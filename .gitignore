@@ -1,0 +1,22 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+
+# Never commit real/sensitive documents or generated processing outputs.
+uploads/*
+outputs/*
+*.pdf
+*.jpg
+*.jpeg
+*.png
+
+# Keep repo documentation images explicitly allowed.
+!docs/*.png
+
+# Keep empty folders.
+!uploads/.gitkeep
+!outputs/.gitkeep
+!data/.gitkeep
