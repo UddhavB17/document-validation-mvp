@@ -1,5 +1,13 @@
 fastapi
 uvicorn
 streamlit
+sqlalchemy
+python-dotenv
+pymupdf
 python-multipart
+requests
+pandas
 pytest
+rapidfuzz
+python-dateutil
+openpyxl

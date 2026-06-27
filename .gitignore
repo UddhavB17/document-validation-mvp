@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
 
 # Never commit real/sensitive documents or generated processing outputs.
 uploads/*
