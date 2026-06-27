@@ -1,0 +1,170 @@
+{
+  "product_type": "LAP",
+  "version": "MSFC/NDC/MAY'26/VER.1.4",
+  "checklist_items": [
+    {
+      "s_no": 1,
+      "category": "Application Form / KYC",
+      "description": "Application form duly filled with colored photos - Signed by all Borrowers and GTR",
+      "document_type": "Application Form",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 4,
+      "category": "Application Form / KYC",
+      "description": "Identity proof of Applicant/Co-applicant/GTR",
+      "document_type": ["Aadhaar", "Voter ID", "Passport", "Driving License"],
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence_any",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 5,
+      "category": "Application Form / KYC",
+      "description": "Signature proof of Borrower",
+      "document_type": ["PAN", "Passport", "Driving License"],
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence_any",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 6,
+      "category": "Application Form / KYC",
+      "description": "Address proof of Borrower - current address mandatory",
+      "document_type": ["Aadhaar", "Voter ID", "Driving License", "Utility Bill"],
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence_any",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 7,
+      "category": "Application Form / KYC",
+      "description": "PAN card mandatory for applicant and all co-applicants",
+      "document_type": "PAN",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence_and_match",
+      "match_field": "pan_number",
+      "severity_if_missing": "HIGH",
+      "severity_if_mismatch": "HIGH"
+    },
+    {
+      "s_no": 12,
+      "category": "System Check",
+      "description": "Loan details must match system - ROI/Tenure/Loan Amount/EMI",
+      "document_type": "Loan Agreement",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "field_match",
+      "match_fields": ["loan_amount", "tenure", "emi"],
+      "severity_if_mismatch": "HIGH"
+    },
+    {
+      "s_no": 15,
+      "category": "Internal Documents",
+      "description": "CRIF for all borrowers, CIBIL if above 5 lakh sanction",
+      "document_type": "CRIF Report",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 16,
+      "category": "Internal Documents",
+      "description": "Banking of Applicant mandatory",
+      "document_type": "Bank Statement",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 17,
+      "category": "Internal Documents",
+      "description": "Bank account vintage of 3 months for disbursement account",
+      "document_type": "Bank Statement",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "date_range",
+      "min_months": 3,
+      "severity_if_fail": "MEDIUM"
+    },
+    {
+      "s_no": 20,
+      "category": "Internal Documents",
+      "description": "Loan Agreement - duly filled signed by all borrowers",
+      "document_type": "Loan Agreement",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 21,
+      "category": "Internal Documents",
+      "description": "KFS and Sanction Letter - cross check loan details",
+      "document_type": "Sanction Letter",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 22,
+      "category": "Internal Documents",
+      "description": "Insurance Forms - Signed Life and Property with Calculators",
+      "document_type": "Insurance Form",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "MEDIUM"
+    },
+    {
+      "s_no": 33,
+      "category": "Documents required from customer",
+      "description": "Stamp Duty - stamp date equal to or older than disbursement date",
+      "document_type": "Stamp Duty",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "HIGH"
+    },
+    {
+      "s_no": 40,
+      "category": "Repayments",
+      "description": "ACH must be registered with correct details",
+      "document_type": "NACH Form",
+      "required": true,
+      "ai_checkable": true,
+      "check_type": "presence",
+      "severity_if_missing": "HIGH"
+    }
+  ],
+  "human_review_items": [
+    {"s_no": 2, "description": "KYC OSV done by MSFC employee with EMP code and signature", "reason": "Internal process - cannot verify from document"},
+    {"s_no": 8, "description": "Dual Name/Signature/DOB with Stamp Duty if required", "reason": "Requires human judgment on applicability"},
+    {"s_no": 9, "description": "Approval of authority", "reason": "Internal approval process"},
+    {"s_no": 10, "description": "Relationship proof between all borrowers", "reason": "Requires human verification of relationship"},
+    {"s_no": 11, "description": "Vernacular required if applicable", "reason": "Language judgment required"},
+    {"s_no": 13, "description": "Charges deduction details - system entry", "reason": "System entry verification"},
+    {"s_no": 14, "description": "OTC/PDD marked in System", "reason": "System status check"},
+    {"s_no": 19, "description": "Payment favoring needs to be checked by CSO", "reason": "CSO judgment required"},
+    {"s_no": 24, "description": "Agreement signing photo and video", "reason": "Media files not in PDF"},
+    {"s_no": 25, "description": "BT Undertaking if required", "reason": "Conditional - requires case judgment"},
+    {"s_no": 29, "description": "Customer App installed on phone", "reason": "Cannot verify from document"},
+    {"s_no": 37, "description": "Legal Clearance Status cleared", "reason": "System status - not in uploaded documents"},
+    {"s_no": 38, "description": "Technical Clearance Status cleared", "reason": "System status check"},
+    {"s_no": 39, "description": "Two positive technical reports if loan above 20 lakh", "reason": "Conditional on loan amount - needs system data"},
+    {"s_no": 41, "description": "PDC count verification", "reason": "Physical counting required"},
+    {"s_no": 42, "description": "ACH not registered - CBO/CEO approval required", "reason": "Approval process verification"},
+    {"s_no": 43, "description": "3 PDCs from co-applicants and GTRs", "reason": "Physical document counting"},
+    {"s_no": 44, "description": "Other items as applicable", "reason": "Case specific"}
+  ]
+}
