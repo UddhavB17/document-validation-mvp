@@ -15,6 +15,7 @@ streamlit>=1.35.0
 
 # Data / validation
 pydantic>=2.7.0              # request/response models
+python-dateutil>=2.9.0       # robust date parsing in field_extractor
 
 # Reporting
 jinja2>=3.1.4                # HTML report templating
