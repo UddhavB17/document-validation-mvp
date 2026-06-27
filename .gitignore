@@ -8,6 +8,9 @@ __pycache__/
 # Never commit real/sensitive documents or generated processing outputs.
 uploads/*
 outputs/*
+data/uploads/*
+data/pages/*
+data/reports/*
 *.pdf
 *.jpg
 *.jpeg
@@ -20,3 +23,6 @@ outputs/*
 !uploads/.gitkeep
 !outputs/.gitkeep
 !data/.gitkeep
+!data/uploads/.gitkeep
+!data/pages/.gitkeep
+!data/reports/.gitkeep
