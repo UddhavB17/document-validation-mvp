@@ -16,12 +16,20 @@ DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/dmef.db"))
 
 
 def get_connection() -> sqlite3.Connection:
-    """Open (and create if missing) the SQLite database.
-
-    Row factory is set so that rows can be accessed by column name.
-    """
+    """Open the SQLite database and return rows addressable by column name."""
     DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
+def init_db() -> None:
+    """Create all DMEF tables and indexes if they do not already exist."""
+    from database.models import INDEX_STATEMENTS, SCHEMA_STATEMENTS
+
+    with get_connection() as connection:
+        for statement in SCHEMA_STATEMENTS:
+            connection.execute(statement)
+        for statement in INDEX_STATEMENTS:
+            connection.execute(statement)
