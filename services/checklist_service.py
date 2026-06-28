@@ -1,36 +1,35 @@
-"""Checklist loader.
-
-Reads the product-specific document checklist from a JSON file.
-The checklist defines which documents are required and any field-level rules.
-
-Expected JSON structure (minimum):
-{
-    "product_type": "Home Loan",
-    "required_documents": ["PAN", "Aadhaar", "Bank Statement"],
-    "field_rules": {
-        "loan_amount": {"type": "number", "min": 100000}
-    }
-}
-"""
+"""Checklist loader for system-supplied MSFC checklist JSON."""
 
 import json
 from pathlib import Path
 
-DEFAULT_CHECKLIST_PATH = "data/checklist.json"
+CHECKLIST_PATH = Path("data/checklist.json")
 
 
-def load_checklist(path: str = DEFAULT_CHECKLIST_PATH) -> dict:
-    """Load and return the checklist JSON from *path*.
-
-    Raises:
-        FileNotFoundError: if the checklist file does not exist.
-        json.JSONDecodeError: if the file is not valid JSON.
-    """
+def _read_checklist(path: str | Path = CHECKLIST_PATH) -> dict:
     checklist_path = Path(path)
     if not checklist_path.exists():
-        raise FileNotFoundError(
-            f"Checklist not found at '{checklist_path}'. "
-            "Place a valid checklist JSON at that path before processing."
-        )
-    with checklist_path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
+        raise FileNotFoundError(f"Checklist JSON not found at {checklist_path}")
+
+    with checklist_path.open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
+def load_checklist(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> dict:
+    """Return the full checklist dict for a product type."""
+    checklist = _read_checklist(path)
+    if checklist.get("product_type") == product_type:
+        return checklist
+    if product_type in checklist:
+        return checklist[product_type]
+    raise ValueError(f"No checklist configured for product_type={product_type}")
+
+
+def get_ai_checkable_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+    checklist = load_checklist(product_type, path)
+    return [item for item in checklist.get("checklist_items", []) if item.get("ai_checkable")]
+
+
+def get_human_review_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+    checklist = load_checklist(product_type, path)
+    return checklist.get("human_review_items", [])
