@@ -19,6 +19,11 @@ pymupdf>=1.24.0
 rapidfuzz>=3.9.0
 python-dateutil>=2.9.0
 
+# OCR and image processing
+opencv-python>=4.9.0
+paddlepaddle>=2.6.0
+paddleocr>=2.7.0
+
 # Reporting
 openpyxl>=3.1.0
 jinja2>=3.1.4
