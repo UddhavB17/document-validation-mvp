@@ -26,6 +26,90 @@ The uploaded PDF has two sections:
 
 Siddhant owns PDF processing, OCR, document classification, and field extraction. Uddhav owns upload UI, database, checklist loading/evaluation, exception aggregation, reports, LLM summary, audit logging, and reviewer flow.
 
+## Setup
+
+### Prerequisites
+
+| Requirement | Version | Notes |
+|---|---|---|
+| Python | **3.11.x** | ⚠️ Must be 3.11 — `paddlepaddle` has no wheel for 3.12+ |
+| Git | any | — |
+
+Download Python 3.11 from [python.org/downloads](https://www.python.org/downloads/release/python-3119/).
+
+---
+
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/UddhavB17/document-validation-mvp.git
+cd document-validation-mvp
+```
+
+### 2. Create a virtual environment using Python 3.11
+
+**Windows**
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+**macOS / Linux**
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+```
+
+> If `py -3.11` is not found on Windows, use the full path to the Python 3.11 executable, e.g.:
+> `& "$env:LOCALAPPDATA\Programs\Python\Python311\python.exe" -m venv .venv`
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+This installs all packages including `paddlepaddle`, `paddleocr`, `opencv-python`, `pymupdf`, FastAPI, Streamlit, and test tools.  
+First-time install may take a few minutes (~200 MB download).
+
+### 4. Configure environment variables
+
+```bash
+cp .env.example .env   # macOS/Linux
+copy .env.example .env  # Windows
+```
+
+Edit `.env` and fill in any values specific to your machine (the defaults work for local development as-is).
+
+### 5. Run the app
+
+**FastAPI backend** (terminal 1):
+```bash
+uvicorn main:app --reload
+```
+
+**Streamlit UI** (terminal 2):
+```bash
+streamlit run app.py
+```
+
+### 6. Run tests
+
+```bash
+pytest
+```
+
+All tests should pass. The first run of any OCR test will download PaddleOCR model weights (~100 MB, cached locally after that).
+
+---
+
+### ⚠️ Python Version Note
+
+`paddlepaddle` (the OCR compute backend) does **not** publish wheels for Python 3.12 or 3.13 or 3.14.  
+**You must use Python 3.11.** Using any other version will result in OCR being silently disabled.
+
+
+
 ## Part 2: File System Diagram
 
 ```text
