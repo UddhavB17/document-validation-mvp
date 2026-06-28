@@ -1,69 +1,73 @@
-"""Streamlit reviewer worklist page.
+"""Streamlit reviewer worklist page."""
 
-Shows all applications currently in a reviewable state, letting the
-reviewer navigate to each application's results page.
-"""
-
+import pandas as pd
 import streamlit as st
 
-
-# Status display config
-_STATUS_ICONS = {
-    "uploaded": "📥",
-    "processing": "⚙️",
-    "exceptions_found": "⚠️",
-    "clean": "✅",
-    "reviewed": "🔍",
-    "approved": "✔️",
-    "rejected": "❌",
-}
+from database.db import get_connection
 
 
 def render_worklist_page(items: list[dict] | None = None) -> None:
-    st.title("🗂️ Reviewer Worklist")
-    st.caption("Applications awaiting review are listed below.")
+    st.subheader("Reviewer Worklist")
+    applications = items or _load_worklist()
+    status_filter = st.radio(
+        "Filter",
+        ["All", "Pending", "Needs Review", "Verified"],
+        horizontal=True,
+    )
+    filtered = _filter_applications(applications, status_filter)
 
-    if items is None:
-        # Placeholder data until DB queries are wired up
-        items = [
-            {
-                "loan_id": "LN-DEMO-001",
-                "applicant_name": "Ravi Kumar",
-                "product_type": "Home Loan",
-                "branch": "Pune Main",
-                "status": "exceptions_found",
-                "total_exceptions": 3,
-                "high_severity_count": 1,
-            }
-        ]
-        st.info("Showing placeholder data — wire up DB query to load real applications.")
-
-    if not items:
-        st.success("🎉 No applications pending review.")
+    if not filtered:
+        st.info("No applications found.")
         return
 
-    st.divider()
+    table_rows = [
+        {
+            "Loan ID": item["loan_id"],
+            "Applicant": item["applicant_name"],
+            "Product": item["product_type"],
+            "Status": item["status"],
+            "Issues": item["issues"],
+            "Uploaded": item["created_at"],
+            "application_id": item["id"],
+        }
+        for item in filtered
+    ]
+    st.dataframe(pd.DataFrame(table_rows).drop(columns=["application_id"]), hide_index=True, use_container_width=True)
 
-    for item in items:
-        status = item.get("status", "uploaded")
-        icon = _STATUS_ICONS.get(status, "📄")
-        exc_count = item.get("total_exceptions", 0)
-        high_count = item.get("high_severity_count", 0)
+    selected_loan = st.selectbox("Open application", [row["Loan ID"] for row in table_rows])
+    if st.button("Open Results"):
+        selected = next(row for row in table_rows if row["Loan ID"] == selected_loan)
+        st.session_state["application_id"] = selected["application_id"]
 
-        col_info, col_action = st.columns([4, 1])
-        with col_info:
-            st.markdown(
-                f"**{icon} {item.get('loan_id', 'Unknown')}** — "
-                f"{item.get('applicant_name', 'N/A')}  \n"
-                f"Product: {item.get('product_type', '—')} | "
-                f"Branch: {item.get('branch', '—')} | "
-                f"Status: `{status}` | "
-                f"Exceptions: **{exc_count}** ({high_count} high)"
-            )
-        with col_action:
-            if st.button("View", key=f"view_{item.get('loan_id')}"):
-                # TODO: set session state to load this application in results_page
-                st.session_state["selected_loan_id"] = item.get("loan_id")
-                st.info("TODO: navigate to Results page with this loan loaded.")
 
-        st.divider()
+def _load_worklist() -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                applications.id,
+                applications.loan_id,
+                applications.applicant_name,
+                applications.product_type,
+                applications.status,
+                applications.created_at,
+                COUNT(validation_results.id) AS issues
+            FROM applications
+            LEFT JOIN validation_results ON validation_results.application_id = applications.id
+            GROUP BY applications.id
+            ORDER BY applications.created_at DESC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _filter_applications(applications: list[dict], status_filter: str) -> list[dict]:
+    if status_filter == "All":
+        return applications
+    if status_filter == "Pending":
+        return [item for item in applications if item["status"] in {"uploaded", "ocr_completed"}]
+    if status_filter == "Needs Review":
+        return [item for item in applications if item["status"] in {"NEEDS_REVIEW", "CRITICAL"}]
+    if status_filter == "Verified":
+        return [item for item in applications if item["status"] in {"verified", "verified_with_override", "CLEAN"}]
+    return applications
