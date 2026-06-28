@@ -1,82 +1,127 @@
-"""LLM service boundary.
+"""LLM explanation service using local/open-source HTTP APIs."""
 
-Provides a clean interface for generating natural-language summaries
-of validation exceptions. The underlying model is swappable via the
-LLM_PROVIDER environment variable.
-
-Supported providers (set in .env):
-  none   – rule-based fallback (no API key required)
-  openai – OpenAI Chat Completions (requires LLM_API_KEY)
-  gemini – Google Gemini (requires LLM_API_KEY)
-"""
-
-from __future__ import annotations
-
+import json
 import os
 
+import requests
 
-def summarize_exceptions(exceptions: list[dict]) -> str:
-    """Return a human-readable summary of validation exceptions.
+from database.db import get_connection
 
-    Args:
-        exceptions: List of exception dicts from exception_aggregator.
 
-    Returns:
-        A plain-text summary suitable for displaying in the UI or
-        embedding in the generated report.
+def generate_explanation(
+    anomalies: list[dict],
+    ground_truth: dict,
+    application_id: int | None = None,
+) -> str | None:
+    """Generate a short operations summary from anomalies.
+
+    Defaults to a local Ollama-style API. In production, set LLM_API_URL or
+    OPEN_SOURCE_LLM_API_URL to an open-source model endpoint.
     """
-    provider = os.getenv("LLM_PROVIDER", "none").lower()
+    if not anomalies:
+        return None
 
-    if provider == "none" or not exceptions:
-        return _rule_based_summary(exceptions)
+    try:
+        from dotenv import load_dotenv
 
-    if provider == "openai":
-        return _openai_summary(exceptions)  # type: ignore[return-value]
+        load_dotenv()
+    except Exception:
+        pass
 
-    if provider == "gemini":
-        return _gemini_summary(exceptions)  # type: ignore[return-value]
+    try:
+        text = _call_llm_api(_build_prompt(anomalies, ground_truth))
+    except Exception:
+        return None
 
-    return _rule_based_summary(exceptions)
+    if text and application_id is not None:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE applications SET llm_summary = ? WHERE id = ?",
+                (text, application_id),
+            )
+        try:
+            from services.audit_service import log_action
+
+            log_action(application_id, "llm_summary_generated", {"summary_length": len(text)})
+        except Exception:
+            pass
+
+    return text
 
 
-# ── Fallback (no LLM) ─────────────────────────
-
-def _rule_based_summary(exceptions: list[dict]) -> str:
+def summarize_exceptions(exceptions: list[dict]) -> str | None:
     if not exceptions:
-        return "✅ No exceptions found. The loan file appears complete."
+        return None
 
-    high = sum(1 for e in exceptions if e.get("severity") == "high")
-    medium = sum(1 for e in exceptions if e.get("severity") == "medium")
-    low = sum(1 for e in exceptions if e.get("severity") == "low")
+    high = sum(1 for item in exceptions if str(item.get("severity", "")).upper() == "HIGH")
+    medium = sum(1 for item in exceptions if str(item.get("severity", "")).upper() == "MEDIUM")
+    low = sum(1 for item in exceptions if str(item.get("severity", "")).upper() == "LOW")
 
     parts = [f"{len(exceptions)} exception(s) require review:"]
     if high:
-        parts.append(f"  • {high} high-severity")
+        parts.append(f"{high} high-severity")
     if medium:
-        parts.append(f"  • {medium} medium-severity")
+        parts.append(f"{medium} medium-severity")
     if low:
-        parts.append(f"  • {low} low-severity")
-
-    missing = [e["document"] for e in exceptions if e.get("issue") == "missing"]
-    if missing:
-        parts.append(f"Missing documents: {', '.join(missing)}")
-
+        parts.append(f"{low} low-severity")
     return "\n".join(parts)
 
 
-# ── LLM stubs (implement when provider is configured) ──
+def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
+    loan_id = ground_truth.get("loan_id", "")
+    applicant_name = ground_truth.get("applicant_name", "")
+    return (
+        "You are an assistant for an NBFC operations team reviewing loan files in India. "
+        "Explain anomalies in simple English. Always state the page number. "
+        "Never invent information not in the data provided.\n\n"
+        f"Loan file {loan_id} for {applicant_name}.\n"
+        "Ground truth from application form:\n"
+        f"{json.dumps(ground_truth, indent=2)}\n"
+        "Anomalies detected:\n"
+        f"{json.dumps(anomalies, indent=2)}\n"
+        "Write:\n"
+        "1. One sentence overall summary\n"
+        "2. Per anomaly: what is wrong, page number, action needed\n"
+        "3. Final: APPROVE / SEND BACK TO BRANCH / MANUAL REVIEW\n"
+        "Keep response under 200 words."
+    )
 
-def _openai_summary(exceptions: list[dict]) -> str:  # pragma: no cover
-    """Call OpenAI Chat Completions API.
 
-    TODO: implement once LLM_API_KEY is configured.
-    """
-    raise NotImplementedError("OpenAI provider not yet implemented.")
+def _call_llm_api(prompt: str) -> str | None:
+    api_url = (
+        os.getenv("LLM_API_URL")
+        or os.getenv("LOCAL_LLM_API_URL")
+        or os.getenv("OPEN_SOURCE_LLM_API_URL")
+        or "http://localhost:11434/api/generate"
+    )
+    model = os.getenv("LOCAL_LLM_MODEL") or os.getenv("LLM_MODEL") or "llama3.1"
+
+    if "11434" in api_url or api_url.endswith("/api/generate"):
+        payload = {"model": model, "prompt": prompt, "stream": False}
+    else:
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 450,
+        }
+
+    response = requests.post(api_url, json=payload, timeout=90)
+    response.raise_for_status()
+    return _extract_response_text(response.json())
 
 
-def _gemini_summary(exceptions: list[dict]) -> str:  # pragma: no cover
-    """Call Google Gemini API.
+def _extract_response_text(payload: dict) -> str | None:
+    if payload.get("response"):
+        return payload["response"]
+    if payload.get("text"):
+        return payload["text"]
+    if payload.get("output"):
+        return payload["output"]
 
-    TODO: implement once LLM_API_KEY is configured.
-    """
-    raise NotImplementedError("Gemini provider not yet implemented.")
+    choices = payload.get("choices") or []
+    if choices:
+        first_choice = choices[0]
+        message = first_choice.get("message") or {}
+        return message.get("content") or first_choice.get("text")
+
+    return None
