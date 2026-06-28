@@ -1,125 +1,389 @@
-"""Checklist evaluation engine.
+"""Checklist matching logic."""
 
-Core decision logic owned by this team.
+from datetime import datetime
+import re
 
-Inputs consumed (from partner JSON):
-  - digital_text  : dict of form fields extracted from the loan application pages.
-  - scanned_docs  : dict mapping document name → content/metadata from scanned pages.
+from services import checklist_service
 
-The engine compares both against the loaded checklist and produces a list of
-exception dicts that feed into exception_aggregator → report_generator.
-"""
+try:
+    from rapidfuzz import fuzz
+except Exception:
+    from difflib import SequenceMatcher
 
-from __future__ import annotations
-
-
-# ── Exception types ───────────────────────────
-ISSUE_MISSING = "missing"
-ISSUE_MISMATCH = "mismatch"
-ISSUE_UNREADABLE = "unreadable"
+    class fuzz:
+        @staticmethod
+        def ratio(left: str, right: str) -> int:
+            return int(SequenceMatcher(None, left, right).ratio() * 100)
 
 
-def evaluate_checklist(
-    checklist: dict,
-    digital_text: dict,
-    scanned_docs: dict,
-) -> list[dict]:
-    """Evaluate the partner's extracted data against the product checklist.
+def _parse_date(value: object) -> datetime:
+    try:
+        from dateutil import parser
 
-    Args:
-        checklist:     Loaded checklist dict (from checklist_service.load_checklist).
-        digital_text:  Form fields extracted from the digital pages of the PDF.
-        scanned_docs:  Documents classified from the scanned pages of the PDF.
-
-    Returns:
-        List of exception dicts with keys:
-          document   – name of the document / field
-          issue      – one of ISSUE_* constants
-          detail     – human-readable description
-          severity   – "high" | "medium" | "low"
-    """
-    exceptions: list[dict] = []
-
-    # ── 1. Required document presence check ──
-    required_docs: list[str] = checklist.get("required_documents", [])
-    found_docs = set(scanned_docs.keys())
-
-    for doc_name in required_docs:
-        if doc_name not in found_docs:
-            exceptions.append(
-                {
-                    "document": doc_name,
-                    "issue": ISSUE_MISSING,
-                    "detail": f"Required document '{doc_name}' was not found in scanned pages.",
-                    "severity": "high",
-                }
-            )
-
-    # ── 2. Field-level rule checks (digital form) ──
-    field_rules: dict = checklist.get("field_rules", {})
-    for field_name, rules in field_rules.items():
-        actual_value = digital_text.get(field_name)
-        _check_field(field_name, actual_value, rules, exceptions)
-
-    # ── 3. Cross-checks (digital vs scanned) ──
-    # TODO: implement name / date / amount cross-validation between
-    #       digital_text fields and their scanned document counterparts.
-
-    return exceptions
+        return parser.parse(str(value))
+    except Exception:
+        return datetime.fromisoformat(str(value))
 
 
-def _check_field(
-    field_name: str,
-    actual_value: object,
-    rules: dict,
-    exceptions: list[dict],
-) -> None:
-    """Apply field-level rules and append any exceptions found."""
-    # Missing required field
-    if actual_value is None:
-        exceptions.append(
-            {
-                "document": "loan_application_form",
-                "issue": ISSUE_MISSING,
-                "detail": f"Required field '{field_name}' is absent from the application form.",
-                "severity": "high",
+def build_anomaly(
+    rule_id: str,
+    s_no: int | None,
+    severity: str,
+    expected_value: object,
+    found_value: object,
+    reason: str,
+    page_number: int | None = None,
+    document_type: str | None = None,
+) -> dict:
+    return {
+        "rule_id": rule_id,
+        "s_no": s_no,
+        "severity": severity,
+        "document_type": document_type,
+        "expected_value": expected_value,
+        "found_value": found_value,
+        "page_number": page_number,
+        "reason": reason,
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+def check_presence_any(pages: list[dict], document_types: list[str]) -> dict:
+    found_types = {page.get("document_type") for page in pages if page.get("document_type")}
+    found = any(document_type in found_types for document_type in document_types)
+
+    if not found:
+        return {
+            "passed": False,
+            "found_value": "None of required types found",
+            "expected_value": f"Any one of: {', '.join(document_types)}",
+        }
+
+    matched = [document_type for document_type in document_types if document_type in found_types]
+    return {"passed": True, "found_value": matched[0]}
+
+
+def check_field_match(extracted_fields: dict, system_data: dict, field_names: list[str]) -> list[dict]:
+    anomalies = []
+
+    for field in field_names:
+        system_val = system_data.get(field)
+        extracted_val = extracted_fields.get(field)
+        if system_val in (None, "") or extracted_val in (None, ""):
+            continue
+
+        if field in ["loan_amount", "emi", "tenure"]:
+            try:
+                sys_num = float(str(system_val).replace(",", ""))
+                ext_num = float(str(extracted_val).replace(",", ""))
+                tolerance = sys_num * 0.01
+                if abs(sys_num - ext_num) > tolerance:
+                    anomalies.append({"field": field, "expected": system_val, "found": extracted_val})
+            except Exception:
+                continue
+        elif field == "pan_number":
+            if str(system_val).upper() != str(extracted_val).upper():
+                anomalies.append({"field": field, "expected": system_val, "found": extracted_val})
+        else:
+            score = fuzz.ratio(str(system_val).lower(), str(extracted_val).lower())
+            if score < 85:
+                anomalies.append(
+                    {
+                        "field": field,
+                        "expected": system_val,
+                        "found": extracted_val,
+                        "match_score": score,
+                    }
+                )
+
+    return anomalies
+
+
+def check_date_range(extracted_fields: dict, min_months: int) -> dict:
+    date_val = extracted_fields.get("statement_period_end")
+    if not date_val:
+        return {"passed": False, "reason": "Statement date not found"}
+
+    try:
+        parsed = _parse_date(date_val)
+        months_old = (datetime.now() - parsed).days / 30
+        if months_old > min_months:
+            return {
+                "passed": False,
+                "found_value": f"{int(months_old)} months old",
+                "expected_value": f"Within {min_months} months",
             }
-        )
-        return
+        return {"passed": True}
+    except Exception:
+        return {"passed": False, "reason": "Could not parse statement date"}
 
-    # Numeric range check
-    expected_type = rules.get("type")
-    if expected_type == "number":
-        try:
-            value = float(actual_value)
-        except (TypeError, ValueError):
-            exceptions.append(
-                {
-                    "document": "loan_application_form",
-                    "issue": ISSUE_MISMATCH,
-                    "detail": f"Field '{field_name}' must be numeric; got '{actual_value}'.",
-                    "severity": "medium",
-                }
-            )
-            return
 
-        min_val = rules.get("min")
-        max_val = rules.get("max")
-        if min_val is not None and value < min_val:
-            exceptions.append(
-                {
-                    "document": "loan_application_form",
-                    "issue": ISSUE_MISMATCH,
-                    "detail": f"Field '{field_name}' value {value} is below minimum {min_val}.",
-                    "severity": "medium",
-                }
+def _find_pages(pages: list[dict], document_type: str) -> list[dict]:
+    return [page for page in pages if page.get("document_type") == document_type]
+
+
+def run_checks(
+    pages: list[dict],
+    ground_truth: dict,
+    system_data: dict | None,
+    product_type: str,
+) -> list[dict]:
+    system_data = system_data or ground_truth or {}
+    ai_items = checklist_service.get_ai_checkable_items(product_type)
+    anomalies: list[dict] = []
+
+    for item in ai_items:
+        check_type = item["check_type"]
+        s_no = item.get("s_no")
+        description = item.get("description", "")
+        severity = item.get("severity_if_missing", "MEDIUM")
+        document_type = item.get("document_type")
+
+        if check_type == "presence":
+            found = bool(_find_pages(pages, document_type))
+            if not found:
+                anomalies.append(
+                    build_anomaly(
+                        rule_id=f"MISSING_DOC_S{s_no}",
+                        s_no=s_no,
+                        severity=severity,
+                        expected_value="Document present",
+                        found_value="Not found in file",
+                        reason=description,
+                        document_type=document_type,
+                    )
+                )
+
+        elif check_type == "presence_any":
+            result = check_presence_any(pages, document_type)
+            if not result["passed"]:
+                anomalies.append(
+                    build_anomaly(
+                        rule_id=f"MISSING_DOC_S{s_no}",
+                        s_no=s_no,
+                        severity=severity,
+                        expected_value=result["expected_value"],
+                        found_value=result["found_value"],
+                        reason=description,
+                        document_type=", ".join(document_type),
+                    )
+                )
+
+        elif check_type == "presence_and_match":
+            doc_pages = _find_pages(pages, document_type)
+            if not doc_pages:
+                anomalies.append(
+                    build_anomaly(
+                        rule_id=f"MISSING_DOC_S{s_no}",
+                        s_no=s_no,
+                        severity=severity,
+                        expected_value=f"{document_type} present",
+                        found_value="Not found",
+                        reason=description,
+                        document_type=document_type,
+                    )
+                )
+            else:
+                mismatches = check_field_match(
+                    doc_pages[0].get("extracted_fields", {}),
+                    system_data,
+                    [item["match_field"]],
+                )
+                for mismatch in mismatches:
+                    anomalies.append(
+                        build_anomaly(
+                            rule_id=f"FIELD_MISMATCH_S{s_no}",
+                            s_no=s_no,
+                            severity=item.get("severity_if_mismatch", "HIGH"),
+                            expected_value=str(mismatch["expected"]),
+                            found_value=str(mismatch["found"]),
+                            reason=f"{document_type} field mismatch: {mismatch['field']}",
+                            page_number=doc_pages[0].get("page_number"),
+                            document_type=document_type,
+                        )
+                    )
+
+        elif check_type == "field_match":
+            doc_pages = _find_pages(pages, document_type)
+            if doc_pages:
+                mismatches = check_field_match(
+                    doc_pages[0].get("extracted_fields", {}),
+                    system_data,
+                    item.get("match_fields", []),
+                )
+                for mismatch in mismatches:
+                    anomalies.append(
+                        build_anomaly(
+                            rule_id=f"FIELD_MISMATCH_S{s_no}",
+                            s_no=s_no,
+                            severity=item.get("severity_if_mismatch", "HIGH"),
+                            expected_value=str(mismatch["expected"]),
+                            found_value=str(mismatch["found"]),
+                            reason=f"{document_type} field mismatch: {mismatch['field']}",
+                            page_number=doc_pages[0].get("page_number"),
+                            document_type=document_type,
+                        )
+                    )
+
+        elif check_type == "date_range":
+            doc_pages = _find_pages(pages, document_type)
+            if doc_pages:
+                result = check_date_range(doc_pages[0].get("extracted_fields", {}), item["min_months"])
+                if not result["passed"]:
+                    anomalies.append(
+                        build_anomaly(
+                            rule_id=f"DATE_CHECK_S{s_no}",
+                            s_no=s_no,
+                            severity=item.get("severity_if_fail", "MEDIUM"),
+                            expected_value=result.get("expected_value", ""),
+                            found_value=result.get("found_value", ""),
+                            reason=result.get("reason", description),
+                            page_number=doc_pages[0].get("page_number"),
+                            document_type=document_type,
+                        )
+                    )
+
+    anomalies.extend(_run_quality_checks(pages, ground_truth))
+    return anomalies
+
+
+def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
+    anomalies: list[dict] = []
+    pan_pages = _find_pages(pages, "PAN")
+
+    for page in pages:
+        page_number = page.get("page_number")
+        document_type = page.get("document_type")
+        if page.get("is_readable") is False:
+            anomalies.append(
+                build_anomaly(
+                    "UNREADABLE_PAGE",
+                    None,
+                    "MEDIUM",
+                    "Clear scan",
+                    "Blurry or unreadable",
+                    "Page scan quality too low for OCR",
+                    page_number,
+                    document_type,
+                )
             )
-        if max_val is not None and value > max_val:
-            exceptions.append(
-                {
-                    "document": "loan_application_form",
-                    "issue": ISSUE_MISMATCH,
-                    "detail": f"Field '{field_name}' value {value} exceeds maximum {max_val}.",
-                    "severity": "medium",
-                }
+
+        confidence = page.get("ocr_confidence", page.get("confidence"))
+        if page.get("page_type") == "scanned" and confidence is not None and confidence < 0.70:
+            anomalies.append(
+                build_anomaly(
+                    "LOW_OCR_CONFIDENCE",
+                    None,
+                    "LOW",
+                    "Confidence above 70%",
+                    f"{confidence:.0%} confidence",
+                    "OCR confidence below acceptable threshold",
+                    page_number,
+                    document_type,
+                )
             )
+
+        if document_type in (None, "Unknown"):
+            anomalies.append(
+                build_anomaly(
+                    "UNCLASSIFIED_PAGE",
+                    None,
+                    "LOW",
+                    "Known document type",
+                    "Unknown",
+                    "Page could not be classified",
+                    page_number,
+                    document_type,
+                )
+            )
+
+    if pan_pages:
+        pan_fields = pan_pages[0].get("extracted_fields", {})
+        pan_number = pan_fields.get("pan_number")
+        if pan_number and not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]{1}", str(pan_number).upper()):
+            anomalies.append(
+                build_anomaly(
+                    "INVALID_PAN_FORMAT",
+                    None,
+                    "HIGH",
+                    "Valid PAN format",
+                    pan_number,
+                    "PAN number format is invalid",
+                    pan_pages[0].get("page_number"),
+                    "PAN",
+                )
+            )
+
+        ground_pan = ground_truth.get("pan_number")
+        if ground_pan and pan_number and str(ground_pan).upper() != str(pan_number).upper():
+            anomalies.append(
+                build_anomaly(
+                    "PAN_NUMBER_MISMATCH",
+                    None,
+                    "HIGH",
+                    ground_pan,
+                    pan_number,
+                    "PAN number differs from digital application form",
+                    pan_pages[0].get("page_number"),
+                    "PAN",
+                )
+            )
+
+        ground_name = ground_truth.get("applicant_name")
+        pan_name = pan_fields.get("applicant_name")
+        if ground_name and pan_name:
+            score = fuzz.ratio(str(ground_name), str(pan_name))
+            if 75 <= score < 90:
+                anomalies.append(
+                    build_anomaly(
+                        "BORDERLINE_NAME_MATCH",
+                        None,
+                        "MEDIUM",
+                        ground_name,
+                        pan_name,
+                        f"Name match score {score}%, review needed",
+                        pan_pages[0].get("page_number"),
+                        "PAN",
+                    )
+                )
+            elif score < 75:
+                anomalies.append(
+                    build_anomaly(
+                        "NAME_MISMATCH",
+                        None,
+                        "HIGH",
+                        ground_name,
+                        pan_name,
+                        f"Name match score {score}%, likely mismatch",
+                        pan_pages[0].get("page_number"),
+                        "PAN",
+                    )
+                )
+
+    for bank_page in _find_pages(pages, "Bank Statement"):
+        result = check_date_range(bank_page.get("extracted_fields", {}), 6)
+        if not result["passed"] and result.get("found_value"):
+            anomalies.append(
+                build_anomaly(
+                    "STATEMENT_TOO_OLD",
+                    None,
+                    "MEDIUM",
+                    result.get("expected_value", "Recent statement"),
+                    result.get("found_value", ""),
+                    "Bank statement is older than allowed recency window",
+                    bank_page.get("page_number"),
+                    "Bank Statement",
+                )
+            )
+
+    return anomalies
+
+
+def evaluate_checklist(checklist: dict, extracted_documents: dict) -> list[dict]:
+    required_docs = checklist.get("required_documents", [])
+    found_docs = set(extracted_documents.keys())
+    return [
+        {"document": doc_name, "issue": "missing"}
+        for doc_name in required_docs
+        if doc_name not in found_docs
+    ]

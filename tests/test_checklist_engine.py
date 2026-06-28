@@ -1,82 +1,56 @@
-"""Tests for services/checklist_engine.py."""
+from datetime import datetime, timedelta
 
-import pytest
-
-from services.checklist_engine import ISSUE_MISSING, ISSUE_MISMATCH, evaluate_checklist
-
-
-# ── Helper fixtures ───────────────────────────
-
-BASE_CHECKLIST = {
-    "required_documents": ["PAN", "Aadhaar", "Bank Statement"],
-    "field_rules": {
-        "loan_amount": {"type": "number", "min": 100_000, "max": 10_000_000},
-    },
-}
+from services.checklist_engine import (
+    check_date_range,
+    check_field_match,
+    check_presence_any,
+    evaluate_checklist,
+    run_checks,
+)
 
 
-# ── Document presence checks ──────────────────
+def test_evaluate_checklist_flags_missing_documents() -> None:
+    checklist = {"required_documents": ["PAN", "Aadhaar"]}
+    extracted_documents = {"PAN": {}}
 
-def test_no_exceptions_when_all_docs_present() -> None:
-    scanned = {"PAN": {}, "Aadhaar": {}, "Bank Statement": {}}
-    digital = {"loan_amount": "500000"}
-    result = evaluate_checklist(BASE_CHECKLIST, digital, scanned)
-    assert result == []
-
-
-def test_flags_single_missing_document() -> None:
-    scanned = {"PAN": {}, "Aadhaar": {}}   # Bank Statement missing
-    digital = {"loan_amount": "500000"}
-    result = evaluate_checklist(BASE_CHECKLIST, digital, scanned)
-    issues = [e["document"] for e in result]
-    assert "Bank Statement" in issues
-    assert all(e["issue"] == ISSUE_MISSING for e in result)
+    assert evaluate_checklist(checklist, extracted_documents) == [
+        {"document": "Aadhaar", "issue": "missing"}
+    ]
 
 
-def test_flags_all_missing_documents() -> None:
-    result = evaluate_checklist(BASE_CHECKLIST, {}, {})
-    missing_docs = {e["document"] for e in result if e["issue"] == ISSUE_MISSING}
-    assert "PAN" in missing_docs
-    assert "Aadhaar" in missing_docs
-    assert "Bank Statement" in missing_docs
+def test_presence_any_passes_with_aadhaar() -> None:
+    result = check_presence_any([{"document_type": "Aadhaar"}], ["Aadhaar", "Voter ID"])
+    assert result["passed"] is True
 
 
-# ── Field-level rule checks ───────────────────
-
-def test_flags_missing_required_field() -> None:
-    scanned = {"PAN": {}, "Aadhaar": {}, "Bank Statement": {}}
-    digital = {}   # loan_amount absent
-    result = evaluate_checklist(BASE_CHECKLIST, digital, scanned)
-    issues = [e["issue"] for e in result]
-    assert ISSUE_MISSING in issues
+def test_presence_any_fails_when_none_found() -> None:
+    result = check_presence_any([{"document_type": "Bank Statement"}], ["Aadhaar", "Voter ID"])
+    assert result["passed"] is False
 
 
-def test_flags_non_numeric_field() -> None:
-    scanned = {"PAN": {}, "Aadhaar": {}, "Bank Statement": {}}
-    digital = {"loan_amount": "not-a-number"}
-    result = evaluate_checklist(BASE_CHECKLIST, digital, scanned)
-    issues = [e["issue"] for e in result]
-    assert ISSUE_MISMATCH in issues
+def test_field_match_loan_amount_exact() -> None:
+    assert check_field_match({"loan_amount": "500000"}, {"loan_amount": "500000"}, ["loan_amount"]) == []
 
 
-def test_flags_field_below_minimum() -> None:
-    scanned = {"PAN": {}, "Aadhaar": {}, "Bank Statement": {}}
-    digital = {"loan_amount": "50000"}   # below min 100,000
-    result = evaluate_checklist(BASE_CHECKLIST, digital, scanned)
-    issues = [e["issue"] for e in result]
-    assert ISSUE_MISMATCH in issues
+def test_field_match_loan_amount_mismatch() -> None:
+    result = check_field_match({"loan_amount": "600000"}, {"loan_amount": "500000"}, ["loan_amount"])
+    assert result[0]["field"] == "loan_amount"
 
 
-def test_flags_field_above_maximum() -> None:
-    scanned = {"PAN": {}, "Aadhaar": {}, "Bank Statement": {}}
-    digital = {"loan_amount": "99999999"}  # above max 10,000,000
-    result = evaluate_checklist(BASE_CHECKLIST, digital, scanned)
-    issues = [e["issue"] for e in result]
-    assert ISSUE_MISMATCH in issues
+def test_field_match_pan_case_insensitive() -> None:
+    assert check_field_match({"pan_number": "abcde1234f"}, {"pan_number": "ABCDE1234F"}, ["pan_number"]) == []
 
 
-def test_valid_field_within_range() -> None:
-    scanned = {"PAN": {}, "Aadhaar": {}, "Bank Statement": {}}
-    digital = {"loan_amount": "2000000"}
-    result = evaluate_checklist(BASE_CHECKLIST, digital, scanned)
-    assert result == []
+def test_date_range_bank_stmt_recent() -> None:
+    recent = (datetime.now() - timedelta(days=30)).date().isoformat()
+    assert check_date_range({"statement_period_end": recent}, 3)["passed"] is True
+
+
+def test_date_range_bank_stmt_old() -> None:
+    old = (datetime.now() - timedelta(days=180)).date().isoformat()
+    assert check_date_range({"statement_period_end": old}, 3)["passed"] is False
+
+
+def test_missing_pan() -> None:
+    anomalies = run_checks([], {}, {}, "LAP")
+    assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
