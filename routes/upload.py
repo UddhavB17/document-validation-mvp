@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from database.db import get_connection, init_db
 from services.file_validator import validate_file, validate_upload
+from services.pipeline import run_pipeline
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = Path("data/uploads")
@@ -115,11 +116,28 @@ async def upload_file(
             (application_id, "file_uploaded", f"Uploaded {file.filename}"),
         )
 
+    pipeline_result = run_pipeline(
+        file_path,
+        application_id,
+        system_data={
+            "loan_id": loan_id,
+            "applicant_name": applicant_name,
+            "coapplicant_name": coapplicant_name,
+            "product_type": product_type,
+            "branch": branch,
+        },
+        product_type=product_type,
+    )
+
     return {
         "application_id": application_id,
         "loan_id": loan_id,
-        "status": "uploaded",
+        "status": pipeline_result["final_status"],
+        "pipeline_status": pipeline_result["pipeline_status"],
         "total_pages": validation["total_pages"],
         "digital_pages": validation["digital_pages"],
         "scanned_pages": validation["scanned_pages"],
+        "documents_found": pipeline_result["documents_found"],
+        "documents_missing": pipeline_result["documents_missing"],
+        "anomaly_count": len(pipeline_result["anomalies"]),
     }

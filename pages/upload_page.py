@@ -78,7 +78,7 @@ def _submit_upload_form(
             st.error(error)
         return
 
-    with st.spinner("Validating file..."):
+    with st.spinner("Uploading and processing file..."):
         try:
             response = requests.post(
                 f"{API_BASE_URL}/upload",
@@ -96,7 +96,7 @@ def _submit_upload_form(
                         "application/pdf",
                     )
                 },
-                timeout=60,
+                timeout=180,
             )
         except requests.RequestException as exc:
             st.error(f"Upload failed: {exc}")
@@ -114,7 +114,9 @@ def _submit_upload_form(
     st.success(
         "Application ID: "
         f"{result['application_id']} | "
-        f"File uploaded: {result['total_pages']} pages "
+        f"Status: {result['status']} | "
+        f"Processed: {result['total_pages']} pages "
         f"({result['digital_pages']} digital pages + "
-        f"{result['scanned_pages']} scanned pages)"
+        f"{result['scanned_pages']} scanned pages) | "
+        f"Issues found: {result.get('anomaly_count', 0)}"
     )
