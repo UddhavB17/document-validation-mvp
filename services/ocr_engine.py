@@ -32,7 +32,34 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PADDLE_CACHE_DIR = Path(os.getenv("PADDLE_PDX_CACHE_HOME", _PROJECT_ROOT / "data/paddlex_cache"))
-os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(PADDLE_CACHE_DIR))
+
+
+def _configure_paddle_runtime() -> None:
+    """Apply Paddle flags before the native runtime is imported."""
+    os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(PADDLE_CACHE_DIR))
+    # oneDNN/MKLDNN triggers PIR runtime errors on many CPU installs (incl. Py 3.11).
+    os.environ.setdefault("FLAGS_use_mkldnn", "0")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+
+
+_configure_paddle_runtime()
+
+
+def _create_paddle_ocr() -> Any:
+    """Create a PaddleOCR instance with CPU-safe defaults."""
+    from paddleocr import PaddleOCR as _PaddleOCR
+
+    base_kwargs = {
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False,
+        "use_textline_orientation": False,
+        "lang": "en",
+    }
+    try:
+        return _PaddleOCR(**base_kwargs, enable_mkldnn=False)
+    except TypeError:
+        # Older paddleocr builds do not expose enable_mkldnn.
+        return _PaddleOCR(**base_kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -40,14 +67,7 @@ os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(PADDLE_CACHE_DIR))
 # ---------------------------------------------------------------------------
 
 try:
-    from paddleocr import PaddleOCR as _PaddleOCR
-
-    ocr_model: _PaddleOCR | None = _PaddleOCR(
-        use_doc_orientation_classify=False,
-        use_doc_unwarping=False,
-        use_textline_orientation=False,
-        lang="en",
-    )
+    ocr_model: Any | None = _create_paddle_ocr()
 except Exception as _paddle_exc:  # ImportError, RuntimeError, etc.
     logger.warning(
         "PaddleOCR could not be loaded (%s). "
@@ -64,9 +84,11 @@ except Exception as _paddle_exc:  # ImportError, RuntimeError, etc.
 
 class _OcrResult(TypedDict, total=False):
     is_readable: bool
+    is_blurry: bool
     ocr_text: str
     confidence: float
-    error: str  # only present when OCR raises
+    blur_score: float
+    error: str
 
 
 # ---------------------------------------------------------------------------
@@ -81,8 +103,8 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     -----
     1. Check readability via :func:`~services.preprocessing.check_readability`.
     2. If blurry / unreadable, return early with ``is_readable=False``.
-    3. Preprocess the image (grayscale + denoising).
-    4. Run PaddleOCR and aggregate text lines and confidence scores.
+    3. Run PaddleOCR on the rendered page image.
+    4. Aggregate text lines and confidence scores.
     5. Wrap everything in ``try/except`` – OCR failures return an error dict
        instead of raising.
 
@@ -102,55 +124,77 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
 
         ``error`` *(optional)* – exception message when OCR raises.
     """
-    # ── 1. Readability gate ──────────────────────────────────────────────────
     readability = check_readability(image_path)
-    if not readability["is_readable"]:
+    is_blurry = not readability["is_readable"]
+    if is_blurry:
         return {
             "is_readable": False,
+            "is_blurry": True,
             "ocr_text": "",
             "confidence": 0.0,
+            "blur_score": readability["blur_score"],
         }
 
-    # ── 2. Guard: model not available ────────────────────────────────────────
     if ocr_model is None:
         return {
             "is_readable": False,
+            "is_blurry": is_blurry,
             "ocr_text": "",
             "confidence": 0.0,
+            "blur_score": readability["blur_score"],
             "error": (
                 "PaddleOCR model is not loaded. "
                 "Install paddlepaddle and paddleocr to enable OCR."
             ),
         }
 
-    # ── 3. Preprocess → OCR ──────────────────────────────────────────────────
     try:
-        preprocessed = _prepare_for_paddle(preprocess_image(image_path))
-        result = ocr_model.ocr(
-            preprocessed,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-        )
+        result = _run_paddle_ocr(ocr_model, image_path)
         text, confidence = _extract_ocr_text_and_confidence(result)
 
         return {
-            "is_readable": True,
+            "is_readable": bool(text.strip()),
+            "is_blurry": is_blurry,
             "ocr_text": text,
             "confidence": confidence,
+            "blur_score": readability["blur_score"],
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception("OCR failed for %s", image_path)
         return {
             "is_readable": False,
+            "is_blurry": is_blurry,
             "ocr_text": "",
             "confidence": 0.0,
+            "blur_score": readability["blur_score"],
             "error": str(exc),
         }
 
 
+def _run_paddle_ocr(model: Any, image_path: str | Path) -> Any:
+    """Run PaddleOCR 3.x ``predict`` or fall back to legacy ``ocr``."""
+    path = str(image_path)
+    inference_kwargs = {
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False,
+        "use_textline_orientation": False,
+    }
+
+    if hasattr(model, "predict"):
+        try:
+            return model.predict(path, **inference_kwargs)
+        except TypeError:
+            return model.predict(path)
+
+    preprocessed = _prepare_for_paddle(preprocess_image(image_path))
+    try:
+        return model.ocr(preprocessed, **inference_kwargs)
+    except TypeError:
+        return model.ocr(preprocessed)
+
+
 def _prepare_for_paddle(image: np.ndarray) -> np.ndarray:
-    """PaddleOCR 3.x expects a 3-channel image, not grayscale."""
+    """PaddleOCR 2.x expects a 3-channel image, not grayscale."""
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     return image
