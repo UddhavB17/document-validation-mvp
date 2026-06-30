@@ -164,6 +164,7 @@ class TestRunOcrOnPage:
             ]
         ]
         mock_model = MagicMock()
+        mock_model.predict.return_value = fake_ocr_output
         mock_model.ocr.return_value = fake_ocr_output
 
         with patch.object(ocr_engine, "ocr_model", mock_model):
@@ -183,13 +184,15 @@ class TestRunOcrOnPage:
         img_path = tmp_path / "sharp.png"
         _make_sharp_png(img_path)
 
-        mock_model = MagicMock()
-        mock_model.ocr.return_value = [
+        v3_result = [
             {
                 "rec_texts": ["Applicant Name: Ramesh Kumar", "PAN: ABCDE1234F"],
                 "rec_scores": [0.98, 0.95],
             }
         ]
+        mock_model = MagicMock()
+        mock_model.predict.return_value = v3_result
+        mock_model.ocr.return_value = v3_result
 
         with patch.object(ocr_engine, "ocr_model", mock_model):
             result = run_ocr_on_page(img_path)
@@ -215,8 +218,10 @@ class TestRunOcrOnPage:
                 "rec_scores": [0.98, 0.95],
             }
         }
+        wrapped_result = [mock_result]
         mock_model = MagicMock()
-        mock_model.ocr.return_value = [mock_result]
+        mock_model.predict.return_value = wrapped_result
+        mock_model.ocr.return_value = wrapped_result
 
         with patch.object(ocr_engine, "ocr_model", mock_model):
             result = run_ocr_on_page(img_path)
@@ -236,6 +241,7 @@ class TestRunOcrOnPage:
         _make_sharp_png(img_path)
 
         mock_model = MagicMock()
+        mock_model.predict.side_effect = RuntimeError("model crash")
         mock_model.ocr.side_effect = RuntimeError("model crash")
 
         with patch.object(ocr_engine, "ocr_model", mock_model):
