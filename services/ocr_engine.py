@@ -19,12 +19,20 @@ ocr_model
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
+
+import cv2
+import numpy as np
 
 from services.preprocessing import check_readability, preprocess_image
 
 logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PADDLE_CACHE_DIR = Path(os.getenv("PADDLE_PDX_CACHE_HOME", _PROJECT_ROOT / "data/paddlex_cache"))
+os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(PADDLE_CACHE_DIR))
 
 
 # ---------------------------------------------------------------------------
@@ -35,9 +43,10 @@ try:
     from paddleocr import PaddleOCR as _PaddleOCR
 
     ocr_model: _PaddleOCR | None = _PaddleOCR(
-        use_textline_orientation=True,  # use_angle_cls renamed in PaddleOCR 3.x
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
         lang="en",
-        show_log=False,
     )
 except Exception as _paddle_exc:  # ImportError, RuntimeError, etc.
     logger.warning(
@@ -116,14 +125,14 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
 
     # ── 3. Preprocess → OCR ──────────────────────────────────────────────────
     try:
-        preprocessed = preprocess_image(image_path)
-        result = ocr_model.ocr(preprocessed, cls=True)
-
-        lines: list[str] = [line[1][0] for line in result[0]]
-        text = " ".join(lines)
-
-        scores: list[float] = [line[1][1] for line in result[0]]
-        confidence = sum(scores) / len(scores) if scores else 0.0
+        preprocessed = _prepare_for_paddle(preprocess_image(image_path))
+        result = ocr_model.ocr(
+            preprocessed,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
+        text, confidence = _extract_ocr_text_and_confidence(result)
 
         return {
             "is_readable": True,
@@ -138,3 +147,72 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
             "confidence": 0.0,
             "error": str(exc),
         }
+
+
+def _prepare_for_paddle(image: np.ndarray) -> np.ndarray:
+    """PaddleOCR 3.x expects a 3-channel image, not grayscale."""
+    if image.ndim == 2:
+        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    return image
+
+
+def _extract_ocr_text_and_confidence(result: Any) -> tuple[str, float]:
+    """Normalize PaddleOCR 2.x and 3.x results into text plus mean confidence."""
+    if not result:
+        return "", 0.0
+
+    if isinstance(result, list):
+        legacy_text, legacy_scores = _extract_legacy_lines(result)
+        if legacy_text or legacy_scores:
+            return " ".join(legacy_text), _mean_score(legacy_scores)
+
+        new_text: list[str] = []
+        new_scores: list[float] = []
+        for page_result in result:
+            page_text, page_scores = _extract_mapping_result(page_result)
+            new_text.extend(page_text)
+            new_scores.extend(page_scores)
+        return " ".join(new_text), _mean_score(new_scores)
+
+    text, scores = _extract_mapping_result(result)
+    return " ".join(text), _mean_score(scores)
+
+
+def _extract_legacy_lines(result: list[Any]) -> tuple[list[str], list[float]]:
+    page_lines = result[0] if result and isinstance(result[0], list) else result
+    lines: list[str] = []
+    scores: list[float] = []
+    for line in page_lines:
+        if not isinstance(line, (list, tuple)) or len(line) < 2:
+            continue
+        text_score = line[1]
+        if not isinstance(text_score, (list, tuple)) or len(text_score) < 2:
+            continue
+        lines.append(str(text_score[0]))
+        scores.append(float(text_score[1]))
+    return lines, scores
+
+
+def _extract_mapping_result(result: Any) -> tuple[list[str], list[float]]:
+    if not isinstance(result, dict) and hasattr(result, "json"):
+        try:
+            result = result.json
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not isinstance(result, dict):
+        return [], []
+
+    if "res" in result and isinstance(result["res"], dict):
+        result = result["res"]
+
+    rec_texts = result.get("rec_texts") or []
+    rec_scores = result.get("rec_scores") or []
+
+    lines = [str(text) for text in rec_texts if text]
+    scores = [float(score) for score in rec_scores if score is not None]
+    return lines, scores
+
+
+def _mean_score(scores: list[float]) -> float:
+    return sum(scores) / len(scores) if scores else 0.0

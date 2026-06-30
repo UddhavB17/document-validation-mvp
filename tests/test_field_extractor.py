@@ -156,6 +156,53 @@ class TestLoanAgreement:
 
 
 # ════════════════════════════════════════════
+# PAN
+# ════════════════════════════════════════════
+
+class TestPAN:
+
+    def _extract(self, text: str) -> dict:
+        return extract_fields("PAN", text)
+
+    def test_pan_number_extracted(self) -> None:
+        result = self._extract("INCOME TAX DEPARTMENT\nName: Ramesh Kumar\nABCDE1234F")
+        assert result["pan_number"] == "ABCDE1234F"
+
+    def test_pan_card_alias_supported(self) -> None:
+        result = extract_fields("PAN Card", "Permanent Account Number ABCDE1234F")
+        assert result["pan_number"] == "ABCDE1234F"
+
+    def test_applicant_name_extracted(self) -> None:
+        result = self._extract("Name: Priya Mehta\nDate of Birth: 01/01/1990\nABCDE1234F")
+        assert result["applicant_name"] == "Priya Mehta"
+        assert result["dob"] == "1990-01-01"
+
+    def test_missing_pan_returns_none(self) -> None:
+        result = self._extract("Income Tax Department")
+        assert result["pan_number"] is None
+
+
+# ════════════════════════════════════════════
+# AADHAAR
+# ════════════════════════════════════════════
+
+class TestAadhaar:
+
+    def _extract(self, text: str) -> dict:
+        return extract_fields("Aadhaar", text)
+
+    def test_aadhaar_number_extracted(self) -> None:
+        result = self._extract("Government of India\nName: Sunita Sharma\n1234 5678 9012")
+        assert result["aadhaar_number"] == "123456789012"
+
+    def test_dob_and_address_extracted(self) -> None:
+        text = "DOB: 15/08/1985\nAddress\n12 Main Street\nPune 411001"
+        result = self._extract(text)
+        assert result["dob"] == "1985-08-15"
+        assert "Main Street" in result["address"]
+
+
+# ════════════════════════════════════════════
 # VOTER ID
 # ════════════════════════════════════════════
 
@@ -284,3 +331,51 @@ class TestCRIFReport:
     def test_no_score_returns_none(self) -> None:
         result = self._extract("CRIF Report with no score information")
         assert result["credit_score"] is None
+
+
+# ════════════════════════════════════════════
+# BANK STATEMENT
+# ════════════════════════════════════════════
+
+class TestBankStatement:
+
+    def _extract(self, text: str) -> dict:
+        return extract_fields("Bank Statement", text)
+
+    def test_account_number_and_ifsc_extracted(self) -> None:
+        result = self._extract("Account Number: 123456789012\nIFSC: HDFC0001234")
+        assert result["account_number"] == "123456789012"
+        assert result["ifsc"] == "HDFC0001234"
+
+    def test_statement_period_extracted(self) -> None:
+        result = self._extract("Statement Period: 01/01/2026 to 31/03/2026")
+        assert result["statement_period_start"] == "2026-01-01"
+        assert result["statement_period_end"] == "2026-03-31"
+
+    def test_statement_end_date_fallback(self) -> None:
+        result = self._extract("Statement Date: 30/04/2026")
+        assert result["statement_period_end"] == "2026-04-30"
+
+
+# ════════════════════════════════════════════
+# SALARY SLIP
+# ════════════════════════════════════════════
+
+class TestSalarySlip:
+
+    def _extract(self, text: str) -> dict:
+        return extract_fields("Salary Slip", text)
+
+    def test_salary_fields_extracted(self) -> None:
+        result = self._extract(
+            "Employee Name: Neha Rao\n"
+            "Company: ABC Pvt Ltd\n"
+            "Salary Month: March 2026\n"
+            "Gross Salary: Rs. 75,000\n"
+            "Net Salary: Rs. 62,500"
+        )
+        assert result["employee_name"] == "Neha Rao"
+        assert result["employer_name"] == "ABC Pvt Ltd"
+        assert result["salary_month"] == "March 2026"
+        assert result["gross_salary"] == "75000"
+        assert result["net_salary"] == "62500"

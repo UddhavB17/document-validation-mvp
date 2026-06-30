@@ -50,9 +50,14 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
     _EXTRACTORS = {
         "Sanction Letter":  _extract_sanction_letter,
         "Loan Agreement":   _extract_loan_agreement,
+        "PAN":              _extract_pan,
+        "PAN Card":         _extract_pan,
+        "Aadhaar":          _extract_aadhaar,
         "Voter ID":         _extract_voter_id,
         "Driving License":  _extract_driving_license,
         "CRIF Report":      _extract_crif_report,
+        "Bank Statement":   _extract_bank_statement,
+        "Salary Slip":      _extract_salary_slip,
     }
     extractor = _EXTRACTORS.get(document_type)
     if extractor is None:
@@ -267,6 +272,35 @@ def _extract_loan_agreement(text: str) -> dict[str, Any]:
     }
 
 
+def _extract_pan(text: str) -> dict[str, Any]:
+    """Extract fields from a PAN card."""
+    pan_match = re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
+    return {
+        "applicant_name": _line_after_label(
+            text,
+            "name",
+            "applicant name",
+            "card holder name",
+            "father's name",
+            "fathers name",
+        ),
+        "pan_number": pan_match.group(1) if pan_match else None,
+        "dob": _extract_date_near(text.lower(), "date of birth", "dob"),
+    }
+
+
+def _extract_aadhaar(text: str) -> dict[str, Any]:
+    """Extract fields from an Aadhaar card."""
+    aadhaar_match = re.search(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", text)
+    aadhaar_number = aadhaar_match.group(1).replace(" ", "") if aadhaar_match else None
+    return {
+        "applicant_name": _line_after_label(text, "name", "s/o", "d/o", "w/o"),
+        "aadhaar_number": aadhaar_number,
+        "dob": _extract_date_near(text.lower(), "date of birth", "dob", "year of birth", "yob"),
+        "address": _lines_after_label(text, "address", max_lines=4),
+    }
+
+
 def _extract_voter_id(text: str) -> dict[str, Any]:
     """Extract fields from a Voter ID / EPIC card."""
     t = text.lower()
@@ -344,3 +378,59 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
         "credit_score": score,
         "report_date": report_date,
     }
+
+
+def _extract_bank_statement(text: str) -> dict[str, Any]:
+    """Extract fields from a bank statement."""
+    t = text.lower()
+    account_match = re.search(
+        r"(?:account\s*(?:number|no\.?|#)|a/c\s*(?:no\.?|number)?)\s*[:\-–]?\s*([0-9Xx* ]{6,24})",
+        text,
+        re.IGNORECASE,
+    )
+    ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
+    period_start, period_end = _extract_statement_period(text)
+    return {
+        "account_holder_name": _line_after_label(text, "account holder", "customer name", "name"),
+        "account_number": _digits_only(account_match.group(1)) if account_match else None,
+        "ifsc": ifsc_match.group(1) if ifsc_match else None,
+        "statement_period_start": period_start,
+        "statement_period_end": period_end or _extract_date_near(t, "statement date", "as on", "period ending"),
+    }
+
+
+def _extract_statement_period(text: str) -> tuple[str | None, str | None]:
+    date_pattern = (
+        r"\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}"
+        r"|\d{4}[/\-\.]\d{2}[/\-\.]\d{2}"
+        r"|\d{1,2}\s+\w+\s+\d{4}"
+    )
+    match = re.search(
+        rf"(?:period|statement\s+period|from)\s*[:\-–]?\s*({date_pattern})\s*(?:to|\-|\u2013|\u2014)\s*({date_pattern})",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None, None
+    return _parse_date(match.group(1)), _parse_date(match.group(2))
+
+
+def _extract_salary_slip(text: str) -> dict[str, Any]:
+    """Extract fields from a salary slip."""
+    t = text.lower()
+    return {
+        "employee_name": _line_after_label(text, "employee name", "name"),
+        "employer_name": _line_after_label(text, "employer", "company", "organization", "organisation"),
+        "gross_salary": _extract_amount(t, "gross salary", "gross pay", "gross earnings"),
+        "net_salary": _extract_amount(t, "net salary", "net pay", "take home"),
+        "salary_month": _extract_salary_month(text),
+    }
+
+
+def _extract_salary_month(text: str) -> str | None:
+    match = re.search(
+        r"(?:salary\s+month|pay\s+period|month)\s*[:\-–]?\s*([A-Za-z]+\s+\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else None

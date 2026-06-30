@@ -1,12 +1,15 @@
-"""Streamlit upload page."""
+"""Streamlit upload view."""
 
 import json
 import os
+import time
 
 import requests
 import streamlit as st
 
+from database.db import get_connection
 from services.file_validator import validate_upload
+from views.results_view import render_application_results
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
@@ -18,22 +21,13 @@ def render_upload_page() -> None:
     with tab_upload:
         with st.form("upload_form"):
             loan_id = st.text_input("Loan ID")
-            applicant_name = st.text_input("Applicant Name")
-            coapplicant_name = st.text_input("Co-applicant Name")
-            product_type = st.selectbox("Product Type", ["LAP", "MSME", "Personal Loan"])
-            branch = st.text_input("Branch")
             uploaded_file = st.file_uploader("PDF file", type=["pdf"])
             submitted = st.form_submit_button("Submit")
 
         if submitted:
-            _submit_upload_form(
-                loan_id,
-                applicant_name,
-                coapplicant_name,
-                product_type,
-                branch,
-                uploaded_file,
-            )
+            _submit_upload_form(loan_id, uploaded_file)
+
+        _render_uploaded_application_result()
 
     with tab_json:
         st.subheader("Partner OCR JSON Payload")
@@ -56,16 +50,9 @@ def render_upload_page() -> None:
                     st.error(f"Invalid JSON: {exc}")
 
 
-def _submit_upload_form(
-    loan_id: str,
-    applicant_name: str,
-    coapplicant_name: str,
-    product_type: str,
-    branch: str,
-    uploaded_file,
-) -> None:
-    if not loan_id.strip() or not applicant_name.strip() or not branch.strip():
-        st.error("Loan ID, Applicant Name, and Branch are required.")
+def _submit_upload_form(loan_id: str, uploaded_file) -> None:
+    if not loan_id.strip():
+        st.error("Loan ID is required.")
         return
 
     if uploaded_file is None:
@@ -78,16 +65,16 @@ def _submit_upload_form(
             st.error(error)
         return
 
-    with st.spinner("Uploading and processing file..."):
+    with st.spinner("Uploading file..."):
         try:
             response = requests.post(
                 f"{API_BASE_URL}/upload",
                 data={
                     "loan_id": loan_id,
-                    "applicant_name": applicant_name,
-                    "coapplicant_name": coapplicant_name,
-                    "product_type": product_type,
-                    "branch": branch,
+                    "applicant_name": loan_id,
+                    "coapplicant_name": "",
+                    "product_type": "LAP",
+                    "branch": "Default",
                 },
                 files={
                     "file": (
@@ -111,12 +98,45 @@ def _submit_upload_form(
         return
 
     result = response.json()
+    st.session_state["last_uploaded_application_id"] = result["application_id"]
+    st.session_state["application_id"] = result["application_id"]
     st.success(
         "Application ID: "
         f"{result['application_id']} | "
         f"Status: {result['status']} | "
-        f"Processed: {result['total_pages']} pages "
+        f"Queued for processing: {result['total_pages']} pages "
         f"({result['digital_pages']} digital pages + "
         f"{result['scanned_pages']} scanned pages) | "
-        f"Issues found: {result.get('anomaly_count', 0)}"
+        "Results will appear below after processing completes."
     )
+
+
+def _render_uploaded_application_result() -> None:
+    application_id = st.session_state.get("last_uploaded_application_id")
+    if application_id is None:
+        return
+
+    status = _load_application_status(int(application_id))
+    if status is None:
+        return
+
+    st.divider()
+    if status == "processing":
+        st.info("PDF uploaded. Processing is still running...")
+        time.sleep(2)
+        st.rerun()
+    if status == "pipeline_failed":
+        st.error("PDF processing failed. Open the Worklist or check logs for details.")
+        return
+
+    st.success("PDF has been processed.")
+    render_application_results(int(application_id))
+
+
+def _load_application_status(application_id: int) -> str | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT status FROM applications WHERE id = ?",
+            (application_id,),
+        ).fetchone()
+    return row["status"] if row else None

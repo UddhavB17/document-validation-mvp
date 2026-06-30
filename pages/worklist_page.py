@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from database.db import get_connection
+from views.results_view import render_application_results
 
 
 def render_worklist_page(items: list[dict] | None = None) -> None:
@@ -11,7 +12,7 @@ def render_worklist_page(items: list[dict] | None = None) -> None:
     applications = items or _load_worklist()
     status_filter = st.radio(
         "Filter",
-        ["All", "Pending", "Needs Review", "Verified"],
+        ["All", "Pending", "Needs Review", "Auto Clean", "Verified"],
         horizontal=True,
     )
     filtered = _filter_applications(applications, status_filter)
@@ -35,9 +36,14 @@ def render_worklist_page(items: list[dict] | None = None) -> None:
     st.dataframe(pd.DataFrame(table_rows).drop(columns=["application_id"]), hide_index=True, use_container_width=True)
 
     selected_loan = st.selectbox("Open application", [row["Loan ID"] for row in table_rows])
-    if st.button("Open Results"):
+    if st.button("Show Results"):
         selected = next(row for row in table_rows if row["Loan ID"] == selected_loan)
-        st.session_state["application_id"] = selected["application_id"]
+        st.session_state["worklist_application_id"] = selected["application_id"]
+
+    selected_application_id = st.session_state.get("worklist_application_id")
+    if selected_application_id is not None:
+        st.divider()
+        render_application_results(int(selected_application_id))
 
 
 def _load_worklist() -> list[dict]:
@@ -65,9 +71,15 @@ def _filter_applications(applications: list[dict], status_filter: str) -> list[d
     if status_filter == "All":
         return applications
     if status_filter == "Pending":
-        return [item for item in applications if item["status"] in {"uploaded", "ocr_completed"}]
+        return [item for item in applications if item["status"] in {"uploaded", "processing", "ocr_completed"}]
     if status_filter == "Needs Review":
         return [item for item in applications if item["status"] in {"NEEDS_REVIEW", "CRITICAL"}]
+    if status_filter == "Auto Clean":
+        return [item for item in applications if item["status"] == "CLEAN"]
     if status_filter == "Verified":
-        return [item for item in applications if item["status"] in {"verified", "verified_with_override", "CLEAN"}]
+        return [item for item in applications if item["status"] in {"verified", "verified_with_override"}]
     return applications
+
+
+if __name__ == "__main__":
+    render_worklist_page()

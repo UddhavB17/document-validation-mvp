@@ -174,6 +174,58 @@ class TestRunOcrOnPage:
         assert "ABCDE1234F" in result["ocr_text"]
         assert 0.0 < result["confidence"] <= 1.0
 
+    def test_clear_image_returns_text_from_paddleocr_v3_result(self, tmp_path: Path) -> None:
+        """PaddleOCR 3.x dict results must return text and confidence."""
+        pytest.importorskip("cv2")
+        from services import ocr_engine
+        from services.ocr_engine import run_ocr_on_page
+
+        img_path = tmp_path / "sharp.png"
+        _make_sharp_png(img_path)
+
+        mock_model = MagicMock()
+        mock_model.ocr.return_value = [
+            {
+                "rec_texts": ["Applicant Name: Ramesh Kumar", "PAN: ABCDE1234F"],
+                "rec_scores": [0.98, 0.95],
+            }
+        ]
+
+        with patch.object(ocr_engine, "ocr_model", mock_model):
+            result = run_ocr_on_page(img_path)
+
+        assert result["is_readable"] is True
+        assert "Ramesh Kumar" in result["ocr_text"]
+        assert "ABCDE1234F" in result["ocr_text"]
+        assert result["confidence"] == pytest.approx(0.965)
+
+    def test_clear_image_returns_text_from_wrapped_paddleocr_v3_result(self, tmp_path: Path) -> None:
+        """PaddleOCR 3.x result JSON may wrap fields under a res key."""
+        pytest.importorskip("cv2")
+        from services import ocr_engine
+        from services.ocr_engine import run_ocr_on_page
+
+        img_path = tmp_path / "sharp.png"
+        _make_sharp_png(img_path)
+
+        mock_result = MagicMock()
+        mock_result.json = {
+            "res": {
+                "rec_texts": ["Applicant Name: Ramesh Kumar", "PAN: ABCDE1234F"],
+                "rec_scores": [0.98, 0.95],
+            }
+        }
+        mock_model = MagicMock()
+        mock_model.ocr.return_value = [mock_result]
+
+        with patch.object(ocr_engine, "ocr_model", mock_model):
+            result = run_ocr_on_page(img_path)
+
+        assert result["is_readable"] is True
+        assert "Ramesh Kumar" in result["ocr_text"]
+        assert "ABCDE1234F" in result["ocr_text"]
+        assert result["confidence"] == pytest.approx(0.965)
+
     def test_ocr_exception_returns_error_dict(self, tmp_path: Path) -> None:
         """If the OCR call raises, the result must include an 'error' key."""
         pytest.importorskip("cv2")
