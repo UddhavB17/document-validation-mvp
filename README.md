@@ -149,9 +149,13 @@ document-validation-mvp/
 │   └── models.py                   # [Shared - Uddhav builds, Siddhant reads]
 │
 ├── pages/
-│   ├── upload_page.py              # [Uddhav]
-│   ├── results_page.py             # [Uddhav]
-│   └── worklist_page.py            # [Uddhav]
+│   └── worklist_page.py            # [Uddhav] reviewer worklist with inline results
+│
+├── views/
+│   ├── __init__.py
+│   ├── upload_view.py              # [Uddhav] PDF + partner JSON intake
+│   ├── results_view.py             # [Uddhav] reusable inline results view
+│   └── status_helpers.py           # [Uddhav] processing/failed result guards
 │
 ├── tests/
 │   ├── __init__.py
@@ -178,6 +182,9 @@ document-validation-mvp/
 ## Architecture
 
 See `docs/document_validation_architecture.png`.
+
+Results are rendered inline on the Upload and Worklist views; there is no
+separate Results tab/page.
 
 ## Collaboration Rules
 
