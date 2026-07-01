@@ -2,6 +2,7 @@
 
 import streamlit as st
 
+from pages.activity_page import render_activity_page
 from pages.worklist_page import render_worklist_page
 from views.upload_view import render_upload_page
 
@@ -38,14 +39,16 @@ def main() -> None:
         st.caption("Document Matching Early Finder")
         page = st.radio(
             "View",
-            ["Upload", "Worklist"],
+            ["Upload", "Worklist", "My Activity"],
             key="current_page",
         )
 
     if page == "Upload":
         render_upload_page()
-    else:
+    elif page == "Worklist":
         render_worklist_page()
+    else:
+        render_activity_page()
 
 
 if __name__ == "__main__":
