@@ -5,6 +5,7 @@ import streamlit as st
 
 from database.db import get_connection
 from views.results_view import render_application_results
+from views.status_helpers import render_result_status_guard
 
 
 def render_worklist_page(items: list[dict] | None = None) -> None:
@@ -43,6 +44,13 @@ def render_worklist_page(items: list[dict] | None = None) -> None:
     selected_application_id = st.session_state.get("worklist_application_id")
     if selected_application_id is not None:
         st.divider()
+        is_ready = render_result_status_guard(
+            int(selected_application_id),
+            session_key_prefix=f"worklist_{selected_application_id}",
+            processing_message="Application processing is still running...",
+        )
+        if not is_ready:
+            return
         render_application_results(int(selected_application_id))
 
 

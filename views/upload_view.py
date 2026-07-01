@@ -2,14 +2,13 @@
 
 import json
 import os
-import time
 
 import requests
 import streamlit as st
 
-from database.db import get_connection
 from services.file_validator import validate_upload
 from views.results_view import render_application_results
+from views.status_helpers import render_result_status_guard
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
@@ -21,11 +20,22 @@ def render_upload_page() -> None:
     with tab_upload:
         with st.form("upload_form"):
             loan_id = st.text_input("Loan ID")
+            applicant_name = st.text_input("Applicant Name")
+            coapplicant_name = st.text_input("Co-applicant Name")
+            product_type = st.selectbox("Product Type", ["LAP", "MSME", "Personal Loan"])
+            branch = st.text_input("Branch")
             uploaded_file = st.file_uploader("PDF file", type=["pdf"])
             submitted = st.form_submit_button("Submit")
 
         if submitted:
-            _submit_upload_form(loan_id, uploaded_file)
+            _submit_upload_form(
+                loan_id,
+                applicant_name,
+                coapplicant_name,
+                product_type,
+                branch,
+                uploaded_file,
+            )
 
         _render_uploaded_application_result()
 
@@ -43,16 +53,22 @@ def render_upload_page() -> None:
             else:
                 try:
                     payload = json.loads(raw_json)
-                    st.success("JSON parsed successfully.")
-                    st.json(payload)
-                    st.info("Checklist evaluation will run after pipeline integration.")
                 except json.JSONDecodeError as exc:
                     st.error(f"Invalid JSON: {exc}")
+                else:
+                    _submit_partner_json(payload)
 
 
-def _submit_upload_form(loan_id: str, uploaded_file) -> None:
-    if not loan_id.strip():
-        st.error("Loan ID is required.")
+def _submit_upload_form(
+    loan_id: str,
+    applicant_name: str,
+    coapplicant_name: str,
+    product_type: str,
+    branch: str,
+    uploaded_file,
+) -> None:
+    if not loan_id.strip() or not applicant_name.strip() or not branch.strip():
+        st.error("Loan ID, Applicant Name, and Branch are required.")
         return
 
     if uploaded_file is None:
@@ -71,10 +87,10 @@ def _submit_upload_form(loan_id: str, uploaded_file) -> None:
                 f"{API_BASE_URL}/upload",
                 data={
                     "loan_id": loan_id,
-                    "applicant_name": loan_id,
-                    "coapplicant_name": "",
-                    "product_type": "LAP",
-                    "branch": "Default",
+                    "applicant_name": applicant_name,
+                    "coapplicant_name": coapplicant_name,
+                    "product_type": product_type,
+                    "branch": branch,
                 },
                 files={
                     "file": (
@@ -90,11 +106,7 @@ def _submit_upload_form(loan_id: str, uploaded_file) -> None:
             return
 
     if response.status_code >= 400:
-        try:
-            detail = response.json().get("detail", "Upload failed")
-        except ValueError:
-            detail = response.text or "Upload failed"
-        st.error(detail)
+        st.error(_response_error_detail(response, "Upload failed"))
         return
 
     result = response.json()
@@ -111,32 +123,59 @@ def _submit_upload_form(loan_id: str, uploaded_file) -> None:
     )
 
 
+def _submit_partner_json(payload: dict) -> None:
+    with st.spinner("Running checklist evaluation..."):
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/upload/json",
+                json=payload,
+                timeout=180,
+            )
+        except requests.RequestException as exc:
+            st.error(f"Partner JSON upload failed: {exc}")
+            return
+
+    if response.status_code >= 400:
+        st.error(_response_error_detail(response, "Partner JSON upload failed"))
+        return
+
+    result = response.json()
+    application_id = result["application_id"]
+    st.session_state["last_uploaded_application_id"] = application_id
+    st.session_state["application_id"] = application_id
+    st.success(
+        "Application ID: "
+        f"{application_id} | "
+        f"Status: {result['status']} | "
+        f"Issues found: {result.get('anomaly_count', 0)}"
+    )
+    st.write(f"Documents found: {', '.join(result.get('documents_found') or []) or 'None'}")
+    render_application_results(int(application_id))
+
+
+def _response_error_detail(response: requests.Response, fallback: str) -> str:
+    try:
+        detail = response.json().get("detail", fallback)
+    except ValueError:
+        detail = response.text or fallback
+    if isinstance(detail, list):
+        return "; ".join(str(item) for item in detail)
+    return str(detail)
+
+
 def _render_uploaded_application_result() -> None:
     application_id = st.session_state.get("last_uploaded_application_id")
     if application_id is None:
         return
 
-    status = _load_application_status(int(application_id))
-    if status is None:
-        return
-
     st.divider()
-    if status == "processing":
-        st.info("PDF uploaded. Processing is still running...")
-        time.sleep(2)
-        st.rerun()
-    if status == "pipeline_failed":
-        st.error("PDF processing failed. Open the Worklist or check logs for details.")
+    is_ready = render_result_status_guard(
+        int(application_id),
+        session_key_prefix=f"upload_{application_id}",
+        processing_message="PDF uploaded. Processing is still running...",
+    )
+    if not is_ready:
         return
 
     st.success("PDF has been processed.")
     render_application_results(int(application_id))
-
-
-def _load_application_status(application_id: int) -> str | None:
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT status FROM applications WHERE id = ?",
-            (application_id,),
-        ).fetchone()
-    return row["status"] if row else None
