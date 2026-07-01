@@ -112,14 +112,10 @@ def _submit_upload_form(
     result = response.json()
     st.session_state["last_uploaded_application_id"] = result["application_id"]
     st.session_state["application_id"] = result["application_id"]
-    st.success(
-        "Application ID: "
-        f"{result['application_id']} | "
-        f"Status: {result['status']} | "
-        f"Queued for processing: {result['total_pages']} pages "
-        f"({result['digital_pages']} digital pages + "
-        f"{result['scanned_pages']} scanned pages) | "
-        "Results will appear below after processing completes."
+    st.caption(
+        f"Application ID {result['application_id']} queued — "
+        f"{result['total_pages']} pages "
+        f"({result['digital_pages']} digital, {result['scanned_pages']} scanned)."
     )
 
 
@@ -172,7 +168,7 @@ def _render_uploaded_application_result() -> None:
     is_ready = render_result_status_guard(
         int(application_id),
         session_key_prefix=f"upload_{application_id}",
-        processing_message="PDF uploaded. Processing is still running...",
+        processing_message="Processing your loan file",
     )
     if not is_ready:
         return
