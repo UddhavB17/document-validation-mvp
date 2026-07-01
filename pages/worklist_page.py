@@ -60,7 +60,7 @@ def render_worklist_page(items: list[dict] | None = None) -> None:
         is_ready = render_result_status_guard(
             int(selected_application_id),
             session_key_prefix=f"worklist_{selected_application_id}",
-            processing_message="Application processing is still running...",
+            processing_message="Processing your loan file",
         )
         if not is_ready:
             return

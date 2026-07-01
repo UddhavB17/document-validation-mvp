@@ -15,6 +15,41 @@ FINAL_STATUSES = frozenset({"CLEAN", "NEEDS_REVIEW", "CRITICAL", "verified", "ve
 POLL_INTERVAL_SECONDS = int(os.getenv("DMEF_POLL_INTERVAL_SECONDS", "2"))
 POLL_TIMEOUT_SECONDS = int(os.getenv("DMEF_PROCESSING_TIMEOUT_SECONDS", "900"))
 
+_PROCESSING_BANNER_CSS = """
+<style>
+.dmef-processing-banner {
+    background: #e8f4fd;
+    border: 1px solid #b6dff5;
+    border-left: 5px solid #0284c7;
+    border-radius: 10px;
+    color: #0c4a6e;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0.75rem 0 1rem 0;
+    padding: 18px 20px;
+}
+.dmef-processing-text {
+    display: inline-block;
+}
+.dmef-processing-dots {
+    display: inline-block;
+    min-width: 1.5em;
+    text-align: left;
+}
+.dmef-processing-dots::after {
+    animation: dmef-processing-dots 1.4s steps(4, end) infinite;
+    content: "";
+}
+@keyframes dmef-processing-dots {
+    0% { content: ""; }
+    25% { content: "."; }
+    50% { content: ".."; }
+    75% { content: "..."; }
+    100% { content: ""; }
+}
+</style>
+"""
+
 
 def load_application_status(application_id: int) -> str | None:
     with get_connection() as connection:
@@ -35,6 +70,22 @@ def get_result_state(status: str | None) -> str:
     if status in FINAL_STATUSES:
         return "ready"
     return "unknown"
+
+
+def render_processing_banner(message: str) -> None:
+    """Show one stable processing notice with animated dots (no elapsed timer)."""
+    st.markdown(
+        _PROCESSING_BANNER_CSS
+        + (
+            '<div class="dmef-processing-banner">'
+            '<span class="dmef-processing-text">'
+            f"{message}"
+            '</span>'
+            '<span class="dmef-processing-dots"></span>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_result_status_guard(
@@ -60,7 +111,7 @@ def render_result_status_guard(
             st.warning("Processing is taking longer than expected. Please check Worklist again later.")
             return False
 
-        st.info(f"{processing_message} Elapsed: {elapsed_seconds}s.")
+        render_processing_banner(processing_message)
         time.sleep(POLL_INTERVAL_SECONDS)
         st.rerun()
         return False

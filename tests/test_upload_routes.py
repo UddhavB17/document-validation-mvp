@@ -45,6 +45,9 @@ class _FakeStreamlit:
     def write(self, message: str) -> None:
         self.write_messages.append(message)
 
+    def caption(self, message: str) -> None:
+        self.write_messages.append(message)
+
 
 def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
