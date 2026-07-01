@@ -11,6 +11,7 @@ _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 import json
 
 from database.db import get_connection
+from services.reviewer_exceptions import compute_final_status
 
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
@@ -52,10 +53,8 @@ def aggregate(
 
     if not sorted_anomalies:
         final_status = "CLEAN"
-    elif any(str(anomaly.get("severity")).upper() == "HIGH" for anomaly in sorted_anomalies):
-        final_status = "CRITICAL"
     else:
-        final_status = "NEEDS_REVIEW"
+        final_status = compute_final_status(sorted_anomalies)
 
     result = {
         "total_pages": len(pages),
