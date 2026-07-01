@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from database.db import get_connection
+from services.reviewer_exceptions import summarize_for_display
 from views.results_view import render_application_results
 from views.status_helpers import render_result_status_guard
 
@@ -11,6 +12,18 @@ from views.status_helpers import render_result_status_guard
 def render_worklist_page(items: list[dict] | None = None) -> None:
     st.subheader("Reviewer Worklist")
     applications = items or _load_worklist()
+
+    queue_col, _ = st.columns([1, 3])
+    if queue_col.button("Start Review Queue", type="primary"):
+        pending = _queue_candidates(applications)
+        if not pending:
+            st.warning("No files waiting for review.")
+        else:
+            st.session_state["queue"] = [item["id"] for item in pending]
+            st.session_state["queue_index"] = 0
+            st.session_state["worklist_application_id"] = pending[0]["id"]
+            st.rerun()
+
     status_filter = st.radio(
         "Filter",
         ["All", "Pending", "Needs Review", "Auto Clean", "Verified"],
@@ -28,7 +41,7 @@ def render_worklist_page(items: list[dict] | None = None) -> None:
             "Applicant": item["applicant_name"],
             "Product": item["product_type"],
             "Status": item["status"],
-            "Issues": item["issues"],
+            "Issues": item["reviewer_issues"],
             "Uploaded": item["created_at"],
             "application_id": item["id"],
         }
@@ -54,6 +67,11 @@ def render_worklist_page(items: list[dict] | None = None) -> None:
         render_application_results(int(selected_application_id))
 
 
+def _queue_candidates(applications: list[dict]) -> list[dict]:
+    pending = [item for item in applications if item["status"] in {"NEEDS_REVIEW", "CRITICAL", "ocr_completed", "checklist_run"}]
+    return sorted(pending, key=lambda item: item["created_at"])
+
+
 def _load_worklist() -> list[dict]:
     with get_connection() as connection:
         rows = connection.execute(
@@ -64,15 +82,25 @@ def _load_worklist() -> list[dict]:
                 applications.applicant_name,
                 applications.product_type,
                 applications.status,
-                applications.created_at,
-                COUNT(validation_results.id) AS issues
+                applications.created_at
             FROM applications
-            LEFT JOIN validation_results ON validation_results.application_id = applications.id
-            GROUP BY applications.id
             ORDER BY applications.created_at DESC
             """
         ).fetchall()
-    return [dict(row) for row in rows]
+
+    applications = []
+    for row in rows:
+        item = dict(row)
+        with get_connection() as connection:
+            anomalies = connection.execute(
+                "SELECT severity, rule_id, page_number, reason, document_type, expected_value, found_value FROM validation_results WHERE application_id = ?",
+                (item["id"],),
+            ).fetchall()
+        summary = summarize_for_display([dict(anomaly) for anomaly in anomalies])
+        item["issues"] = summary["raw_count"]
+        item["reviewer_issues"] = summary["reviewer_count"]
+        applications.append(item)
+    return applications
 
 
 def _filter_applications(applications: list[dict], status_filter: str) -> list[dict]:
