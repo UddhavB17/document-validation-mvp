@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import re
 
+from services.classifier_keywords import HI, contains_term
+
 
 # ── Return-value helper ───────────────────────────────────────────────────────
 
@@ -55,11 +57,13 @@ def _is_pan(text_lower: str) -> bool:
 
 def _is_aadhaar(text_lower: str) -> bool:
     """Aadhaar: UIDAI-issued identity card."""
-    has_aadhaar_phrase = (
-        "aadhaar" in text_lower
-        or "unique identification" in text_lower
-        or "uidai" in text_lower
-        or "aadhar" in text_lower          # common misspelling
+    has_aadhaar_phrase = contains_term(
+        text_lower,
+        "aadhaar",
+        "unique identification",
+        "uidai",
+        "aadhar",
+        *HI["aadhaar"],
     )
     has_aadhaar_number = bool(re.search(r'\b\d{4}\s\d{4}\s\d{4}\b', text_lower))
     return has_aadhaar_phrase or has_aadhaar_number
@@ -96,21 +100,25 @@ def _is_driving_license(text_lower: str) -> bool:
 
 def _is_voter_id(text_lower: str) -> bool:
     """Voter ID / EPIC card issued by the Election Commission of India."""
-    return (
-        "election commission" in text_lower
-        or "voter id" in text_lower
-        or "electors photo identity" in text_lower
-        or "epic" in text_lower
+    return contains_term(
+        text_lower,
+        "election commission",
+        "voter id",
+        "electors photo identity",
+        "epic",
+        *HI["voter"],
     )
 
 
 def _is_sanction_letter(text_lower: str) -> bool:
     """Sanction Letter / Key Fact Statement."""
-    has_simple = (
-        "sanction letter" in text_lower
-        or "key fact statement" in text_lower
-        or "kfs" in text_lower
-        or "loan sanction" in text_lower
+    has_simple = contains_term(
+        text_lower,
+        "sanction letter",
+        "key fact statement",
+        "kfs",
+        "loan sanction",
+        *HI["sanction"],
     )
     has_compound = "sanctioned amount" in text_lower and "tenure" in text_lower
     return has_simple or has_compound
@@ -118,9 +126,12 @@ def _is_sanction_letter(text_lower: str) -> bool:
 
 def _is_loan_agreement(text_lower: str) -> bool:
     """Loan Agreement."""
-    return (
-        "loan agreement" in text_lower
-        or "borrower" in text_lower
+    return contains_term(
+        text_lower,
+        "loan agreement",
+        *HI["loan_agreement"],
+    ) or (
+        "borrower" in text_lower
         and "lender" in text_lower
         and "repayment" in text_lower
     )
@@ -149,10 +160,12 @@ def _is_crif_report(text_lower: str) -> bool:
 
 def _is_bank_statement(text_lower: str) -> bool:
     """Bank Statement."""
-    has_statement = (
-        "bank statement" in text_lower
-        or "account statement" in text_lower
-        or "statement of account" in text_lower
+    has_statement = contains_term(
+        text_lower,
+        "bank statement",
+        "account statement",
+        "statement of account",
+        *HI["bank_statement"],
     )
     has_transaction_markers = (
         "debit" in text_lower
@@ -175,7 +188,7 @@ def _is_salary_slip(text_lower: str) -> bool:
 
 def _is_insurance_form(text_lower: str) -> bool:
     """Insurance Form: life/property insurance with policy details."""
-    has_insurance = "insurance" in text_lower
+    has_insurance = contains_term(text_lower, "insurance", *HI["insurance"])
     has_type = (
         "life" in text_lower
         or "property" in text_lower
@@ -191,20 +204,24 @@ def _is_insurance_form(text_lower: str) -> bool:
 
 def _is_stamp_duty(text_lower: str) -> bool:
     """Stamp Duty / e-Stamp / Franking."""
-    return (
-        "stamp duty" in text_lower
-        or "non judicial stamp" in text_lower
-        or "e-stamp" in text_lower
-        or "franking" in text_lower
-        or "stamp paper" in text_lower
+    return contains_term(
+        text_lower,
+        "stamp duty",
+        "non judicial stamp",
+        "e-stamp",
+        "franking",
+        "stamp paper",
+        *HI["stamp"],
     )
 
 
 def _is_guarantee_deed(text_lower: str) -> bool:
     """Guarantee Deed."""
-    has_simple = (
-        "guarantee deed" in text_lower
-        or "deed of guarantee" in text_lower
+    has_simple = contains_term(
+        text_lower,
+        "guarantee deed",
+        "deed of guarantee",
+        *HI["guarantee"],
     )
     has_compound = "guarantor" in text_lower and "deed" in text_lower
     return has_simple or has_compound
@@ -225,22 +242,24 @@ def _is_utility_bill(text_lower: str) -> bool:
 
 def _is_property_document(text_lower: str) -> bool:
     """Property Document / Sale Deed / Title Deed."""
-    return (
-        "sale deed" in text_lower
-        or "title deed" in text_lower
-        or "property document" in text_lower
-        or "registered deed" in text_lower
-        or ("survey number" in text_lower and "plot" in text_lower)
-    )
+    return contains_term(
+        text_lower,
+        "sale deed",
+        "title deed",
+        "property document",
+        "registered deed",
+        *HI["property"],
+    ) or ("survey number" in text_lower and "plot" in text_lower)
 
 
 def _is_application_form(text_lower: str) -> bool:
     """Loan Application Form."""
-    return (
-        "application form" in text_lower
-        or "loan application" in text_lower
-        or ("applicant name" in text_lower and "date of birth" in text_lower)
-    )
+    return contains_term(
+        text_lower,
+        "application form",
+        "loan application",
+        *HI["application"],
+    ) or ("applicant name" in text_lower and "date of birth" in text_lower)
 
 
 def _is_kyc_osv_mark(text_lower: str) -> bool:
@@ -256,15 +275,22 @@ def _is_facility_agreement(text_lower: str) -> bool:
 
 
 def _is_passbook(text_lower: str) -> bool:
-    return (
-        "passbook" in text_lower
-        or "pass book" in text_lower
-        or "savings bank passbook" in text_lower
+    return contains_term(
+        text_lower,
+        "passbook",
+        "pass book",
+        "savings bank passbook",
+        *HI["passbook"],
     )
 
 
 def _is_consent_letter(text_lower: str) -> bool:
-    return "consent letter" in text_lower or "customer consent" in text_lower
+    return contains_term(
+        text_lower,
+        "consent letter",
+        "customer consent",
+        *HI["consent"],
+    )
 
 
 def _is_insurance_consent_letter(text_lower: str) -> bool:
@@ -274,23 +300,27 @@ def _is_insurance_consent_letter(text_lower: str) -> bool:
 
 
 def _is_technical_report(text_lower: str) -> bool:
-    return (
-        "technical report" in text_lower
-        or "technical evaluation" in text_lower
-        or "technical valuation" in text_lower
-        or "valuation report" in text_lower
+    return contains_term(
+        text_lower,
+        "technical report",
+        "technical evaluation",
+        "technical valuation",
+        "valuation report",
+        *HI["technical"],
     )
 
 
 def _is_technical_clearance(text_lower: str) -> bool:
-    return "technical clearance" in text_lower
+    return contains_term(text_lower, "technical clearance", *HI["technical"])
 
 
 def _is_legal_clearance(text_lower: str) -> bool:
-    return (
-        "legal clearance" in text_lower
-        or "legal report" in text_lower
-        or "title search report" in text_lower
+    return contains_term(
+        text_lower,
+        "legal clearance",
+        "legal report",
+        "title search report",
+        *HI["legal"],
     )
 
 
@@ -312,7 +342,12 @@ def _is_pdc(text_lower: str) -> bool:
 
 
 def _is_disbursement_request(text_lower: str) -> bool:
-    return "request for disbursement" in text_lower or "disbursement request" in text_lower
+    return contains_term(
+        text_lower,
+        "request for disbursement",
+        "disbursement request",
+        *HI["disbursement"],
+    )
 
 
 def _is_bt_undertaking(text_lower: str) -> bool:
