@@ -1,0 +1,152 @@
+"""Local LLM fallback for page-level document classification."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from typing import Any
+
+from services.llm_client import call_llm_api
+
+VALID_DOCUMENT_TYPES = (
+    "PAN Card",
+    "Aadhaar",
+    "Passport",
+    "Driving License",
+    "Voter ID",
+    "Sanction Letter",
+    "Loan Agreement",
+    "NACH Form",
+    "CRIF Report",
+    "Bank Statement",
+    "Salary Slip",
+    "Insurance Form",
+    "Stamp Duty",
+    "Guarantee Deed",
+    "Utility Bill",
+    "Property Document",
+    "Application Form",
+    "None",
+)
+
+_MAX_TEXT_CHARS = 3500
+
+
+def is_llm_page_classifier_enabled() -> bool:
+    return os.getenv("ENABLE_LLM_PAGE_CLASSIFIER", "").lower() in {"1", "true", "yes", "on"}
+
+
+def llm_classifier_min_confidence() -> float:
+    raw = os.getenv("LLM_CLASSIFIER_MIN_CONFIDENCE", "0.75")
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.75
+
+
+def llm_classifier_max_pages_per_file() -> int:
+    raw = os.getenv("LLM_CLASSIFIER_MAX_PAGES_PER_FILE", "100")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 100
+
+
+def llm_classifier_ocr_threshold() -> float:
+    """Pages with OCR confidence below this may trigger LLM classification."""
+    raw = os.getenv("LLM_CLASSIFIER_OCR_THRESHOLD", "0.65")
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.65
+
+
+def needs_llm_classification(
+    rule_result: dict[str, Any],
+    ocr_confidence: float | None,
+) -> bool:
+    document_type = str(rule_result.get("document_type") or "")
+    confidence = float(rule_result.get("confidence") or 0.0)
+
+    if document_type in {"", "None"}:
+        return True
+    if confidence < llm_classifier_min_confidence():
+        return True
+    if ocr_confidence is not None and ocr_confidence < llm_classifier_ocr_threshold():
+        return True
+    return False
+
+
+def classify_page_with_llm(text: str) -> dict[str, Any] | None:
+    """Classify page text using the local LLM. Returns None on failure."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+
+    prompt = _build_classifier_prompt(cleaned[:_MAX_TEXT_CHARS])
+    try:
+        response_text = call_llm_api(prompt, max_tokens=120, timeout=120)
+    except Exception:
+        return None
+
+    if not response_text:
+        return None
+
+    parsed = _parse_classifier_response(response_text)
+    if not parsed:
+        return None
+
+    document_type = str(parsed.get("document_type") or "None")
+    if document_type not in VALID_DOCUMENT_TYPES:
+        return None
+
+    confidence = parsed.get("confidence")
+    try:
+        confidence_value = float(confidence)
+    except (TypeError, ValueError):
+        confidence_value = 0.7
+
+    confidence_value = max(0.0, min(1.0, confidence_value))
+    return {
+        "document_type": document_type,
+        "confidence": confidence_value,
+        "reason": str(parsed.get("reason") or "").strip() or None,
+    }
+
+
+def _build_classifier_prompt(text: str) -> str:
+    types_list = ", ".join(f'"{item}"' for item in VALID_DOCUMENT_TYPES)
+    return (
+        "You classify one page from an Indian NBFC loan file.\n"
+        f"Choose exactly one document_type from this list: {types_list}.\n"
+        "Use \"None\" only when the page is blank, unreadable, or not a loan document.\n"
+        "Respond with JSON only, no markdown:\n"
+        '{"document_type": "...", "confidence": 0.0, "reason": "short reason"}\n\n'
+        "Page text:\n"
+        f"{text}"
+    )
+
+
+def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
+    stripped = response_text.strip()
+    if not stripped:
+        return None
+
+    candidates = [stripped]
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        candidates.insert(0, fence_match.group(1))
+
+    brace_match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if brace_match:
+        candidates.append(brace_match.group(0))
+
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("document_type"):
+            return payload
+    return None

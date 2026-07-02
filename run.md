@@ -150,3 +150,57 @@ Check `http://localhost:8000/health` — if it doesn't respond, the backend isn'
 
 ### PaddleOCR model download hangs
 This is a one-time download over your internet connection (~100 MB). If it hangs, check your network. The cache is stored at `~/.paddleocr/` and won't be downloaded again.
+
+---
+
+## Local LLM (confidential documents — no cloud API)
+
+For scanned pages that rules cannot classify, you can run a **local** model on your machine. Nothing is sent to a cloud API.
+
+### 1. Install Ollama
+
+Download from [https://ollama.com/download](https://ollama.com/download) and install for your OS.
+
+### 2. Pull a model
+
+In a terminal:
+
+```bash
+ollama pull llama3.1
+```
+
+Smaller/faster options: `llama3.2:3b`, `mistral`. Update `LOCAL_LLM_MODEL` in `.env` to match.
+
+### 3. Confirm Ollama is running
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+You should get JSON listing installed models.
+
+### 4. Enable classification in `.env`
+
+```bash
+ENABLE_LLM_PAGE_CLASSIFIER=true
+LOCAL_LLM_API_URL=http://localhost:11434/api/generate
+LOCAL_LLM_MODEL=llama3.1
+LLM_CLASSIFIER_MAX_PAGES_PER_FILE=100
+```
+
+| Variable | Purpose |
+|---|---|
+| `ENABLE_LLM_PAGE_CLASSIFIER` | Turn on LLM fallback for Unknown / low-confidence pages |
+| `LLM_CLASSIFIER_MIN_CONFIDENCE` | Re-classify rule hits below this score (default `0.75`) |
+| `LLM_CLASSIFIER_OCR_THRESHOLD` | Also try LLM when OCR confidence is below this (default `0.65`) |
+| `LLM_CLASSIFIER_MAX_PAGES_PER_FILE` | Cap LLM calls per upload (default `100`) — large files stay tractable |
+| `ENABLE_LLM_SUMMARY` | Optional natural-language summary of exceptions after validation |
+
+### 5. Restart DMEF and upload
+
+Keep Ollama running in the background, then start FastAPI + Streamlit as usual. Re-upload your PDF.
+
+**Performance note:** Each LLM call takes a few seconds on CPU. A file with hundreds of unclassified pages may take a long time; raise `LLM_CLASSIFIER_MAX_PAGES_PER_FILE` only if you accept longer runs.
+
+Classification provenance is stored per page in `extracted_fields._classification` (`source`: `rules` or `llm`).
+
