@@ -24,6 +24,13 @@ from services.llm_service import generate_explanation, summarize_exceptions
 from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_engine import run_ocr_on_page
 from services.pdf_processor import process_pdf_structure
+from services.progress_tracker import (
+    mark_completed,
+    mark_page_started,
+    start_tracking,
+    update_page_progress,
+    update_stage,
+)
 from services.report_generator import build_report, save_report_json
 from services.text_extractor import extract_digital_text, extract_ground_truth
 
@@ -48,16 +55,28 @@ def run_pipeline(
     image_output_dir = application_output_dir / "pages"
 
     structure = process_pdf_structure(pdf_path, image_output_dir)
+    start_tracking(
+        application_id,
+        total_pages=int(structure.get("total_pages") or 0),
+        digital_pages=int(structure.get("digital_pages") or 0),
+        scanned_pages=int(structure.get("scanned_pages") or 0),
+        stage="structure_processed",
+        message="PDF structure extracted",
+    )
+    update_stage(application_id, "extracting_digital_text", "Extracting digital text")
     digital_text_by_page = _extract_digital_text_by_page(pdf_path)
     ground_truth = dict(extract_ground_truth(pdf_path))
     if system_data:
         ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
 
-    pages = _build_page_records(structure["pages"], digital_text_by_page)
+    update_stage(application_id, "processing_pages", "Classifying and extracting page fields")
+    pages = _build_page_records(structure["pages"], digital_text_by_page, application_id=application_id)
+    update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
     _update_uploaded_file_counts(application_id, structure)
 
+    update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
 
@@ -85,6 +104,7 @@ def run_pipeline(
             "report_path": str(report_path),
         }
     )
+    mark_completed(application_id, result["final_status"])
     log_action(
         application_id,
         "pipeline_completed",
@@ -111,10 +131,26 @@ def run_partner_json_pipeline(
         **(payload.get("digital_text") or {}),
     }
     pages = _build_partner_pages(payload.get("scanned_docs") or {})
+    start_tracking(
+        application_id,
+        total_pages=len(pages),
+        digital_pages=0,
+        scanned_pages=len(pages),
+        stage="processing_partner_json",
+        message="Processing partner supplied JSON",
+    )
+    update_page_progress(
+        application_id,
+        processed_pages=len(pages),
+        total_pages=len(pages),
+        current_page=len(pages) if pages else None,
+    )
 
+    update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
 
+    update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
 
@@ -141,6 +177,7 @@ def run_partner_json_pipeline(
             "report_path": str(report_path),
         }
     )
+    mark_completed(application_id, result["final_status"])
     log_action(
         application_id,
         "partner_json_pipeline_completed",
@@ -168,36 +205,57 @@ def _extract_digital_text_by_page(pdf_path: Path) -> dict[int, str]:
 def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
+    application_id: int | None = None,
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     llm_budget = create_llm_classifier_budget()
-    for page_info in page_structure:
+    total_pages = len(page_structure)
+    processing_order = sorted(
+        page_structure,
+        key=lambda item: (item.get("page_type") != "digital", int(item.get("page_number") or 0)),
+    )
+    for page_info in processing_order:
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
         image_path = page_info.get("image_path")
+        if application_id is not None:
+            mark_page_started(
+                application_id,
+                current_page=page_number,
+                total_pages=total_pages,
+                message=f"Processing page {page_number}/{total_pages}",
+            )
 
-        if page_type == "digital":
-            text = digital_text_by_page.get(page_number, "")
-            is_readable = bool(text)
-            ocr_confidence = None
-        else:
-            ocr_result = run_ocr_on_page(image_path or "")
-            text = ocr_result.get("ocr_text", "")
-            is_readable = ocr_result.get("is_readable", False)
-            ocr_confidence = ocr_result.get("confidence", 0.0)
+        try:
+            if page_type == "digital":
+                text = digital_text_by_page.get(page_number, "")
+                is_readable = bool(text)
+                ocr_confidence = None
+            else:
+                ocr_result = run_ocr_on_page(image_path or "")
+                text = ocr_result.get("ocr_text", "")
+                is_readable = ocr_result.get("is_readable", False)
+                ocr_confidence = ocr_result.get("confidence", 0.0)
 
-        classification, classification_meta = classify_page_text(
-            text,
-            ocr_confidence=ocr_confidence,
-            llm_budget=llm_budget,
-        )
-        document_type = _normalize_document_type(classification.get("document_type"))
-        extracted_fields = extract_fields(document_type, text)
-        if classification_meta:
-            extracted_fields = {
-                **extracted_fields,
-                "_classification": classification_meta,
-            }
+            classification, classification_meta = classify_page_text(
+                text,
+                ocr_confidence=ocr_confidence,
+                llm_budget=llm_budget,
+            )
+            document_type = _normalize_document_type(classification.get("document_type"))
+            extracted_fields = extract_fields(document_type, text)
+            if classification_meta:
+                extracted_fields = {
+                    **extracted_fields,
+                    "_classification": classification_meta,
+                }
+        except Exception as exc:  # noqa: BLE001
+            text = ""
+            is_readable = False
+            ocr_confidence = 0.0
+            document_type = "Unknown"
+            classification = {"confidence": 0.0}
+            extracted_fields = {"_processing_error": str(exc)}
 
         pages.append(
             {
@@ -212,7 +270,14 @@ def _build_page_records(
                 "extracted_fields": extracted_fields,
             }
         )
-    return pages
+        if application_id is not None:
+            update_page_progress(
+                application_id,
+                processed_pages=len(pages),
+                total_pages=total_pages,
+                current_page=page_number,
+            )
+    return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
 
 def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:

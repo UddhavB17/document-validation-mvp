@@ -26,10 +26,16 @@ def get_connection() -> sqlite3.Connection:
 
 def init_db() -> None:
     """Create all DMEF tables and indexes if they do not already exist."""
-    from database.models import INDEX_STATEMENTS, SCHEMA_STATEMENTS
+    from database.models import INDEX_STATEMENTS, MIGRATION_STATEMENTS, SCHEMA_STATEMENTS
 
     with get_connection() as connection:
         for statement in SCHEMA_STATEMENTS:
             connection.execute(statement)
+        for statement in MIGRATION_STATEMENTS:
+            try:
+                connection.execute(statement)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
         for statement in INDEX_STATEMENTS:
             connection.execute(statement)

@@ -135,7 +135,7 @@ def check_presence_min_count(pages: list[dict], document_type: str, min_count: i
 
 
 def _accuracy_checks_enabled() -> bool:
-    return os.getenv("ENABLE_ACCURACY_CHECKS", "").lower() in {"1", "true", "yes", "on"}
+    return os.getenv("ENABLE_ACCURACY_CHECKS", "true").lower() in {"1", "true", "yes", "on"}
 
 
 def _run_presence_checks(
@@ -292,6 +292,9 @@ def run_checks(
 ) -> list[dict]:
     system_data = system_data or ground_truth or {}
     presence_items = checklist_service.get_ai_checkable_items(product_type)
+    relevance_anomaly = _non_loan_relevance_anomaly(pages, presence_items)
+    if relevance_anomaly is not None:
+        return [relevance_anomaly]
     anomalies = _run_presence_checks(pages, presence_items)
 
     if _accuracy_checks_enabled():
@@ -300,6 +303,52 @@ def run_checks(
 
     anomalies.extend(_run_quality_checks(pages, ground_truth))
     return anomalies
+
+
+def _non_loan_relevance_anomaly(
+    pages: list[dict],
+    presence_items: list[dict],
+) -> dict | None:
+    """Return one anomaly when uploaded file appears unrelated to loan processing.
+
+    We only short-circuit when:
+    - there are pages, and
+    - no required checklist document type is detected anywhere, and
+    - almost all pages are unclassified/unknown.
+    """
+    if not pages:
+        return None
+
+    expected_types: set[str] = set()
+    for item in presence_items:
+        document_type = item.get("document_type")
+        if isinstance(document_type, str) and document_type:
+            expected_types.add(document_type)
+        elif isinstance(document_type, list):
+            expected_types.update(str(value) for value in document_type if value)
+
+    if not expected_types:
+        return None
+
+    doc_types = [str(page.get("document_type") or "").strip() for page in pages]
+    matched_expected = sum(1 for item in doc_types if item in expected_types)
+    unknown_count = sum(1 for item in doc_types if item in {"", "Unknown", "None"})
+    unknown_ratio = unknown_count / max(1, len(doc_types))
+
+    # Keep valid loan files unaffected: only block obvious non-loan uploads.
+    if matched_expected > 0 or unknown_ratio < 0.8:
+        return None
+
+    return build_anomaly(
+        rule_id="UNSUPPORTED_DOCUMENT_TYPE",
+        s_no=None,
+        severity="HIGH",
+        expected_value="Loan-file documents matching checklist",
+        found_value=f"No expected document classes detected across {len(pages)} pages",
+        reason="Uploaded PDF appears unrelated to the loan checklist workflow.",
+        page_number=1,
+        document_type="Unsupported",
+    )
 
 
 def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:

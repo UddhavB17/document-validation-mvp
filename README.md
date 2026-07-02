@@ -58,6 +58,7 @@ py -3.11 -m venv .venv
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
+python --version  # must print Python 3.11.x
 ```
 
 > If `py -3.11` is not found on Windows, use the full path to the Python 3.11 executable, e.g.:

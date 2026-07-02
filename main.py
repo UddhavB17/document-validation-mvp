@@ -6,6 +6,10 @@ Run with:
 
 import os
 
+from services.python_runtime import require_python_311
+
+require_python_311()
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 

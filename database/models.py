@@ -62,6 +62,7 @@ SCHEMA_STATEMENTS = [
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         application_id INTEGER REFERENCES applications(id),
         rule_id TEXT,
+        s_no INTEGER,
         severity TEXT,
         document_type TEXT,
         expected_value TEXT,
@@ -105,6 +106,41 @@ SCHEMA_STATEMENTS = [
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_progress (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id),
+        stage TEXT NOT NULL DEFAULT 'queued',
+        total_pages INTEGER NOT NULL DEFAULT 0,
+        digital_pages INTEGER NOT NULL DEFAULT 0,
+        scanned_pages INTEGER NOT NULL DEFAULT 0,
+        processed_pages INTEGER NOT NULL DEFAULT 0,
+        current_page INTEGER,
+        percentage REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'processing',
+        message TEXT,
+        error TEXT,
+        started_at TEXT,
+        updated_at TEXT,
+        completed_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application_id INTEGER NOT NULL REFERENCES applications(id),
+        job_type TEXT NOT NULL DEFAULT 'pdf_pipeline',
+        status TEXT NOT NULL DEFAULT 'queued',
+        error TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT
+    )
+    """,
+]
+
+MIGRATION_STATEMENTS = [
+    "ALTER TABLE validation_results ADD COLUMN s_no INTEGER",
 ]
 
 INDEX_STATEMENTS = [
@@ -115,6 +151,9 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_reviewer_decisions_application_id ON reviewer_decisions(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_exceptions_application_id ON exceptions(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_audit_log_application_id ON audit_log(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_progress_application_id ON pipeline_progress(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_application_id ON pipeline_jobs(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status ON pipeline_jobs(status)",
 ]
 
 
