@@ -21,6 +21,7 @@ from services.document_classifier import classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.llm_service import generate_explanation, summarize_exceptions
+from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_engine import run_ocr_on_page
 from services.pdf_processor import process_pdf_structure
 from services.report_generator import build_report, save_report_json
@@ -169,6 +170,7 @@ def _build_page_records(
     digital_text_by_page: dict[int, str],
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
+    llm_budget = create_llm_classifier_budget()
     for page_info in page_structure:
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
@@ -184,9 +186,18 @@ def _build_page_records(
             is_readable = ocr_result.get("is_readable", False)
             ocr_confidence = ocr_result.get("confidence", 0.0)
 
-        classification = classify_page(text)
+        classification, classification_meta = classify_page_text(
+            text,
+            ocr_confidence=ocr_confidence,
+            llm_budget=llm_budget,
+        )
         document_type = _normalize_document_type(classification.get("document_type"))
         extracted_fields = extract_fields(document_type, text)
+        if classification_meta:
+            extracted_fields = {
+                **extracted_fields,
+                "_classification": classification_meta,
+            }
 
         pages.append(
             {
