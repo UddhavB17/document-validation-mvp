@@ -21,7 +21,7 @@ def max_scanned_pages_for_ocr() -> int:
     and physical-only exhibits. The default keeps the MVP bounded while still
     sampling the front, middle, and tail of large packets.
     """
-    return get_int("DMEF_MAX_SCANNED_OCR_PAGES", 120, minimum=1)
+    return get_int("DMEF_MAX_SCANNED_OCR_PAGES", 30, minimum=1)
 
 
 def selected_scanned_page_numbers(page_structure: list[dict[str, Any]]) -> set[int]:

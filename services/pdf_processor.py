@@ -10,12 +10,12 @@ Responsibilities
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TypedDict
 
 import fitz  # PyMuPDF
 
+from services.config import get_float
 from services.processing_policy import selected_scanned_page_numbers
 
 
@@ -75,7 +75,7 @@ def detect_page_type(fitz_page: fitz.Page) -> str:
 
 
 def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
-    """Render a PDF page to a PNG image at 200 DPI.
+    """Render a PDF page to a PNG image for downstream OCR.
 
     Parameters
     ----------
@@ -93,10 +93,8 @@ def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # fitz.Matrix(2, 2) scales by 2× in both axes → 144 DPI base × ... 
-    # Actually PyMuPDF default is 72 DPI, so ×2 gives 144 DPI; use ×(200/72)
-    # for exactly 200 DPI.  Per the spec we use fitz.Matrix(2, 2).
-    matrix = fitz.Matrix(2, 2)
+    scale = get_float("DMEF_RENDER_SCALE", 1.25, minimum=0.75, maximum=2.0)
+    matrix = fitz.Matrix(scale, scale)
     pixmap = fitz_page.get_pixmap(matrix=matrix, alpha=False)
     pixmap.save(str(output_path))
     return str(output_path.resolve())
