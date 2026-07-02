@@ -83,6 +83,7 @@ def save_aggregation(application_id: int, anomalies: list[dict], final_status: s
                 INSERT INTO validation_results (
                     application_id,
                     rule_id,
+                    s_no,
                     severity,
                     document_type,
                     expected_value,
@@ -90,11 +91,12 @@ def save_aggregation(application_id: int, anomalies: list[dict], final_status: s
                     page_number,
                     reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     application_id,
                     anomaly.get("rule_id"),
+                    anomaly.get("s_no"),
                     anomaly.get("severity"),
                     anomaly.get("document_type"),
                     _stringify(anomaly.get("expected_value")),

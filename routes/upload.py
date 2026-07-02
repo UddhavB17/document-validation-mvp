@@ -9,6 +9,15 @@ from pydantic import BaseModel
 
 from database.db import get_connection, init_db
 from services.file_validator import validate_file, validate_upload
+from services.progress_tracker import (
+    create_pipeline_job,
+    get_progress,
+    mark_failed,
+    mark_job_completed,
+    mark_job_failed,
+    mark_job_started,
+    start_tracking,
+)
 from services.pipeline import run_pipeline
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -185,9 +194,19 @@ async def upload_file(
             "UPDATE applications SET status = ? WHERE id = ?",
             ("processing", application_id),
         )
+    start_tracking(
+        application_id,
+        total_pages=validation["total_pages"],
+        digital_pages=validation["digital_pages"],
+        scanned_pages=validation["scanned_pages"],
+        stage="queued",
+        message="Upload accepted and queued",
+    )
+    job_id = create_pipeline_job(application_id)
 
     background_tasks.add_task(
         _run_pipeline_task,
+        job_id,
         str(file_path),
         application_id,
         system_data,
@@ -196,9 +215,11 @@ async def upload_file(
 
     return {
         "application_id": application_id,
+        "job_id": job_id,
         "loan_id": loan_id,
         "status": "processing",
         "pipeline_status": "queued",
+        "progress_url": f"/upload/{application_id}/progress",
         "total_pages": validation["total_pages"],
         "digital_pages": validation["digital_pages"],
         "scanned_pages": validation["scanned_pages"],
@@ -209,19 +230,24 @@ async def upload_file(
 
 
 def _run_pipeline_task(
+    job_id: int,
     file_path: str,
     application_id: int,
     system_data: dict,
     product_type: str,
 ) -> None:
     try:
+        mark_job_started(job_id)
         run_pipeline(
             file_path,
             application_id,
             system_data=system_data,
             product_type=product_type,
         )
+        mark_job_completed(job_id)
     except Exception as exc:  # noqa: BLE001
+        mark_job_failed(job_id, str(exc))
+        mark_failed(application_id, str(exc))
         with get_connection() as connection:
             connection.execute(
                 "UPDATE applications SET status = ? WHERE id = ?",
@@ -234,3 +260,12 @@ def _run_pipeline_task(
                 """,
                 (application_id, "pipeline_failed", str(exc)),
             )
+
+
+@router.get("/{application_id}/progress", summary="Get upload processing progress")
+def upload_progress(application_id: int) -> dict[str, object]:
+    init_db()
+    progress = get_progress(application_id)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="Progress not found for application")
+    return progress

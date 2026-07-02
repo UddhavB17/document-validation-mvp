@@ -17,11 +17,6 @@ import re
 from pathlib import Path
 from typing import Any, TypedDict
 
-import cv2
-import numpy as np
-
-from services.preprocessing import check_readability, preprocess_image
-
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -77,11 +72,20 @@ def _load_ocr_models() -> dict[str, Any | None]:
     return models
 
 
-ocr_models: dict[str, Any | None] = _load_ocr_models()
-ocr_model: Any | None = ocr_models.get("hi") or ocr_models.get("en") or next(
-    (model for model in ocr_models.values() if model is not None),
-    None,
-)
+ocr_models: dict[str, Any | None] | None = None
+ocr_model: Any | None = None
+
+
+def get_ocr_models() -> dict[str, Any | None]:
+    """Load PaddleOCR models on first use instead of at module import time."""
+    global ocr_models, ocr_model
+    if ocr_models is None:
+        ocr_models = _load_ocr_models()
+        ocr_model = ocr_models.get("hi") or ocr_models.get("en") or next(
+            (model for model in ocr_models.values() if model is not None),
+            None,
+        )
+    return ocr_models
 
 
 class _OcrResult(TypedDict, total=False):
@@ -101,11 +105,13 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     When dual-language mode is enabled, Hindi and English models both run
     and their outputs are merged for downstream classification.
     """
+    from services.preprocessing import check_readability
+
     readability = check_readability(image_path)
     is_blurry = not readability["is_readable"]
     blur_score = readability["blur_score"]
 
-    active_models = [(lang, model) for lang, model in ocr_models.items() if model is not None]
+    active_models = [(lang, model) for lang, model in get_ocr_models().items() if model is not None]
     if not active_models:
         return {
             "is_readable": False,
@@ -124,6 +130,8 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     merged_scores: list[float] = []
     languages_used: list[str] = []
     errors: list[str] = []
+    early_exit_confidence = _early_exit_confidence()
+    early_exit_min_chars = _early_exit_min_chars()
 
     for lang, model in active_models:
         try:
@@ -134,6 +142,9 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
                 merged_texts.append(text.strip())
             if confidence > 0:
                 merged_scores.append(confidence)
+            if confidence >= early_exit_confidence and len(text.strip()) >= early_exit_min_chars:
+                # High-confidence extraction from the primary language model is enough.
+                break
         except Exception as exc:  # noqa: BLE001
             logger.exception("OCR failed for %s (%s)", image_path, lang)
             errors.append(f"{lang}: {exc}")
@@ -177,6 +188,8 @@ def _merge_ocr_texts(texts: list[str]) -> str:
 
 def _run_paddle_ocr(model: Any, image_path: str | Path) -> Any:
     """Run PaddleOCR 3.x ``predict`` or fall back to legacy ``ocr``."""
+    from services.preprocessing import preprocess_image
+
     path = str(image_path)
     inference_kwargs = {
         "use_doc_orientation_classify": False,
@@ -197,7 +210,9 @@ def _run_paddle_ocr(model: Any, image_path: str | Path) -> Any:
         return model.ocr(preprocessed)
 
 
-def _prepare_for_paddle(image: np.ndarray) -> np.ndarray:
+def _prepare_for_paddle(image: Any) -> Any:
+    import cv2
+
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     return image
@@ -262,3 +277,19 @@ def _extract_mapping_result(result: Any) -> tuple[list[str], list[float]]:
 
 def _mean_score(scores: list[float]) -> float:
     return sum(scores) / len(scores) if scores else 0.0
+
+
+def _early_exit_confidence() -> float:
+    raw = os.getenv("PADDLE_OCR_EARLY_EXIT_CONFIDENCE", "0.92")
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except ValueError:
+        return 0.92
+
+
+def _early_exit_min_chars() -> int:
+    raw = os.getenv("PADDLE_OCR_EARLY_EXIT_MIN_CHARS", "24")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 24

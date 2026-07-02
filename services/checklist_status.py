@@ -39,7 +39,12 @@ def build_checklist_status(
         s_no = int(item.get("s_no") or 0)
         document_types = _document_types(item)
         matched_pages = _pages_for_types(pages, document_types)
-        status = "MISSING" if s_no in missing_by_sno else "FOUND"
+        if matched_pages:
+            status = "FOUND"
+        elif s_no in missing_by_sno:
+            status = "MISSING"
+        else:
+            status = "NOT_CHECKED"
 
         rows.append(
             {

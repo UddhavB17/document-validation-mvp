@@ -119,6 +119,22 @@ def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> No
     assert body["status"] == "processing"
     assert body["pipeline_status"] == "queued"
     assert body["loan_id"] == "LAP-UPLOAD-001"
+    assert body["progress_url"] == f"/upload/{body['application_id']}/progress"
+
+    progress_response = client.get(body["progress_url"])
+    assert progress_response.status_code == 200
+    progress = progress_response.json()
+    assert progress["application_id"] == body["application_id"]
+    assert progress["stage"] in {"queued", "processing_pages"}
+    assert progress["status"] in {"processing", "completed"}
+
+    with db.get_connection() as connection:
+        job = connection.execute(
+            "SELECT status FROM pipeline_jobs WHERE application_id = ?",
+            (body["application_id"],),
+        ).fetchone()
+
+    assert job["status"] == "completed"
 
 
 def test_upload_view_posts_real_form_metadata(monkeypatch) -> None:

@@ -30,3 +30,15 @@ def test_build_checklist_status_marks_missing_items() -> None:
     pan_row = next(row for row in rows if row["s_no"] == 7)
     assert app_row["status"] == "FOUND"
     assert pan_row["status"] == "MISSING"
+
+
+def test_build_checklist_status_does_not_mark_unmatched_items_found() -> None:
+    items = get_all_checklist_items("LAP")
+    rows = build_checklist_status(
+        items,
+        pages=[{"document_type": "Unknown", "page_number": 1}],
+        anomalies=[{"rule_id": "UNSUPPORTED_DOCUMENT_TYPE", "s_no": None}],
+    )
+
+    assert all(row["status"] != "FOUND" for row in rows)
+    assert all(row["status"] == "NOT_CHECKED" for row in rows)

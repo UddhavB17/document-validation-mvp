@@ -307,21 +307,32 @@ def _render_summary(application: dict, data: dict, summary: dict, pages: list[di
 
 
 def _render_document_checklist(data: dict, product_type: str) -> None:
+    if any(str(anomaly.get("rule_id", "")).upper() == "UNSUPPORTED_DOCUMENT_TYPE" for anomaly in data["anomalies"]):
+        st.subheader("MSFC Checklist")
+        st.error(
+            "This uploaded file does not look like an MSFC loan file. "
+            "Checklist matching is skipped to avoid false positives."
+        )
+        st.info("Upload a loan-file packet to run the 44-item checklist.")
+        return
+
     checklist_items = get_all_checklist_items(product_type)
     item_count = len(checklist_items)
     st.subheader(f"MSFC Checklist ({item_count} items)")
     rows = build_checklist_status(checklist_items, data["pages"], data["anomalies"])
     missing_rows = [row for row in rows if row["status"] == "MISSING"]
-    found_count = len(rows) - len(missing_rows)
+    found_rows = [row for row in rows if row["status"] == "FOUND"]
+    not_checked_rows = [row for row in rows if row["status"] == "NOT_CHECKED"]
 
-    summary_col1, summary_col2 = st.columns(2)
-    summary_col1.metric("Checklist items found", found_count)
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    summary_col1.metric("Checklist items found", len(found_rows))
     summary_col2.metric("Checklist items missing", len(missing_rows))
+    summary_col3.metric("Checklist items not checked", len(not_checked_rows))
 
     display_rows = [
         {
             "S.No": row["s_no"],
-            "Status": "✅ Found" if row["status"] == "FOUND" else "❌ Missing",
+            "Status": _checklist_status_label(row["status"]),
             "Description": row["description"],
             "Looked for": row["document_types"],
             "Pages": row["pages"],
@@ -335,8 +346,18 @@ def _render_document_checklist(data: dict, product_type: str) -> None:
             "Missing documents: "
             + "; ".join(f"S{row['s_no']} — {row['description']}" for row in missing_rows)
         )
+    elif not_checked_rows:
+        st.info("Checklist evaluation was skipped for items with no matching document pages.")
     else:
         st.success(f"All {item_count} checklist documents were found in the uploaded file.")
+
+
+def _checklist_status_label(status: str) -> str:
+    if status == "FOUND":
+        return "Found"
+    if status == "MISSING":
+        return "Missing"
+    return "Not checked"
 
 
 def _render_manual_review(product_type: str) -> bool:

@@ -1,6 +1,7 @@
 """Report generation for JSON and Excel anomaly reports."""
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,7 +26,7 @@ def generate_excel_report(application_id: int) -> str:
 
     loan_id = application.get("loan_id") or f"application_{application_id}"
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    output_path = REPORT_DIR / f"{loan_id}_{timestamp}.xlsx"
+    output_path = REPORT_DIR / f"{_safe_filename_part(str(loan_id))}_{timestamp}.xlsx"
 
     workbook = Workbook()
     summary_sheet = workbook.active
@@ -104,11 +105,18 @@ def build_report(
 
 def save_report_json(report: dict) -> Path:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    filename = f"report_{report['application_id']}_{report.get('loan_id') or 'unknown'}.json"
+    loan_id = _safe_filename_part(str(report.get("loan_id") or "unknown"))
+    filename = f"report_{report['application_id']}_{loan_id}.json"
     output_path = REPORTS_DIR / filename
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(report, file, indent=2, ensure_ascii=False)
     return output_path
+
+
+def _safe_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    cleaned = cleaned.strip("._")
+    return cleaned or "unknown"
 
 
 def _load_report_data(application_id: int) -> dict:
@@ -131,7 +139,7 @@ def _load_report_data(application_id: int) -> dict:
         ).fetchone()
         anomalies = connection.execute(
             """
-            SELECT rule_id, severity, document_type, expected_value, found_value, page_number, reason
+            SELECT rule_id, s_no, severity, document_type, expected_value, found_value, page_number, reason
             FROM validation_results
             WHERE application_id = ?
             ORDER BY

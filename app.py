@@ -1,5 +1,9 @@
 """Streamlit entry point for DMEF - Document Matching Early Finder."""
 
+from services.python_runtime import require_python_311
+
+require_python_311()
+
 import streamlit as st
 
 from pages.activity_page import render_activity_page

@@ -5,7 +5,7 @@ import pytest
 import database.db as db
 import services.report_generator as report_generator
 from database.db import init_db
-from services.report_generator import generate_excel_report
+from services.report_generator import build_report, generate_excel_report, save_report_json
 
 
 def _seed_application() -> int:
@@ -102,3 +102,12 @@ def test_excel_empty_anomalies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     workbook = openpyxl.load_workbook(generate_excel_report(application_id))
 
     assert workbook["Anomalies"].max_row == 1
+
+
+def test_report_json_sanitizes_loan_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(report_generator, "REPORTS_DIR", tmp_path)
+
+    report_path = save_report_json(build_report(1, loan_id="../bad/loan id"))
+
+    assert report_path.parent == tmp_path
+    assert report_path.name == "report_1_bad_loan_id.json"

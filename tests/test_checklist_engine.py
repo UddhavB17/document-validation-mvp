@@ -54,3 +54,16 @@ def test_date_range_bank_stmt_old() -> None:
 def test_missing_pan() -> None:
     anomalies = run_checks([], {}, {}, "LAP")
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
+
+
+def test_run_checks_flags_non_loan_document_instead_of_missing_docs() -> None:
+    pages = [
+        {"page_number": 1, "document_type": "Unknown", "page_type": "digital", "is_readable": True},
+        {"page_number": 2, "document_type": "Unknown", "page_type": "digital", "is_readable": True},
+        {"page_number": 3, "document_type": "Unknown", "page_type": "digital", "is_readable": True},
+        {"page_number": 4, "document_type": "Unknown", "page_type": "digital", "is_readable": True},
+        {"page_number": 5, "document_type": "Unknown", "page_type": "digital", "is_readable": True},
+    ]
+    anomalies = run_checks(pages, {}, {}, "LAP")
+    assert len(anomalies) == 1
+    assert anomalies[0]["rule_id"] == "UNSUPPORTED_DOCUMENT_TYPE"
