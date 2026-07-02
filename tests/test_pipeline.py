@@ -208,7 +208,8 @@ def test_run_pipeline_continues_when_page_processing_errors(
             (application_id,),
         ).fetchone()
 
-    assert result["pipeline_status"] == "completed"
+    assert result["pipeline_status"] == "partial_failed"
+    assert result["partial_failure_count"] == 1
     assert "\"_processing_error\": \"boom\"" in page["extracted_fields"]
     assert progress["stage"] == "completed"
     assert progress["status"] == "completed"
