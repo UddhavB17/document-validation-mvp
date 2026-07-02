@@ -26,6 +26,11 @@ from services.llm_service import generate_explanation, summarize_exceptions
 from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_engine import run_ocr_on_page
 from services.pdf_processor import process_pdf_structure
+from services.processing_policy import (
+    OCR_SKIPPED_DOCUMENT_TYPE,
+    build_ocr_skipped_fields,
+    selected_scanned_page_numbers,
+)
 from services.progress_tracker import (
     mark_completed,
     mark_page_started,
@@ -310,6 +315,8 @@ def _build_page_records(
     pages: list[dict[str, Any]] = []
     llm_budget = create_llm_classifier_budget()
     total_pages = len(page_structure)
+    selected_scanned_pages = selected_scanned_page_numbers(page_structure)
+    total_scanned_pages = sum(1 for page in page_structure if page.get("page_type") == "scanned")
     processing_order = sorted(
         page_structure,
         key=lambda item: (item.get("page_type") != "digital", int(item.get("page_number") or 0)),
@@ -331,6 +338,38 @@ def _build_page_records(
                 text = digital_text_by_page.get(page_number, "")
                 is_readable = bool(text)
                 ocr_confidence = None
+            elif page_number not in selected_scanned_pages:
+                text = ""
+                is_readable = None
+                ocr_confidence = None
+                document_type = OCR_SKIPPED_DOCUMENT_TYPE
+                classification = {"confidence": 1.0}
+                extracted_fields = build_ocr_skipped_fields(page_number, total_scanned_pages)
+                pages.append(
+                    {
+                        "page_number": page_number,
+                        "page_type": page_type,
+                        "image_path": image_path,
+                        "is_readable": is_readable,
+                        "ocr_text": text,
+                        "ocr_confidence": ocr_confidence,
+                        "document_type": document_type,
+                        "classification_confidence": classification.get("confidence", 0.0),
+                        "extracted_fields": extracted_fields,
+                    }
+                )
+                if application_id is not None:
+                    update_page_progress(
+                        application_id,
+                        processed_pages=len(pages),
+                        total_pages=total_pages,
+                        current_page=page_number,
+                        message=(
+                            f"Skipped OCR for page {page_number}/{total_pages} "
+                            "under large-file budget"
+                        ),
+                    )
+                continue
             else:
                 ocr_result = run_ocr_on_page(image_path or "")
                 text = ocr_result.get("ocr_text", "")

@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import database.db as db
 import routes.upload as upload_route
 from main import app
-from services.file_validator import MAX_FILE_SIZE_BYTES, validate_file, validate_upload
+from services.file_validator import MAX_FILE_SIZE_BYTES, max_file_size_bytes, validate_file, validate_upload
 
 
 def _create_pdf(path: Path, text_pages: int = 1, blank_pages: int = 0) -> None:
@@ -60,10 +60,20 @@ def test_validate_upload_accepts_file_within_size_limit() -> None:
     assert result["is_valid"] is True
 
 
-def test_validate_upload_rejects_oversized_file() -> None:
+def test_validate_upload_rejects_oversized_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MAX_UPLOAD_SIZE_MB", raising=False)
     result = validate_upload("loan.pdf", file_size_bytes=MAX_FILE_SIZE_BYTES + 1)
     assert result["is_valid"] is False
     assert any("100MB" in err for err in result["errors"])
+
+
+def test_validate_upload_uses_configurable_size_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_SIZE_MB", "300")
+
+    assert max_file_size_bytes() == 300 * 1024 * 1024
+    result = validate_upload("loan.pdf", file_size_bytes=200 * 1024 * 1024)
+
+    assert result["is_valid"] is True
 
 
 def test_valid_pdf(tmp_path: Path) -> None:
@@ -93,7 +103,8 @@ def test_empty_file(tmp_path: Path) -> None:
     assert result == {"valid": False, "error": "File is empty"}
 
 
-def test_file_too_large(tmp_path: Path) -> None:
+def test_file_too_large(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MAX_UPLOAD_SIZE_MB", raising=False)
     file_path = tmp_path / "large.pdf"
     file_path.write_bytes(b"%PDF")
 

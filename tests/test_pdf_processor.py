@@ -161,3 +161,27 @@ def test_structure_counts_correct(tmp_path: Path) -> None:
     # Page numbers must be 1-based and sequential
     page_numbers = [p["page_number"] for p in result["pages"]]
     assert page_numbers == list(range(1, DIGITAL + SCANNED + 1))
+
+
+def test_process_pdf_structure_renders_only_ocr_budgeted_scanned_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("fitz")
+    from services.pdf_processor import process_pdf_structure
+
+    monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "2")
+    pdf_path = tmp_path / "large_scanned.pdf"
+    output_dir = tmp_path / "images"
+    _make_scanned_pdf(pdf_path, pages=5)
+
+    result = process_pdf_structure(pdf_path, output_dir)
+
+    scanned_entries = [page for page in result["pages"] if page["page_type"] == "scanned"]
+    rendered_entries = [page for page in scanned_entries if page["image_path"]]
+    skipped_entries = [page for page in scanned_entries if page["image_path"] is None]
+
+    assert result["scanned_pages"] == 5
+    assert len(rendered_entries) == 2
+    assert len(skipped_entries) == 3
+    assert all(Path(page["image_path"]).exists() for page in rendered_entries)

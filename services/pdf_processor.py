@@ -16,6 +16,8 @@ from typing import TypedDict
 
 import fitz  # PyMuPDF
 
+from services.processing_policy import selected_scanned_page_numbers
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -172,10 +174,7 @@ def process_pdf_structure(
             page_number = index + 1  # 1-based
             page_type = detect_page_type(page)
 
-            image_path: str | None = None
             if page_type == "scanned":
-                filename = f"{pdf_stem}_page_{page_number:04d}.png"
-                image_path = convert_page_to_image(page, output_dir / filename)
                 scanned_pages += 1
             else:
                 digital_pages += 1
@@ -184,9 +183,18 @@ def process_pdf_structure(
                 {
                     "page_number": page_number,
                     "page_type": page_type,
-                    "image_path": image_path,
+                    "image_path": None,
                 }
             )
+
+        selected_scanned_pages = selected_scanned_page_numbers(pages)
+        for page_info in pages:
+            page_number = int(page_info["page_number"])
+            if page_info["page_type"] != "scanned" or page_number not in selected_scanned_pages:
+                continue
+            page = doc[page_number - 1]
+            filename = f"{pdf_stem}_page_{page_number:04d}.png"
+            page_info["image_path"] = convert_page_to_image(page, output_dir / filename)
     finally:
         doc.close()
 
