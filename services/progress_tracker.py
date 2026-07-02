@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 from database.db import get_connection
@@ -10,6 +11,17 @@ from database.db import get_connection
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _audit(application_id: int, action: str, details: dict[str, Any]) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO audit_log (application_id, action, details)
+            VALUES (?, ?, ?)
+            """,
+            (application_id, action, json.dumps(details)),
+        )
 
 
 def start_tracking(
@@ -82,6 +94,7 @@ def update_stage(application_id: int, stage: str, message: str | None = None) ->
             """,
             (stage, message, _utc_now_iso(), application_id),
         )
+    _audit(application_id, "pipeline_stage_changed", {"stage": stage, "message": message})
 
 
 def update_page_progress(
@@ -93,6 +106,7 @@ def update_page_progress(
     message: str | None = None,
 ) -> None:
     percentage = round((processed_pages / total_pages) * 100, 2) if total_pages > 0 else 100.0
+    progress_message = message or f"Processed {processed_pages}/{total_pages} pages"
     with get_connection() as connection:
         connection.execute(
             """
@@ -103,7 +117,7 @@ def update_page_progress(
                 current_page = ?,
                 percentage = ?,
                 status = ?,
-                message = COALESCE(?, message),
+                message = ?,
                 updated_at = ?
             WHERE application_id = ?
             """,
@@ -114,7 +128,7 @@ def update_page_progress(
                 current_page,
                 percentage,
                 "processing",
-                message,
+                progress_message,
                 _utc_now_iso(),
                 application_id,
             ),
@@ -136,7 +150,7 @@ def mark_page_started(
                 current_page = ?,
                 total_pages = ?,
                 status = ?,
-                message = COALESCE(?, message),
+                message = ?,
                 updated_at = ?
             WHERE application_id = ?
             """,
@@ -145,14 +159,14 @@ def mark_page_started(
                 current_page,
                 total_pages,
                 "processing",
-                message,
+                message or f"Working on page {current_page}; processed count unchanged",
                 _utc_now_iso(),
                 application_id,
             ),
         )
 
 
-def mark_completed(application_id: int, final_status: str) -> None:
+def mark_completed(application_id: int, final_status: str, outcome: str = "completed") -> None:
     now = _utc_now_iso()
     with get_connection() as connection:
         connection.execute(
@@ -167,8 +181,16 @@ def mark_completed(application_id: int, final_status: str) -> None:
                 updated_at = ?
             WHERE application_id = ?
             """,
-            ("completed", "completed", f"Pipeline finished with status {final_status}", now, now, application_id),
+            (
+                "completed",
+                outcome,
+                f"Pipeline finished with status {final_status} ({outcome})",
+                now,
+                now,
+                application_id,
+            ),
         )
+    _audit(application_id, "pipeline_completed", {"final_status": final_status, "outcome": outcome})
 
 
 def mark_failed(application_id: int, error: str) -> None:
@@ -207,6 +229,9 @@ def get_progress(application_id: int) -> dict[str, Any] | None:
     payload = dict(row)
     eta_seconds = _estimate_eta_seconds(payload)
     payload["eta_seconds"] = eta_seconds
+    payload["last_processed_page"] = payload.pop("current_page")
+    payload["progress_text"] = f"{payload['processed_pages']}/{payload['total_pages']} pages processed"
+    payload["pipeline_outcome"] = payload["status"]
     return payload
 
 

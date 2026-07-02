@@ -17,6 +17,8 @@ import re
 from pathlib import Path
 from typing import Any, TypedDict
 
+from services.config import get_float, get_int
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -280,16 +282,8 @@ def _mean_score(scores: list[float]) -> float:
 
 
 def _early_exit_confidence() -> float:
-    raw = os.getenv("PADDLE_OCR_EARLY_EXIT_CONFIDENCE", "0.92")
-    try:
-        return max(0.0, min(1.0, float(raw)))
-    except ValueError:
-        return 0.92
+    return get_float("PADDLE_OCR_EARLY_EXIT_CONFIDENCE", 0.92, minimum=0.0, maximum=1.0)
 
 
 def _early_exit_min_chars() -> int:
-    raw = os.getenv("PADDLE_OCR_EARLY_EXIT_MIN_CHARS", "24")
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        return 24
+    return get_int("PADDLE_OCR_EARLY_EXIT_MIN_CHARS", 24, minimum=1)

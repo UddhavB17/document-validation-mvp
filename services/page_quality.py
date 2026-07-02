@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-MIN_CLASSIFICATION_CONFIDENCE = 0.60
-MIN_SCANNED_OCR_CONFIDENCE = 0.70
+from services.config import effective_config
 
 
 def is_confident_document_match(page: dict[str, Any], document_type: str) -> bool:
@@ -13,13 +12,14 @@ def is_confident_document_match(page: dict[str, Any], document_type: str) -> boo
     if page.get("document_type") != document_type:
         return False
 
+    config = effective_config()
     classification_confidence = page.get("classification_confidence")
-    if classification_confidence is not None and float(classification_confidence) < MIN_CLASSIFICATION_CONFIDENCE:
+    if classification_confidence is not None and float(classification_confidence) < config.min_classification_confidence:
         return False
 
     ocr_confidence = page.get("ocr_confidence")
     if page.get("page_type") == "scanned" and ocr_confidence is not None:
-        return float(ocr_confidence) >= MIN_SCANNED_OCR_CONFIDENCE
+        return float(ocr_confidence) >= config.min_scanned_ocr_confidence
 
     return True
 

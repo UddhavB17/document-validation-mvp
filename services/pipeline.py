@@ -17,9 +17,11 @@ import fitz
 from database.db import get_connection
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
+from services.config import effective_config
 from services.document_classifier import classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
+from services.input_classifier import classify_input_text
 from services.llm_service import generate_explanation, summarize_exceptions
 from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_engine import run_ocr_on_page
@@ -69,6 +71,34 @@ def run_pipeline(
     if system_data:
         ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
 
+    input_classification = classify_input_text(digital_text_by_page)
+    if input_classification["input_type"] == "unsupported":
+        update_stage(application_id, "unsupported_input", str(input_classification["reason"]))
+        pages = _build_unsupported_page_records(structure["pages"], digital_text_by_page)
+        result = _finalize_pipeline_result(
+            application_id=application_id,
+            pages=pages,
+            ground_truth=ground_truth,
+            anomalies=[
+                build_anomaly(
+                    rule_id="UNSUPPORTED_DOCUMENT_TYPE",
+                    s_no=None,
+                    severity="HIGH",
+                    expected_value="Loan-file documents matching checklist",
+                    found_value=str(input_classification["reason"]),
+                    reason="Uploaded PDF appears unrelated to the loan checklist workflow.",
+                    page_number=1,
+                    document_type="Unsupported",
+                )
+            ],
+            pipeline_status="unsupported_input",
+            partial_failure_count=0,
+            generate_llm_summary=generate_llm_summary,
+        )
+        _update_uploaded_file_counts(application_id, structure)
+        log_action(application_id, "input_classified_unsupported", input_classification)
+        return result
+
     update_stage(application_id, "processing_pages", "Classifying and extracting page fields")
     pages = _build_page_records(structure["pages"], digital_text_by_page, application_id=application_id)
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
@@ -79,9 +109,18 @@ def run_pipeline(
     update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
     processing_error_anomalies = _processing_error_anomalies(pages)
+    for anomaly in processing_error_anomalies:
+        log_action(
+            application_id,
+            "page_processing_error",
+            {
+                "page_number": anomaly.get("page_number"),
+                "reason": anomaly.get("found_value"),
+            },
+        )
     anomalies.extend(processing_error_anomalies)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
-    pipeline_status = "partial_failed" if processing_error_anomalies else "completed"
+    pipeline_status = _pipeline_outcome(result["anomalies"], processing_error_anomalies)
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
@@ -108,7 +147,7 @@ def run_pipeline(
             "report_path": str(report_path),
         }
     )
-    mark_completed(application_id, result["final_status"])
+    mark_completed(application_id, result["final_status"], pipeline_status)
     log_action(
         application_id,
         "pipeline_completed",
@@ -118,6 +157,59 @@ def run_pipeline(
             "final_status": result["final_status"],
             "pipeline_status": pipeline_status,
             "partial_failure_count": len(processing_error_anomalies),
+            "report_path": str(report_path),
+        },
+    )
+    return result
+
+
+def _finalize_pipeline_result(
+    *,
+    application_id: int,
+    pages: list[dict[str, Any]],
+    ground_truth: dict[str, Any],
+    anomalies: list[dict[str, Any]],
+    pipeline_status: str,
+    partial_failure_count: int,
+    generate_llm_summary: bool | None,
+) -> dict[str, Any]:
+    _save_ground_truth(application_id, ground_truth)
+    _save_pages(application_id, pages)
+    result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
+    summary = summarize_exceptions(result["anomalies"])
+    if _should_call_llm(generate_llm_summary):
+        llm_summary = generate_explanation(result["anomalies"], ground_truth, application_id)
+        summary = llm_summary or summary
+    if summary:
+        _save_llm_summary(application_id, summary)
+
+    report_path = save_report_json(
+        build_report(
+            application_id=application_id,
+            loan_id=str(ground_truth.get("loan_id") or ""),
+            exceptions=result["anomalies"],
+            llm_summary=summary or "",
+        )
+    )
+    result.update(
+        {
+            "application_id": application_id,
+            "pipeline_status": pipeline_status,
+            "partial_failure_count": partial_failure_count,
+            "llm_summary": summary,
+            "report_path": str(report_path),
+        }
+    )
+    mark_completed(application_id, result["final_status"], pipeline_status)
+    log_action(
+        application_id,
+        "pipeline_completed",
+        {
+            "total_pages": result["total_pages"],
+            "anomaly_count": len(result["anomalies"]),
+            "final_status": result["final_status"],
+            "pipeline_status": pipeline_status,
+            "partial_failure_count": partial_failure_count,
             "report_path": str(report_path),
         },
     )
@@ -159,6 +251,7 @@ def run_partner_json_pipeline(
     update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
+    pipeline_status = _pipeline_outcome(result["anomalies"], [])
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
@@ -178,12 +271,13 @@ def run_partner_json_pipeline(
     result.update(
         {
             "application_id": application_id,
-            "pipeline_status": "completed",
+            "pipeline_status": pipeline_status,
+            "partial_failure_count": 0,
             "llm_summary": summary,
             "report_path": str(report_path),
         }
     )
-    mark_completed(application_id, result["final_status"])
+    mark_completed(application_id, result["final_status"], pipeline_status)
     log_action(
         application_id,
         "partner_json_pipeline_completed",
@@ -316,6 +410,26 @@ def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
     return pages
 
 
+def _build_unsupported_page_records(
+    page_structure: list[dict[str, Any]],
+    digital_text_by_page: dict[int, str],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "page_number": int(page_info["page_number"]),
+            "page_type": page_info["page_type"],
+            "image_path": page_info.get("image_path"),
+            "is_readable": bool(digital_text_by_page.get(int(page_info["page_number"]), "")),
+            "ocr_text": digital_text_by_page.get(int(page_info["page_number"]), ""),
+            "ocr_confidence": None,
+            "document_type": "Unknown",
+            "classification_confidence": 0.0,
+            "extracted_fields": {},
+        }
+        for page_info in page_structure
+    ]
+
+
 def _coerce_partner_doc(doc_key: str, value: Any) -> tuple[str, str | None, dict[str, Any], float]:
     if isinstance(value, dict):
         text = str(value.get("text") or value.get("ocr_text") or value.get("raw_text") or "")
@@ -373,6 +487,16 @@ def _processing_error_anomalies(pages: list[dict[str, Any]]) -> list[dict[str, A
             )
         )
     return anomalies
+
+
+def _pipeline_outcome(anomalies: list[dict[str, Any]], processing_errors: list[dict[str, Any]]) -> str:
+    if len(processing_errors) >= effective_config().page_failure_threshold:
+        return "failed"
+    if processing_errors:
+        return "partial_failed"
+    if any(anomaly.get("rule_id") == "UNSUPPORTED_DOCUMENT_TYPE" for anomaly in anomalies):
+        return "unsupported_input"
+    return "completed"
 
 
 def _run_checklist_with_fallback(

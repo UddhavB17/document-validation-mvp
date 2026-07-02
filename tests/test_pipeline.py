@@ -212,5 +212,5 @@ def test_run_pipeline_continues_when_page_processing_errors(
     assert result["partial_failure_count"] == 1
     assert "\"_processing_error\": \"boom\"" in page["extracted_fields"]
     assert progress["stage"] == "completed"
-    assert progress["status"] == "completed"
+    assert progress["status"] == "partial_failed"
     assert progress["processed_pages"] == progress["total_pages"] == 1
