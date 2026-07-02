@@ -30,6 +30,16 @@ def get_ai_checkable_items(product_type: str = "LAP", path: str | Path = CHECKLI
     return [item for item in checklist.get("checklist_items", []) if item.get("ai_checkable")]
 
 
+def get_accuracy_check_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+    checklist = load_checklist(product_type, path)
+    return [item for item in checklist.get("accuracy_check_items", []) if item.get("ai_checkable")]
+
+
+def get_all_checklist_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+    checklist = load_checklist(product_type, path)
+    return list(checklist.get("checklist_items", []))
+
+
 def get_human_review_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
     checklist = load_checklist(product_type, path)
     return checklist.get("human_review_items", [])

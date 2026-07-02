@@ -1,5 +1,6 @@
 """Checklist matching logic."""
 
+import os
 from datetime import datetime
 import re
 
@@ -118,21 +119,32 @@ def check_date_range(extracted_fields: dict, min_months: int) -> dict:
         return {"passed": False, "reason": "Could not parse statement date"}
 
 
-def _find_pages(pages: list[dict], document_type: str) -> list[dict]:
-    return [page for page in pages if page.get("document_type") == document_type]
+def check_presence_min_count(pages: list[dict], document_type: str, min_count: int) -> dict:
+    found_pages = _find_pages(pages, document_type)
+    if len(found_pages) >= min_count:
+        return {
+            "passed": True,
+            "found_value": f"{len(found_pages)} page(s)",
+            "expected_value": f"At least {min_count}",
+        }
+    return {
+        "passed": False,
+        "found_value": f"{len(found_pages)} page(s)",
+        "expected_value": f"At least {min_count} page(s) of {document_type}",
+    }
 
 
-def run_checks(
+def _accuracy_checks_enabled() -> bool:
+    return os.getenv("ENABLE_ACCURACY_CHECKS", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _run_presence_checks(
     pages: list[dict],
-    ground_truth: dict,
-    system_data: dict | None,
-    product_type: str,
+    items: list[dict],
 ) -> list[dict]:
-    system_data = system_data or ground_truth or {}
-    ai_items = checklist_service.get_ai_checkable_items(product_type)
     anomalies: list[dict] = []
 
-    for item in ai_items:
+    for item in items:
         check_type = item["check_type"]
         s_no = item.get("s_no")
         description = item.get("description", "")
@@ -169,21 +181,46 @@ def run_checks(
                     )
                 )
 
-        elif check_type == "presence_and_match":
-            doc_pages = _find_pages(pages, document_type)
-            if not doc_pages:
+        elif check_type == "presence_min_count":
+            min_count = int(item.get("min_count") or 1)
+            result = check_presence_min_count(pages, document_type, min_count)
+            if not result["passed"]:
                 anomalies.append(
                     build_anomaly(
                         rule_id=f"MISSING_DOC_S{s_no}",
                         s_no=s_no,
                         severity=severity,
-                        expected_value=f"{document_type} present",
-                        found_value="Not found",
+                        expected_value=result["expected_value"],
+                        found_value=result["found_value"],
                         reason=description,
                         document_type=document_type,
                     )
                 )
-            else:
+
+    return anomalies
+
+
+def _find_pages(pages: list[dict], document_type: str) -> list[dict]:
+    return [page for page in pages if page.get("document_type") == document_type]
+
+
+def _run_accuracy_checks(
+    pages: list[dict],
+    ground_truth: dict,
+    system_data: dict,
+    items: list[dict],
+) -> list[dict]:
+    anomalies: list[dict] = []
+
+    for item in items:
+        check_type = item["check_type"]
+        s_no = item.get("s_no")
+        description = item.get("description", "")
+        document_type = item.get("document_type")
+
+        if check_type == "presence_and_match":
+            doc_pages = _find_pages(pages, document_type)
+            if doc_pages:
                 mismatches = check_field_match(
                     doc_pages[0].get("extracted_fields", {}),
                     system_data,
@@ -242,6 +279,24 @@ def run_checks(
                             document_type=document_type,
                         )
                     )
+
+    return anomalies
+
+
+
+def run_checks(
+    pages: list[dict],
+    ground_truth: dict,
+    system_data: dict | None,
+    product_type: str,
+) -> list[dict]:
+    system_data = system_data or ground_truth or {}
+    presence_items = checklist_service.get_ai_checkable_items(product_type)
+    anomalies = _run_presence_checks(pages, presence_items)
+
+    if _accuracy_checks_enabled():
+        accuracy_items = checklist_service.get_accuracy_check_items(product_type)
+        anomalies.extend(_run_accuracy_checks(pages, ground_truth, system_data, accuracy_items))
 
     anomalies.extend(_run_quality_checks(pages, ground_truth))
     return anomalies

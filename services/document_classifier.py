@@ -243,6 +243,221 @@ def _is_application_form(text_lower: str) -> bool:
     )
 
 
+def _is_kyc_osv_mark(text_lower: str) -> bool:
+    return (
+        "original seen and verified" in text_lower
+        or "original seen verified" in text_lower
+        or re.search(r"\bosv\b", text_lower) is not None
+    )
+
+
+def _is_facility_agreement(text_lower: str) -> bool:
+    return "facility agreement" in text_lower
+
+
+def _is_passbook(text_lower: str) -> bool:
+    return (
+        "passbook" in text_lower
+        or "pass book" in text_lower
+        or "savings bank passbook" in text_lower
+    )
+
+
+def _is_consent_letter(text_lower: str) -> bool:
+    return "consent letter" in text_lower or "customer consent" in text_lower
+
+
+def _is_insurance_consent_letter(text_lower: str) -> bool:
+    return "insurance consent" in text_lower or (
+        "insurance" in text_lower and "consent" in text_lower and "tenure" in text_lower
+    )
+
+
+def _is_technical_report(text_lower: str) -> bool:
+    return (
+        "technical report" in text_lower
+        or "technical evaluation" in text_lower
+        or "technical valuation" in text_lower
+        or "valuation report" in text_lower
+    )
+
+
+def _is_technical_clearance(text_lower: str) -> bool:
+    return "technical clearance" in text_lower
+
+
+def _is_legal_clearance(text_lower: str) -> bool:
+    return (
+        "legal clearance" in text_lower
+        or "legal report" in text_lower
+        or "title search report" in text_lower
+    )
+
+
+def _is_fi_report(text_lower: str) -> bool:
+    return (
+        "fi report" in text_lower
+        or "field investigation" in text_lower
+        or "field inquiry report" in text_lower
+    )
+
+
+def _is_pdc(text_lower: str) -> bool:
+    return (
+        "post dated cheque" in text_lower
+        or "post-dated cheque" in text_lower
+        or re.search(r"\bpdc\b", text_lower) is not None
+        or "security cheque" in text_lower
+    )
+
+
+def _is_disbursement_request(text_lower: str) -> bool:
+    return "request for disbursement" in text_lower or "disbursement request" in text_lower
+
+
+def _is_bt_undertaking(text_lower: str) -> bool:
+    return "bt undertaking" in text_lower or "balance transfer undertaking" in text_lower
+
+
+def _is_crime_check_report(text_lower: str) -> bool:
+    return (
+        "crime check" in text_lower
+        or "criminal verification" in text_lower
+        or "police verification report" in text_lower
+    )
+
+
+def _is_customer_app_proof(text_lower: str) -> bool:
+    return (
+        "customer app" in text_lower
+        or "mobile app installed" in text_lower
+        or "ms fincap app" in text_lower
+        or "msfincap app" in text_lower
+    )
+
+
+def _is_bank_signature_verification(text_lower: str) -> bool:
+    return (
+        "bank signature verification" in text_lower
+        or re.search(r"\bbsv\b", text_lower) is not None
+        or "signature verification from bank" in text_lower
+    )
+
+
+def _is_ach_approval_document(text_lower: str) -> bool:
+    return (
+        "cbo approval" in text_lower
+        or "ceo approval" in text_lower
+        or "nach approval" in text_lower
+    )
+
+
+def _is_foreclosure_letter(text_lower: str) -> bool:
+    return (
+        "foreclosure letter" in text_lower
+        or "list of documents" in text_lower
+        or re.search(r"\blod\b", text_lower) is not None
+    )
+
+
+def _is_payment_favoring_letter(text_lower: str) -> bool:
+    return (
+        "payment favoring" in text_lower
+        or "favoring account" in text_lower
+        or "payee account" in text_lower
+    )
+
+
+def _is_pre_disbursement_conditions(text_lower: str) -> bool:
+    return (
+        "pre disbursement" in text_lower
+        or "pre-disbursement" in text_lower
+        or "sanction condition" in text_lower
+        or "special condition" in text_lower
+    )
+
+
+def _is_charges_deduction_document(text_lower: str) -> bool:
+    return (
+        "charges deduction" in text_lower
+        or "processing fee" in text_lower
+        or "login fee" in text_lower
+    )
+
+
+def _is_otc_pdd_document(text_lower: str) -> bool:
+    return (
+        re.search(r"\botc\b", text_lower) is not None
+        or re.search(r"\bpdd\b", text_lower) is not None
+        or "post disbursement document" in text_lower
+    )
+
+
+def _is_dual_name_declaration(text_lower: str) -> bool:
+    return (
+        "dual name" in text_lower
+        or "name mismatch declaration" in text_lower
+        or ("affidavit" in text_lower and "name" in text_lower)
+    )
+
+
+def _is_approval_letter(text_lower: str) -> bool:
+    return (
+        "approval of authority" in text_lower
+        or "sanctioning authority" in text_lower
+        or "approved by credit" in text_lower
+    )
+
+
+def _is_relationship_proof(text_lower: str) -> bool:
+    return "relationship proof" in text_lower or "relationship between" in text_lower
+
+
+def _is_vernacular_document(text_lower: str) -> bool:
+    return "vernacular" in text_lower or "regional language declaration" in text_lower
+
+
+def _is_agreement_signing_photo(text_lower: str) -> bool:
+    return (
+        "signing photo" in text_lower
+        or "agreement photo" in text_lower
+        or "signing video" in text_lower
+        or "agreement signing" in text_lower
+    )
+
+
+def _is_udyam_certificate(text_lower: str) -> bool:
+    return "udyam" in text_lower or "msme registration" in text_lower
+
+
+def _is_gst_certificate(text_lower: str) -> bool:
+    return "gst registration" in text_lower or "gstin" in text_lower
+
+
+def _is_shop_establishment_certificate(text_lower: str) -> bool:
+    return "shop establishment" in text_lower or "shop act" in text_lower
+
+
+def _is_income_tax_return(text_lower: str) -> bool:
+    return (
+        "income tax return" in text_lower
+        or "itr-" in text_lower
+        or "form 26as" in text_lower
+    )
+
+
+def _is_assessed_income_document(text_lower: str) -> bool:
+    return "assessed income" in text_lower or "income assessment" in text_lower
+
+
+def _is_operations_checklist(text_lower: str) -> bool:
+    return (
+        "non discrepancy checklist" in text_lower
+        or "operations checklist" in text_lower
+        or ("msfc / ndc" in text_lower and "checklist" in text_lower)
+    )
+
+
 # ── Main public function ──────────────────────────────────────────────────────
 
 def classify_page(text: str) -> dict:
@@ -283,6 +498,10 @@ def classify_page(text: str) -> dict:
     if _is_sanction_letter(text_lower):
         return _result("Sanction Letter")
 
+    # 6b. Facility Agreement — before generic Loan Agreement
+    if _is_facility_agreement(text_lower):
+        return _result("Facility Agreement")
+
     # 7. Loan Agreement
     if _is_loan_agreement(text_lower):
         return _result("Loan Agreement")
@@ -295,35 +514,103 @@ def classify_page(text: str) -> dict:
     if _is_crif_report(text_lower):
         return _result("CRIF Report")
 
-    # 10. Bank Statement
+    # 10. Passbook — before Bank Statement
+    if _is_passbook(text_lower):
+        return _result("Passbook")
+
+    # 11. Bank Statement
     if _is_bank_statement(text_lower):
         return _result("Bank Statement")
 
-    # 11. Salary Slip
+    # 12. Salary Slip
     if _is_salary_slip(text_lower):
         return _result("Salary Slip")
 
-    # 12. Insurance Form
+    # 13. Insurance Form
     if _is_insurance_form(text_lower):
         return _result("Insurance Form")
 
-    # 13. Stamp Duty
+    # 14. Insurance Consent Letter
+    if _is_insurance_consent_letter(text_lower):
+        return _result("Insurance Consent Letter")
+
+    # 15. Stamp Duty
     if _is_stamp_duty(text_lower):
         return _result("Stamp Duty")
 
-    # 14. Guarantee Deed
+    # 16. Guarantee Deed
     if _is_guarantee_deed(text_lower):
         return _result("Guarantee Deed")
 
-    # 15. Utility Bill
+    # 17. Utility Bill
     if _is_utility_bill(text_lower):
         return _result("Utility Bill")
 
-    # 16. Property Document
+    # 18. Property Document
     if _is_property_document(text_lower):
         return _result("Property Document")
 
-    # 17. Application Form
+    # 19. MSFC operational / legal documents
+    if _is_operations_checklist(text_lower):
+        return _result("Operations Checklist")
+    if _is_kyc_osv_mark(text_lower):
+        return _result("KYC OSV Mark")
+    if _is_consent_letter(text_lower):
+        return _result("Consent Letter")
+    if _is_technical_report(text_lower):
+        return _result("Technical Report")
+    if _is_technical_clearance(text_lower):
+        return _result("Technical Clearance Report")
+    if _is_legal_clearance(text_lower):
+        return _result("Legal Clearance Report")
+    if _is_fi_report(text_lower):
+        return _result("FI Report")
+    if _is_pdc(text_lower):
+        return _result("PDC")
+    if _is_disbursement_request(text_lower):
+        return _result("Disbursement Request")
+    if _is_bt_undertaking(text_lower):
+        return _result("BT Undertaking")
+    if _is_crime_check_report(text_lower):
+        return _result("Crime Check Report")
+    if _is_customer_app_proof(text_lower):
+        return _result("Customer App Proof")
+    if _is_bank_signature_verification(text_lower):
+        return _result("Bank Signature Verification")
+    if _is_ach_approval_document(text_lower):
+        return _result("ACH Approval Document")
+    if _is_foreclosure_letter(text_lower):
+        return _result("Foreclosure Letter")
+    if _is_payment_favoring_letter(text_lower):
+        return _result("Payment Favoring Letter")
+    if _is_pre_disbursement_conditions(text_lower):
+        return _result("Pre-Disbursement Conditions")
+    if _is_charges_deduction_document(text_lower):
+        return _result("Charges Deduction Document")
+    if _is_otc_pdd_document(text_lower):
+        return _result("OTC PDD Document")
+    if _is_dual_name_declaration(text_lower):
+        return _result("Dual Name Declaration")
+    if _is_approval_letter(text_lower):
+        return _result("Approval Letter")
+    if _is_relationship_proof(text_lower):
+        return _result("Relationship Proof")
+    if _is_vernacular_document(text_lower):
+        return _result("Vernacular Document")
+    if _is_agreement_signing_photo(text_lower):
+        return _result("Agreement Signing Photo")
+    if _is_udyam_certificate(text_lower):
+        return _result("Udyam Certificate")
+    if _is_gst_certificate(text_lower):
+        return _result("GST Certificate")
+    if _is_shop_establishment_certificate(text_lower):
+        return _result("Shop Establishment Certificate")
+    if _is_income_tax_return(text_lower):
+        return _result("Income Tax Return")
+    if _is_assessed_income_document(text_lower):
+        return _result("Assessed Income Document")
+
+    # 20. Application Form
     if _is_application_form(text_lower):
         return _result("Application Form")
 
