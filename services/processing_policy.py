@@ -12,6 +12,7 @@ from typing import Any
 from services.config import get_int
 
 OCR_SKIPPED_DOCUMENT_TYPE = "OCR Skipped"
+INTERNAL_DOCUMENT_TYPES = frozenset({OCR_SKIPPED_DOCUMENT_TYPE})
 
 
 def max_scanned_pages_for_ocr() -> int:
@@ -71,3 +72,15 @@ def build_ocr_skipped_fields(page_number: int, total_scanned_pages: int) -> dict
         "total_scanned_pages": total_scanned_pages,
         "ocr_budget": max_scanned_pages_for_ocr(),
     }
+
+
+def is_internal_document_type(document_type: object) -> bool:
+    return str(document_type or "") in INTERNAL_DOCUMENT_TYPES
+
+
+def is_ocr_skipped_page(page: dict[str, Any]) -> bool:
+    extracted_fields = page.get("extracted_fields") or {}
+    return (
+        page.get("document_type") == OCR_SKIPPED_DOCUMENT_TYPE
+        or (isinstance(extracted_fields, dict) and bool(extracted_fields.get("_ocr_skipped")))
+    )

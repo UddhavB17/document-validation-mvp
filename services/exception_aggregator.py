@@ -11,6 +11,7 @@ _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 import json
 
 from database.db import get_connection
+from services.processing_policy import is_internal_document_type
 from services.reviewer_exceptions import compute_final_status
 
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
@@ -37,7 +38,11 @@ def aggregate(
         {
             page.get("document_type")
             for page in pages
-            if page.get("document_type") and page.get("document_type") != "Unknown"
+            if (
+                page.get("document_type")
+                and page.get("document_type") != "Unknown"
+                and not is_internal_document_type(page.get("document_type"))
+            )
         }
     )
     documents_missing = sorted(

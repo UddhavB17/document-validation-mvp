@@ -29,6 +29,7 @@ from services.pdf_processor import process_pdf_structure
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
     build_ocr_skipped_fields,
+    max_scanned_pages_for_ocr,
     selected_scanned_page_numbers,
 )
 from services.progress_tracker import (
@@ -113,6 +114,9 @@ def run_pipeline(
 
     update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
+    partial_scan_anomaly = _ocr_budget_anomaly(pages)
+    if partial_scan_anomaly is not None:
+        anomalies.append(partial_scan_anomaly)
     processing_error_anomalies = _processing_error_anomalies(pages)
     for anomaly in processing_error_anomalies:
         log_action(
@@ -528,6 +532,32 @@ def _processing_error_anomalies(pages: list[dict[str, Any]]) -> list[dict[str, A
     return anomalies
 
 
+def _ocr_budget_anomaly(pages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    scanned_pages = [page for page in pages if page.get("page_type") == "scanned"]
+    skipped_pages = [page for page in scanned_pages if page.get("document_type") == OCR_SKIPPED_DOCUMENT_TYPE]
+    if not skipped_pages:
+        return None
+
+    budget = max_scanned_pages_for_ocr()
+    processed_count = len(scanned_pages) - len(skipped_pages)
+    return build_anomaly(
+        rule_id="OCR_BUDGET_PARTIAL_SCAN",
+        s_no=None,
+        severity="MEDIUM",
+        expected_value="All scanned pages OCR-checked for final validation",
+        found_value=(
+            f"OCR checked {processed_count} of {len(scanned_pages)} scanned page(s); "
+            f"{len(skipped_pages)} page(s) skipped by budget {budget}"
+        ),
+        reason=(
+            "Checklist results are based on an OCR sample. Run a full scan before "
+            "final sign-off if missing-document accuracy is required."
+        ),
+        page_number=skipped_pages[0].get("page_number"),
+        document_type=OCR_SKIPPED_DOCUMENT_TYPE,
+    )
+
+
 def _pipeline_outcome(anomalies: list[dict[str, Any]], processing_errors: list[dict[str, Any]]) -> str:
     if len(processing_errors) >= effective_config().page_failure_threshold:
         return "failed"
@@ -616,7 +646,7 @@ def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
                     page.get("page_number"),
                     page.get("page_type"),
                     page.get("image_path"),
-                    bool(page.get("is_readable")),
+                    page.get("is_readable") if page.get("is_readable") is not None else None,
                     page.get("ocr_text"),
                     page.get("ocr_confidence"),
                     page.get("document_type"),

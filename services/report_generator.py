@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from database.db import get_connection
+from services.processing_policy import is_internal_document_type
 
 REPORTS_DIR = Path("data/reports")
 REPORT_DIR = REPORTS_DIR
@@ -161,7 +162,11 @@ def _load_report_data(application_id: int) -> dict:
         "application": dict(application),
         "uploaded_file": dict(uploaded_file) if uploaded_file else {},
         "anomalies": [dict(row) for row in anomalies],
-        "documents_found": sorted(row["document_type"] for row in pages),
+        "documents_found": sorted(
+            row["document_type"]
+            for row in pages
+            if not is_internal_document_type(row["document_type"])
+        ),
     }
 
 

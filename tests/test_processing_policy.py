@@ -2,6 +2,7 @@ import json
 
 from services.pipeline import _build_page_records
 from services.processing_policy import OCR_SKIPPED_DOCUMENT_TYPE, selected_scanned_page_numbers
+from services.exception_aggregator import aggregate
 
 
 def _scanned_pages(count: int) -> list[dict]:
@@ -38,3 +39,16 @@ def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> N
     assert len(skipped) == 3
     skipped_fields = json.dumps(skipped[0]["extracted_fields"])
     assert "_ocr_skipped" in skipped_fields
+
+
+def test_internal_ocr_skipped_pages_are_not_documents_found() -> None:
+    result = aggregate(
+        pages=[
+            {"document_type": "PAN", "page_type": "scanned"},
+            {"document_type": OCR_SKIPPED_DOCUMENT_TYPE, "page_type": "scanned"},
+        ],
+        anomalies=[],
+        ground_truth={},
+    )
+
+    assert result["documents_found"] == ["PAN"]

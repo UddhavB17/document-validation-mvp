@@ -12,6 +12,7 @@ Strategy
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -271,6 +272,33 @@ class TestRunOcrOnPage:
 
         assert result["is_readable"] is False
         assert "error" in result
+
+    def test_ocr_hard_timeout_returns_error_dict(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A hung OCR call should return an error instead of blocking forever."""
+        pytest.importorskip("cv2")
+        from services import ocr_engine
+        from services.ocr_engine import run_ocr_on_page
+
+        img_path = tmp_path / "sharp.png"
+        _make_sharp_png(img_path)
+        monkeypatch.setenv("OCR_HARD_TIMEOUT_SECONDS", "1")
+
+        mock_model = MagicMock()
+
+        def slow_ocr(*_args, **_kwargs):
+            time.sleep(2)
+            return []
+
+        monkeypatch.setattr(ocr_engine, "_run_paddle_ocr", slow_ocr)
+        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model}):
+            result = run_ocr_on_page(img_path)
+
+        assert result["is_readable"] is False
+        assert "OCR exceeded hard timeout" in result["error"]
 
     # ── test_ocr_model_loaded_once ───────────────────────────────────────────
 

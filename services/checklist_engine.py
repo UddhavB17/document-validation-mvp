@@ -7,6 +7,7 @@ import re
 from services import checklist_service
 from services.config import effective_config
 from services.page_quality import confident_pages_for_types, is_confident_document_match
+from services.processing_policy import is_ocr_skipped_page
 
 try:
     from rapidfuzz import fuzz
@@ -378,6 +379,9 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
     pan_pages = _find_pages_any_confidence(pages, "PAN")
 
     for page in pages:
+        if is_ocr_skipped_page(page):
+            continue
+
         page_number = page.get("page_number")
         document_type = page.get("document_type")
         if page.get("is_readable") is False:
