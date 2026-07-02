@@ -36,13 +36,13 @@ _configure_paddle_runtime()
 
 
 def _dual_lang_enabled() -> bool:
-    return os.getenv("PADDLE_OCR_DUAL_LANG", "true").lower() in {"1", "true", "yes", "on"}
+    return os.getenv("PADDLE_OCR_DUAL_LANG", "false").lower() in {"1", "true", "yes", "on"}
 
 
 def _configured_ocr_langs() -> list[str]:
     if _dual_lang_enabled():
         return ["hi", "en"]
-    primary = (os.getenv("PADDLE_OCR_LANG") or "hi").strip().lower()
+    primary = (os.getenv("PADDLE_OCR_LANG") or "en").strip().lower()
     return [primary]
 
 
