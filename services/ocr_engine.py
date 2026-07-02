@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -137,7 +139,18 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
 
     for lang, model in active_models:
         try:
-            result = _run_paddle_ocr(model, image_path)
+            started_at = time.monotonic()
+            result = _run_paddle_ocr_with_timeout(model, image_path)
+            elapsed = time.monotonic() - started_at
+            soft_timeout = _soft_timeout_seconds()
+            if elapsed > soft_timeout:
+                logger.warning(
+                    "OCR exceeded soft timeout for %s (%s): %.1fs > %ss",
+                    image_path,
+                    lang,
+                    elapsed,
+                    soft_timeout,
+                )
             text, confidence = _extract_ocr_text_and_confidence(result)
             languages_used.append(lang)
             if text.strip():
@@ -210,6 +223,19 @@ def _run_paddle_ocr(model: Any, image_path: str | Path) -> Any:
         return model.ocr(preprocessed, **inference_kwargs)
     except TypeError:
         return model.ocr(preprocessed)
+
+
+def _run_paddle_ocr_with_timeout(model: Any, image_path: str | Path) -> Any:
+    hard_timeout = _hard_timeout_seconds()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dmef-ocr-page")
+    future = executor.submit(_run_paddle_ocr, model, image_path)
+    try:
+        return future.result(timeout=hard_timeout)
+    except TimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"OCR exceeded hard timeout of {hard_timeout}s") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _prepare_for_paddle(image: Any) -> Any:
@@ -287,3 +313,11 @@ def _early_exit_confidence() -> float:
 
 def _early_exit_min_chars() -> int:
     return get_int("PADDLE_OCR_EARLY_EXIT_MIN_CHARS", 24, minimum=1)
+
+
+def _soft_timeout_seconds() -> int:
+    return get_int("OCR_SOFT_TIMEOUT_SECONDS", 30, minimum=1)
+
+
+def _hard_timeout_seconds() -> int:
+    return get_int("OCR_HARD_TIMEOUT_SECONDS", 90, minimum=1)

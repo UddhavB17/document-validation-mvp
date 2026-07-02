@@ -24,6 +24,15 @@ def _create_application_pdf(path: Path) -> None:
     doc.close()
 
 
+def _create_blank_scanned_pdf(path: Path, pages: int) -> None:
+    fitz = pytest.importorskip("fitz")
+    doc = fitz.open()
+    for _ in range(pages):
+        doc.new_page()
+    doc.save(path)
+    doc.close()
+
+
 def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_path = tmp_path / "dmef.db"
     pdf_path = tmp_path / "application.pdf"
@@ -214,3 +223,70 @@ def test_run_pipeline_continues_when_page_processing_errors(
     assert progress["stage"] == "completed"
     assert progress["status"] == "partial_failed"
     assert progress["processed_pages"] == progress["total_pages"] == 1
+
+
+def test_run_pipeline_marks_partial_scan_and_preserves_skipped_readability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "dmef.db"
+    pdf_path = tmp_path / "large_scanned.pdf"
+    output_dir = tmp_path / "processed"
+    monkeypatch.setattr(db, "DATABASE_PATH", db_path)
+    monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "2")
+    _create_blank_scanned_pdf(pdf_path, pages=5)
+
+    monkeypatch.setattr(
+        "services.pipeline.run_ocr_on_page",
+        lambda *_args, **_kwargs: {
+            "ocr_text": "Permanent Account Number ABCDE1234F",
+            "is_readable": True,
+            "confidence": 0.95,
+        },
+    )
+
+    init_db()
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO applications (loan_id, applicant_name, product_type, branch)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("LAP-PARTIAL-001", "Ramesh Kumar", "LAP", "Delhi"),
+        )
+        application_id = cursor.lastrowid
+        connection.execute(
+            """
+            INSERT INTO uploaded_files (
+                application_id, file_path, original_filename, file_size_kb,
+                total_pages, digital_pages, scanned_pages
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (application_id, str(pdf_path), "large_scanned.pdf", 1.0, 0, 0, 0),
+        )
+
+    result = run_pipeline(
+        pdf_path,
+        application_id,
+        output_dir=output_dir,
+        system_data={"loan_id": "LAP-PARTIAL-001", "applicant_name": "Ramesh Kumar"},
+        product_type="LAP",
+        generate_llm_summary=False,
+    )
+
+    assert any(anomaly["rule_id"] == "OCR_BUDGET_PARTIAL_SCAN" for anomaly in result["anomalies"])
+    assert "OCR Skipped" not in result["documents_found"]
+
+    with get_connection() as connection:
+        skipped_rows = connection.execute(
+            """
+            SELECT is_readable, document_type
+            FROM pages
+            WHERE application_id = ? AND document_type = 'OCR Skipped'
+            """,
+            (application_id,),
+        ).fetchall()
+
+    assert len(skipped_rows) == 3
+    assert all(row["is_readable"] is None for row in skipped_rows)
