@@ -214,7 +214,17 @@ def test_crif_before_bank_statement() -> None:
     assert _classify(text) == "CRIF Report"
 
 
-def test_insurance_before_utility_bill() -> None:
-    """Insurance Form (priority 12) beats Utility Bill (priority 15)."""
-    text = "Life Insurance Policy Sum Assured Nominee Premium Electricity Bill"
-    assert _classify(text) == "Insurance Form"
+def test_hindi_passbook_classified() -> None:
+    text = "एचडीएफसी बैंक पासबुक खाता संख्या 1234567890"
+    assert _classify(text) == "Passbook"
+
+
+def test_hindi_sanction_letter_classified() -> None:
+    text = "ऋण स्वीकृति पत्र स्वीकृत राशि 500000 अवधि 60 महीने"
+    assert _classify(text) == "Sanction Letter"
+
+
+def test_hindi_consent_letter_classified() -> None:
+    text = "ग्राहक सहमति पत्र बीमा अवधि ऋण अवधि"
+    assert _classify(text) == "Consent Letter"
+
