@@ -42,7 +42,7 @@ def _dual_lang_enabled() -> bool:
 def _configured_ocr_langs() -> list[str]:
     if _dual_lang_enabled():
         return ["hi", "en"]
-    primary = (os.getenv("PADDLE_OCR_LANG") or "en").strip().lower()
+    primary = (os.getenv("PADDLE_OCR_LANG") or "hi").strip().lower()
     return [primary]
 
 
