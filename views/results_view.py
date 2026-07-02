@@ -11,7 +11,8 @@ import requests
 import streamlit as st
 
 from database.db import get_connection
-from services.checklist_service import get_ai_checkable_items, get_human_review_items
+from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
+from services.checklist_status import build_checklist_status
 from services.report_generator import generate_excel_report
 from services.reviewer_exceptions import collapse_for_reviewer, summarize_for_display
 
@@ -72,7 +73,7 @@ def render_application_results(application_id: int) -> None:
     _render_anomaly_expanders(anomalies, page_images)
 
     manual_confirmed = _render_manual_review(product_type)
-    _render_document_checklist(data)
+    _render_document_checklist(data, product_type)
     _render_pages_requiring_review(anomalies)
     _render_download(application_id)
     _render_keyboard_shortcuts_note()
@@ -305,24 +306,37 @@ def _render_summary(application: dict, data: dict, summary: dict, pages: list[di
     columns[3].metric("Issues (reviewer view)", summary["reviewer_count"])
 
 
-def _render_document_checklist(data: dict) -> None:
-    st.subheader("Documents Checklist")
-    found_col, missing_col = st.columns(2)
-    found_rows = [
-        {"Document": document, "Pages": ", ".join(map(str, data["document_pages"].get(document, [])))}
-        for document in data["documents_found"]
-    ]
-    missing = sorted(set(data["documents_missing"]))
+def _render_document_checklist(data: dict, product_type: str) -> None:
+    checklist_items = get_all_checklist_items(product_type)
+    item_count = len(checklist_items)
+    st.subheader(f"MSFC Checklist ({item_count} items)")
+    rows = build_checklist_status(checklist_items, data["pages"], data["anomalies"])
+    missing_rows = [row for row in rows if row["status"] == "MISSING"]
+    found_count = len(rows) - len(missing_rows)
 
-    with found_col:
-        st.write("Found documents")
-        st.dataframe(pd.DataFrame(found_rows), hide_index=True, use_container_width=True)
-    with missing_col:
-        st.write("Missing documents")
-        if missing:
-            st.error(", ".join(missing))
-        else:
-            st.success("None")
+    summary_col1, summary_col2 = st.columns(2)
+    summary_col1.metric("Checklist items found", found_count)
+    summary_col2.metric("Checklist items missing", len(missing_rows))
+
+    display_rows = [
+        {
+            "S.No": row["s_no"],
+            "Status": "✅ Found" if row["status"] == "FOUND" else "❌ Missing",
+            "Description": row["description"],
+            "Looked for": row["document_types"],
+            "Pages": row["pages"],
+        }
+        for row in rows
+    ]
+    st.dataframe(pd.DataFrame(display_rows), hide_index=True, use_container_width=True)
+
+    if missing_rows:
+        st.error(
+            "Missing documents: "
+            + "; ".join(f"S{row['s_no']} — {row['description']}" for row in missing_rows)
+        )
+    else:
+        st.success(f"All {item_count} checklist documents were found in the uploaded file.")
 
 
 def _render_manual_review(product_type: str) -> bool:
