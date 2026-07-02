@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.page_quality import confident_pages_for_types
+
 
 def _document_types(item: dict[str, Any]) -> list[str]:
     document_type = item.get("document_type")
@@ -15,10 +17,11 @@ def _document_types(item: dict[str, Any]) -> list[str]:
 
 
 def _pages_for_types(pages: list[dict[str, Any]], document_types: list[str]) -> list[int]:
-    page_numbers: list[int] = []
-    for page in pages:
-        if page.get("document_type") in document_types and page.get("page_number") is not None:
-            page_numbers.append(int(page["page_number"]))
+    page_numbers = [
+        int(page["page_number"])
+        for page in confident_pages_for_types(pages, document_types)
+        if page.get("page_number") is not None
+    ]
     return sorted(set(page_numbers))
 
 

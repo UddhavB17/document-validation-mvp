@@ -78,7 +78,10 @@ def run_pipeline(
 
     update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
+    processing_error_anomalies = _processing_error_anomalies(pages)
+    anomalies.extend(processing_error_anomalies)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
+    pipeline_status = "partial_failed" if processing_error_anomalies else "completed"
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
@@ -99,7 +102,8 @@ def run_pipeline(
     result.update(
         {
             "application_id": application_id,
-            "pipeline_status": "completed",
+            "pipeline_status": pipeline_status,
+            "partial_failure_count": len(processing_error_anomalies),
             "llm_summary": summary,
             "report_path": str(report_path),
         }
@@ -112,6 +116,8 @@ def run_pipeline(
             "total_pages": result["total_pages"],
             "anomaly_count": len(result["anomalies"]),
             "final_status": result["final_status"],
+            "pipeline_status": pipeline_status,
+            "partial_failure_count": len(processing_error_anomalies),
             "report_path": str(report_path),
         },
     )
@@ -346,6 +352,27 @@ def _normalize_document_type(document_type: str | None) -> str:
     if not document_type:
         return "Unknown"
     return DOCUMENT_TYPE_ALIASES.get(document_type, document_type)
+
+
+def _processing_error_anomalies(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    anomalies: list[dict[str, Any]] = []
+    for page in pages:
+        extracted_fields = page.get("extracted_fields") or {}
+        if not isinstance(extracted_fields, dict) or "_processing_error" not in extracted_fields:
+            continue
+        anomalies.append(
+            build_anomaly(
+                rule_id="PAGE_PROCESSING_ERROR",
+                s_no=None,
+                severity="HIGH",
+                expected_value="Page processed without internal errors",
+                found_value=str(extracted_fields.get("_processing_error") or "Unknown processing error"),
+                reason="OCR, classification, or field extraction failed for this page.",
+                page_number=page.get("page_number"),
+                document_type=page.get("document_type"),
+            )
+        )
+    return anomalies
 
 
 def _run_checklist_with_fallback(

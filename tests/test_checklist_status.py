@@ -42,3 +42,24 @@ def test_build_checklist_status_does_not_mark_unmatched_items_found() -> None:
 
     assert all(row["status"] != "FOUND" for row in rows)
     assert all(row["status"] == "NOT_CHECKED" for row in rows)
+
+
+def test_build_checklist_status_requires_confident_match() -> None:
+    items = get_all_checklist_items("LAP")
+    rows = build_checklist_status(
+        items,
+        pages=[
+            {
+                "document_type": "PAN",
+                "page_number": 1,
+                "page_type": "scanned",
+                "ocr_confidence": 0.40,
+                "classification_confidence": 0.95,
+            }
+        ],
+        anomalies=[{"rule_id": "MISSING_DOC_S7", "s_no": 7}],
+    )
+
+    pan_row = next(row for row in rows if row["s_no"] == 7)
+    assert pan_row["status"] == "MISSING"
+    assert pan_row["pages"] == "-"

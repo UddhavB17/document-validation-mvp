@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 
 from services import checklist_service
+from services.page_quality import confident_pages_for_types, is_confident_document_match
 
 try:
     from rapidfuzz import fuzz
@@ -50,7 +51,11 @@ def build_anomaly(
 
 
 def check_presence_any(pages: list[dict], document_types: list[str]) -> dict:
-    found_types = {page.get("document_type") for page in pages if page.get("document_type")}
+    found_types = {
+        document_type
+        for document_type in document_types
+        if any(is_confident_document_match(page, document_type) for page in pages)
+    }
     found = any(document_type in found_types for document_type in document_types)
 
     if not found:
@@ -201,6 +206,10 @@ def _run_presence_checks(
 
 
 def _find_pages(pages: list[dict], document_type: str) -> list[dict]:
+    return confident_pages_for_types(pages, [document_type])
+
+
+def _find_pages_any_confidence(pages: list[dict], document_type: str) -> list[dict]:
     return [page for page in pages if page.get("document_type") == document_type]
 
 
@@ -331,12 +340,20 @@ def _non_loan_relevance_anomaly(
         return None
 
     doc_types = [str(page.get("document_type") or "").strip() for page in pages]
-    matched_expected = sum(1 for item in doc_types if item in expected_types)
+    matched_expected = sum(
+        1
+        for page in pages
+        for expected_type in expected_types
+        if is_confident_document_match(page, expected_type)
+    )
     unknown_count = sum(1 for item in doc_types if item in {"", "Unknown", "None"})
     unknown_ratio = unknown_count / max(1, len(doc_types))
 
-    # Keep valid loan files unaffected: only block obvious non-loan uploads.
-    if matched_expected > 0 or unknown_ratio < 0.8:
+    min_expected_matches = int(os.getenv("MIN_CHECKLIST_MATCHES_FOR_LOAN_FILE", "2"))
+    max_unknown_ratio = float(os.getenv("MAX_UNKNOWN_RATIO_FOR_UNSUPPORTED_FILE", "0.60"))
+
+    # Keep valid loan files unaffected: only block weak, mostly-unclassified uploads.
+    if matched_expected >= min_expected_matches or unknown_ratio < max_unknown_ratio:
         return None
 
     return build_anomaly(
@@ -344,7 +361,10 @@ def _non_loan_relevance_anomaly(
         s_no=None,
         severity="HIGH",
         expected_value="Loan-file documents matching checklist",
-        found_value=f"No expected document classes detected across {len(pages)} pages",
+        found_value=(
+            f"Only {matched_expected} confident checklist document match(es) "
+            f"across {len(pages)} pages"
+        ),
         reason="Uploaded PDF appears unrelated to the loan checklist workflow.",
         page_number=1,
         document_type="Unsupported",
@@ -353,7 +373,7 @@ def _non_loan_relevance_anomaly(
 
 def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
     anomalies: list[dict] = []
-    pan_pages = _find_pages(pages, "PAN")
+    pan_pages = _find_pages_any_confidence(pages, "PAN")
 
     for page in pages:
         page_number = page.get("page_number")
