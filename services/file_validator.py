@@ -2,8 +2,19 @@
 
 from pathlib import Path
 
-MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
+from services.config import get_int
+
+DEFAULT_MAX_FILE_SIZE_MB = 100
+MAX_FILE_SIZE_BYTES = DEFAULT_MAX_FILE_SIZE_MB * 1024 * 1024
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".pdf"})
+
+
+def max_file_size_bytes() -> int:
+    return get_int("MAX_UPLOAD_SIZE_MB", DEFAULT_MAX_FILE_SIZE_MB, minimum=1) * 1024 * 1024
+
+
+def max_file_size_label() -> str:
+    return f"{max_file_size_bytes() // (1024 * 1024)}MB"
 
 
 def validate_file(file_path: str | Path, file_size_bytes: int) -> dict[str, object]:
@@ -16,8 +27,8 @@ def validate_file(file_path: str | Path, file_size_bytes: int) -> dict[str, obje
     if file_size_bytes == 0:
         return {"valid": False, "error": "File is empty"}
 
-    if file_size_bytes > MAX_FILE_SIZE_BYTES:
-        return {"valid": False, "error": "File too large, max 100MB"}
+    if file_size_bytes > max_file_size_bytes():
+        return {"valid": False, "error": f"File too large, max {max_file_size_label()}"}
 
     try:
         import fitz
@@ -67,7 +78,7 @@ def validate_upload(filename: str, file_size_bytes: int = 0) -> dict[str, object
     elif suffix not in ALLOWED_EXTENSIONS:
         errors.append(f"Only PDF files accepted")
 
-    if file_size_bytes > MAX_FILE_SIZE_BYTES:
-        errors.append("File too large, max 100MB")
+    if file_size_bytes > max_file_size_bytes():
+        errors.append(f"File too large, max {max_file_size_label()}")
 
     return {"is_valid": not errors, "errors": errors}

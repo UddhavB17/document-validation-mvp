@@ -1,0 +1,73 @@
+"""Operations-focused processing policy for large loan packets.
+
+The MVP should reduce reviewer work by checking high-value digital/system
+documents first, not by OCRing every physical-only page in a 400-page file.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Any
+
+from services.config import get_int
+
+OCR_SKIPPED_DOCUMENT_TYPE = "OCR Skipped"
+
+
+def max_scanned_pages_for_ocr() -> int:
+    """Return the scanned-page OCR budget for one uploaded PDF.
+
+    A 400-page packet can contain many property papers, stamp papers, photos,
+    and physical-only exhibits. The default keeps the MVP bounded while still
+    sampling the front, middle, and tail of large packets.
+    """
+    return get_int("DMEF_MAX_SCANNED_OCR_PAGES", 120, minimum=1)
+
+
+def selected_scanned_page_numbers(page_structure: list[dict[str, Any]]) -> set[int]:
+    """Choose scanned pages for OCR using a front/tail/even-sample strategy."""
+    scanned_pages = [
+        int(page["page_number"])
+        for page in page_structure
+        if page.get("page_type") == "scanned"
+    ]
+    if not scanned_pages:
+        return set()
+
+    budget = max_scanned_pages_for_ocr()
+    if len(scanned_pages) <= budget:
+        return set(scanned_pages)
+
+    front_count = min(budget, max(1, math.ceil(budget * 0.60)))
+    remaining_budget = max(0, budget - front_count)
+    tail_count = min(remaining_budget, max(0, math.floor(budget * 0.20)))
+    middle_count = max(0, budget - front_count - tail_count)
+
+    selected = set(scanned_pages[:front_count])
+    if tail_count:
+        selected.update(scanned_pages[-tail_count:])
+
+    middle_end = -tail_count if tail_count else None
+    middle = scanned_pages[front_count:middle_end]
+    if middle and middle_count > 0:
+        if len(middle) <= middle_count:
+            selected.update(middle)
+        else:
+            step = len(middle) / middle_count
+            for index in range(middle_count):
+                selected.add(middle[min(len(middle) - 1, int(index * step))])
+
+    return set(sorted(selected))
+
+
+def build_ocr_skipped_fields(page_number: int, total_scanned_pages: int) -> dict[str, Any]:
+    return {
+        "_ocr_skipped": True,
+        "reason": (
+            "Skipped by large-file OCR budget. This page remains available for "
+            "manual review or full-scan fallback."
+        ),
+        "page_number": page_number,
+        "total_scanned_pages": total_scanned_pages,
+        "ocr_budget": max_scanned_pages_for_ocr(),
+    }

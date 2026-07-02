@@ -42,4 +42,26 @@ def get_all_checklist_items(product_type: str = "LAP", path: str | Path = CHECKL
 
 def get_human_review_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
     checklist = load_checklist(product_type, path)
-    return checklist.get("human_review_items", [])
+    explicit_items = list(checklist.get("human_review_items", []))
+    derived_items = [
+        {
+            "s_no": item.get("s_no"),
+            "description": item.get("description"),
+            "category": item.get("category"),
+            "document_type": item.get("document_type"),
+            "reason": item.get("manual_review_reason")
+            or item.get("applicability_note")
+            or "Physical-only, conditional, or system-status item; verify manually.",
+        }
+        for item in checklist.get("checklist_items", [])
+        if not item.get("ai_checkable")
+    ]
+    seen: set[int | str | None] = set()
+    merged: list[dict] = []
+    for item in [*explicit_items, *derived_items]:
+        key = item.get("s_no") or item.get("description")
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged

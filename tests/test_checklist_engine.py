@@ -7,6 +7,7 @@ from services.checklist_engine import (
     evaluate_checklist,
     run_checks,
 )
+from services.checklist_service import get_ai_checkable_items, get_human_review_items
 
 
 def test_evaluate_checklist_flags_missing_documents() -> None:
@@ -53,6 +54,20 @@ def test_date_range_bank_stmt_old() -> None:
 
 def test_missing_pan() -> None:
     anomalies = run_checks([], {}, {}, "LAP")
+    assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
+
+
+def test_physical_only_items_are_manual_review_not_ai_missing() -> None:
+    ai_snos = {item["s_no"] for item in get_ai_checkable_items("LAP")}
+    manual_snos = {item["s_no"] for item in get_human_review_items("LAP")}
+
+    assert 1 not in ai_snos
+    assert 1 in manual_snos
+    assert 24 in manual_snos
+    assert 41 in manual_snos
+
+    anomalies = run_checks([], {}, {}, "LAP")
+    assert not any(anomaly["rule_id"] == "MISSING_DOC_S1" for anomaly in anomalies)
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
 
 

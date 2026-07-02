@@ -9,8 +9,10 @@
       "document_type": "Application Form",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "ai_checkable": false,
+      "severity_if_missing": "HIGH",
+      "review_mode": "manual",
+      "manual_review_reason": "Physical application form with photos; reviewer should verify signatures/photos manually."
     },
     {
       "s_no": 2,
@@ -19,48 +21,73 @@
       "document_type": "KYC OSV Mark",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "ai_checkable": false,
+      "severity_if_missing": "HIGH",
+      "review_mode": "manual",
+      "manual_review_reason": "KYC OSV employee stamp/signature is a physical/manual verification item."
     },
     {
       "s_no": 3,
       "category": "Application Form / KYC",
       "description": "Particulars and KYC document type recorded for Applicant/Co-applicant/GTR",
-      "document_type": ["Aadhaar", "Voter ID", "Passport", "Driving License"],
+      "document_type": [
+        "Aadhaar",
+        "Voter ID",
+        "Passport",
+        "Driving License"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 4,
       "category": "Application Form / KYC",
       "description": "Identity proof of Applicant/Co-applicant/GTR",
-      "document_type": ["Aadhaar", "Voter ID", "Passport", "Driving License"],
+      "document_type": [
+        "Aadhaar",
+        "Voter ID",
+        "Passport",
+        "Driving License"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 5,
       "category": "Application Form / KYC",
       "description": "Signature proof of Borrower",
-      "document_type": ["PAN", "Passport", "Driving License"],
+      "document_type": [
+        "PAN",
+        "Passport",
+        "Driving License"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 6,
       "category": "Application Form / KYC",
       "description": "Address proof of Borrower - current address mandatory",
-      "document_type": ["Aadhaar", "Voter ID", "Driving License", "Utility Bill"],
+      "document_type": [
+        "Aadhaar",
+        "Voter ID",
+        "Driving License",
+        "Utility Bill"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 7,
@@ -70,7 +97,8 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 8,
@@ -79,8 +107,10 @@
       "document_type": "Dual Name Declaration",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Dual-name/signature/DOB declaration applies only when mismatch exists; verify manually."
     },
     {
       "s_no": 9,
@@ -89,8 +119,10 @@
       "document_type": "Approval Letter",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Authority approval is a system/workflow control, not a high-value OCR target."
     },
     {
       "s_no": 10,
@@ -99,8 +131,10 @@
       "document_type": "Relationship Proof",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Relationship proof depends on borrower structure and should be verified manually."
     },
     {
       "s_no": 11,
@@ -109,18 +143,25 @@
       "document_type": "Vernacular Document",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Vernacular requirement is conditional; verify manually when applicable."
     },
     {
       "s_no": 12,
       "category": "System Check",
       "description": "Loan details document - ROI/Tenure/Loan Amount/EMI (Sanction Letter or Loan Agreement)",
-      "document_type": ["Sanction Letter", "Loan Agreement", "Facility Agreement"],
+      "document_type": [
+        "Sanction Letter",
+        "Loan Agreement",
+        "Facility Agreement"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 13,
@@ -129,8 +170,10 @@
       "document_type": "Charges Deduction Document",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Charges deduction is primarily a system cross-check."
     },
     {
       "s_no": 14,
@@ -139,8 +182,10 @@
       "document_type": "OTC PDD Document",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "OTC/PDD marking is primarily a system cross-check."
     },
     {
       "s_no": 15,
@@ -150,27 +195,36 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 16,
       "category": "Internal Documents",
       "description": "Banking of Applicant mandatory (Bank Statement or Passbook)",
-      "document_type": ["Bank Statement", "Passbook"],
+      "document_type": [
+        "Bank Statement",
+        "Passbook"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 17,
       "category": "Internal Documents",
       "description": "Bank account vintage document - passbook front page or statement of account",
-      "document_type": ["Bank Statement", "Passbook"],
+      "document_type": [
+        "Bank Statement",
+        "Passbook"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 18,
@@ -179,8 +233,10 @@
       "document_type": "Pre-Disbursement Conditions",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Pre-disbursement conditions are compiled/system uploaded; reviewer verifies applicability."
     },
     {
       "s_no": 19,
@@ -189,18 +245,24 @@
       "document_type": "Payment Favoring Letter",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Payment favoring check is a CSO/system control."
     },
     {
       "s_no": 20,
       "category": "Internal Documents",
       "description": "Loan Agreement - duly filled signed by all borrowers",
-      "document_type": ["Loan Agreement", "Facility Agreement"],
+      "document_type": [
+        "Loan Agreement",
+        "Facility Agreement"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 21,
@@ -210,7 +272,8 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 22,
@@ -220,7 +283,8 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "ai"
     },
     {
       "s_no": 23,
@@ -229,8 +293,10 @@
       "document_type": "FI Report",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "FI report applies only for threshold/credit-policy cases; verify applicability manually."
     },
     {
       "s_no": 24,
@@ -239,8 +305,10 @@
       "document_type": "Agreement Signing Photo",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Agreement signing photo/video is media evidence and should be verified manually."
     },
     {
       "s_no": 25,
@@ -249,8 +317,10 @@
       "document_type": "BT Undertaking",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "BT undertaking is conditional and physical; verify only when applicable."
     },
     {
       "s_no": 26,
@@ -259,8 +329,10 @@
       "document_type": "Consent Letter",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Consent letter is physical/conditional; verify manually."
     },
     {
       "s_no": 27,
@@ -269,8 +341,10 @@
       "document_type": "Guarantee Deed",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "ai_checkable": false,
+      "severity_if_missing": "HIGH",
+      "review_mode": "manual",
+      "manual_review_reason": "Guarantee deed and stamp duty are physical execution checks; verify manually."
     },
     {
       "s_no": 28,
@@ -279,8 +353,10 @@
       "document_type": "Crime Check Report",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Crime check applies only for qualifying cases; verify system upload manually."
     },
     {
       "s_no": 29,
@@ -289,8 +365,10 @@
       "document_type": "Customer App Proof",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "LOW"
+      "ai_checkable": false,
+      "severity_if_missing": "LOW",
+      "review_mode": "manual",
+      "manual_review_reason": "Customer app proof is screenshot/device evidence; verify manually."
     },
     {
       "s_no": 30,
@@ -300,17 +378,23 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 31,
       "category": "Documents required from customer",
       "description": "Business proof - Udyam / Shop establishment / BRN / GST registration",
-      "document_type": ["Udyam Certificate", "GST Certificate", "Shop Establishment Certificate"],
+      "document_type": [
+        "Udyam Certificate",
+        "GST Certificate",
+        "Shop Establishment Certificate"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "ai"
     },
     {
       "s_no": 32,
@@ -319,8 +403,10 @@
       "document_type": "Bank Signature Verification",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Bank signature verification is conditional on NACH status; verify manually."
     },
     {
       "s_no": 33,
@@ -330,17 +416,23 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 34,
       "category": "Documents required from customer",
       "description": "Assessed income documents as per credit policy",
-      "document_type": ["Salary Slip", "Income Tax Return", "Assessed Income Document"],
+      "document_type": [
+        "Salary Slip",
+        "Income Tax Return",
+        "Assessed Income Document"
+      ],
       "check_type": "presence_any",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "ai"
     },
     {
       "s_no": 35,
@@ -350,7 +442,8 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "ai"
     },
     {
       "s_no": 36,
@@ -359,8 +452,10 @@
       "document_type": "Foreclosure Letter",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Foreclosure/LOD is BT-case specific; verify manually when applicable."
     },
     {
       "s_no": 37,
@@ -370,7 +465,8 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 38,
@@ -380,7 +476,8 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 39,
@@ -391,7 +488,8 @@
       "min_count": 2,
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 40,
@@ -401,7 +499,8 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
-      "severity_if_missing": "HIGH"
+      "severity_if_missing": "HIGH",
+      "review_mode": "ai"
     },
     {
       "s_no": 41,
@@ -411,8 +510,10 @@
       "check_type": "presence_min_count",
       "min_count": 1,
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "PDC count is physical cheque custody; verify manually."
     },
     {
       "s_no": 42,
@@ -421,8 +522,10 @@
       "document_type": "ACH Approval Document",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "ACH-not-registered approval is conditional; verify manually."
     },
     {
       "s_no": 43,
@@ -432,8 +535,10 @@
       "check_type": "presence_min_count",
       "min_count": 3,
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "MEDIUM"
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Co-applicant/GTR PDC count is physical cheque custody; verify manually."
     },
     {
       "s_no": 44,
@@ -442,8 +547,10 @@
       "document_type": "Operations Checklist",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": true,
-      "severity_if_missing": "LOW"
+      "ai_checkable": false,
+      "severity_if_missing": "LOW",
+      "review_mode": "manual",
+      "manual_review_reason": "Operations checklist signatures are final manual acknowledgments."
     }
   ],
   "accuracy_check_items": [
@@ -461,7 +568,11 @@
       "description": "Loan details must match system - ROI/Tenure/Loan Amount/EMI",
       "document_type": "Loan Agreement",
       "check_type": "field_match",
-      "match_fields": ["loan_amount", "tenure", "emi"],
+      "match_fields": [
+        "loan_amount",
+        "tenure",
+        "emi"
+      ],
       "severity_if_mismatch": "HIGH",
       "ai_checkable": true
     },
@@ -475,5 +586,30 @@
       "ai_checkable": true
     }
   ],
-  "human_review_items": []
+  "human_review_items": [],
+  "validation_strategy": {
+    "mode": "operations_focused_mvp",
+    "goal": "Reduce operations effort by OCRing and cross-checking high-value identity, banking, credit, loan, insurance, legal, technical, and repayment documents first.",
+    "primary_ocr_targets": [
+      "PAN",
+      "Aadhaar",
+      "Voter ID",
+      "Passport",
+      "Driving License",
+      "Bank Statement",
+      "Passbook",
+      "CRIF Report",
+      "Sanction Letter",
+      "Loan Agreement",
+      "Facility Agreement",
+      "Insurance Form",
+      "Legal Clearance Report",
+      "Technical Clearance Report",
+      "Technical Report",
+      "NACH Form",
+      "Stamp Duty",
+      "Salary Slip"
+    ],
+    "manual_review_policy": "Physical-only, media, cheque custody, and conditional workflow controls are shown in Manual Review Required instead of forcing full-packet OCR."
+  }
 }
