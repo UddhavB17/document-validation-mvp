@@ -1,11 +1,9 @@
 """LLM explanation service using local/open-source HTTP APIs."""
 
 import json
-import os
-
-import requests
 
 from database.db import get_connection
+from services.llm_client import call_llm_api, extract_response_text as _extract_response_text
 
 
 def generate_explanation(
@@ -29,7 +27,7 @@ def generate_explanation(
         pass
 
     try:
-        text = _call_llm_api(_build_prompt(anomalies, ground_truth))
+        text = call_llm_api(_build_prompt(anomalies, ground_truth))
     except Exception:
         return None
 
@@ -87,41 +85,3 @@ def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
     )
 
 
-def _call_llm_api(prompt: str) -> str | None:
-    api_url = (
-        os.getenv("LLM_API_URL")
-        or os.getenv("LOCAL_LLM_API_URL")
-        or os.getenv("OPEN_SOURCE_LLM_API_URL")
-        or "http://localhost:11434/api/generate"
-    )
-    model = os.getenv("LOCAL_LLM_MODEL") or os.getenv("LLM_MODEL") or "llama3.1"
-
-    if "11434" in api_url or api_url.endswith("/api/generate"):
-        payload = {"model": model, "prompt": prompt, "stream": False}
-    else:
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 450,
-        }
-
-    response = requests.post(api_url, json=payload, timeout=90)
-    response.raise_for_status()
-    return _extract_response_text(response.json())
-
-
-def _extract_response_text(payload: dict) -> str | None:
-    if payload.get("response"):
-        return payload["response"]
-    if payload.get("text"):
-        return payload["text"]
-    if payload.get("output"):
-        return payload["output"]
-
-    choices = payload.get("choices") or []
-    if choices:
-        first_choice = choices[0]
-        message = first_choice.get("message") or {}
-        return message.get("content") or first_choice.get("text")
-
-    return None
