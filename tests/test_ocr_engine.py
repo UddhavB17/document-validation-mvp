@@ -126,8 +126,8 @@ class TestRunOcrOnPage:
 
     # ── test_blurry_image_flagged ────────────────────────────────────────────
 
-    def test_blurry_image_flagged(self, tmp_path: Path) -> None:
-        """A blurry image must return is_readable=False without calling OCR."""
+    def test_blurry_image_still_runs_ocr(self, tmp_path: Path) -> None:
+        """Blurry pages must still run OCR; blur is advisory only."""
         pytest.importorskip("cv2")
         from services import ocr_engine
         from services.ocr_engine import run_ocr_on_page
@@ -135,13 +135,18 @@ class TestRunOcrOnPage:
         img_path = tmp_path / "blurry.png"
         _make_blurry_png(img_path)
 
-        # Even if OCR model is None or mocked, blurry check happens first.
-        with patch.object(ocr_engine, "ocr_model", MagicMock()):
+        fake_ocr_output = [[ [None, ["Blurry Passbook Page", 0.42]] ]]
+        mock_model = MagicMock()
+        mock_model.predict.return_value = fake_ocr_output
+        mock_model.ocr.return_value = fake_ocr_output
+
+        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
-        assert result["is_readable"] is False
-        assert result["ocr_text"] == ""
-        assert result["confidence"] == 0.0
+        assert result["is_blurry"] is True
+        assert "Blurry Passbook Page" in result["ocr_text"]
+        assert result["confidence"] == pytest.approx(0.42)
+        assert result["ocr_languages"] == ["hi", "en"]
 
     # ── test_clear_image_returns_text ────────────────────────────────────────
 
@@ -167,7 +172,7 @@ class TestRunOcrOnPage:
         mock_model.predict.return_value = fake_ocr_output
         mock_model.ocr.return_value = fake_ocr_output
 
-        with patch.object(ocr_engine, "ocr_model", mock_model):
+        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is True
@@ -194,7 +199,7 @@ class TestRunOcrOnPage:
         mock_model.predict.return_value = v3_result
         mock_model.ocr.return_value = v3_result
 
-        with patch.object(ocr_engine, "ocr_model", mock_model):
+        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is True
@@ -223,7 +228,7 @@ class TestRunOcrOnPage:
         mock_model.predict.return_value = wrapped_result
         mock_model.ocr.return_value = wrapped_result
 
-        with patch.object(ocr_engine, "ocr_model", mock_model):
+        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is True
@@ -244,7 +249,7 @@ class TestRunOcrOnPage:
         mock_model.predict.side_effect = RuntimeError("model crash")
         mock_model.ocr.side_effect = RuntimeError("model crash")
 
-        with patch.object(ocr_engine, "ocr_model", mock_model):
+        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is False
@@ -253,7 +258,7 @@ class TestRunOcrOnPage:
         assert "model crash" in result["error"]
 
     def test_no_model_returns_error_dict(self, tmp_path: Path) -> None:
-        """When ocr_model is None, result must contain an 'error' key."""
+        """When OCR models are unavailable, result must contain an 'error' key."""
         pytest.importorskip("cv2")
         from services import ocr_engine
         from services.ocr_engine import run_ocr_on_page
@@ -261,7 +266,7 @@ class TestRunOcrOnPage:
         img_path = tmp_path / "sharp.png"
         _make_sharp_png(img_path)
 
-        with patch.object(ocr_engine, "ocr_model", None):
+        with patch.object(ocr_engine, "ocr_models", {"hi": None, "en": None}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is False

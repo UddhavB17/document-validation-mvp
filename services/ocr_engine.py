@@ -1,25 +1,19 @@
 """OCR engine for scanned loan-document pages.
 
-Uses PaddleOCR for text recognition.  The model is initialised *once* at
-module import time so that subsequent calls to :func:`run_ocr_on_page` share
-the same warm model without reloading weights.
+Uses PaddleOCR with Hindi + English coverage for Indian loan files.
+Models are initialised once at import time and reused across pages.
 
 Public API
 ----------
 run_ocr_on_page(image_path)
-    Assess readability, preprocess, run OCR, and return a result dict.
-
-Module-level
-------------
-ocr_model
-    Singleton :class:`PaddleOCR` instance (or ``None`` when PaddleOCR is not
-    installed in this environment).
+    Measure blur (advisory), run OCR, and return merged Hindi/English text.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -37,7 +31,6 @@ PADDLE_CACHE_DIR = Path(os.getenv("PADDLE_PDX_CACHE_HOME", _PROJECT_ROOT / "data
 def _configure_paddle_runtime() -> None:
     """Apply Paddle flags before the native runtime is imported."""
     os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(PADDLE_CACHE_DIR))
-    # oneDNN/MKLDNN triggers PIR runtime errors on many CPU installs (incl. Py 3.11).
     os.environ.setdefault("FLAGS_use_mkldnn", "0")
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
@@ -45,7 +38,18 @@ def _configure_paddle_runtime() -> None:
 _configure_paddle_runtime()
 
 
-def _create_paddle_ocr() -> Any:
+def _dual_lang_enabled() -> bool:
+    return os.getenv("PADDLE_OCR_DUAL_LANG", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def _configured_ocr_langs() -> list[str]:
+    if _dual_lang_enabled():
+        return ["hi", "en"]
+    primary = (os.getenv("PADDLE_OCR_LANG") or "hi").strip().lower()
+    return [primary]
+
+
+def _create_paddle_ocr(lang: str) -> Any:
     """Create a PaddleOCR instance with CPU-safe defaults."""
     from paddleocr import PaddleOCR as _PaddleOCR
 
@@ -53,33 +57,31 @@ def _create_paddle_ocr() -> Any:
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,
         "use_textline_orientation": False,
-        "lang": "en",
+        "lang": lang,
     }
     try:
         return _PaddleOCR(**base_kwargs, enable_mkldnn=False)
     except TypeError:
-        # Older paddleocr builds do not expose enable_mkldnn.
         return _PaddleOCR(**base_kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Module-level OCR model – initialised once, reused on every call
-# ---------------------------------------------------------------------------
-
-try:
-    ocr_model: Any | None = _create_paddle_ocr()
-except Exception as _paddle_exc:  # ImportError, RuntimeError, etc.
-    logger.warning(
-        "PaddleOCR could not be loaded (%s). "
-        "OCR will be unavailable until PaddleOCR and PaddlePaddle are installed.",
-        _paddle_exc,
-    )
-    ocr_model = None
+def _load_ocr_models() -> dict[str, Any | None]:
+    models: dict[str, Any | None] = {}
+    for lang in _configured_ocr_langs():
+        try:
+            models[lang] = _create_paddle_ocr(lang)
+            logger.info("Loaded PaddleOCR model for lang=%s", lang)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PaddleOCR could not load lang=%s (%s)", lang, exc)
+            models[lang] = None
+    return models
 
 
-# ---------------------------------------------------------------------------
-# TypedDicts
-# ---------------------------------------------------------------------------
+ocr_models: dict[str, Any | None] = _load_ocr_models()
+ocr_model: Any | None = ocr_models.get("hi") or ocr_models.get("en") or next(
+    (model for model in ocr_models.values() if model is not None),
+    None,
+)
 
 
 class _OcrResult(TypedDict, total=False):
@@ -88,87 +90,89 @@ class _OcrResult(TypedDict, total=False):
     ocr_text: str
     confidence: float
     blur_score: float
+    ocr_languages: list[str]
     error: str
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
-    """Run OCR on a single scanned-page image.
+    """Run OCR on a scanned page image.
 
-    Steps
-    -----
-    1. Check readability via :func:`~services.preprocessing.check_readability`.
-    2. If blurry / unreadable, return early with ``is_readable=False``.
-    3. Run PaddleOCR on the rendered page image.
-    4. Aggregate text lines and confidence scores.
-    5. Wrap everything in ``try/except`` – OCR failures return an error dict
-       instead of raising.
-
-    Parameters
-    ----------
-    image_path:
-        Path to the PNG / JPEG image produced by the PDF processor.
-
-    Returns
-    -------
-    dict
-        ``is_readable`` – ``bool``.
-
-        ``ocr_text`` – space-joined OCR output (empty string on failure).
-
-        ``confidence`` – mean confidence score (0.0–1.0).
-
-        ``error`` *(optional)* – exception message when OCR raises.
+    Blur is measured for quality warnings but never blocks OCR.
+    When dual-language mode is enabled, Hindi and English models both run
+    and their outputs are merged for downstream classification.
     """
     readability = check_readability(image_path)
     is_blurry = not readability["is_readable"]
-    if is_blurry:
-        return {
-            "is_readable": False,
-            "is_blurry": True,
-            "ocr_text": "",
-            "confidence": 0.0,
-            "blur_score": readability["blur_score"],
-        }
+    blur_score = readability["blur_score"]
 
-    if ocr_model is None:
+    active_models = [(lang, model) for lang, model in ocr_models.items() if model is not None]
+    if not active_models:
         return {
             "is_readable": False,
             "is_blurry": is_blurry,
             "ocr_text": "",
             "confidence": 0.0,
-            "blur_score": readability["blur_score"],
+            "blur_score": blur_score,
+            "ocr_languages": [],
             "error": (
-                "PaddleOCR model is not loaded. "
+                "PaddleOCR models are not loaded. "
                 "Install paddlepaddle and paddleocr to enable OCR."
             ),
         }
 
-    try:
-        result = _run_paddle_ocr(ocr_model, image_path)
-        text, confidence = _extract_ocr_text_and_confidence(result)
+    merged_texts: list[str] = []
+    merged_scores: list[float] = []
+    languages_used: list[str] = []
+    errors: list[str] = []
 
-        return {
-            "is_readable": bool(text.strip()),
-            "is_blurry": is_blurry,
-            "ocr_text": text,
-            "confidence": confidence,
-            "blur_score": readability["blur_score"],
-        }
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("OCR failed for %s", image_path)
+    for lang, model in active_models:
+        try:
+            result = _run_paddle_ocr(model, image_path)
+            text, confidence = _extract_ocr_text_and_confidence(result)
+            languages_used.append(lang)
+            if text.strip():
+                merged_texts.append(text.strip())
+            if confidence > 0:
+                merged_scores.append(confidence)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("OCR failed for %s (%s)", image_path, lang)
+            errors.append(f"{lang}: {exc}")
+
+    ocr_text = _merge_ocr_texts(merged_texts)
+    confidence = max(merged_scores) if merged_scores else 0.0
+
+    if not ocr_text and errors:
         return {
             "is_readable": False,
             "is_blurry": is_blurry,
             "ocr_text": "",
             "confidence": 0.0,
-            "blur_score": readability["blur_score"],
-            "error": str(exc),
+            "blur_score": blur_score,
+            "ocr_languages": languages_used,
+            "error": "; ".join(errors),
         }
+
+    return {
+        "is_readable": bool(ocr_text.strip()),
+        "is_blurry": is_blurry,
+        "ocr_text": ocr_text,
+        "confidence": confidence,
+        "blur_score": blur_score,
+        "ocr_languages": languages_used,
+    }
+
+
+def _merge_ocr_texts(texts: list[str]) -> str:
+    """Merge OCR outputs from multiple language models without duplicate lines."""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for chunk in texts:
+        for part in re.split(r"\n+", chunk):
+            normalized = part.strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                merged.append(normalized)
+    return "\n".join(merged)
 
 
 def _run_paddle_ocr(model: Any, image_path: str | Path) -> Any:
@@ -194,14 +198,12 @@ def _run_paddle_ocr(model: Any, image_path: str | Path) -> Any:
 
 
 def _prepare_for_paddle(image: np.ndarray) -> np.ndarray:
-    """PaddleOCR 2.x expects a 3-channel image, not grayscale."""
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     return image
 
 
 def _extract_ocr_text_and_confidence(result: Any) -> tuple[str, float]:
-    """Normalize PaddleOCR 2.x and 3.x results into text plus mean confidence."""
     if not result:
         return "", 0.0
 
