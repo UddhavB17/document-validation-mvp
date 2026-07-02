@@ -185,3 +185,27 @@ def test_process_pdf_structure_renders_only_ocr_budgeted_scanned_pages(
     assert len(rendered_entries) == 2
     assert len(skipped_entries) == 3
     assert all(Path(page["image_path"]).exists() for page in rendered_entries)
+
+
+def test_process_pdf_structure_600_pages_renders_only_budgeted_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("fitz")
+    from services.pdf_processor import process_pdf_structure
+
+    monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "30")
+    monkeypatch.delenv("DMEF_FULL_SCAN_OCR", raising=False)
+    pdf_path = tmp_path / "large_600_page_packet.pdf"
+    output_dir = tmp_path / "images"
+    _make_scanned_pdf(pdf_path, pages=600)
+
+    result = process_pdf_structure(pdf_path, output_dir)
+
+    scanned_entries = [page for page in result["pages"] if page["page_type"] == "scanned"]
+    rendered_entries = [page for page in scanned_entries if page["image_path"]]
+
+    assert result["total_pages"] == 600
+    assert result["scanned_pages"] == 600
+    assert len(rendered_entries) == 30
+    assert all(Path(page["image_path"]).exists() for page in rendered_entries)

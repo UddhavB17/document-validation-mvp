@@ -98,6 +98,13 @@ def preprocess_image(image_path: str | Path) -> np.ndarray:
     if image is None:
         raise FileNotFoundError(f"Could not load image: {image_path}")
 
+    from services.image_limits import downscale_if_needed
+
+    image = downscale_if_needed(image)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    denoised: np.ndarray = cv2.fastNlMeansDenoising(gray, h=10)
+    # Skip slow denoise on large loan-file pages; mobile OCR handles mild noise.
+    if gray.shape[0] * gray.shape[1] <= 2_500_000:
+        denoised: np.ndarray = cv2.fastNlMeansDenoising(gray, h=10)
+    else:
+        denoised = gray
     return denoised

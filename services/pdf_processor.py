@@ -15,7 +15,8 @@ from typing import TypedDict
 
 import fitz  # PyMuPDF
 
-from services.config import get_float
+from services.config import get_float, get_int
+from services.image_limits import downscale_if_needed, max_image_side_px
 from services.processing_policy import selected_scanned_page_numbers
 
 
@@ -93,10 +94,20 @@ def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    scale = get_float("DMEF_RENDER_SCALE", 1.25, minimum=0.75, maximum=2.0)
+    scale = get_float("DMEF_RENDER_SCALE", 1.0, minimum=0.75, maximum=2.0)
     matrix = fitz.Matrix(scale, scale)
     pixmap = fitz_page.get_pixmap(matrix=matrix, alpha=False)
-    pixmap.save(str(output_path))
+
+    import cv2
+    import numpy as np
+
+    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(pixmap.height, pixmap.width, pixmap.n)
+    if pixmap.n == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+    elif pixmap.n == 1:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    image = downscale_if_needed(image, max_side=max_image_side_px())
+    cv2.imwrite(str(output_path), image)
     return str(output_path.resolve())
 
 

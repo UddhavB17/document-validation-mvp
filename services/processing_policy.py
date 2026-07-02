@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from services.config import get_int
+from services.config import get_bool, get_int
 
 OCR_SKIPPED_DOCUMENT_TYPE = "OCR Skipped"
 INTERNAL_DOCUMENT_TYPES = frozenset({OCR_SKIPPED_DOCUMENT_TYPE})
@@ -22,7 +22,12 @@ def max_scanned_pages_for_ocr() -> int:
     and physical-only exhibits. The default keeps the MVP bounded while still
     sampling the front, middle, and tail of large packets.
     """
-    return get_int("DMEF_MAX_SCANNED_OCR_PAGES", 30, minimum=1)
+    return get_int("DMEF_MAX_SCANNED_OCR_PAGES", 30, minimum=0)
+
+
+def full_scan_ocr_enabled() -> bool:
+    """Return True when every scanned page should be OCR-rendered."""
+    return get_bool("DMEF_FULL_SCAN_OCR", False) or max_scanned_pages_for_ocr() == 0
 
 
 def selected_scanned_page_numbers(page_structure: list[dict[str, Any]]) -> set[int]:
@@ -34,6 +39,9 @@ def selected_scanned_page_numbers(page_structure: list[dict[str, Any]]) -> set[i
     ]
     if not scanned_pages:
         return set()
+
+    if full_scan_ocr_enabled():
+        return set(scanned_pages)
 
     budget = max_scanned_pages_for_ocr()
     if len(scanned_pages) <= budget:

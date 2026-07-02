@@ -17,7 +17,7 @@ import fitz
 from database.db import get_connection
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
-from services.config import effective_config
+from services.config import get_int
 from services.document_classifier import classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
@@ -311,6 +311,17 @@ def _extract_digital_text_by_page(pdf_path: Path) -> dict[int, str]:
         doc.close()
 
 
+def _progress_update_interval() -> int:
+    return get_int("DMEF_PROGRESS_UPDATE_EVERY", 25, minimum=1)
+
+
+def _should_emit_progress(processed_pages: int, *, force: bool = False) -> bool:
+    if force:
+        return True
+    interval = _progress_update_interval()
+    return processed_pages == 1 or processed_pages % interval == 0
+
+
 def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
@@ -329,15 +340,17 @@ def _build_page_records(
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
         image_path = page_info.get("image_path")
-        if application_id is not None:
+        needs_ocr = page_type == "scanned" and page_number in selected_scanned_pages
+        if application_id is not None and needs_ocr:
             mark_page_started(
                 application_id,
                 current_page=page_number,
                 total_pages=total_pages,
-                message=f"Processing page {page_number}/{total_pages}",
+                message=f"OCR on page {page_number}/{total_pages}",
             )
 
         try:
+            extracted_fields: dict[str, Any] = {}
             if page_type == "digital":
                 text = digital_text_by_page.get(page_number, "")
                 is_readable = bool(text)
@@ -362,15 +375,15 @@ def _build_page_records(
                         "extracted_fields": extracted_fields,
                     }
                 )
-                if application_id is not None:
+                if application_id is not None and _should_emit_progress(len(pages)):
                     update_page_progress(
                         application_id,
                         processed_pages=len(pages),
                         total_pages=total_pages,
                         current_page=page_number,
                         message=(
-                            f"Skipped OCR for page {page_number}/{total_pages} "
-                            "under large-file budget"
+                            f"Processed {len(pages)}/{total_pages} pages "
+                            f"(OCR budget skip)"
                         ),
                     )
                 continue
@@ -379,6 +392,9 @@ def _build_page_records(
                 text = ocr_result.get("ocr_text", "")
                 is_readable = ocr_result.get("is_readable", False)
                 ocr_confidence = ocr_result.get("confidence", 0.0)
+                extracted_fields = {}
+                if ocr_result.get("error"):
+                    extracted_fields["_processing_error"] = str(ocr_result["error"])
 
             classification, classification_meta = classify_page_text(
                 text,
@@ -386,7 +402,7 @@ def _build_page_records(
                 llm_budget=llm_budget,
             )
             document_type = _normalize_document_type(classification.get("document_type"))
-            extracted_fields = extract_fields(document_type, text)
+            extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
             if classification_meta:
                 extracted_fields = {
                     **extracted_fields,
@@ -413,13 +429,22 @@ def _build_page_records(
                 "extracted_fields": extracted_fields,
             }
         )
-        if application_id is not None:
+        if application_id is not None and _should_emit_progress(len(pages), force=needs_ocr):
             update_page_progress(
                 application_id,
                 processed_pages=len(pages),
                 total_pages=total_pages,
                 current_page=page_number,
+                message=f"Processed {len(pages)}/{total_pages} pages",
             )
+    if application_id is not None and pages:
+        update_page_progress(
+            application_id,
+            processed_pages=len(pages),
+            total_pages=total_pages,
+            current_page=pages[-1]["page_number"],
+            message=f"Processed {len(pages)}/{total_pages} pages",
+        )
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
 
@@ -559,8 +584,6 @@ def _ocr_budget_anomaly(pages: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _pipeline_outcome(anomalies: list[dict[str, Any]], processing_errors: list[dict[str, Any]]) -> str:
-    if len(processing_errors) >= effective_config().page_failure_threshold:
-        return "failed"
     if processing_errors:
         return "partial_failed"
     if any(anomaly.get("rule_id") == "UNSUPPORTED_DOCUMENT_TYPE" for anomaly in anomalies):

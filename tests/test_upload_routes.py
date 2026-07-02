@@ -137,6 +137,29 @@ def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> No
     assert job["status"] == "completed"
 
 
+def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setenv("MAX_UPLOAD_SIZE_MB", "1")
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload",
+        data={
+            "loan_id": "LAP-LARGE-001",
+            "applicant_name": "Ramesh Kumar",
+            "coapplicant_name": "",
+            "product_type": "LAP",
+            "branch": "Delhi",
+        },
+        files={"file": ("huge.pdf", b"0" * ((1024 * 1024) + 1), "application/pdf")},
+    )
+
+    assert response.status_code == 400
+    assert "File too large" in response.json()["detail"]
+    assert not list((tmp_path / "uploads").glob("*.pdf"))
+
+
 def test_upload_view_posts_real_form_metadata(monkeypatch) -> None:
     import views.upload_view as upload_view
 

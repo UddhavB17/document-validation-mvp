@@ -290,3 +290,67 @@ def test_run_pipeline_marks_partial_scan_and_preserves_skipped_readability(
 
     assert len(skipped_rows) == 3
     assert all(row["is_readable"] is None for row in skipped_rows)
+
+
+def test_run_pipeline_records_ocr_error_as_partial_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "dmef.db"
+    pdf_path = tmp_path / "ocr_error.pdf"
+    output_dir = tmp_path / "processed"
+    monkeypatch.setattr(db, "DATABASE_PATH", db_path)
+    monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "1")
+    _create_blank_scanned_pdf(pdf_path, pages=1)
+
+    monkeypatch.setattr(
+        "services.pipeline.run_ocr_on_page",
+        lambda *_args, **_kwargs: {
+            "ocr_text": "",
+            "is_readable": False,
+            "confidence": 0.0,
+            "error": "OCR exceeded hard timeout of 1s",
+        },
+    )
+
+    init_db()
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO applications (loan_id, applicant_name, product_type, branch)
+            VALUES (?, ?, ?, ?)
+            """,
+            ("LAP-OCR-ERR-001", "Ramesh Kumar", "LAP", "Delhi"),
+        )
+        application_id = cursor.lastrowid
+        connection.execute(
+            """
+            INSERT INTO uploaded_files (
+                application_id, file_path, original_filename, file_size_kb,
+                total_pages, digital_pages, scanned_pages
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (application_id, str(pdf_path), "ocr_error.pdf", 1.0, 0, 0, 0),
+        )
+
+    result = run_pipeline(
+        pdf_path,
+        application_id,
+        output_dir=output_dir,
+        system_data={"loan_id": "LAP-OCR-ERR-001", "applicant_name": "Ramesh Kumar"},
+        product_type="LAP",
+        generate_llm_summary=False,
+    )
+
+    assert result["pipeline_status"] == "partial_failed"
+    assert result["partial_failure_count"] == 1
+    assert any(anomaly["rule_id"] == "PAGE_PROCESSING_ERROR" for anomaly in result["anomalies"])
+
+    with get_connection() as connection:
+        page = connection.execute(
+            "SELECT extracted_fields FROM pages WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+
+    assert "OCR exceeded hard timeout" in page["extracted_fields"]

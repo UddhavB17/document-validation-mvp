@@ -1,7 +1,11 @@
 import json
 
 from services.pipeline import _build_page_records
-from services.processing_policy import OCR_SKIPPED_DOCUMENT_TYPE, selected_scanned_page_numbers
+from services.processing_policy import (
+    OCR_SKIPPED_DOCUMENT_TYPE,
+    full_scan_ocr_enabled,
+    selected_scanned_page_numbers,
+)
 from services.exception_aggregator import aggregate
 
 
@@ -20,6 +24,38 @@ def test_selected_scanned_page_numbers_samples_large_packet(monkeypatch) -> None
     assert len(selected) == 5
     assert {1, 2, 3}.issubset(selected)
     assert 20 in selected
+
+
+def test_selected_scanned_page_numbers_handles_600_page_packet_by_budget(monkeypatch) -> None:
+    monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "30")
+    monkeypatch.delenv("DMEF_FULL_SCAN_OCR", raising=False)
+
+    selected = selected_scanned_page_numbers(_scanned_pages(600))
+
+    assert len(selected) == 30
+    assert {1, 2, 3, 4, 5}.issubset(selected)
+    assert {595, 596, 597, 598, 599, 600}.issubset(selected)
+
+
+def test_selected_scanned_page_numbers_can_full_scan_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "true")
+    monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "30")
+
+    selected = selected_scanned_page_numbers(_scanned_pages(600))
+
+    assert full_scan_ocr_enabled() is True
+    assert len(selected) == 600
+    assert selected == set(range(1, 601))
+
+
+def test_zero_ocr_budget_means_full_scan(monkeypatch) -> None:
+    monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "0")
+    monkeypatch.delenv("DMEF_FULL_SCAN_OCR", raising=False)
+
+    selected = selected_scanned_page_numbers(_scanned_pages(12))
+
+    assert full_scan_ocr_enabled() is True
+    assert selected == set(range(1, 13))
 
 
 def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> None:
