@@ -59,6 +59,7 @@ def render_application_results(application_id: int) -> None:
     _render_verdict_banner(application, summary)
     _render_ground_truth(ground_truth, application)
     _render_summary(application, data, summary, pages, product_type)
+    _render_result_explanation(data)
 
     if application.get("llm_summary"):
         st.subheader("AI Analysis")
@@ -304,6 +305,25 @@ def _render_summary(application: dict, data: dict, summary: dict, pages: list[di
     columns[1].metric("Digital Pages", uploaded_file.get("digital_pages") or "-")
     columns[2].metric("Scanned Pages", uploaded_file.get("scanned_pages") or "-")
     columns[3].metric("Issues (reviewer view)", summary["reviewer_count"])
+
+
+def _render_result_explanation(data: dict) -> None:
+    anomalies = data["anomalies"]
+    unsupported = next((item for item in anomalies if item.get("rule_id") == "UNSUPPORTED_DOCUMENT_TYPE"), None)
+    page_failures = [item for item in anomalies if item.get("rule_id") == "PAGE_PROCESSING_ERROR"]
+    missing = [item for item in anomalies if str(item.get("rule_id", "")).startswith("MISSING_DOC")]
+
+    st.subheader("Result Explanation")
+    if unsupported:
+        st.error("Unsupported input: the file does not contain enough confident loan-document matches.")
+        st.caption(str(unsupported.get("found_value") or unsupported.get("reason") or "Checklist evaluation skipped."))
+        return
+    if page_failures:
+        st.warning(f"Partial failure: {len(page_failures)} page(s) had processing errors and need manual review.")
+    if missing:
+        st.info(f"{len(missing)} checklist item(s) are missing because no confident matching page was found.")
+    if not unsupported and not page_failures and not missing:
+        st.success("The result is based on confident page classifications and completed processing.")
 
 
 def _render_document_checklist(data: dict, product_type: str) -> None:

@@ -4,11 +4,12 @@ from datetime import datetime
 from pathlib import Path
 import re
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from database.db import get_connection, init_db
 from services.file_validator import validate_file, validate_upload
+from services.job_runner import submit_job
 from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
@@ -113,7 +114,6 @@ async def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
 
 @router.post("")
 async def upload_file(
-    background_tasks: BackgroundTasks,
     loan_id: str = Form(...),
     applicant_name: str = Form(...),
     coapplicant_name: str | None = Form(None),
@@ -204,7 +204,7 @@ async def upload_file(
     )
     job_id = create_pipeline_job(application_id)
 
-    background_tasks.add_task(
+    submit_job(
         _run_pipeline_task,
         job_id,
         str(file_path),
@@ -219,6 +219,7 @@ async def upload_file(
         "loan_id": loan_id,
         "status": "processing",
         "pipeline_status": "queued",
+        "pipeline_outcome": "queued",
         "progress_url": f"/upload/{application_id}/progress",
         "total_pages": validation["total_pages"],
         "digital_pages": validation["digital_pages"],
@@ -238,13 +239,16 @@ def _run_pipeline_task(
 ) -> None:
     try:
         mark_job_started(job_id)
-        run_pipeline(
+        result = run_pipeline(
             file_path,
             application_id,
             system_data=system_data,
             product_type=product_type,
         )
-        mark_job_completed(job_id)
+        if result.get("pipeline_status") == "failed":
+            mark_job_failed(job_id, "Pipeline completed with failed outcome")
+        else:
+            mark_job_completed(job_id)
     except Exception as exc:  # noqa: BLE001
         mark_job_failed(job_id, str(exc))
         mark_failed(application_id, str(exc))

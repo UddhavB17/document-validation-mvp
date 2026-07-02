@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import os
 import time
 
 import streamlit as st
 
 from database.db import get_connection
+from services.config import get_int
 
 PROCESSING_STATUSES = frozenset({"uploaded", "processing", "ocr_completed"})
 FAILED_STATUSES = frozenset({"pipeline_failed"})
 FINAL_STATUSES = frozenset({"CLEAN", "NEEDS_REVIEW", "CRITICAL", "verified", "verified_with_override", "incomplete"})
-POLL_INTERVAL_SECONDS = int(os.getenv("DMEF_POLL_INTERVAL_SECONDS", "2"))
-POLL_TIMEOUT_SECONDS = int(os.getenv("DMEF_PROCESSING_TIMEOUT_SECONDS", "900"))
+POLL_INTERVAL_SECONDS = get_int("DMEF_POLL_INTERVAL_SECONDS", 2, minimum=1)
+POLL_TIMEOUT_SECONDS = get_int("DMEF_PROCESSING_TIMEOUT_SECONDS", 900, minimum=30)
 
 _PROCESSING_BANNER_CSS = """
 <style>
@@ -58,6 +58,19 @@ def load_application_status(application_id: int) -> str | None:
             (application_id,),
         ).fetchone()
     return row["status"] if row else None
+
+
+def load_progress_summary(application_id: int) -> dict | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT processed_pages, total_pages, current_page, percentage, message
+            FROM pipeline_progress
+            WHERE application_id = ?
+            """,
+            (application_id,),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def get_result_state(status: str | None) -> str:
@@ -111,7 +124,17 @@ def render_result_status_guard(
             st.warning("Processing is taking longer than expected. Please check Worklist again later.")
             return False
 
-        render_processing_banner(processing_message)
+        progress = load_progress_summary(application_id)
+        if progress:
+            progress_text = (
+                f"{processing_message}: "
+                f"{progress.get('processed_pages') or 0}/{progress.get('total_pages') or 0} pages processed"
+            )
+            if progress.get("current_page"):
+                progress_text += f" · working on page {progress['current_page']}"
+            render_processing_banner(progress_text)
+        else:
+            render_processing_banner(processing_message)
         time.sleep(POLL_INTERVAL_SECONDS)
         st.rerun()
         return False

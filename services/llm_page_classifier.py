@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import Any
 
+from services.config import get_bool, get_float, get_int
 from services.llm_client import call_llm_api
 
 VALID_DOCUMENT_TYPES = (
@@ -34,32 +34,20 @@ _MAX_TEXT_CHARS = 3500
 
 
 def is_llm_page_classifier_enabled() -> bool:
-    return os.getenv("ENABLE_LLM_PAGE_CLASSIFIER", "").lower() in {"1", "true", "yes", "on"}
+    return get_bool("ENABLE_LLM_PAGE_CLASSIFIER", False)
 
 
 def llm_classifier_min_confidence() -> float:
-    raw = os.getenv("LLM_CLASSIFIER_MIN_CONFIDENCE", "0.75")
-    try:
-        return float(raw)
-    except ValueError:
-        return 0.75
+    return get_float("LLM_CLASSIFIER_MIN_CONFIDENCE", 0.75, minimum=0.0, maximum=1.0)
 
 
 def llm_classifier_max_pages_per_file() -> int:
-    raw = os.getenv("LLM_CLASSIFIER_MAX_PAGES_PER_FILE", "100")
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return 100
+    return get_int("LLM_CLASSIFIER_MAX_PAGES_PER_FILE", 100, minimum=0)
 
 
 def llm_classifier_ocr_threshold() -> float:
     """Pages with OCR confidence below this may trigger LLM classification."""
-    raw = os.getenv("LLM_CLASSIFIER_OCR_THRESHOLD", "0.65")
-    try:
-        return float(raw)
-    except ValueError:
-        return 0.65
+    return get_float("LLM_CLASSIFIER_OCR_THRESHOLD", 0.65, minimum=0.0, maximum=1.0)
 
 
 def needs_llm_classification(

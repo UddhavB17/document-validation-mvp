@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from database.models import initialize_schema
 from routes import decisions, upload
+from services.config import log_effective_config
 
 load_dotenv()
 
@@ -32,6 +33,7 @@ app = FastAPI(
 def on_startup() -> None:
     """Initialise the SQLite schema on first run."""
     initialize_schema()
+    log_effective_config()
 
 
 # ── Routers ───────────────────────────────────

@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 
 from services import checklist_service
+from services.config import effective_config
 from services.page_quality import confident_pages_for_types, is_confident_document_match
 
 try:
@@ -349,8 +350,9 @@ def _non_loan_relevance_anomaly(
     unknown_count = sum(1 for item in doc_types if item in {"", "Unknown", "None"})
     unknown_ratio = unknown_count / max(1, len(doc_types))
 
-    min_expected_matches = int(os.getenv("MIN_CHECKLIST_MATCHES_FOR_LOAN_FILE", "2"))
-    max_unknown_ratio = float(os.getenv("MAX_UNKNOWN_RATIO_FOR_UNSUPPORTED_FILE", "0.60"))
+    config = effective_config()
+    min_expected_matches = config.min_checklist_matches_for_loan_file
+    max_unknown_ratio = config.max_unknown_ratio_for_unsupported_file
 
     # Keep valid loan files unaffected: only block weak, mostly-unclassified uploads.
     if matched_expected >= min_expected_matches or unknown_ratio < max_unknown_ratio:

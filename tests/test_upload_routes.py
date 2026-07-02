@@ -96,7 +96,7 @@ def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
 def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
-    monkeypatch.setattr(upload_route, "run_pipeline", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(upload_route, "run_pipeline", lambda *_args, **_kwargs: {"pipeline_status": "completed"})
 
     pdf_path = tmp_path / "upload.pdf"
     _create_pdf(pdf_path)
