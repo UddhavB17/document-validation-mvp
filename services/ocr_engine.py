@@ -49,14 +49,24 @@ def _configured_ocr_langs() -> list[str]:
 
 
 def _create_paddle_ocr(lang: str) -> Any:
-    """Create a PaddleOCR instance with CPU-safe defaults."""
+    """Create a PaddleOCR instance with CPU-safe, mobile-sized defaults."""
     from paddleocr import PaddleOCR as _PaddleOCR
+
+    det_limit = get_int("PADDLE_OCR_DET_LIMIT_SIDE_LEN", 1280, minimum=640, maximum=2400)
+    det_model = os.getenv("PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det").strip() or "PP-OCRv5_mobile_det"
+    if lang == "hi":
+        rec_model = os.getenv("PADDLE_OCR_REC_MODEL_HI", "devanagari_PP-OCRv5_mobile_rec").strip()
+    else:
+        rec_model = os.getenv("PADDLE_OCR_REC_MODEL_EN", "PP-OCRv5_mobile_rec").strip()
 
     base_kwargs = {
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,
         "use_textline_orientation": False,
         "lang": lang,
+        "text_detection_model_name": det_model,
+        "text_recognition_model_name": rec_model,
+        "text_det_limit_side_len": det_limit,
     }
     try:
         return _PaddleOCR(**base_kwargs, enable_mkldnn=False)
@@ -109,8 +119,10 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     When dual-language mode is enabled, Hindi and English models both run
     and their outputs are merged for downstream classification.
     """
+    from services.image_limits import prepare_image_path_for_ocr
     from services.preprocessing import check_readability
 
+    image_path = prepare_image_path_for_ocr(image_path)
     readability = check_readability(image_path)
     is_blurry = not readability["is_readable"]
     blur_score = readability["blur_score"]
@@ -320,4 +332,4 @@ def _soft_timeout_seconds() -> int:
 
 
 def _hard_timeout_seconds() -> int:
-    return get_int("OCR_HARD_TIMEOUT_SECONDS", 90, minimum=1)
+    return get_int("OCR_HARD_TIMEOUT_SECONDS", 60, minimum=1)

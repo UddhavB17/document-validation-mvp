@@ -289,11 +289,10 @@ class TestRunOcrOnPage:
 
         mock_model = MagicMock()
 
-        def slow_ocr(*_args, **_kwargs):
-            time.sleep(2)
-            return []
+        def slow_timeout(*_args, **_kwargs):
+            raise TimeoutError("OCR exceeded hard timeout of 1s")
 
-        monkeypatch.setattr(ocr_engine, "_run_paddle_ocr", slow_ocr)
+        monkeypatch.setattr(ocr_engine, "_run_paddle_ocr_with_timeout", slow_timeout)
         with patch.object(ocr_engine, "ocr_models", {"hi": mock_model}):
             result = run_ocr_on_page(img_path)
 

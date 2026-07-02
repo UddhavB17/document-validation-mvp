@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from database.db import get_connection, init_db
-from services.file_validator import validate_file, validate_upload
+from services.file_validator import max_file_size_bytes, validate_file, validate_upload
 from services.job_runner import submit_job
 from services.progress_tracker import (
     create_pipeline_job,
@@ -40,6 +40,26 @@ class PartnerPayload(BaseModel):
 def _safe_name(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip())
     return cleaned.strip("_") or "loan"
+
+
+async def _save_upload_stream(file: UploadFile, file_path: Path) -> int:
+    """Stream an upload to disk with a running size limit."""
+    bytes_written = 0
+    limit = max_file_size_bytes()
+    try:
+        with file_path.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                bytes_written += len(chunk)
+                if bytes_written > limit:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"File too large, max {limit // (1024 * 1024)}MB",
+                    )
+                output.write(chunk)
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
+    return bytes_written
 
 
 @router.post("/json", summary="Ingest partner OCR JSON payload")
@@ -124,12 +144,11 @@ async def upload_file(
     init_db()
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-    file_bytes = await file.read()
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     file_path = UPLOAD_DIR / f"{_safe_name(loan_id)}_{timestamp}.pdf"
-    file_path.write_bytes(file_bytes)
+    file_size_bytes = await _save_upload_stream(file, file_path)
 
-    validation = validate_file(file_path, len(file_bytes))
+    validation = validate_file(file_path, file_size_bytes)
     if not validation["valid"]:
         file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=validation["error"])
@@ -167,7 +186,7 @@ async def upload_file(
                 application_id,
                 str(file_path),
                 file.filename,
-                round(len(file_bytes) / 1024, 2),
+                round(file_size_bytes / 1024, 2),
                 validation["total_pages"],
                 validation["digital_pages"],
                 validation["scanned_pages"],
