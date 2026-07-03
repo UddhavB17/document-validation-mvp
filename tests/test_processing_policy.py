@@ -16,7 +16,18 @@ def _scanned_pages(count: int) -> list[dict]:
     ]
 
 
+def test_selected_scanned_page_numbers_defaults_to_full_scan(monkeypatch) -> None:
+    monkeypatch.delenv("DMEF_FULL_SCAN_OCR", raising=False)
+    monkeypatch.delenv("DMEF_MAX_SCANNED_OCR_PAGES", raising=False)
+
+    selected = selected_scanned_page_numbers(_scanned_pages(12))
+
+    assert full_scan_ocr_enabled() is True
+    assert selected == set(range(1, 13))
+
+
 def test_selected_scanned_page_numbers_samples_large_packet(monkeypatch) -> None:
+    monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "5")
 
     selected = selected_scanned_page_numbers(_scanned_pages(20))
@@ -27,8 +38,8 @@ def test_selected_scanned_page_numbers_samples_large_packet(monkeypatch) -> None
 
 
 def test_selected_scanned_page_numbers_handles_600_page_packet_by_budget(monkeypatch) -> None:
+    monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "30")
-    monkeypatch.delenv("DMEF_FULL_SCAN_OCR", raising=False)
 
     selected = selected_scanned_page_numbers(_scanned_pages(600))
 
@@ -59,6 +70,7 @@ def test_zero_ocr_budget_means_full_scan(monkeypatch) -> None:
 
 
 def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> None:
+    monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "2")
     ocr_calls: list[str] = []
 

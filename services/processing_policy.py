@@ -1,7 +1,7 @@
 """Operations-focused processing policy for large loan packets.
 
-The MVP should reduce reviewer work by checking high-value digital/system
-documents first, not by OCRing every physical-only page in a 400-page file.
+By default every scanned page is OCR'd. Set ``DMEF_MAX_SCANNED_OCR_PAGES`` or
+``DMEF_FULL_SCAN_OCR=false`` to sample large packets when runtime must be bounded.
 """
 
 from __future__ import annotations
@@ -16,18 +16,17 @@ INTERNAL_DOCUMENT_TYPES = frozenset({OCR_SKIPPED_DOCUMENT_TYPE})
 
 
 def max_scanned_pages_for_ocr() -> int:
-    """Return the scanned-page OCR budget for one uploaded PDF.
+    """Return the scanned-page OCR budget when sampling is enabled.
 
-    A 400-page packet can contain many property papers, stamp papers, photos,
-    and physical-only exhibits. The default keeps the MVP bounded while still
-    sampling the front, middle, and tail of large packets.
+    Ignored when :func:`full_scan_ocr_enabled` is True. Use a positive budget
+    with ``DMEF_FULL_SCAN_OCR=false`` to sample front, middle, and tail pages.
     """
     return get_int("DMEF_MAX_SCANNED_OCR_PAGES", 30, minimum=0)
 
 
 def full_scan_ocr_enabled() -> bool:
     """Return True when every scanned page should be OCR-rendered."""
-    return get_bool("DMEF_FULL_SCAN_OCR", False) or max_scanned_pages_for_ocr() == 0
+    return get_bool("DMEF_FULL_SCAN_OCR", True) or max_scanned_pages_for_ocr() == 0
 
 
 def selected_scanned_page_numbers(page_structure: list[dict[str, Any]]) -> set[int]:
