@@ -54,6 +54,8 @@ SCHEMA_STATEMENTS = [
         ocr_confidence REAL,
         document_type TEXT,
         classification_confidence REAL,
+        detection_method TEXT DEFAULT 'detected',
+        detected_page_number INTEGER,
         extracted_fields TEXT
     )
     """,
@@ -141,6 +143,8 @@ SCHEMA_STATEMENTS = [
 
 MIGRATION_STATEMENTS = [
     "ALTER TABLE validation_results ADD COLUMN s_no INTEGER",
+    "ALTER TABLE pages ADD COLUMN detection_method TEXT DEFAULT 'detected'",
+    "ALTER TABLE pages ADD COLUMN detected_page_number INTEGER",
 ]
 
 INDEX_STATEMENTS = [

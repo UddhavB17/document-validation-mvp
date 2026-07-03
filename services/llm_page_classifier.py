@@ -7,28 +7,10 @@ import re
 from typing import Any
 
 from services.config import get_bool, get_float, get_int
+from services.document_classifier import registry_document_types
 from services.llm_client import call_llm_api
 
-VALID_DOCUMENT_TYPES = (
-    "PAN Card",
-    "Aadhaar",
-    "Passport",
-    "Driving License",
-    "Voter ID",
-    "Sanction Letter",
-    "Loan Agreement",
-    "NACH Form",
-    "CRIF Report",
-    "Bank Statement",
-    "Salary Slip",
-    "Insurance Form",
-    "Stamp Duty",
-    "Guarantee Deed",
-    "Utility Bill",
-    "Property Document",
-    "Application Form",
-    "None",
-)
+VALID_DOCUMENT_TYPES = tuple(registry_document_types(include_unknown=True))
 
 _MAX_TEXT_CHARS = 3500
 
