@@ -167,13 +167,41 @@ def _line_after_label(text: str, *labels: str) -> str | None:
             # Try the remainder of the same line first
             parts = re.split(r"[:\-–]", line, maxsplit=1)
             if len(parts) == 2 and parts[1].strip():
-                return parts[1].strip()
+                candidate = _clean_name_like_value(parts[1])
+                if candidate:
+                    return candidate
             # Else next non-empty line
             for j in range(i + 1, len(lines)):
-                candidate = lines[j].strip()
+                candidate = _clean_name_like_value(lines[j])
                 if candidate:
                     return candidate
     return None
+
+
+def _clean_name_like_value(value: str) -> str | None:
+    candidate = value.strip(" :\t\r\n")
+    if not candidate:
+        return None
+    labels = {
+        "applicant name",
+        "borrower name",
+        "name of applicant",
+        "consumer name",
+        "card holder name",
+        "father's name",
+        "fathers name",
+        "name",
+        "s/o",
+        "d/o",
+        "w/o",
+        "आवेदक का नाम",
+        "नाम",
+    }
+    if candidate.lower() in labels or candidate in labels:
+        return None
+    if len(candidate) > 100:
+        return None
+    return candidate
 
 
 def _lines_after_label(text: str, label: str, max_lines: int = 3) -> str | None:

@@ -149,21 +149,62 @@ def _safe_extract(fn, text: str) -> str | None:
 
 def _extract_applicant_name(text: str) -> str | None:
     """Return the value following an applicant-name label."""
-    labels = ("applicant name", "borrower name", "name of applicant")
     lines = text.splitlines()
+    for i, line in enumerate(lines[:20]):
+        if not line.lower().startswith("for "):
+            continue
+        header_window = " ".join(lines[max(0, i - 3):i]).lower()
+        if "credit information" not in header_window:
+            continue
+        candidate = _clean_name_candidate(line[4:])
+        if candidate:
+            return candidate
+
+    labels = (
+        "applicant name",
+        "borrower name",
+        "name of applicant",
+        "consumer name",
+        "name",
+    )
     for i, line in enumerate(lines):
         line_lower = line.lower()
         if any(label in line_lower for label in labels):
             # Value may appear after a colon on the same line
             colon_parts = re.split(r"[:\-–]", line, maxsplit=1)
             if len(colon_parts) == 2 and colon_parts[1].strip():
-                return colon_parts[1].strip()
+                candidate = _clean_name_candidate(colon_parts[1])
+                if candidate:
+                    return candidate
             # Otherwise take the next non-empty line
             for j in range(i + 1, len(lines)):
-                candidate = lines[j].strip()
+                candidate = _clean_name_candidate(lines[j])
                 if candidate:
                     return candidate
     return None
+
+
+def _clean_name_candidate(value: str) -> str | None:
+    candidate = value.strip(" :\t\r\n")
+    if not candidate:
+        return None
+
+    labels = {
+        "applicant name",
+        "borrower name",
+        "name of applicant",
+        "consumer name",
+        "name",
+        "आवेदक का नाम",
+        "नाम",
+    }
+    if candidate.lower() in labels or candidate in labels:
+        return None
+    if re.search(r"(?:mobile|phone|pan|aadhaar|loan|amount|date|address)", candidate, re.IGNORECASE):
+        return None
+    if len(candidate) > 80:
+        return None
+    return candidate
 
 
 def _extract_pan_number(text: str) -> str | None:

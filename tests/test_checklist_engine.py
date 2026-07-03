@@ -24,6 +24,38 @@ def test_presence_any_passes_with_aadhaar() -> None:
     assert result["passed"] is True
 
 
+def test_technical_report_satisfies_technical_clearance_presence() -> None:
+    pages = [
+        {
+            "page_number": 490,
+            "document_type": "Technical Report",
+            "page_type": "digital",
+            "classification_confidence": 1.0,
+            "ocr_text": "MS FINCAP PVT. LTD. TECHNICAL VALUATION",
+        }
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert not any(anomaly["rule_id"] == "MISSING_DOC_S38" for anomaly in anomalies)
+
+
+def test_legal_title_evidence_satisfies_legal_clearance_presence() -> None:
+    pages = [
+        {
+            "page_number": 82,
+            "document_type": "Sanction Letter",
+            "page_type": "digital",
+            "classification_confidence": 1.0,
+            "ocr_text": "property has a clear, marketable, and unencumbered title for security",
+        }
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert not any(anomaly["rule_id"] == "MISSING_DOC_S37" for anomaly in anomalies)
+
+
 def test_presence_any_fails_when_none_found() -> None:
     result = check_presence_any([{"document_type": "Bank Statement"}], ["Aadhaar", "Voter ID"])
     assert result["passed"] is False
