@@ -233,6 +233,7 @@ def test_run_pipeline_marks_partial_scan_and_preserves_skipped_readability(
     pdf_path = tmp_path / "large_scanned.pdf"
     output_dir = tmp_path / "processed"
     monkeypatch.setattr(db, "DATABASE_PATH", db_path)
+    monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "2")
     _create_blank_scanned_pdf(pdf_path, pages=5)
 

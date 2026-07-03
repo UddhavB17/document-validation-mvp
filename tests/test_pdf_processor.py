@@ -170,6 +170,7 @@ def test_process_pdf_structure_renders_only_ocr_budgeted_scanned_pages(
     pytest.importorskip("fitz")
     from services.pdf_processor import process_pdf_structure
 
+    monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "2")
     pdf_path = tmp_path / "large_scanned.pdf"
     output_dir = tmp_path / "images"
@@ -194,8 +195,8 @@ def test_process_pdf_structure_600_pages_renders_only_budgeted_pages(
     pytest.importorskip("fitz")
     from services.pdf_processor import process_pdf_structure
 
+    monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "30")
-    monkeypatch.delenv("DMEF_FULL_SCAN_OCR", raising=False)
     pdf_path = tmp_path / "large_600_page_packet.pdf"
     output_dir = tmp_path / "images"
     _make_scanned_pdf(pdf_path, pages=600)
