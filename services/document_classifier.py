@@ -1,653 +1,267 @@
-"""Document page classifier for DMEF.
+"""Deterministic, registry-driven document page classifier.
 
-Classifies a single page of extracted text into one of the recognised
-MS Fincap document types.
-
-Public API
-----------
-classify_page(text: str) -> dict
-    Returns {"document_type": str, "confidence": float}.
-
-Priority order (most-specific first, generic last):
-  1.  PAN Card
-  2.  Aadhaar
-  3.  Passport
-  4.  Driving License
-  5.  Voter ID
-  6.  Sanction Letter   ← before Loan Agreement
-  7.  Loan Agreement
-  8.  NACH Form
-  9.  CRIF Report
-  10. Bank Statement
-  11. Salary Slip
-  12. Insurance Form
-  13. Stamp Duty
-  14. Guarantee Deed
-  15. Utility Bill
-  16. Property Document
-  17. Application Form
-  18. None              ← unclassified fallback
+The classifier intentionally stays rule/heuristic based.  It loads document
+type signal rules from ``data/document_type_registry.json`` and scores each
+candidate using the same mechanism: heading phrases, keyword groups, regex
+field patterns, and optional required signals.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
+from difflib import SequenceMatcher
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
 
-from services.classifier_keywords import HI, contains_term
+try:  # pragma: no cover - exercised when rapidfuzz is installed
+    from rapidfuzz import fuzz
+except Exception:  # pragma: no cover - tiny fallback for lean test envs
+    fuzz = None
 
 
-# ── Return-value helper ───────────────────────────────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_REGISTRY_PATH = PROJECT_ROOT / "data" / "document_type_registry.json"
+UNKNOWN_TYPE = "None"
+DEFAULT_MIN_CONFIDENCE = 0.50
+HIGH_CONFIDENCE = 0.75
 
-def _result(document_type: str, confidence: float = 1.0) -> dict:
-    return {"document_type": document_type, "confidence": confidence}
 
+def classify_page(text: str) -> dict[str, Any]:
+    """Classify a page of text into a configured document type.
 
-# ── Individual detectors (called in priority order) ───────────────────────────
-
-def _is_pan(text_lower: str) -> bool:
-    """PAN Card: permanent account number + income tax indicators."""
-    has_pan_phrase = (
-        "permanent account number" in text_lower
-        or "income tax department" in text_lower
-        or "pan card" in text_lower
-    )
-    has_pan_number = bool(re.search(r'\b[A-Z]{5}[0-9]{4}[A-Z]\b', text_lower.upper()))
-    return has_pan_phrase or has_pan_number
-
-
-def _is_aadhaar(text_lower: str) -> bool:
-    """Aadhaar: UIDAI-issued identity card."""
-    has_aadhaar_phrase = contains_term(
-        text_lower,
-        "aadhaar",
-        "unique identification",
-        "uidai",
-        "aadhar",
-        *HI["aadhaar"],
-    )
-    has_aadhaar_number = bool(re.search(r'\b\d{4}\s\d{4}\s\d{4}\b', text_lower))
-    return has_aadhaar_phrase or has_aadhaar_number
-
-
-def _is_passport(text_lower: str) -> bool:
-    """Passport: Republic of India travel document with passport number."""
-    has_republic = "republic of india" in text_lower
-    has_passport_phrase = (
-        "passport" in text_lower
-        or "ministry of external affairs" in text_lower
-    )
-    has_passport_number = bool(re.search(r'[A-Z][0-9]{7}', text_lower.upper()))
-    return has_republic and has_passport_phrase and has_passport_number
-
-
-def _is_driving_license(text_lower: str) -> bool:
-    """Driving License: MV Act + transport department + a date (expiry)."""
-    has_dl_phrase = (
-        "driving licence" in text_lower
-        or "driving license" in text_lower
-        or "motor vehicles act" in text_lower
-        or "transport department" in text_lower
-    )
-    has_date = bool(
-        re.search(
-            r'\b\d{2}[/-]\d{2}[/-]\d{2,4}\b'   # DD/MM/YYYY or DD-MM-YY
-            r'|\b\d{4}[/-]\d{2}[/-]\d{2}\b',    # YYYY-MM-DD
-            text_lower,
-        )
-    )
-    return has_dl_phrase and has_date
-
-
-def _is_voter_id(text_lower: str) -> bool:
-    """Voter ID / EPIC card issued by the Election Commission of India."""
-    return contains_term(
-        text_lower,
-        "election commission",
-        "voter id",
-        "electors photo identity",
-        "epic",
-        *HI["voter"],
-    )
-
-
-def _is_sanction_letter(text_lower: str) -> bool:
-    """Sanction Letter / Key Fact Statement."""
-    has_simple = contains_term(
-        text_lower,
-        "sanction letter",
-        "key fact statement",
-        "kfs",
-        "loan sanction",
-        *HI["sanction"],
-    )
-    has_compound = "sanctioned amount" in text_lower and "tenure" in text_lower
-    return has_simple or has_compound
-
-
-def _is_loan_agreement(text_lower: str) -> bool:
-    """Loan Agreement."""
-    return contains_term(
-        text_lower,
-        "loan agreement",
-        *HI["loan_agreement"],
-    ) or (
-        "borrower" in text_lower
-        and "lender" in text_lower
-        and "repayment" in text_lower
-    )
-
-
-def _is_nach_form(text_lower: str) -> bool:
-    """NACH / ECS mandate form."""
-    return (
-        "nach" in text_lower
-        or "national automated clearing house" in text_lower
-        or "ecs mandate" in text_lower
-        or "auto debit" in text_lower
-    )
-
-
-def _is_crif_report(text_lower: str) -> bool:
-    """CRIF / CIBIL credit report."""
-    return (
-        "crif" in text_lower
-        or "credit information report" in text_lower
-        or "cibil" in text_lower
-        or "credit score" in text_lower
-        or "credit report" in text_lower
-    )
-
-
-def _is_bank_statement(text_lower: str) -> bool:
-    """Bank Statement."""
-    has_statement = contains_term(
-        text_lower,
-        "bank statement",
-        "account statement",
-        "statement of account",
-        *HI["bank_statement"],
-    )
-    has_transaction_markers = (
-        "debit" in text_lower
-        and "credit" in text_lower
-        and "balance" in text_lower
-    )
-    return has_statement or has_transaction_markers
-
-
-def _is_salary_slip(text_lower: str) -> bool:
-    """Salary Slip / Pay Slip."""
-    return (
-        "salary slip" in text_lower
-        or "pay slip" in text_lower
-        or "payslip" in text_lower
-        or ("gross salary" in text_lower and "net salary" in text_lower)
-        or ("basic" in text_lower and "hra" in text_lower and "deductions" in text_lower)
-    )
-
-
-def _is_insurance_form(text_lower: str) -> bool:
-    """Insurance Form: life/property insurance with policy details."""
-    has_insurance = contains_term(text_lower, "insurance", *HI["insurance"])
-    has_type = (
-        "life" in text_lower
-        or "property" in text_lower
-        or "premium" in text_lower
-    )
-    has_policy = (
-        "policy" in text_lower
-        or "sum assured" in text_lower
-        or "nominee" in text_lower
-    )
-    return has_insurance and has_type and has_policy
-
-
-def _is_stamp_duty(text_lower: str) -> bool:
-    """Stamp Duty / e-Stamp / Franking."""
-    return contains_term(
-        text_lower,
-        "stamp duty",
-        "non judicial stamp",
-        "e-stamp",
-        "franking",
-        "stamp paper",
-        *HI["stamp"],
-    )
-
-
-def _is_guarantee_deed(text_lower: str) -> bool:
-    """Guarantee Deed."""
-    has_simple = contains_term(
-        text_lower,
-        "guarantee deed",
-        "deed of guarantee",
-        *HI["guarantee"],
-    )
-    has_compound = "guarantor" in text_lower and "deed" in text_lower
-    return has_simple or has_compound
-
-
-def _is_utility_bill(text_lower: str) -> bool:
-    """Utility Bill (electricity, water, gas, telephone, broadband)."""
-    has_simple = (
-        "electricity bill" in text_lower
-        or "water bill" in text_lower
-        or "gas bill" in text_lower
-        or "telephone bill" in text_lower
-        or "broadband" in text_lower
-    )
-    has_compound = "consumer no" in text_lower and "due date" in text_lower
-    return has_simple or has_compound
-
-
-def _is_property_document(text_lower: str) -> bool:
-    """Property Document / Sale Deed / Title Deed."""
-    return contains_term(
-        text_lower,
-        "sale deed",
-        "title deed",
-        "property document",
-        "registered deed",
-        *HI["property"],
-    ) or ("survey number" in text_lower and "plot" in text_lower)
-
-
-def _is_application_form(text_lower: str) -> bool:
-    """Loan Application Form."""
-    return contains_term(
-        text_lower,
-        "application form",
-        "loan application",
-        *HI["application"],
-    ) or ("applicant name" in text_lower and "date of birth" in text_lower)
-
-
-def _is_kyc_osv_mark(text_lower: str) -> bool:
-    return (
-        "original seen and verified" in text_lower
-        or "original seen verified" in text_lower
-        or re.search(r"\bosv\b", text_lower) is not None
-    )
-
-
-def _is_facility_agreement(text_lower: str) -> bool:
-    return "facility agreement" in text_lower
-
-
-def _is_passbook(text_lower: str) -> bool:
-    return contains_term(
-        text_lower,
-        "passbook",
-        "pass book",
-        "savings bank passbook",
-        *HI["passbook"],
-    )
-
-
-def _is_consent_letter(text_lower: str) -> bool:
-    return contains_term(
-        text_lower,
-        "consent letter",
-        "customer consent",
-        *HI["consent"],
-    )
-
-
-def _is_insurance_consent_letter(text_lower: str) -> bool:
-    return "insurance consent" in text_lower or (
-        "insurance" in text_lower and "consent" in text_lower and "tenure" in text_lower
-    )
-
-
-def _is_technical_report(text_lower: str) -> bool:
-    return contains_term(
-        text_lower,
-        "technical report",
-        "technical evaluation",
-        "technical valuation",
-        "valuation report",
-        *HI["technical"],
-    )
-
-
-def _is_technical_clearance(text_lower: str) -> bool:
-    return contains_term(text_lower, "technical clearance", *HI["technical"])
-
-
-def _is_legal_clearance(text_lower: str) -> bool:
-    return contains_term(
-        text_lower,
-        "legal clearance",
-        "legal report",
-        "title search report",
-        *HI["legal"],
-    )
-
-
-def _is_fi_report(text_lower: str) -> bool:
-    return (
-        "fi report" in text_lower
-        or "field investigation" in text_lower
-        or "field inquiry report" in text_lower
-    )
-
-
-def _is_pdc(text_lower: str) -> bool:
-    return (
-        "post dated cheque" in text_lower
-        or "post-dated cheque" in text_lower
-        or re.search(r"\bpdc\b", text_lower) is not None
-        or "security cheque" in text_lower
-    )
-
-
-def _is_disbursement_request(text_lower: str) -> bool:
-    return contains_term(
-        text_lower,
-        "request for disbursement",
-        "disbursement request",
-        *HI["disbursement"],
-    )
-
-
-def _is_bt_undertaking(text_lower: str) -> bool:
-    return "bt undertaking" in text_lower or "balance transfer undertaking" in text_lower
-
-
-def _is_crime_check_report(text_lower: str) -> bool:
-    return (
-        "crime check" in text_lower
-        or "criminal verification" in text_lower
-        or "police verification report" in text_lower
-    )
-
-
-def _is_customer_app_proof(text_lower: str) -> bool:
-    return (
-        "customer app" in text_lower
-        or "mobile app installed" in text_lower
-        or "ms fincap app" in text_lower
-        or "msfincap app" in text_lower
-    )
-
-
-def _is_bank_signature_verification(text_lower: str) -> bool:
-    return (
-        "bank signature verification" in text_lower
-        or re.search(r"\bbsv\b", text_lower) is not None
-        or "signature verification from bank" in text_lower
-    )
-
-
-def _is_ach_approval_document(text_lower: str) -> bool:
-    return (
-        "cbo approval" in text_lower
-        or "ceo approval" in text_lower
-        or "nach approval" in text_lower
-    )
-
-
-def _is_foreclosure_letter(text_lower: str) -> bool:
-    return (
-        "foreclosure letter" in text_lower
-        or "list of documents" in text_lower
-        or re.search(r"\blod\b", text_lower) is not None
-    )
-
-
-def _is_payment_favoring_letter(text_lower: str) -> bool:
-    return (
-        "payment favoring" in text_lower
-        or "favoring account" in text_lower
-        or "payee account" in text_lower
-    )
-
-
-def _is_pre_disbursement_conditions(text_lower: str) -> bool:
-    return (
-        "pre disbursement" in text_lower
-        or "pre-disbursement" in text_lower
-        or "sanction condition" in text_lower
-        or "special condition" in text_lower
-    )
-
-
-def _is_charges_deduction_document(text_lower: str) -> bool:
-    return (
-        "charges deduction" in text_lower
-        or "processing fee" in text_lower
-        or "login fee" in text_lower
-    )
-
-
-def _is_otc_pdd_document(text_lower: str) -> bool:
-    return (
-        re.search(r"\botc\b", text_lower) is not None
-        or re.search(r"\bpdd\b", text_lower) is not None
-        or "post disbursement document" in text_lower
-    )
-
-
-def _is_dual_name_declaration(text_lower: str) -> bool:
-    return (
-        "dual name" in text_lower
-        or "name mismatch declaration" in text_lower
-        or ("affidavit" in text_lower and "name" in text_lower)
-    )
-
-
-def _is_approval_letter(text_lower: str) -> bool:
-    return (
-        "approval of authority" in text_lower
-        or "sanctioning authority" in text_lower
-        or "approved by credit" in text_lower
-    )
-
-
-def _is_relationship_proof(text_lower: str) -> bool:
-    return "relationship proof" in text_lower or "relationship between" in text_lower
-
-
-def _is_vernacular_document(text_lower: str) -> bool:
-    return "vernacular" in text_lower or "regional language declaration" in text_lower
-
-
-def _is_agreement_signing_photo(text_lower: str) -> bool:
-    return (
-        "signing photo" in text_lower
-        or "agreement photo" in text_lower
-        or "signing video" in text_lower
-        or "agreement signing" in text_lower
-    )
-
-
-def _is_udyam_certificate(text_lower: str) -> bool:
-    return "udyam" in text_lower or "msme registration" in text_lower
-
-
-def _is_gst_certificate(text_lower: str) -> bool:
-    return "gst registration" in text_lower or "gstin" in text_lower
-
-
-def _is_shop_establishment_certificate(text_lower: str) -> bool:
-    return "shop establishment" in text_lower or "shop act" in text_lower
-
-
-def _is_income_tax_return(text_lower: str) -> bool:
-    return (
-        "income tax return" in text_lower
-        or "itr-" in text_lower
-        or "form 26as" in text_lower
-    )
-
-
-def _is_assessed_income_document(text_lower: str) -> bool:
-    return "assessed income" in text_lower or "income assessment" in text_lower
-
-
-def _is_operations_checklist(text_lower: str) -> bool:
-    return (
-        "non discrepancy checklist" in text_lower
-        or "operations checklist" in text_lower
-        or ("msfc / ndc" in text_lower and "checklist" in text_lower)
-    )
-
-
-# ── Main public function ──────────────────────────────────────────────────────
-
-def classify_page(text: str) -> dict:
-    """Classify a single page of extracted text into a document type.
-
-    Checks are performed in the priority order defined in the module docstring.
-    Returns the first match; unmatched pages return document_type="None".
-
-    Args:
-        text: Raw text extracted from a single PDF page.
-
-    Returns:
-        {"document_type": str, "confidence": float}
+    Returns a backward-compatible payload containing at least
+    ``document_type`` and ``confidence``.  Additional score metadata is
+    included for callers that want to inspect how the decision was made.
     """
-    text_lower = text.lower()
+    result = classify_page_with_candidates(text)
+    return {
+        "document_type": result["document_type"],
+        "confidence": result["confidence"],
+        "matched_signals": result.get("matched_signals", []),
+        "candidate_scores": result.get("candidate_scores", []),
+    }
 
-    # 1. PAN Card
-    if _is_pan(text_lower):
-        return _result("PAN Card")
 
-    # 2. Aadhaar
-    if _is_aadhaar(text_lower):
-        return _result("Aadhaar")
+def classify_page_with_candidates(text: str) -> dict[str, Any]:
+    registry = load_document_type_registry()
+    candidates = [_score_rule(text or "", rule) for rule in registry["document_types"]]
+    candidates.sort(key=lambda item: (-item["confidence"], item["priority"]))
 
-    # 3. Passport (specific: republic + passport phrase + passport number regex)
-    if _is_passport(text_lower):
-        return _result("Passport")
+    best = candidates[0] if candidates else _unknown_result([])
+    threshold = float(registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
+    if best["confidence"] < threshold:
+        return _unknown_result(candidates)
 
-    # 4. Driving License (dl phrase + date regex)
-    if _is_driving_license(text_lower):
-        return _result("Driving License")
+    return {
+        "document_type": best["document_type"],
+        "confidence": best["confidence"],
+        "matched_signals": best["matched_signals"],
+        "candidate_scores": _public_candidates(candidates),
+    }
 
-    # 5. Voter ID
-    if _is_voter_id(text_lower):
-        return _result("Voter ID")
 
-    # 6. Sanction Letter — checked BEFORE Loan Agreement
-    if _is_sanction_letter(text_lower):
-        return _result("Sanction Letter")
+@lru_cache(maxsize=4)
+def load_document_type_registry(path: str | Path | None = None) -> dict[str, Any]:
+    """Load the JSON registry.  The env var is useful for tests/local tuning."""
+    registry_path = Path(path or os.getenv("DOCUMENT_TYPE_REGISTRY_PATH") or DEFAULT_REGISTRY_PATH)
+    with registry_path.open("r", encoding="utf-8") as file:
+        registry = json.load(file)
 
-    # 6b. Facility Agreement — before generic Loan Agreement
-    if _is_facility_agreement(text_lower):
-        return _result("Facility Agreement")
+    document_types = registry.get("document_types")
+    if not isinstance(document_types, list) or not document_types:
+        raise ValueError(f"Document type registry {registry_path} has no document_types list")
 
-    # 7. Loan Agreement
-    if _is_loan_agreement(text_lower):
-        return _result("Loan Agreement")
+    for index, rule in enumerate(document_types):
+        if not rule.get("type"):
+            raise ValueError(f"Document type registry rule at index {index} has no type")
+        rule.setdefault("priority", index)
+        rule.setdefault("min_confidence", registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
+        rule.setdefault("headings", [])
+        rule.setdefault("keywords", [])
+        rule.setdefault("required_any", [])
+        rule.setdefault("required_regex", [])
+        rule.setdefault("field_patterns", [])
+        rule.setdefault("negative_keywords", [])
 
-    # 8. NACH Form
-    if _is_nach_form(text_lower):
-        return _result("NACH Form")
+    return registry
 
-    # 9. CRIF Report
-    if _is_crif_report(text_lower):
-        return _result("CRIF Report")
 
-    # 10. Passbook — before Bank Statement
-    if _is_passbook(text_lower):
-        return _result("Passbook")
+def registry_document_types(include_unknown: bool = True) -> list[str]:
+    types = [str(rule["type"]) for rule in load_document_type_registry()["document_types"]]
+    if include_unknown:
+        types.append(UNKNOWN_TYPE)
+    return types
 
-    # 11. Bank Statement
-    if _is_bank_statement(text_lower):
-        return _result("Bank Statement")
 
-    # 12. Salary Slip
-    if _is_salary_slip(text_lower):
-        return _result("Salary Slip")
+def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_text(text)
+    heading_area = _normalize_text("\n".join((text or "").splitlines()[:8])) or normalized[:1200]
+    matched: list[dict[str, Any]] = []
+    score = 0.0
 
-    # 13. Insurance Form
-    if _is_insurance_form(text_lower):
-        return _result("Insurance Form")
+    negative_hits = [term for term in rule.get("negative_keywords", []) if _contains(normalized, term)]
+    if negative_hits:
+        return _candidate(rule, 0.0, [{"kind": "negative_keyword", "value": term} for term in negative_hits])
 
-    # 14. Insurance Consent Letter
-    if _is_insurance_consent_letter(text_lower):
-        return _result("Insurance Consent Letter")
+    required_any = rule.get("required_any", [])
+    if required_any and not any(_contains(normalized, term) for term in required_any):
+        return _candidate(rule, 0.0, [])
 
-    # 15. Stamp Duty
-    if _is_stamp_duty(text_lower):
-        return _result("Stamp Duty")
+    required_regex = rule.get("required_regex", [])
+    if required_regex and not any(re.search(pattern, text or "", re.IGNORECASE | re.MULTILINE) for pattern in required_regex):
+        return _candidate(rule, 0.0, [])
 
-    # 16. Guarantee Deed
-    if _is_guarantee_deed(text_lower):
-        return _result("Guarantee Deed")
+    heading_score, heading_matches = _heading_score(heading_area, rule.get("headings", []))
+    score += heading_score
+    matched.extend(heading_matches)
 
-    # 17. Utility Bill
-    if _is_utility_bill(text_lower):
-        return _result("Utility Bill")
+    keyword_score, keyword_matches = _keyword_score(normalized, rule.get("keywords", []))
+    score += keyword_score
+    matched.extend(keyword_matches)
 
-    # 18. Property Document
-    if _is_property_document(text_lower):
-        return _result("Property Document")
+    field_score, field_matches = _regex_score(text or "", rule.get("field_patterns", []), "field_pattern", 0.25)
+    score += field_score
+    matched.extend(field_matches)
 
-    # 19. MSFC operational / legal documents
-    if _is_operations_checklist(text_lower):
-        return _result("Operations Checklist")
-    if _is_kyc_osv_mark(text_lower):
-        return _result("KYC OSV Mark")
-    if _is_consent_letter(text_lower):
-        return _result("Consent Letter")
-    if _is_technical_report(text_lower):
-        return _result("Technical Report")
-    if _is_technical_clearance(text_lower):
-        return _result("Technical Clearance Report")
-    if _is_legal_clearance(text_lower):
-        return _result("Legal Clearance Report")
-    if _is_fi_report(text_lower):
-        return _result("FI Report")
-    if _is_pdc(text_lower):
-        return _result("PDC")
-    if _is_disbursement_request(text_lower):
-        return _result("Disbursement Request")
-    if _is_bt_undertaking(text_lower):
-        return _result("BT Undertaking")
-    if _is_crime_check_report(text_lower):
-        return _result("Crime Check Report")
-    if _is_customer_app_proof(text_lower):
-        return _result("Customer App Proof")
-    if _is_bank_signature_verification(text_lower):
-        return _result("Bank Signature Verification")
-    if _is_ach_approval_document(text_lower):
-        return _result("ACH Approval Document")
-    if _is_foreclosure_letter(text_lower):
-        return _result("Foreclosure Letter")
-    if _is_payment_favoring_letter(text_lower):
-        return _result("Payment Favoring Letter")
-    if _is_pre_disbursement_conditions(text_lower):
-        return _result("Pre-Disbursement Conditions")
-    if _is_charges_deduction_document(text_lower):
-        return _result("Charges Deduction Document")
-    if _is_otc_pdd_document(text_lower):
-        return _result("OTC PDD Document")
-    if _is_dual_name_declaration(text_lower):
-        return _result("Dual Name Declaration")
-    if _is_approval_letter(text_lower):
-        return _result("Approval Letter")
-    if _is_relationship_proof(text_lower):
-        return _result("Relationship Proof")
-    if _is_vernacular_document(text_lower):
-        return _result("Vernacular Document")
-    if _is_agreement_signing_photo(text_lower):
-        return _result("Agreement Signing Photo")
-    if _is_udyam_certificate(text_lower):
-        return _result("Udyam Certificate")
-    if _is_gst_certificate(text_lower):
-        return _result("GST Certificate")
-    if _is_shop_establishment_certificate(text_lower):
-        return _result("Shop Establishment Certificate")
-    if _is_income_tax_return(text_lower):
-        return _result("Income Tax Return")
-    if _is_assessed_income_document(text_lower):
-        return _result("Assessed Income Document")
+    required_score, required_matches = _keyword_score(normalized, required_any, max_score=0.10, kind="required_keyword")
+    score += required_score
+    matched.extend(required_matches)
 
-    # 20. Application Form
-    if _is_application_form(text_lower):
-        return _result("Application Form")
+    required_regex_score, required_regex_matches = _regex_score(text or "", required_regex, "required_regex", 0.10)
+    score += required_regex_score
+    matched.extend(required_regex_matches)
 
-    # 18. Unclassified
-    return _result("None", confidence=0.0)
+    # Multiple independent signal families deserve high confidence.  Exact
+    # legacy-style matches should remain 1.0 for compatibility.
+    signal_kinds = {item["kind"] for item in matched}
+    if {"heading", "keyword"} <= signal_kinds or {"heading", "field_pattern"} <= signal_kinds:
+        score = max(1.0, score + 0.15)
+    if len(signal_kinds) >= 3:
+        score += 0.10
+
+    confidence = round(min(1.0, score), 3)
+    min_confidence = float(rule.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
+    if confidence < min_confidence:
+        confidence = 0.0
+
+    return _candidate(rule, confidence, matched)
+
+
+def _heading_score(text: str, headings: list[str]) -> tuple[float, list[dict[str, Any]]]:
+    matches: list[dict[str, Any]] = []
+    best = 0.0
+    for heading in headings:
+        normalized_heading = _normalize_text(heading)
+        if not normalized_heading:
+            continue
+        if normalized_heading in text:
+            best = max(best, 0.60)
+            matches.append({"kind": "heading", "value": heading, "score": 1.0})
+            continue
+        ratio = _partial_ratio(normalized_heading, text)
+        if ratio >= 0.86:
+            contribution = 0.52
+        elif ratio >= 0.76:
+            contribution = 0.42
+        else:
+            contribution = 0.0
+        if contribution:
+            best = max(best, contribution)
+            matches.append({"kind": "heading_fuzzy", "value": heading, "score": round(ratio, 3)})
+    return best, matches[:3]
+
+
+def _keyword_score(
+    text: str,
+    keywords: list[str],
+    *,
+    max_score: float = 0.30,
+    kind: str = "keyword",
+) -> tuple[float, list[dict[str, Any]]]:
+    if not keywords:
+        return 0.0, []
+    hits = [{"kind": kind, "value": term} for term in keywords if _contains(text, term)]
+    if not hits:
+        return 0.0, []
+    ratio = len(hits) / max(len(keywords), 1)
+    # Do not require every synonym.  Two strong keyword hits are usually enough.
+    capped_ratio = min(1.0, ratio * 2.0)
+    return max_score * capped_ratio, hits[:5]
+
+
+def _regex_score(
+    text: str,
+    patterns: list[str],
+    kind: str,
+    max_score: float,
+) -> tuple[float, list[dict[str, Any]]]:
+    if not patterns:
+        return 0.0, []
+    hits = []
+    for pattern in patterns:
+        if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
+            hits.append({"kind": kind, "value": pattern})
+    if not hits:
+        return 0.0, []
+    return max_score * min(1.0, len(hits) / max(len(patterns), 1) * 2.0), hits[:4]
+
+
+def _candidate(rule: dict[str, Any], confidence: float, matched: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "document_type": str(rule["type"]),
+        "confidence": confidence,
+        "priority": int(rule.get("priority", 9999)),
+        "matched_signals": matched,
+    }
+
+
+def _unknown_result(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "document_type": UNKNOWN_TYPE,
+        "confidence": 0.0,
+        "matched_signals": [],
+        "candidate_scores": _public_candidates(candidates),
+    }
+
+
+def _public_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "document_type": item["document_type"],
+            "confidence": item["confidence"],
+            "matched_signals": item.get("matched_signals", []),
+        }
+        for item in candidates[:5]
+    ]
+
+
+def _normalize_text(value: str) -> str:
+    lowered = str(value or "").lower()
+    lowered = lowered.replace("\u2013", "-").replace("\u2014", "-")
+    lowered = re.sub(r"[^0-9a-z\u0900-\u097f]+", " ", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def _contains(text: str, term: str) -> bool:
+    normalized_term = _normalize_text(term)
+    return bool(normalized_term and normalized_term in text)
+
+
+def _partial_ratio(needle: str, haystack: str) -> float:
+    if not needle or not haystack:
+        return 0.0
+    if fuzz is not None:
+        return float(fuzz.partial_ratio(needle, haystack)) / 100.0
+
+    window_size = max(len(needle), 1)
+    if len(haystack) <= window_size:
+        return SequenceMatcher(None, needle, haystack).ratio()
+    best = 0.0
+    step = max(1, window_size // 4)
+    for start in range(0, len(haystack) - window_size + 1, step):
+        window = haystack[start : start + window_size]
+        best = max(best, SequenceMatcher(None, needle, window).ratio())
+    return best

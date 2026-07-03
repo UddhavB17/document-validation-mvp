@@ -187,6 +187,27 @@ See `docs/document_validation_architecture.png`.
 Results are rendered inline on the Upload and Worklist views; there is no
 separate Results tab/page.
 
+## Document Type Classification
+
+Page classification is deterministic and registry-driven. The type rules live
+in `data/document_type_registry.json`; each document type can define heading
+phrases, keywords, required keywords, regex field patterns, negative keywords,
+priority, and a minimum confidence. To add a new document type, add a new entry
+to that JSON file rather than editing classifier code.
+
+The classifier scores every configured type and assigns the best candidate only
+when it crosses the configured confidence threshold. Pages that do not match
+any known signal stay in the explicit `Unknown` bucket.
+
+Multi-page documents are handled in `services/pipeline.py` with a sequential
+state machine. Pages are processed in PDF order. A high-confidence detection
+starts or reconfirms the current document type. A low-confidence or unmatched
+page inherits the most recent detected type when one exists, and stores
+classification metadata showing `detection_method = inherited` plus the page
+number where the type was last detected. If the sequence starts with unknown
+pages, those pages remain unknown until a real high-confidence detection is
+found.
+
 ## Collaboration Rules
 
 - Keep `main` stable.

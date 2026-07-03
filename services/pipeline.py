@@ -18,7 +18,7 @@ from database.db import get_connection
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
 from services.config import get_int
-from services.document_classifier import classify_page
+from services.document_classifier import HIGH_CONFIDENCE, classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.input_classifier import classify_input_text
@@ -332,10 +332,11 @@ def _build_page_records(
     total_pages = len(page_structure)
     selected_scanned_pages = selected_scanned_page_numbers(page_structure)
     total_scanned_pages = sum(1 for page in page_structure if page.get("page_type") == "scanned")
-    processing_order = sorted(
-        page_structure,
-        key=lambda item: (item.get("page_type") != "digital", int(item.get("page_number") or 0)),
-    )
+    processing_order = sorted(page_structure, key=lambda item: int(item.get("page_number") or 0))
+    current_type = "Unknown"
+    current_confidence = 0.0
+    current_detected_page: int | None = None
+
     for page_info in processing_order:
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
@@ -372,6 +373,8 @@ def _build_page_records(
                         "ocr_confidence": ocr_confidence,
                         "document_type": document_type,
                         "classification_confidence": classification.get("confidence", 0.0),
+                        "detection_method": "skipped",
+                        "detected_page_number": None,
                         "extracted_fields": extracted_fields,
                     }
                 )
@@ -401,8 +404,31 @@ def _build_page_records(
                 ocr_confidence=ocr_confidence,
                 llm_budget=llm_budget,
             )
-            document_type = _normalize_document_type(classification.get("document_type"))
+            assigned = _assign_sequential_document_type(
+                page_number=page_number,
+                text=text,
+                classification=classification,
+                current_type=current_type,
+                current_confidence=current_confidence,
+                current_detected_page=current_detected_page,
+            )
+            document_type = assigned["document_type"]
+            classification = {"confidence": assigned["confidence"]}
+            if assigned["detection_method"] == "detected":
+                current_type = document_type
+                current_confidence = float(assigned["confidence"] or 0.0)
+                current_detected_page = page_number
             extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
+            classification_meta = {
+                **classification_meta,
+                "assigned_type": document_type,
+                "detection_method": assigned["detection_method"],
+                "raw_document_type": assigned["raw_document_type"],
+                "raw_confidence": assigned["raw_confidence"],
+                "detected_page_number": assigned["detected_page_number"],
+            }
+            if assigned.get("inheritance_warning"):
+                classification_meta["inheritance_warning"] = assigned["inheritance_warning"]
             if classification_meta:
                 extracted_fields = {
                     **extracted_fields,
@@ -414,7 +440,16 @@ def _build_page_records(
             ocr_confidence = 0.0
             document_type = "Unknown"
             classification = {"confidence": 0.0}
-            extracted_fields = {"_processing_error": str(exc)}
+            extracted_fields = {
+                "_processing_error": str(exc),
+                "_classification": {
+                    "assigned_type": "Unknown",
+                    "detection_method": "unknown",
+                    "raw_document_type": "Unknown",
+                    "raw_confidence": 0.0,
+                    "detected_page_number": None,
+                },
+            }
 
         pages.append(
             {
@@ -426,6 +461,16 @@ def _build_page_records(
                 "ocr_confidence": ocr_confidence,
                 "document_type": document_type,
                 "classification_confidence": classification.get("confidence", 0.0),
+                "detection_method": (
+                    extracted_fields.get("_classification", {}).get("detection_method")
+                    if isinstance(extracted_fields.get("_classification"), dict)
+                    else "detected"
+                ),
+                "detected_page_number": (
+                    extracted_fields.get("_classification", {}).get("detected_page_number")
+                    if isinstance(extracted_fields.get("_classification"), dict)
+                    else page_number
+                ),
                 "extracted_fields": extracted_fields,
             }
         )
@@ -446,6 +491,71 @@ def _build_page_records(
             message=f"Processed {len(pages)}/{total_pages} pages",
         )
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+
+
+def _assign_sequential_document_type(
+    *,
+    page_number: int,
+    text: str,
+    classification: dict[str, Any],
+    current_type: str,
+    current_confidence: float,
+    current_detected_page: int | None,
+) -> dict[str, Any]:
+    raw_type = _normalize_document_type(classification.get("document_type"))
+    raw_confidence = float(classification.get("confidence") or 0.0)
+    if raw_type != "Unknown" and raw_confidence >= HIGH_CONFIDENCE:
+        return {
+            "document_type": raw_type,
+            "confidence": raw_confidence,
+            "detection_method": "detected",
+            "detected_page_number": page_number,
+            "raw_document_type": raw_type,
+            "raw_confidence": raw_confidence,
+        }
+
+    if current_type != "Unknown":
+        inherited_confidence = max(0.55, min(0.85, current_confidence * 0.85))
+        warning = "fresh-page-like-low-confidence" if _looks_like_fresh_page_without_match(text) else None
+        if warning:
+            inherited_confidence = min(inherited_confidence, 0.60)
+        return {
+            "document_type": current_type,
+            "confidence": round(inherited_confidence, 3),
+            "detection_method": "inherited",
+            "detected_page_number": current_detected_page,
+            "raw_document_type": raw_type,
+            "raw_confidence": raw_confidence,
+            "inheritance_warning": warning,
+        }
+
+    return {
+        "document_type": "Unknown",
+        "confidence": 0.0,
+        "detection_method": "unknown",
+        "detected_page_number": None,
+        "raw_document_type": raw_type,
+        "raw_confidence": raw_confidence,
+    }
+
+
+def _looks_like_fresh_page_without_match(text: str) -> bool:
+    header = " ".join((text or "").splitlines()[:6]).lower()
+    if not header:
+        return False
+    fresh_terms = (
+        "certificate",
+        "letter",
+        "agreement",
+        "deed",
+        "report",
+        "statement",
+        "form",
+        "application",
+        "undertaking",
+        "declaration",
+    )
+    return any(term in header for term in fresh_terms)
 
 
 def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
@@ -472,6 +582,8 @@ def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
                 "ocr_confidence": confidence,
                 "document_type": document_type,
                 "classification_confidence": confidence,
+                "detection_method": "detected",
+                "detected_page_number": page_number,
                 "extracted_fields": extracted_fields,
             }
         )
@@ -492,6 +604,8 @@ def _build_unsupported_page_records(
             "ocr_confidence": None,
             "document_type": "Unknown",
             "classification_confidence": 0.0,
+            "detection_method": "unknown",
+            "detected_page_number": None,
             "extracted_fields": {},
         }
         for page_info in page_structure
@@ -660,9 +774,11 @@ def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
                     ocr_confidence,
                     document_type,
                     classification_confidence,
+                    detection_method,
+                    detected_page_number,
                     extracted_fields
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     application_id,
@@ -674,6 +790,8 @@ def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
                     page.get("ocr_confidence"),
                     page.get("document_type"),
                     page.get("classification_confidence"),
+                    page.get("detection_method"),
+                    page.get("detected_page_number"),
                     json.dumps(page.get("extracted_fields") or {}, ensure_ascii=False),
                 ),
             )
