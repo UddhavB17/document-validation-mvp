@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 import streamlit as st
 
 from database.db import get_connection
 from services.config import get_int
+from services.progress_tracker import get_progress
 
 PROCESSING_STATUSES = frozenset({"uploaded", "processing", "ocr_completed"})
 FAILED_STATUSES = frozenset({"pipeline_failed"})
@@ -61,16 +63,7 @@ def load_application_status(application_id: int) -> str | None:
 
 
 def load_progress_summary(application_id: int) -> dict | None:
-    with get_connection() as connection:
-        row = connection.execute(
-            """
-            SELECT processed_pages, total_pages, current_page, percentage, message
-            FROM pipeline_progress
-            WHERE application_id = ?
-            """,
-            (application_id,),
-        ).fetchone()
-    return dict(row) if row else None
+    return get_progress(application_id)
 
 
 def get_result_state(status: str | None) -> str:
@@ -93,12 +86,44 @@ def render_processing_banner(message: str) -> None:
             '<div class="dmef-processing-banner">'
             '<span class="dmef-processing-text">'
             f"{message}"
-            '</span>'
+            "</span>"
             '<span class="dmef-processing-dots"></span>'
             "</div>"
         ),
         unsafe_allow_html=True,
     )
+
+
+def render_live_page_results(progress: dict, fallback_message: str) -> None:
+    processed_pages = progress.get("processed_pages") or 0
+    total_pages = progress.get("total_pages") or 0
+    current_page = progress.get("last_processed_page")
+    status_line = f"{fallback_message}: {processed_pages}/{total_pages} pages processed"
+    if current_page:
+        status_line += f" | working on page {current_page}"
+    st.caption(status_line)
+    if progress.get("percentage") is not None:
+        st.progress(min(float(progress.get("percentage") or 0) / 100.0, 1.0))
+
+    completed_pages = progress.get("completed_pages") or []
+    if not completed_pages:
+        st.info("Waiting for the first page result...")
+        return
+
+    rows = []
+    for page in completed_pages:
+        fields = page.get("extracted_fields") or {}
+        rows.append(
+            {
+                "Page": page.get("page_number"),
+                "Status": page.get("status"),
+                "Type": page.get("page_type"),
+                "Document": page.get("document_type") or "Unknown",
+                "Time (s)": _format_elapsed(page.get("elapsed_seconds")),
+                "Data": page.get("error") or _summarize_fields(fields),
+            }
+        )
+    st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def render_result_status_guard(
@@ -126,15 +151,9 @@ def render_result_status_guard(
 
         progress = load_progress_summary(application_id)
         if progress:
-            progress_text = (
-                f"{processing_message}: "
-                f"{progress.get('processed_pages') or 0}/{progress.get('total_pages') or 0} pages processed"
-            )
-            if progress.get("current_page"):
-                progress_text += f" · working on page {progress['current_page']}"
-            render_processing_banner(progress_text)
+            render_live_page_results(progress, processing_message)
         else:
-            render_processing_banner(processing_message)
+            st.info(processing_message)
         time.sleep(POLL_INTERVAL_SECONDS)
         st.rerun()
         return False
@@ -150,3 +169,22 @@ def render_result_status_guard(
         return False
 
     return True
+
+
+def _format_elapsed(value: object) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _summarize_fields(fields: dict) -> str:
+    public_fields = {
+        key: value
+        for key, value in fields.items()
+        if not str(key).startswith("_") and value not in (None, "", [], {})
+    }
+    if not public_fields:
+        return "-"
+    compact = json.dumps(public_fields, ensure_ascii=False)
+    return compact if len(compact) <= 180 else f"{compact[:177]}..."

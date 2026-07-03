@@ -139,6 +139,22 @@ SCHEMA_STATEMENTS = [
         completed_at TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_page_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application_id INTEGER NOT NULL REFERENCES applications(id),
+        page_number INTEGER NOT NULL,
+        total_pages INTEGER NOT NULL DEFAULT 0,
+        page_type TEXT,
+        document_type TEXT,
+        status TEXT NOT NULL DEFAULT 'completed',
+        elapsed_seconds REAL,
+        error TEXT,
+        extracted_fields TEXT,
+        completed_at TEXT NOT NULL,
+        UNIQUE(application_id, page_number)
+    )
+    """,
 ]
 
 MIGRATION_STATEMENTS = [
@@ -158,6 +174,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pipeline_progress_application_id ON pipeline_progress(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_application_id ON pipeline_jobs(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status ON pipeline_jobs(status)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_id ON pipeline_page_events(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_page ON pipeline_page_events(application_id, page_number)",
 ]
 
 

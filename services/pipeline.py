@@ -8,7 +8,10 @@ extraction, checklist checks, exception aggregation, and report persistence.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +20,6 @@ import fitz
 from database.db import get_connection
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
-from services.config import get_int
 from services.document_classifier import HIGH_CONFIDENCE, classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
@@ -35,6 +37,7 @@ from services.processing_policy import (
 from services.progress_tracker import (
     mark_completed,
     mark_page_started,
+    record_page_completed,
     start_tracking,
     update_page_progress,
     update_stage,
@@ -47,6 +50,60 @@ DOCUMENT_TYPE_ALIASES = {
     "PAN Card": "PAN",
     "None": "Unknown",
 }
+
+logger = logging.getLogger("dmef.pipeline")
+_LOGGING_CONFIGURED = False
+
+
+def _ensure_pipeline_logging() -> None:
+    global _LOGGING_CONFIGURED
+    if not _LOGGING_CONFIGURED and not logging.getLogger().handlers and not logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+            stream=sys.stdout,
+            force=False,
+        )
+        _LOGGING_CONFIGURED = True
+    logger.setLevel(logging.INFO)
+
+
+def _log_page_phase_start(page_number: int, total_pages: int, phase: str) -> float:
+    _ensure_pipeline_logging()
+    logger.info("[Page %s/%s] Phase: %-22s started", page_number, total_pages, phase)
+    _flush_log_handlers()
+    return time.perf_counter()
+
+
+def _log_page_phase_done(page_number: int, total_pages: int, phase: str, started_at: float) -> None:
+    elapsed = time.perf_counter() - started_at
+    logger.info("[Page %s/%s] Phase: %-22s done in %.2fs", page_number, total_pages, phase, elapsed)
+    _flush_log_handlers()
+
+
+def _log_page_phase_failed(page_number: int, total_pages: int, phase: str, started_at: float, exc: Exception) -> None:
+    elapsed = time.perf_counter() - started_at
+    logger.exception(
+        "[Page %s/%s] Phase: %-22s failed in %.2fs: %s",
+        page_number,
+        total_pages,
+        phase,
+        elapsed,
+        exc,
+    )
+    _flush_log_handlers()
+
+
+def _log_total_page_time(page_number: int, total_pages: int, started_at: float) -> float:
+    elapsed = time.perf_counter() - started_at
+    logger.info("[Page %s/%s] Total page time: %.2fs", page_number, total_pages, elapsed)
+    _flush_log_handlers()
+    return elapsed
+
+
+def _flush_log_handlers() -> None:
+    for handler in logger.handlers + logging.getLogger().handlers:
+        handler.flush()
 
 
 def run_pipeline(
@@ -311,17 +368,6 @@ def _extract_digital_text_by_page(pdf_path: Path) -> dict[int, str]:
         doc.close()
 
 
-def _progress_update_interval() -> int:
-    return get_int("DMEF_PROGRESS_UPDATE_EVERY", 25, minimum=1)
-
-
-def _should_emit_progress(processed_pages: int, *, force: bool = False) -> bool:
-    if force:
-        return True
-    interval = _progress_update_interval()
-    return processed_pages == 1 or processed_pages % interval == 0
-
-
 def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
@@ -338,24 +384,32 @@ def _build_page_records(
     current_detected_page: int | None = None
 
     for page_info in processing_order:
+        page_started_at = time.perf_counter()
+        phase_started_at: float | None = None
+        phase_name = "page processing"
+        page_status = "completed"
+        page_error: str | None = None
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
         image_path = page_info.get("image_path")
         needs_ocr = page_type == "scanned" and page_number in selected_scanned_pages
-        if application_id is not None and needs_ocr:
+        if application_id is not None:
             mark_page_started(
                 application_id,
                 current_page=page_number,
                 total_pages=total_pages,
-                message=f"OCR on page {page_number}/{total_pages}",
+                message=f"Working on page {page_number}/{total_pages}",
             )
 
         try:
             extracted_fields: dict[str, Any] = {}
+            phase_name = "page load"
+            phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
             if page_type == "digital":
                 text = digital_text_by_page.get(page_number, "")
                 is_readable = bool(text)
                 ocr_confidence = None
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
             elif page_number not in selected_scanned_pages:
                 text = ""
                 is_readable = None
@@ -363,22 +417,30 @@ def _build_page_records(
                 document_type = OCR_SKIPPED_DOCUMENT_TYPE
                 classification = {"confidence": 1.0}
                 extracted_fields = build_ocr_skipped_fields(page_number, total_scanned_pages)
-                pages.append(
-                    {
-                        "page_number": page_number,
-                        "page_type": page_type,
-                        "image_path": image_path,
-                        "is_readable": is_readable,
-                        "ocr_text": text,
-                        "ocr_confidence": ocr_confidence,
-                        "document_type": document_type,
-                        "classification_confidence": classification.get("confidence", 0.0),
-                        "detection_method": "skipped",
-                        "detected_page_number": None,
-                        "extracted_fields": extracted_fields,
-                    }
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                skipped_page = {
+                    "page_number": page_number,
+                    "page_type": page_type,
+                    "image_path": image_path,
+                    "is_readable": is_readable,
+                    "ocr_text": text,
+                    "ocr_confidence": ocr_confidence,
+                    "document_type": document_type,
+                    "classification_confidence": classification.get("confidence", 0.0),
+                    "detection_method": "skipped",
+                    "detected_page_number": None,
+                    "extracted_fields": extracted_fields,
+                }
+                pages.append(skipped_page)
+                page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
+                _record_completed_page_event(
+                    application_id,
+                    page=skipped_page,
+                    total_pages=total_pages,
+                    elapsed_seconds=page_elapsed,
+                    status="skipped",
                 )
-                if application_id is not None and _should_emit_progress(len(pages)):
+                if application_id is not None:
                     update_page_progress(
                         application_id,
                         processed_pages=len(pages),
@@ -391,7 +453,11 @@ def _build_page_records(
                     )
                 continue
             else:
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                phase_name = "OCR (PaddleOCR)"
+                phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
                 ocr_result = run_ocr_on_page(image_path or "")
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 text = ocr_result.get("ocr_text", "")
                 is_readable = ocr_result.get("is_readable", False)
                 ocr_confidence = ocr_result.get("confidence", 0.0)
@@ -399,11 +465,14 @@ def _build_page_records(
                 if ocr_result.get("error"):
                     extracted_fields["_processing_error"] = str(ocr_result["error"])
 
+            phase_name = "classification"
+            phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
             classification, classification_meta = classify_page_text(
                 text,
                 ocr_confidence=ocr_confidence,
                 llm_budget=llm_budget,
             )
+            _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
             assigned = _assign_sequential_document_type(
                 page_number=page_number,
                 text=text,
@@ -418,7 +487,10 @@ def _build_page_records(
                 current_type = document_type
                 current_confidence = float(assigned["confidence"] or 0.0)
                 current_detected_page = page_number
+            phase_name = "field extraction"
+            phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
             extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
+            _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
             classification_meta = {
                 **classification_meta,
                 "assigned_type": document_type,
@@ -435,6 +507,13 @@ def _build_page_records(
                     "_classification": classification_meta,
                 }
         except Exception as exc:  # noqa: BLE001
+            if phase_started_at is not None:
+                _log_page_phase_failed(page_number, total_pages, phase_name, phase_started_at, exc)
+            else:
+                logger.exception("[Page %s/%s] Page processing failed: %s", page_number, total_pages, exc)
+                _flush_log_handlers()
+            page_status = "error"
+            page_error = str(exc)
             text = ""
             is_readable = False
             ocr_confidence = 0.0
@@ -451,30 +530,38 @@ def _build_page_records(
                 },
             }
 
-        pages.append(
-            {
-                "page_number": page_number,
-                "page_type": page_type,
-                "image_path": image_path,
-                "is_readable": is_readable,
-                "ocr_text": text,
-                "ocr_confidence": ocr_confidence,
-                "document_type": document_type,
-                "classification_confidence": classification.get("confidence", 0.0),
-                "detection_method": (
-                    extracted_fields.get("_classification", {}).get("detection_method")
-                    if isinstance(extracted_fields.get("_classification"), dict)
-                    else "detected"
-                ),
-                "detected_page_number": (
-                    extracted_fields.get("_classification", {}).get("detected_page_number")
-                    if isinstance(extracted_fields.get("_classification"), dict)
-                    else page_number
-                ),
-                "extracted_fields": extracted_fields,
-            }
+        completed_page = {
+            "page_number": page_number,
+            "page_type": page_type,
+            "image_path": image_path,
+            "is_readable": is_readable,
+            "ocr_text": text,
+            "ocr_confidence": ocr_confidence,
+            "document_type": document_type,
+            "classification_confidence": classification.get("confidence", 0.0),
+            "detection_method": (
+                extracted_fields.get("_classification", {}).get("detection_method")
+                if isinstance(extracted_fields.get("_classification"), dict)
+                else "detected"
+            ),
+            "detected_page_number": (
+                extracted_fields.get("_classification", {}).get("detected_page_number")
+                if isinstance(extracted_fields.get("_classification"), dict)
+                else page_number
+            ),
+            "extracted_fields": extracted_fields,
+        }
+        pages.append(completed_page)
+        page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
+        _record_completed_page_event(
+            application_id,
+            page=completed_page,
+            total_pages=total_pages,
+            elapsed_seconds=page_elapsed,
+            status=page_status,
+            error=page_error,
         )
-        if application_id is not None and _should_emit_progress(len(pages), force=needs_ocr):
+        if application_id is not None:
             update_page_progress(
                 application_id,
                 processed_pages=len(pages),
@@ -491,6 +578,30 @@ def _build_page_records(
             message=f"Processed {len(pages)}/{total_pages} pages",
         )
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+
+
+def _record_completed_page_event(
+    application_id: int | None,
+    *,
+    page: dict[str, Any],
+    total_pages: int,
+    elapsed_seconds: float,
+    status: str,
+    error: str | None = None,
+) -> None:
+    if application_id is None:
+        return
+    record_page_completed(
+        application_id,
+        page_number=int(page.get("page_number") or 0),
+        total_pages=total_pages,
+        page_type=page.get("page_type"),
+        document_type=page.get("document_type"),
+        elapsed_seconds=elapsed_seconds,
+        extracted_fields=page.get("extracted_fields") or {},
+        status=status,
+        error=error,
+    )
 
 
 def _assign_sequential_document_type(
