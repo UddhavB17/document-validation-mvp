@@ -153,6 +153,32 @@ class TestExtractApplicantName:
         text = "Applicant Name\nMohit Singh\nAddress: 456 Park Lane"
         assert _extract_applicant_name(text) == "Mohit Singh"
 
+    def test_name_from_crif_for_line(self) -> None:
+        """CRIF-style 'For NAME' header should be treated as applicant name."""
+        from services.text_extractor import _extract_applicant_name
+
+        text = "Credit Information Report\nFor PEERU LAL\nName:\nPEERU LAL"
+        assert _extract_applicant_name(text) == "PEERU LAL"
+
+    def test_for_active_accounts_is_not_applicant_name(self) -> None:
+        """Later explanatory phrases must not override the report subject."""
+        from services.text_extractor import _extract_applicant_name
+
+        text = (
+            "Credit Information Report\n"
+            "For PEERU LAL\n"
+            "Account Summary\n"
+            "Tip: Current Balance is considered only for ACTIVE accounts."
+        )
+        assert _extract_applicant_name(text) == "PEERU LAL"
+
+    def test_hindi_label_is_skipped_when_name_is_next_line(self) -> None:
+        """A Hindi label must not be stored as the applicant name."""
+        from services.text_extractor import _extract_applicant_name
+
+        text = "Applicant Name\nआवेदक का नाम\nPeeru Lal"
+        assert _extract_applicant_name(text) == "Peeru Lal"
+
     def test_no_name_label_returns_none(self) -> None:
         """Text without a name label must return None."""
         from services.text_extractor import _extract_applicant_name

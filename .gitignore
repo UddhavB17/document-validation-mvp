@@ -13,6 +13,7 @@ data/uploads/*
 data/pages/*
 data/reports/*
 data/dmef.db
+data/dmef.db-*
 data/paddlex_cache/*
 *.pdf
 *.jpg
