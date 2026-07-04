@@ -47,6 +47,7 @@ from services.progress_tracker import (
     update_stage,
 )
 from services.report_generator import build_report, save_report_json
+from services.structured_llm_classifier import classify_with_structured_llm
 from services.text_extractor import extract_digital_text, extract_ground_truth
 
 try:  # pragma: no cover - exercised when rapidfuzz is available
@@ -528,6 +529,7 @@ def _build_page_records(
                 )
             else:
                 phase_name = "classification"
+                _mark_page_phase(application_id, page_number, total_pages, "classifying document")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
                 classification, classification_meta = classify_page_text(
                     text,
@@ -551,6 +553,7 @@ def _build_page_records(
                     current_confidence = float(assigned["confidence"] or 0.0)
                     current_detected_page = page_number
                 phase_name = "field extraction"
+                _mark_page_phase(application_id, page_number, total_pages, "extracting fields")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
                 extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
@@ -572,6 +575,29 @@ def _build_page_records(
                         **extracted_fields,
                         "_classification": classification_meta,
                     }
+                _mark_page_phase(application_id, page_number, total_pages, "checking Ollama classification")
+                structured_llm_result = classify_with_structured_llm(
+                    deterministic_document_type=document_type,
+                    structured_fields=extracted_fields,
+                    ocr_text=text,
+                )
+                if structured_llm_result:
+                    extracted_fields["_structured_llm_classification"] = structured_llm_result
+                    if structured_llm_result.get("document_type") != document_type:
+                        log_classification_review_event(
+                            application_id=application_id,
+                            page_number=page_number,
+                            predicted_type=document_type,
+                            confidence=float(classification.get("confidence") or 0.0),
+                            reason="structured_llm_disagreement",
+                            anchor_match_results={
+                                "deterministic_document_type": document_type,
+                                "structured_llm_document_type": structured_llm_result.get("document_type"),
+                                "structured_llm_confidence": structured_llm_result.get("confidence"),
+                                "structured_llm_reason": structured_llm_result.get("reason"),
+                            },
+                            llm_document_type=str(structured_llm_result.get("document_type") or ""),
+                        )
                 _log_classification_review_if_needed(
                     application_id=application_id,
                     page_number=page_number,
@@ -674,6 +700,22 @@ def _record_completed_page_event(
         extracted_fields=page.get("extracted_fields") or {},
         status=status,
         error=error,
+    )
+
+
+def _mark_page_phase(
+    application_id: int | None,
+    page_number: int,
+    total_pages: int,
+    phase: str,
+) -> None:
+    if application_id is None:
+        return
+    mark_page_started(
+        application_id,
+        current_page=page_number,
+        total_pages=total_pages,
+        message=f"Working on page {page_number}/{total_pages}: {phase}",
     )
 
 
