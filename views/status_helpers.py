@@ -98,9 +98,12 @@ def render_live_page_results(progress: dict, fallback_message: str) -> None:
     processed_pages = progress.get("processed_pages") or 0
     total_pages = progress.get("total_pages") or 0
     current_page = progress.get("last_processed_page")
+    progress_message = str(progress.get("message") or "").strip()
     status_line = f"{fallback_message}: {processed_pages}/{total_pages} pages processed"
     if current_page:
         status_line += f" | working on page {current_page}"
+    if progress_message:
+        status_line += f" | {progress_message}"
 
     completed_pages = progress.get("completed_pages") or []
     if not completed_pages:
@@ -116,11 +119,11 @@ def render_live_page_results(progress: dict, fallback_message: str) -> None:
 
 
 def render_processing_loading(progress: dict, status_line: str) -> None:
-    st.markdown("### Processing")
+    st.markdown("### Page Processing")
     st.caption(status_line)
     if progress.get("percentage") is not None:
         st.progress(min(float(progress.get("percentage") or 0) / 100.0, 1.0))
-    render_processing_banner("Reading the PDF and preparing the first page result")
+    render_processing_banner(status_line)
 
 
 def render_page_processing_table(completed_pages: list[dict]) -> None:
@@ -134,6 +137,7 @@ def render_page_processing_table(completed_pages: list[dict]) -> None:
                 "Status": _status_label(status),
                 "Type": page.get("page_type"),
                 "Document": page.get("document_type") or "Unknown",
+                "LLM Document": _llm_document_label(fields),
                 "Time (s)": _format_elapsed(page.get("elapsed_seconds")),
                 "Data": page.get("error") or _summarize_fields(fields),
             }
@@ -189,6 +193,20 @@ def _format_elapsed(value: object) -> str:
         return f"{float(value):.2f}"
     except (TypeError, ValueError):
         return "-"
+
+
+def _llm_document_label(fields: dict) -> str:
+    llm_result = fields.get("_structured_llm_classification") if isinstance(fields, dict) else None
+    if not isinstance(llm_result, dict):
+        return "-"
+    document_type = str(llm_result.get("document_type") or "").strip()
+    if not document_type:
+        return "-"
+    confidence = llm_result.get("confidence")
+    try:
+        return f"{document_type} ({float(confidence):.0%})"
+    except (TypeError, ValueError):
+        return document_type
 
 
 def _summarize_fields(fields: dict) -> str:
