@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +48,11 @@ from services.progress_tracker import (
 )
 from services.report_generator import build_report, save_report_json
 from services.text_extractor import extract_digital_text, extract_ground_truth
+
+try:  # pragma: no cover - exercised when rapidfuzz is available
+    from rapidfuzz import fuzz
+except Exception:  # pragma: no cover - fallback keeps the pipeline dependency-light
+    fuzz = None
 
 
 DOCUMENT_TYPE_ALIASES = {
@@ -558,6 +565,8 @@ def _build_page_records(
                 }
                 if assigned.get("inheritance_warning"):
                     classification_meta["inheritance_warning"] = assigned["inheritance_warning"]
+                if assigned.get("abstain_reason"):
+                    classification_meta["abstain_reason"] = assigned["abstain_reason"]
                 if classification_meta:
                     extracted_fields = {
                         **extracted_fields,
@@ -725,10 +734,17 @@ def _assign_sequential_document_type(
         }
 
     if current_type != "Unknown":
+        if _looks_like_fresh_page_without_match(text):
+            return {
+                "document_type": "Unknown",
+                "confidence": 0.0,
+                "detection_method": "unknown",
+                "detected_page_number": None,
+                "raw_document_type": raw_type,
+                "raw_confidence": raw_confidence,
+                "abstain_reason": "fresh-page-like-no-match",
+            }
         inherited_confidence = max(0.55, min(0.85, current_confidence * 0.85))
-        warning = "fresh-page-like-low-confidence" if _looks_like_fresh_page_without_match(text) else None
-        if warning:
-            inherited_confidence = min(inherited_confidence, 0.60)
         return {
             "document_type": current_type,
             "confidence": round(inherited_confidence, 3),
@@ -736,7 +752,7 @@ def _assign_sequential_document_type(
             "detected_page_number": current_detected_page,
             "raw_document_type": raw_type,
             "raw_confidence": raw_confidence,
-            "inheritance_warning": warning,
+            "inheritance_warning": None,
         }
 
     return {
@@ -750,10 +766,14 @@ def _assign_sequential_document_type(
 
 
 def _looks_like_fresh_page_without_match(text: str) -> bool:
-    header = " ".join((text or "").splitlines()[:6]).lower()
-    if not header:
+    raw_text = text or ""
+    header = " ".join(raw_text.splitlines()[:6])
+    normalized_header = _normalize_fresh_document_text(header)
+    normalized_text = _normalize_fresh_document_text(raw_text)
+    if not normalized_text:
         return False
-    fresh_terms = (
+
+    generic_header_terms = (
         "certificate",
         "letter",
         "agreement",
@@ -765,7 +785,64 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
         "undertaking",
         "declaration",
     )
-    return any(term in header for term in fresh_terms)
+    if any(term in normalized_header for term in generic_header_terms):
+        return True
+
+    strong_terms = (
+        "affidavit",
+        "notary",
+        "notarised",
+        "notarized",
+        "attested",
+        "stamp paper",
+        "non judicial",
+        "non-judicial",
+        "adhesive stamp",
+        "gps map camera",
+        "patta",
+        "शपथ",
+        "शपथ पत्र",
+        "हलफनामा",
+        "पट्टा",
+        "प्रपत्र",
+        "नोटरी",
+        "स्टाम्प",
+        "न्यायिक",
+        "घोषणा",
+        "अभियान",
+    )
+    if any(_normalize_fresh_document_text(term) in normalized_text for term in strong_terms):
+        return True
+
+    fuzzy_terms = ("शपथ", "हलफनामा", "पट्टा", "प्रपत्र", "नोटरी", "स्टाम्प", "न्यायिक", "घोषणा")
+    return any(_fuzzy_contains(normalized_text, _normalize_fresh_document_text(term)) for term in fuzzy_terms)
+
+
+def _normalize_fresh_document_text(value: str) -> str:
+    normalized = str(value or "").lower()
+    normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
+    normalized = re.sub(r"[^0-9a-z\u0900-\u097f-]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _fuzzy_contains(text: str, term: str, *, threshold: float = 0.85) -> bool:
+    if not text or not term:
+        return False
+    if term in text:
+        return True
+    if fuzz is not None:
+        return (float(fuzz.partial_ratio(term, text)) / 100.0) >= threshold
+
+    term_length = len(term)
+    if len(text) <= term_length:
+        return SequenceMatcher(None, term, text).ratio() >= threshold
+    best_ratio = 0.0
+    for start in range(0, len(text) - term_length + 1):
+        window = text[start : start + term_length]
+        best_ratio = max(best_ratio, SequenceMatcher(None, term, window).ratio())
+        if best_ratio >= threshold:
+            return True
+    return False
 
 
 def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:

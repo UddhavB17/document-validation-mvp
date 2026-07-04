@@ -82,3 +82,50 @@ def test_sequence_starting_unknown_does_not_inherit_until_first_detection() -> N
     assert assigned[0]["detection_method"] == "unknown"
     assert assigned[1]["detection_method"] == "unknown"
     assert assigned[3]["detection_method"] == "inherited"
+
+
+def test_fresh_page_devanagari_affidavit_does_not_inherit() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Application Form", "confidence": 0.95},
+            {"document_type": "None", "confidence": 0.0},
+        ],
+        texts=[
+            "Loan application form",
+            "यह शपथ पत्र प्रस्तुत है और NOTARY ATTESTED किया गया है",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Unknown"
+    assert assigned[1]["detection_method"] == "unknown"
+    assert assigned[1]["abstain_reason"] == "fresh-page-like-no-match"
+
+
+def test_fresh_page_patta_does_not_inherit() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "PAN", "confidence": 0.95},
+            {"document_type": "None", "confidence": 0.0},
+        ],
+        texts=[
+            "Permanent Account Number ABCDE1234F",
+            "राजस्थान पट्टा प्रपत्र 23-क ग्राम पंचायत भूमि विवरण",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Unknown"
+    assert assigned[1]["detection_method"] == "unknown"
+    assert assigned[1]["abstain_reason"] == "fresh-page-like-no-match"
+
+
+def test_blank_continuation_still_inherits() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Bank Statement", "confidence": 0.95},
+            {"document_type": "None", "confidence": 0.0},
+        ],
+        texts=["Bank Statement Account Statement Debit Credit Balance", ""],
+    )
+
+    assert assigned[1]["document_type"] == "Bank Statement"
+    assert assigned[1]["detection_method"] == "inherited"
