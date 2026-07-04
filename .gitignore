@@ -1,9 +1,13 @@
 .DS_Store
 .venv/
+.venv311/
+.codex-venv/
+.pytest_cache/
 __pycache__/
 *.pyc
 .env
 .env.*
+!.env.example
 
 # Never commit real/sensitive documents or generated processing outputs.
 uploads/*
@@ -11,6 +15,13 @@ outputs/*
 data/uploads/*
 data/pages/*
 data/reports/*
+data/dmef.db
+data/dmef.db-*
+database.db
+data/database.db
+data/paddlex_cache/*
+data/processed/*
+data/surya_cache/*
 *.pdf
 *.jpg
 *.jpeg

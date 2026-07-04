@@ -1,7 +1,20 @@
 {
+  "product_type": "Home Loan",
   "required_documents": [
     "PAN",
     "Aadhaar",
-    "Bank Statement"
-  ]
+    "Bank Statement",
+    "Salary Slip",
+    "Property Documents"
+  ],
+  "field_rules": {
+    "loan_amount": {
+      "type": "number",
+      "min": 100000,
+      "max": 10000000
+    },
+    "applicant_name": {
+      "type": "string"
+    }
+  }
 }
