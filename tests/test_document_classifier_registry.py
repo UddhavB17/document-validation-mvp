@@ -19,6 +19,8 @@ def test_fuzzy_ocr_noisy_heading_classified() -> None:
         ("GST Registration Certificate GSTIN 27ABCDE1234F1Z5", "GST Certificate"),
         ("Board Resolution resolved that board of directors authorised signatory", "Board Resolution"),
         ("No Objection Certificate NOC from previous lender", "NOC"),
+        ("TransUnion CIBIL Credit Information Report CIBIL Score Control Number", "CIBIL Report"),
+        ("CRIF High Mark Credit Information Report Credit Score", "CRIF Report"),
     ],
 )
 def test_expanded_registry_document_types(text: str, expected: str) -> None:

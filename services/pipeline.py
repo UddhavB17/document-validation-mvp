@@ -20,6 +20,8 @@ import fitz
 from database.db import get_connection
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
+from services.classification_review_log import log_classification_review_event
+from services.content_triage import triage_page_content
 from services.document_classifier import HIGH_CONFIDENCE, classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
@@ -409,6 +411,7 @@ def _build_page_records(
                 text = digital_text_by_page.get(page_number, "")
                 is_readable = bool(text)
                 ocr_confidence = None
+                ocr_metadata = {}
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
             elif page_number not in selected_scanned_pages:
                 text = ""
@@ -461,51 +464,112 @@ def _build_page_records(
                 text = ocr_result.get("ocr_text", "")
                 is_readable = ocr_result.get("is_readable", False)
                 ocr_confidence = ocr_result.get("confidence", 0.0)
+                ocr_metadata = dict(ocr_result)
                 extracted_fields = {}
                 if ocr_result.get("error"):
                     extracted_fields["_processing_error"] = str(ocr_result["error"])
 
-            phase_name = "classification"
+            phase_name = "content triage"
             phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
-            classification, classification_meta = classify_page_text(
-                text,
-                ocr_confidence=ocr_confidence,
-                llm_budget=llm_budget,
-            )
-            _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
-            assigned = _assign_sequential_document_type(
-                page_number=page_number,
+            triage = triage_page_content(
+                page_type=page_type,
                 text=text,
-                classification=classification,
-                current_type=current_type,
-                current_confidence=current_confidence,
-                current_detected_page=current_detected_page,
+                ocr_confidence=ocr_confidence,
+                ocr_metadata=ocr_metadata,
             )
-            document_type = assigned["document_type"]
-            classification = {"confidence": assigned["confidence"]}
-            if assigned["detection_method"] == "detected":
-                current_type = document_type
-                current_confidence = float(assigned["confidence"] or 0.0)
-                current_detected_page = page_number
-            phase_name = "field extraction"
-            phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
-            extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
             _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
-            classification_meta = {
-                **classification_meta,
-                "assigned_type": document_type,
-                "detection_method": assigned["detection_method"],
-                "raw_document_type": assigned["raw_document_type"],
-                "raw_confidence": assigned["raw_confidence"],
-                "detected_page_number": assigned["detected_page_number"],
-            }
-            if assigned.get("inheritance_warning"):
-                classification_meta["inheritance_warning"] = assigned["inheritance_warning"]
-            if classification_meta:
+
+            if triage["category"] == "photo":
+                document_type = "Property Image"
+                classification = {"confidence": triage["confidence"]}
                 extracted_fields = {
                     **extracted_fields,
-                    "_classification": classification_meta,
+                    "content_category": "property_image",
+                    "_triage": triage,
+                    "_classification": {
+                        "source": "triage",
+                        "assigned_type": document_type,
+                        "detection_method": "triage_photo",
+                        "raw_document_type": document_type,
+                        "raw_confidence": triage["confidence"],
+                        "detected_page_number": page_number,
+                    },
                 }
+            elif triage["category"] == "handwritten" and (ocr_confidence is None or float(ocr_confidence) < 0.70):
+                document_type = "Unknown"
+                classification = {"confidence": 0.0}
+                extracted_fields = {
+                    **extracted_fields,
+                    "review_flag": "low_confidence_needs_review",
+                    "_triage": triage,
+                    "_classification": {
+                        "source": "triage",
+                        "assigned_type": document_type,
+                        "detection_method": "triage_low_confidence",
+                        "raw_document_type": document_type,
+                        "raw_confidence": 0.0,
+                        "detected_page_number": None,
+                    },
+                }
+                log_classification_review_event(
+                    application_id=application_id,
+                    page_number=page_number,
+                    predicted_type=document_type,
+                    confidence=0.0,
+                    reason="low_confidence_needs_review",
+                    anchor_match_results={"triage": triage},
+                )
+            else:
+                phase_name = "classification"
+                phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
+                classification, classification_meta = classify_page_text(
+                    text,
+                    ocr_confidence=ocr_confidence,
+                    layout_metadata=ocr_metadata,
+                    llm_budget=llm_budget,
+                )
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                assigned = _assign_sequential_document_type(
+                    page_number=page_number,
+                    text=text,
+                    classification=classification,
+                    current_type=current_type,
+                    current_confidence=current_confidence,
+                    current_detected_page=current_detected_page,
+                )
+                document_type = assigned["document_type"]
+                classification = {"confidence": assigned["confidence"]}
+                if assigned["detection_method"] == "detected":
+                    current_type = document_type
+                    current_confidence = float(assigned["confidence"] or 0.0)
+                    current_detected_page = page_number
+                phase_name = "field extraction"
+                phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
+                extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                classification_meta = {
+                    **classification_meta,
+                    "assigned_type": document_type,
+                    "detection_method": assigned["detection_method"],
+                    "raw_document_type": assigned["raw_document_type"],
+                    "raw_confidence": assigned["raw_confidence"],
+                    "detected_page_number": assigned["detected_page_number"],
+                    "triage": triage,
+                }
+                if assigned.get("inheritance_warning"):
+                    classification_meta["inheritance_warning"] = assigned["inheritance_warning"]
+                if classification_meta:
+                    extracted_fields = {
+                        **extracted_fields,
+                        "_classification": classification_meta,
+                    }
+                _log_classification_review_if_needed(
+                    application_id=application_id,
+                    page_number=page_number,
+                    document_type=document_type,
+                    confidence=float(classification.get("confidence") or 0.0),
+                    metadata=classification_meta,
+                )
         except Exception as exc:  # noqa: BLE001
             if phase_started_at is not None:
                 _log_page_phase_failed(page_number, total_pages, phase_name, phase_started_at, exc)
@@ -602,6 +666,41 @@ def _record_completed_page_event(
         status=status,
         error=error,
     )
+
+
+def _log_classification_review_if_needed(
+    *,
+    application_id: int | None,
+    page_number: int,
+    document_type: str,
+    confidence: float,
+    metadata: dict[str, Any],
+) -> None:
+    anchor_type = metadata.get("anchor_document_type")
+    llm_type = metadata.get("llm_document_type")
+    anchor_matches = metadata.get("anchor_matches") or {}
+    if anchor_type and llm_type and anchor_type != llm_type:
+        log_classification_review_event(
+            application_id=application_id,
+            page_number=page_number,
+            predicted_type=document_type,
+            confidence=confidence,
+            reason="anchor_llm_disagreement",
+            anchor_match_results=anchor_matches,
+            llm_document_type=str(llm_type),
+        )
+        return
+
+    if confidence < 0.65:
+        log_classification_review_event(
+            application_id=application_id,
+            page_number=page_number,
+            predicted_type=document_type,
+            confidence=confidence,
+            reason="classification_confidence_below_threshold",
+            anchor_match_results=anchor_matches,
+            llm_document_type=str(llm_type) if llm_type else None,
+        )
 
 
 def _assign_sequential_document_type(
@@ -745,7 +844,8 @@ def _document_type_from_key(doc_key: str) -> str | None:
         "driving_licence": "Driving License",
         "crif": "CRIF Report",
         "crif_report": "CRIF Report",
-        "cibil": "CRIF Report",
+        "cibil": "CIBIL Report",
+        "cibil_report": "CIBIL Report",
         "bank_statement": "Bank Statement",
         "salary_slip": "Salary Slip",
         "sanction_letter": "Sanction Letter",

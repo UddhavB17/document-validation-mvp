@@ -160,15 +160,13 @@ def render_result_status_guard(
         start_time = st.session_state.setdefault(start_key, time.monotonic())
         elapsed_seconds = int(time.monotonic() - start_time)
 
-        if elapsed_seconds >= POLL_TIMEOUT_SECONDS:
-            st.warning("Processing is taking longer than expected. Please check Worklist again later.")
-            return False
-
         progress = load_progress_summary(application_id)
         if progress:
             render_live_page_results(progress, processing_message)
         else:
             st.info(processing_message)
+        if elapsed_seconds >= POLL_TIMEOUT_SECONDS:
+            st.warning("Processing is taking longer than expected. Already received page results remain visible here.")
         time.sleep(POLL_INTERVAL_SECONDS)
         st.rerun()
         return False
@@ -194,6 +192,14 @@ def _format_elapsed(value: object) -> str:
 
 
 def _summarize_fields(fields: dict) -> str:
+    visible_markers = {
+        key: fields.get(key)
+        for key in ("review_flag", "content_category")
+        if fields.get(key) not in (None, "", [], {})
+    }
+    if visible_markers:
+        return json.dumps(visible_markers, ensure_ascii=False)
+
     public_fields = {
         key: value
         for key, value in fields.items()

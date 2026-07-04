@@ -128,8 +128,13 @@ def test_crif_classified() -> None:
     assert _confidence(text) == 1.0
 
 
-def test_crif_classified_via_cibil() -> None:
-    text = "CIBIL Credit Report Bureau Score"
+def test_cibil_classified_separately_from_crif() -> None:
+    text = "TransUnion CIBIL Credit Information Report CIBIL Score Control Number"
+    assert _classify(text) == "CIBIL Report"
+
+
+def test_crif_high_mark_not_confused_with_cibil() -> None:
+    text = "CRIF High Mark Credit Information Report Credit Score"
     assert _classify(text) == "CRIF Report"
 
 

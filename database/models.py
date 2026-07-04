@@ -155,6 +155,19 @@ SCHEMA_STATEMENTS = [
         UNIQUE(application_id, page_number)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS classification_review_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application_id INTEGER NOT NULL REFERENCES applications(id),
+        page_number INTEGER NOT NULL,
+        predicted_type TEXT,
+        confidence REAL,
+        reason TEXT NOT NULL,
+        anchor_match_results TEXT,
+        llm_document_type TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
 ]
 
 MIGRATION_STATEMENTS = [
@@ -176,6 +189,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status ON pipeline_jobs(status)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_id ON pipeline_page_events(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_page ON pipeline_page_events(application_id, page_number)",
+    "CREATE INDEX IF NOT EXISTS idx_classification_review_log_application_id ON classification_review_log(application_id)",
 ]
 
 
