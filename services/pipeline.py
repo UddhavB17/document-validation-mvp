@@ -529,6 +529,7 @@ def _build_page_records(
                 )
             else:
                 phase_name = "classification"
+                _mark_page_phase(application_id, page_number, total_pages, "classifying document")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
                 classification, classification_meta = classify_page_text(
                     text,
@@ -552,6 +553,7 @@ def _build_page_records(
                     current_confidence = float(assigned["confidence"] or 0.0)
                     current_detected_page = page_number
                 phase_name = "field extraction"
+                _mark_page_phase(application_id, page_number, total_pages, "extracting fields")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
                 extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
@@ -573,6 +575,7 @@ def _build_page_records(
                         **extracted_fields,
                         "_classification": classification_meta,
                     }
+                _mark_page_phase(application_id, page_number, total_pages, "checking Ollama classification")
                 structured_llm_result = classify_with_structured_llm(
                     deterministic_document_type=document_type,
                     structured_fields=extracted_fields,
@@ -697,6 +700,22 @@ def _record_completed_page_event(
         extracted_fields=page.get("extracted_fields") or {},
         status=status,
         error=error,
+    )
+
+
+def _mark_page_phase(
+    application_id: int | None,
+    page_number: int,
+    total_pages: int,
+    phase: str,
+) -> None:
+    if application_id is None:
+        return
+    mark_page_started(
+        application_id,
+        current_page=page_number,
+        total_pages=total_pages,
+        message=f"Working on page {page_number}/{total_pages}: {phase}",
     )
 
 
