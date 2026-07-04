@@ -20,11 +20,11 @@ POLL_TIMEOUT_SECONDS = get_int("DMEF_PROCESSING_TIMEOUT_SECONDS", 900, minimum=3
 _PROCESSING_BANNER_CSS = """
 <style>
 .dmef-processing-banner {
-    background: #e8f4fd;
-    border: 1px solid #b6dff5;
-    border-left: 5px solid #0284c7;
-    border-radius: 10px;
-    color: #0c4a6e;
+    background: #132033;
+    border: 1px solid #28415f;
+    border-left: 5px solid #60a5fa;
+    border-radius: 6px;
+    color: #dbeafe;
     font-size: 1.05rem;
     font-weight: 600;
     margin: 0.75rem 0 1rem 0;
@@ -101,22 +101,37 @@ def render_live_page_results(progress: dict, fallback_message: str) -> None:
     status_line = f"{fallback_message}: {processed_pages}/{total_pages} pages processed"
     if current_page:
         status_line += f" | working on page {current_page}"
-    st.caption(status_line)
-    if progress.get("percentage") is not None:
-        st.progress(min(float(progress.get("percentage") or 0) / 100.0, 1.0))
 
     completed_pages = progress.get("completed_pages") or []
     if not completed_pages:
-        st.info("Waiting for the first page result...")
+        render_processing_loading(progress, status_line)
         return
 
+    st.markdown("### Page Processing")
+    st.caption(status_line)
+    if progress.get("percentage") is not None:
+        st.progress(min(float(progress.get("percentage") or 0) / 100.0, 1.0))
+    _render_processing_metrics(progress, completed_pages)
+    render_page_processing_table(completed_pages)
+
+
+def render_processing_loading(progress: dict, status_line: str) -> None:
+    st.markdown("### Processing")
+    st.caption(status_line)
+    if progress.get("percentage") is not None:
+        st.progress(min(float(progress.get("percentage") or 0) / 100.0, 1.0))
+    render_processing_banner("Reading the PDF and preparing the first page result")
+
+
+def render_page_processing_table(completed_pages: list[dict]) -> None:
     rows = []
     for page in completed_pages:
         fields = page.get("extracted_fields") or {}
+        status = str(page.get("status") or "completed")
         rows.append(
             {
                 "Page": page.get("page_number"),
-                "Status": page.get("status"),
+                "Status": _status_label(status),
                 "Type": page.get("page_type"),
                 "Document": page.get("document_type") or "Unknown",
                 "Time (s)": _format_elapsed(page.get("elapsed_seconds")),
@@ -188,3 +203,42 @@ def _summarize_fields(fields: dict) -> str:
         return "-"
     compact = json.dumps(public_fields, ensure_ascii=False)
     return compact if len(compact) <= 180 else f"{compact[:177]}..."
+
+
+def _render_processing_metrics(progress: dict, completed_pages: list[dict]) -> None:
+    total_pages = int(progress.get("total_pages") or 0)
+    completed_count = len(completed_pages)
+    failed_count = len([page for page in completed_pages if str(page.get("status") or "").lower() == "error"])
+    elapsed_values = [
+        float(page.get("elapsed_seconds") or 0)
+        for page in completed_pages
+        if page.get("elapsed_seconds") not in (None, "")
+    ]
+    avg_seconds = sum(elapsed_values) / len(elapsed_values) if elapsed_values else 0
+    columns = st.columns(4)
+    columns[0].metric("Completed", f"{completed_count}/{total_pages or '-'}")
+    columns[1].metric("Failed pages", failed_count)
+    columns[2].metric("Avg page time", f"{avg_seconds:.2f}s" if elapsed_values else "-")
+    columns[3].metric("ETA", _format_eta(progress.get("eta_seconds")))
+
+
+def _format_eta(value: object) -> str:
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return "-"
+    if seconds <= 0:
+        return "Done"
+    minutes, remaining = divmod(seconds, 60)
+    if minutes:
+        return f"{minutes}m {remaining}s"
+    return f"{remaining}s"
+
+
+def _status_label(status: str) -> str:
+    normalized = status.lower()
+    if normalized == "error":
+        return "Error"
+    if normalized == "skipped":
+        return "Skipped"
+    return "Completed"
