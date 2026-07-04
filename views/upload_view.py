@@ -14,18 +14,38 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 
 def render_upload_page() -> None:
-    st.title("DMEF - Document Matching Early Finder")
+    st.markdown(
+        """
+        <div class="dmef-page-title">
+            <h1>Document Intake</h1>
+            <div class="dmef-caption">Upload a loan-file packet, watch page results finish, then review the final checklist output.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     tab_upload, tab_json = st.tabs(["PDF Upload", "Partner JSON Intake"])
 
     with tab_upload:
         with st.form("upload_form"):
-            loan_id = st.text_input("Loan ID")
-            applicant_name = st.text_input("Applicant Name")
-            coapplicant_name = st.text_input("Co-applicant Name")
-            product_type = st.selectbox("Product Type", ["LAP", "MSME", "Personal Loan"])
-            branch = st.text_input("Branch")
-            uploaded_file = st.file_uploader("PDF file", type=["pdf"])
-            submitted = st.form_submit_button("Submit")
+            left, right = st.columns([1.15, 0.85])
+            with left:
+                st.subheader("Application Details")
+                id_col, product_col = st.columns([1, 1])
+                loan_id = id_col.text_input("Loan ID")
+                product_type = product_col.selectbox("Product Type", ["LAP", "MSME", "Personal Loan"])
+                applicant_name = st.text_input("Applicant Name")
+                coapplicant_name = st.text_input("Co-applicant Name")
+                branch = st.text_input("Branch")
+            with right:
+                st.subheader("Document")
+                uploaded_file = st.file_uploader("PDF file", type=["pdf"])
+                if uploaded_file is not None:
+                    size_kb = uploaded_file.size / 1024
+                    st.metric("Selected file size", f"{size_kb:,.0f} KB")
+                    st.caption(uploaded_file.name)
+                else:
+                    st.info("Select one PDF loan packet to begin.")
+            submitted = st.form_submit_button("Submit for processing", type="primary", use_container_width=True)
 
         if submitted:
             _submit_upload_form(
@@ -47,7 +67,7 @@ def render_upload_page() -> None:
             placeholder='{\n  "loan_id": "LN-001",\n  "digital_text": {},\n  "scanned_docs": {}\n}',
         )
 
-        if st.button("Run Checklist Evaluation"):
+        if st.button("Run Checklist Evaluation", type="primary"):
             if not raw_json.strip():
                 st.warning("Please paste the partner JSON first.")
             else:
@@ -112,11 +132,12 @@ def _submit_upload_form(
     result = response.json()
     st.session_state["last_uploaded_application_id"] = result["application_id"]
     st.session_state["application_id"] = result["application_id"]
-    st.caption(
-        f"Application ID {result['application_id']} queued — "
-        f"{result['total_pages']} pages "
-        f"({result['digital_pages']} digital, {result['scanned_pages']} scanned)."
-    )
+    queued_cols = st.columns(4)
+    queued_cols[0].metric("Application", result["application_id"])
+    queued_cols[1].metric("Total pages", result["total_pages"])
+    queued_cols[2].metric("Digital", result["digital_pages"])
+    queued_cols[3].metric("Scanned", result["scanned_pages"])
+    st.success("Upload accepted. Page-level results will appear below as processing completes.")
 
 
 def _submit_partner_json(payload: dict) -> None:
@@ -165,13 +186,15 @@ def _render_uploaded_application_result() -> None:
         return
 
     st.divider()
-    is_ready = render_result_status_guard(
-        int(application_id),
-        session_key_prefix=f"upload_{application_id}",
-        processing_message="Processing your loan file",
-    )
+    status_slot = st.empty()
+    with status_slot.container():
+        is_ready = render_result_status_guard(
+            int(application_id),
+            session_key_prefix=f"upload_{application_id}",
+            processing_message="Processing your loan file",
+        )
     if not is_ready:
         return
 
-    st.success("PDF has been processed.")
+    st.success("PDF processing complete.")
     render_application_results(int(application_id))
