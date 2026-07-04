@@ -45,7 +45,7 @@ def render_upload_page() -> None:
                     st.caption(uploaded_file.name)
                 else:
                     st.info("Select one PDF loan packet to begin.")
-            submitted = st.form_submit_button("Submit for processing", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Submit for processing", type="primary", width="stretch")
 
         if submitted:
             _submit_upload_form(

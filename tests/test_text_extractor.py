@@ -186,6 +186,57 @@ class TestExtractApplicantName:
         assert _extract_applicant_name("Loan Amount: 3,00,000\nPAN: XYZPQ9876K") is None
 
 
+class TestExtractApplicantNameByLayout:
+    @staticmethod
+    def _cell(text, x0, y0, x1, y1, page=0):
+        return {"text": text, "x0": x0, "y0": y0, "x1": x1, "y1": y1, "page": page}
+
+    def test_pairs_label_with_value_to_the_right(self):
+        from services.text_extractor import _extract_applicant_name_by_layout
+
+        cells = [
+            self._cell("Masked Aadhaar number", 23, 222, 135, 232),
+            self._cell("Name", 23, 258, 50, 268),
+            self._cell("Date of Birth", 23, 282, 79, 292),
+            self._cell("Gender", 23, 306, 57, 316),
+            self._cell("Radha Bai", 147, 260, 199, 270),
+            self._cell("01-01-1962", 147, 284, 204, 294),
+            self._cell("Female", 147, 307, 184, 317),
+        ]
+        assert _extract_applicant_name_by_layout(cells) == "Radha Bai"
+
+    def test_label_block_without_values_returns_none(self):
+        from services.text_extractor import _extract_applicant_name_by_layout
+
+        cells = [
+            self._cell("Name", 23, 258, 50, 268),
+            self._cell("Date of Birth", 23, 282, 79, 292),
+            self._cell("Gender", 23, 306, 57, 316),
+            self._cell("c/o , s/o", 23, 330, 58, 340),
+        ]
+        assert _extract_applicant_name_by_layout(cells) is None
+
+    def test_specific_label_wins_over_generic_name(self):
+        from services.text_extractor import _extract_applicant_name_by_layout
+
+        cells = [
+            self._cell("Name", 23, 100, 50, 110),
+            self._cell("Nominee Person", 147, 100, 220, 110),
+            self._cell("Applicant Name", 23, 140, 110, 150),
+            self._cell("Ramesh Kumar", 147, 140, 230, 150),
+        ]
+        assert _extract_applicant_name_by_layout(cells) == "Ramesh Kumar"
+
+    def test_value_on_different_page_is_ignored(self):
+        from services.text_extractor import _extract_applicant_name_by_layout
+
+        cells = [
+            self._cell("Name", 23, 258, 50, 268, page=0),
+            self._cell("Some Value", 147, 260, 220, 270, page=1),
+        ]
+        assert _extract_applicant_name_by_layout(cells) is None
+
+
 # ---------------------------------------------------------------------------
 # Integration tests: extract_ground_truth
 # ---------------------------------------------------------------------------

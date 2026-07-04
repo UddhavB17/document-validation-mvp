@@ -33,7 +33,7 @@ def render_activity_page() -> None:
     if summary["total"] > 0:
         st.bar_chart(chart_data.set_index("Decision"))
 
-    st.dataframe(pd.DataFrame(summary["rows"]), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(summary["rows"]), hide_index=True, width="stretch")
 
 
 def _load_today_summary() -> dict:

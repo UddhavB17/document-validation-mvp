@@ -47,7 +47,7 @@ def render_worklist_page(items: list[dict] | None = None) -> None:
         }
         for item in filtered
     ]
-    st.dataframe(pd.DataFrame(table_rows).drop(columns=["application_id"]), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(table_rows).drop(columns=["application_id"]), hide_index=True, width="stretch")
 
     selected_loan = st.selectbox("Open application", [row["Loan ID"] for row in table_rows])
     if st.button("Show Results"):

@@ -38,7 +38,7 @@ def render_results_page(exceptions: list[dict] | None = None, llm_summary: str =
         st.caption(f"Loan ID: {loan_id}")
     if llm_summary:
         st.info(llm_summary)
-    st.dataframe(exceptions or [], use_container_width=True)
+    st.dataframe(exceptions or [], width="stretch")
 
 
 def render_application_results(application_id: int) -> None:
@@ -218,7 +218,7 @@ def _render_anomaly_expanders(anomalies: list[dict], page_images: dict[int, str]
             with left:
                 image_path = page_images.get(page_number) if page_number is not None else None
                 if image_path and Path(image_path).exists():
-                    st.image(image_path, caption=f"Page {page_number}", use_container_width=True)
+                    st.image(image_path, caption=f"Page {page_number}", width="stretch")
                 else:
                     st.caption("Page image not available")
             with right:
@@ -262,7 +262,7 @@ def _render_document_checklist(data: dict, product_type: str) -> None:
         }
         for row in rows
     ]
-    st.dataframe(pd.DataFrame(display_rows), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(display_rows), hide_index=True, width="stretch")
 
     if missing_rows:
         st.error(
@@ -292,7 +292,7 @@ def _render_manual_review(product_type: str) -> bool:
                 ]
             ),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
     return st.checkbox("I confirm I have manually verified all items in the above list")
 

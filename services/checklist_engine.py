@@ -462,7 +462,7 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
         ground_name = ground_truth.get("applicant_name")
         pan_name = pan_fields.get("applicant_name")
         if ground_name and pan_name:
-            score = fuzz.ratio(str(ground_name), str(pan_name))
+            score = fuzz.ratio(str(ground_name).strip().lower(), str(pan_name).strip().lower())
             if 75 <= score < 90:
                 anomalies.append(
                     build_anomaly(
