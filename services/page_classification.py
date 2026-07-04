@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.bureau_anchors import classify_credit_bureau_by_anchors
 from services.document_classifier import classify_page
 from services.llm_page_classifier import (
     classify_page_with_llm,
@@ -36,14 +37,33 @@ def classify_page_text(
     text: str,
     *,
     ocr_confidence: float | None = None,
+    layout_metadata: dict[str, Any] | None = None,
     llm_budget: LlmClassifierBudget | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Classify page text using rules, optionally falling back to a local LLM."""
+    anchor_result = classify_credit_bureau_by_anchors(text, layout_metadata)
+    if anchor_result.get("document_type"):
+        return (
+            {
+                "document_type": anchor_result["document_type"],
+                "confidence": anchor_result.get("confidence", 0.0),
+            },
+            {
+                "source": "anchors",
+                "anchor_document_type": anchor_result.get("document_type"),
+                "anchor_confidence": anchor_result.get("confidence", 0.0),
+                "anchor_matches": anchor_result.get("matches", {}),
+            },
+        )
+
     rule_result = classify_page(text)
     metadata: dict[str, Any] = {
         "source": "rules",
         "rule_document_type": rule_result.get("document_type"),
         "rule_confidence": rule_result.get("confidence", 0.0),
+        "anchor_document_type": anchor_result.get("document_type"),
+        "anchor_confidence": anchor_result.get("confidence", 0.0),
+        "anchor_matches": anchor_result.get("matches", {}),
     }
 
     if llm_budget is None or not needs_llm_classification(rule_result, ocr_confidence):

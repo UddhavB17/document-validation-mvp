@@ -109,6 +109,12 @@ class _OcrResult(TypedDict, total=False):
     confidence: float
     blur_score: float
     ocr_languages: list[str]
+    char_count: int
+    word_count: int
+    line_count: int
+    image_width: int
+    image_height: int
+    text_density: float
     error: str
 
 
@@ -123,6 +129,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     from services.preprocessing import check_readability
 
     image_path = prepare_image_path_for_ocr(image_path)
+    image_width, image_height = _image_dimensions(image_path)
     readability = check_readability(image_path)
     is_blurry = not readability["is_readable"]
     blur_score = readability["blur_score"]
@@ -136,6 +143,12 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
             "confidence": 0.0,
             "blur_score": blur_score,
             "ocr_languages": [],
+            "char_count": 0,
+            "word_count": 0,
+            "line_count": 0,
+            "image_width": image_width,
+            "image_height": image_height,
+            "text_density": 0.0,
             "error": (
                 "PaddleOCR models are not loaded. "
                 "Install paddlepaddle and paddleocr to enable OCR."
@@ -178,6 +191,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
 
     ocr_text = _merge_ocr_texts(merged_texts)
     confidence = max(merged_scores) if merged_scores else 0.0
+    text_stats = _ocr_text_stats(ocr_text, image_width, image_height)
 
     if not ocr_text and errors:
         return {
@@ -187,6 +201,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
             "confidence": 0.0,
             "blur_score": blur_score,
             "ocr_languages": languages_used,
+            **text_stats,
             "error": "; ".join(errors),
         }
 
@@ -197,6 +212,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
         "confidence": confidence,
         "blur_score": blur_score,
         "ocr_languages": languages_used,
+        **text_stats,
     }
 
 
@@ -256,6 +272,34 @@ def _prepare_for_paddle(image: Any) -> Any:
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     return image
+
+
+def _image_dimensions(image_path: str | Path) -> tuple[int, int]:
+    try:
+        import cv2
+
+        image = cv2.imread(str(image_path))
+        if image is None:
+            return 0, 0
+        height, width = image.shape[:2]
+        return int(width), int(height)
+    except Exception:  # noqa: BLE001
+        return 0, 0
+
+
+def _ocr_text_stats(text: str, image_width: int, image_height: int) -> dict[str, Any]:
+    char_count = len((text or "").strip())
+    word_count = len(re.findall(r"\w+", text or ""))
+    line_count = len([line for line in (text or "").splitlines() if line.strip()])
+    megapixels = (image_width * image_height) / 1_000_000 if image_width and image_height else 1.0
+    return {
+        "char_count": char_count,
+        "word_count": word_count,
+        "line_count": line_count,
+        "image_width": image_width,
+        "image_height": image_height,
+        "text_density": round(char_count / max(megapixels, 0.1), 2),
+    }
 
 
 def _extract_ocr_text_and_confidence(result: Any) -> tuple[str, float]:

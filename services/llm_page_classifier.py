@@ -91,6 +91,8 @@ def _build_classifier_prompt(text: str) -> str:
         "You classify one page from an Indian NBFC loan file.\n"
         f"Choose exactly one document_type from this list: {types_list}.\n"
         "Use \"None\" only when the page is blank, unreadable, or not a loan document.\n"
+        "Do not merge credit bureaus: choose \"CIBIL Report\" only for TransUnion CIBIL/CIBIL pages, "
+        "and choose \"CRIF Report\" only for CRIF High Mark/CRIF pages.\n"
         "Respond with JSON only, no markdown:\n"
         '{"document_type": "...", "confidence": 0.0, "reason": "short reason"}\n\n'
         "Page text:\n"

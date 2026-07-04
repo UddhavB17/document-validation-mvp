@@ -5,6 +5,7 @@ import pytest
 import database.db as db
 from database.db import get_connection, init_db
 from services.pipeline import run_pipeline
+from services.pipeline import _build_page_records
 
 
 def _create_application_pdf(path: Path) -> None:
@@ -355,3 +356,59 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
         ).fetchone()
 
     assert "OCR exceeded hard timeout" in page["extracted_fields"]
+
+
+def test_build_page_records_routes_photo_without_classification(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "services.pipeline.run_ocr_on_page",
+        lambda *_args, **_kwargs: {
+            "ocr_text": "",
+            "is_readable": False,
+            "confidence": 0.10,
+            "char_count": 0,
+            "word_count": 0,
+            "line_count": 0,
+            "image_width": 1600,
+            "image_height": 1200,
+            "text_density": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        "services.pipeline.classify_page_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("classification should be skipped")),
+    )
+
+    pages = _build_page_records(
+        [{"page_number": 1, "page_type": "scanned", "image_path": "property_photo.png"}],
+        {},
+        application_id=None,
+    )
+
+    assert pages[0]["document_type"] == "Property Image"
+    assert pages[0]["extracted_fields"]["content_category"] == "property_image"
+
+
+def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "services.pipeline.run_ocr_on_page",
+        lambda *_args, **_kwargs: {
+            "ocr_text": "rent paid 4500",
+            "is_readable": True,
+            "confidence": 0.45,
+            "char_count": 14,
+            "word_count": 3,
+            "line_count": 1,
+            "image_width": 1000,
+            "image_height": 1400,
+            "text_density": 10.0,
+        },
+    )
+
+    pages = _build_page_records(
+        [{"page_number": 1, "page_type": "scanned", "image_path": "bill.png"}],
+        {},
+        application_id=None,
+    )
+
+    assert pages[0]["document_type"] == "Unknown"
+    assert pages[0]["extracted_fields"]["review_flag"] == "low_confidence_needs_review"

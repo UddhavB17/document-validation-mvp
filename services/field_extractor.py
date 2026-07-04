@@ -56,6 +56,7 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
         "Voter ID":         _extract_voter_id,
         "Driving License":  _extract_driving_license,
         "CRIF Report":      _extract_crif_report,
+        "CIBIL Report":     _extract_crif_report,
         "Bank Statement":   _extract_bank_statement,
         "Salary Slip":      _extract_salary_slip,
     }

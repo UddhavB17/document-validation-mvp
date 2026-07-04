@@ -76,10 +76,23 @@
       "min_confidence": 0.5
     },
     {
+      "type": "CIBIL Report",
+      "priority": 88,
+      "headings": ["TransUnion CIBIL", "CIBIL Report", "CIBIL Credit Report", "CIBIL Credit Information Report", "Consumer CIBIL Report"],
+      "keywords": ["transunion cibil", "cibil", "cibil score", "control number", "member id", "credit information report", "credit report"],
+      "required_any": ["cibil", "transunion cibil"],
+      "negative_keywords": ["crif", "high mark", "crif high mark"],
+      "field_patterns": ["\\bcibil\\b", "control\\s+number", "member\\s+id"],
+      "min_confidence": 0.5
+    },
+    {
       "type": "CRIF Report",
       "priority": 90,
-      "headings": ["CRIF Report", "CIBIL Report", "Credit Information Report", "Credit Report"],
-      "keywords": ["crif", "cibil", "credit information report", "credit report", "credit score"],
+      "headings": ["CRIF Report", "CRIF Credit Information Report", "CRIF High Mark", "CRIF High Mark Credit Information Report", "High Mark Credit Report"],
+      "keywords": ["crif", "crif high mark", "high mark", "credit information report", "credit report", "credit score"],
+      "required_any": ["crif", "crif high mark", "high mark"],
+      "negative_keywords": ["cibil", "transunion cibil"],
+      "field_patterns": ["\\bcrif\\b", "high\\s+mark"],
       "min_confidence": 0.5
     },
     {
