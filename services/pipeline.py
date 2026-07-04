@@ -47,6 +47,7 @@ from services.progress_tracker import (
     update_stage,
 )
 from services.report_generator import build_report, save_report_json
+from services.structured_llm_classifier import classify_with_structured_llm
 from services.text_extractor import extract_digital_text, extract_ground_truth
 
 try:  # pragma: no cover - exercised when rapidfuzz is available
@@ -572,6 +573,28 @@ def _build_page_records(
                         **extracted_fields,
                         "_classification": classification_meta,
                     }
+                structured_llm_result = classify_with_structured_llm(
+                    deterministic_document_type=document_type,
+                    structured_fields=extracted_fields,
+                    ocr_text=text,
+                )
+                if structured_llm_result:
+                    extracted_fields["_structured_llm_classification"] = structured_llm_result
+                    if structured_llm_result.get("document_type") != document_type:
+                        log_classification_review_event(
+                            application_id=application_id,
+                            page_number=page_number,
+                            predicted_type=document_type,
+                            confidence=float(classification.get("confidence") or 0.0),
+                            reason="structured_llm_disagreement",
+                            anchor_match_results={
+                                "deterministic_document_type": document_type,
+                                "structured_llm_document_type": structured_llm_result.get("document_type"),
+                                "structured_llm_confidence": structured_llm_result.get("confidence"),
+                                "structured_llm_reason": structured_llm_result.get("reason"),
+                            },
+                            llm_document_type=str(structured_llm_result.get("document_type") or ""),
+                        )
                 _log_classification_review_if_needed(
                     application_id=application_id,
                     page_number=page_number,
