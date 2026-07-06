@@ -9,6 +9,10 @@ from pydantic import ValidationError
 
 from database.models import FieldVerificationResult
 from services.config import get_bool
+from services.structured_llm_classifier import (
+    LOCAL_DEFAULT_URL as _LOCAL_DEFAULT_URL,
+    REMOTE_DEFAULT_URL as _REMOTE_DEFAULT_URL,
+)
 
 _DEFAULT_MODEL = "qwen2.5:7b"
 _SYSTEM_PROMPT = (
@@ -138,13 +142,27 @@ def _field_verifier_model() -> str:
 
 
 def _ollama_host() -> str:
+    if get_bool("OLLAMA_CLASSIFIER_USE_LOCAL", False):
+        configured = (
+            os.getenv("OLLAMA_HOST")
+            or os.getenv("LOCAL_OLLAMA_CLASSIFIER_URL")
+            or os.getenv("LOCAL_LLM_API_URL")
+            or _LOCAL_DEFAULT_URL
+        )
+        return _normalize_ollama_base_url(configured, default=_LOCAL_DEFAULT_URL)
+
     configured = (
         os.getenv("OLLAMA_HOST")
-        or os.getenv("LOCAL_OLLAMA_CLASSIFIER_URL")
         or os.getenv("OLLAMA_CLASSIFIER_URL")
+        or os.getenv("REMOTE_OLLAMA_CLASSIFIER_URL")
         or os.getenv("LOCAL_LLM_API_URL")
-        or "http://localhost:11434"
+        or _REMOTE_DEFAULT_URL
     )
+    return _normalize_ollama_base_url(configured, default=_REMOTE_DEFAULT_URL)
+
+
+def _normalize_ollama_base_url(url: str, *, default: str) -> str:
+    configured = url or default
     cleaned = configured.rstrip("/")
     if cleaned.endswith("/api/generate"):
         return cleaned[: -len("/api/generate")]

@@ -20,15 +20,18 @@ from typing import Any
 import fitz
 
 from database.db import get_connection
+from database.models import DocumentVerificationReport
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
 from services.classification_review_log import log_classification_review_event
 from services.content_triage import triage_page_content
 from services.document_classifier import HIGH_CONFIDENCE, classify_page
 from services.exception_aggregator import aggregate
+from services.field_verification import verify_all_fields
 from services.field_extractor import extract_fields
 from services.input_classifier import classify_input_text
 from services.llm_service import generate_explanation, summarize_exceptions
+from services.ocr_json_export import merge_public_extracted_fields, save_ocr_document_json
 from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_engine import run_ocr_on_page
 from services.pdf_processor import process_pdf_structure
@@ -49,6 +52,8 @@ from services.progress_tracker import (
 from services.report_generator import build_report, save_report_json
 from services.structured_llm_classifier import classify_with_structured_llm
 from services.text_extractor import extract_digital_text, extract_ground_truth
+from services.verification_pdf_parser import VerificationPdfParseError, parse_verification_pdf
+from services.verification_report_store import save_verification_report
 
 try:  # pragma: no cover - exercised when rapidfuzz is available
     from rapidfuzz import fuzz
@@ -174,9 +179,19 @@ def run_pipeline(
 
     update_stage(application_id, "processing_pages", "Classifying and extracting page fields")
     pages = _build_page_records(structure["pages"], digital_text_by_page, application_id=application_id)
+    update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
+    verification_report, document_page_numbers = _run_document_verification(pdf_path, application_id, pages)
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
+    ocr_json_path = save_ocr_document_json(
+        application_id,
+        pages,
+        output_dir=output_dir,
+        document_page_numbers=document_page_numbers,
+    )
+    if verification_report is not None:
+        save_verification_report(application_id, verification_report)
     _update_uploaded_file_counts(application_id, structure)
 
     update_stage(application_id, "running_checklist", "Running validation checks")
@@ -221,6 +236,12 @@ def run_pipeline(
             "partial_failure_count": len(processing_error_anomalies),
             "llm_summary": summary,
             "report_path": str(report_path),
+            "ocr_json_path": str(ocr_json_path),
+            "verification_report": (
+                verification_report.model_dump(mode="json")
+                if verification_report is not None
+                else None
+            ),
         }
     )
     mark_completed(application_id, result["final_status"], pipeline_status)
@@ -1056,6 +1077,46 @@ def _run_checklist_with_fallback(
             )
         )
         return anomalies
+
+
+def _run_document_verification(
+    pdf_path: Path,
+    application_id: int,
+    pages: list[dict[str, Any]],
+) -> tuple[DocumentVerificationReport | None, set[int] | None]:
+    try:
+        graviton_record, document_pages = parse_verification_pdf(str(pdf_path))
+    except VerificationPdfParseError as exc:
+        log_action(
+            application_id,
+            "verification_skipped",
+            {
+                "reason": str(exc),
+                "pdf_path": str(pdf_path),
+            },
+        )
+        return None, None
+
+    document_page_numbers = {int(page["page_number"]) for page in document_pages}
+    document_only_pages = [
+        page
+        for page in pages
+        if int(page.get("page_number") or 0) in document_page_numbers
+    ]
+    extracted_fields = merge_public_extracted_fields(document_only_pages)
+    report = verify_all_fields(extracted_fields, graviton_record)
+    log_action(
+        application_id,
+        "verification_completed",
+        {
+            "graviton_application_id": graviton_record.application_id,
+            "document_page_count": len(document_pages),
+            "overall_match": report.overall_match,
+            "match_percentage": report.match_percentage,
+            "needs_manual_review": report.needs_manual_review,
+        },
+    )
+    return report, document_page_numbers
 
 
 def _save_ground_truth(application_id: int, ground_truth: dict[str, Any]) -> None:
