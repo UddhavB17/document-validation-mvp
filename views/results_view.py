@@ -548,24 +548,11 @@ def _build_document_ocr_download_payload(application_id: int, data: dict) -> dic
     if saved_payload is not None:
         return saved_payload
 
-    page_events_by_number = {
-        int(page["page_number"]): page
-        for page in data.get("page_events", [])
-        if page.get("page_number") is not None
-    }
-    pages = []
-    for page in data.get("pages") or []:
-        page_number = int(page.get("page_number") or 0)
-        event = page_events_by_number.get(page_number, {})
-        pages.append(
-            {
-                **page,
-                "status": event.get("status") or "completed",
-                "elapsed_seconds": event.get("elapsed_seconds"),
-                "error": event.get("error"),
-            }
-        )
-    return build_ocr_document_json(application_id, pages)
+    return build_ocr_document_json(
+        application_id,
+        data.get("pages") or [],
+        page_events=data.get("page_events") or [],
+    )
 
 
 def _load_saved_document_ocr_json(application_id: int) -> dict | None:

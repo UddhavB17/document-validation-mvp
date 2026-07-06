@@ -13,10 +13,15 @@ def build_ocr_document_json(
     pages: list[dict[str, Any]],
     *,
     document_page_numbers: set[int] | None = None,
+    page_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Convert OCR-processed document pages into comparison-ready JSON."""
     selected_pages = _select_document_pages(pages, document_page_numbers)
-    documents = [_page_to_document_json(page) for page in selected_pages]
+    page_events_by_number = _page_events_by_number(page_events or [])
+    documents = [
+        _page_to_document_json(page, page_events_by_number.get(int(page.get("page_number") or 0)))
+        for page in selected_pages
+    ]
     return {
         "application_id": application_id,
         "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -32,12 +37,14 @@ def save_ocr_document_json(
     output_dir: str | Path = "data/processed",
     *,
     document_page_numbers: set[int] | None = None,
+    page_events: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Save OCR document-page JSON for later review or download."""
     export_payload = build_ocr_document_json(
         application_id,
         pages,
         document_page_numbers=document_page_numbers,
+        page_events=page_events,
     )
     target_dir = Path(output_dir) / f"application_{application_id}"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -75,24 +82,42 @@ def _select_document_pages(
     ]
 
 
-def _page_to_document_json(page: dict[str, Any]) -> dict[str, Any]:
+def _page_events_by_number(page_events: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return {
+        int(event["page_number"]): event
+        for event in page_events
+        if event.get("page_number") is not None
+    }
+
+
+def _page_to_document_json(page: dict[str, Any], event: dict[str, Any] | None = None) -> dict[str, Any]:
+    event = event or {}
     fields = page.get("extracted_fields") or {}
     if not isinstance(fields, dict):
         fields = {}
+    fields = _json_safe(fields)
+    page_details = _json_safe(page)
+    processing_event = _json_safe(event)
     return {
         "page_number": page.get("page_number"),
         "page_type": page.get("page_type"),
-        "status": page.get("status") or "completed",
+        "total_pages": event.get("total_pages"),
+        "status": event.get("status") or page.get("status") or "completed",
         "document_type": page.get("document_type") or "Unknown",
         "llm_document_type": _llm_document_type(fields),
+        "image_path": page.get("image_path"),
+        "is_readable": page.get("is_readable"),
         "ocr_confidence": page.get("ocr_confidence"),
         "classification_confidence": page.get("classification_confidence"),
         "detection_method": page.get("detection_method"),
         "detected_page_number": page.get("detected_page_number"),
-        "elapsed_seconds": page.get("elapsed_seconds"),
-        "error": page.get("error"),
+        "elapsed_seconds": event.get("elapsed_seconds") or page.get("elapsed_seconds"),
+        "completed_at": event.get("completed_at") or page.get("completed_at"),
+        "error": event.get("error") or page.get("error"),
         "ocr_text": page.get("ocr_text") or "",
         "extracted_fields": fields,
+        "page_details": page_details,
+        "processing_event": processing_event,
     }
 
 
@@ -102,3 +127,15 @@ def _llm_document_type(fields: dict[str, Any]) -> str | None:
         return None
     document_type = str(result.get("document_type") or "").strip()
     return document_type or None
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)

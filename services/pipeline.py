@@ -42,6 +42,7 @@ from services.processing_policy import (
     selected_scanned_page_numbers,
 )
 from services.progress_tracker import (
+    get_progress,
     mark_completed,
     mark_page_started,
     record_page_completed,
@@ -184,11 +185,13 @@ def run_pipeline(
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
+    progress_snapshot = get_progress(application_id) or {}
     ocr_json_path = save_ocr_document_json(
         application_id,
         pages,
         output_dir=output_dir,
         document_page_numbers=document_page_numbers,
+        page_events=progress_snapshot.get("completed_pages") or [],
     )
     if verification_report is not None:
         save_verification_report(application_id, verification_report)
