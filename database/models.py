@@ -1,4 +1,109 @@
-"""SQLite schema statements for DMEF."""
+"""SQLite schema statements and shared data models for DMEF."""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+
+
+class GravitonRecord(BaseModel):
+    """Ground-truth borrower data parsed from Graviton JSON pages in a PDF."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    application_id: int
+    applicant_name: str
+    father_name: str
+    date_of_birth: str
+    aadhaar_number: str
+    pan_number: str
+    phone_number: str
+    address: str
+    pin_code: str
+    loan_amount: str
+    loan_type: str
+
+    @field_validator("aadhaar_number", mode="before")
+    @classmethod
+    def validate_aadhaar_number(cls, value: Any) -> str:
+        """Normalize and validate Aadhaar numbers as exactly 12 digits."""
+        if value in (None, ""):
+            raise ValueError("aadhaar_number is required")
+        normalized = re.sub(r"\D", "", str(value))
+        if not re.fullmatch(r"\d{12}", normalized):
+            raise ValueError("aadhaar_number must contain exactly 12 digits")
+        return normalized
+
+    @field_validator("pan_number", mode="before")
+    @classmethod
+    def validate_pan_number(cls, value: Any) -> str:
+        """Normalize and validate PAN values using ABCDE1234F format."""
+        if value in (None, ""):
+            raise ValueError("pan_number is required")
+        normalized = str(value).strip().upper()
+        if not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", normalized):
+            raise ValueError("pan_number must match ABCDE1234F format")
+        return normalized
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def validate_phone_number(cls, value: Any) -> str:
+        """Normalize and validate phone numbers as exactly 10 digits."""
+        if value in (None, ""):
+            raise ValueError("phone_number is required")
+        normalized = re.sub(r"\D", "", str(value))
+        if not re.fullmatch(r"\d{10}", normalized):
+            raise ValueError("phone_number must contain exactly 10 digits")
+        return normalized
+
+    @field_validator("pin_code", mode="before")
+    @classmethod
+    def validate_pin_code(cls, value: Any) -> str:
+        """Normalize and validate Indian PIN codes as exactly 6 digits."""
+        if value in (None, ""):
+            raise ValueError("pin_code is required")
+        normalized = re.sub(r"\D", "", str(value))
+        if not re.fullmatch(r"\d{6}", normalized):
+            raise ValueError("pin_code must contain exactly 6 digits")
+        return normalized
+
+
+class FieldVerificationResult(BaseModel):
+    """Result of comparing one extracted field against ground-truth data."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    field_name: str
+    extracted_value: Any = None
+    db_value: Any = None
+    match: bool
+    confidence: float = Field(ge=0.0, le=1.0)
+    method: Literal["exact", "fuzzy", "llm"]
+    mismatch_reason: str | None = None
+
+
+class DocumentVerificationReport(BaseModel):
+    """Final document verification output for one application."""
+
+    application_id: int
+    overall_match: bool
+    total_fields_checked: int = Field(ge=0)
+    matched_fields: int = Field(ge=0)
+    failed_fields: list[str]
+    field_results: list[FieldVerificationResult]
+    verification_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    needs_manual_review: bool
+
+    @computed_field
+    @property
+    def match_percentage(self) -> float:
+        """Return matched fields as a percentage of all checked fields."""
+        if self.total_fields_checked <= 0:
+            return 0.0
+        return round((self.matched_fields / self.total_fields_checked) * 100.0, 2)
 
 SCHEMA_STATEMENTS = [
     """

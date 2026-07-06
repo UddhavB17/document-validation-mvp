@@ -13,6 +13,8 @@ pydantic>=2.7.0
 streamlit>=1.35.0
 pandas>=2.2.0
 requests>=2.32.0
+ollama>=0.4.0
+instructor>=1.7.0
 
 # PDF and validation
 pymupdf>=1.24.0
