@@ -613,6 +613,12 @@ def _build_page_records(
                 )
                 if structured_llm_result:
                     extracted_fields["_structured_llm_classification"] = structured_llm_result
+                    extracted_fields = _apply_llm_extraction_fallback(
+                        deterministic_document_type=document_type,
+                        structured_llm_result=structured_llm_result,
+                        text=text,
+                        extracted_fields=extracted_fields,
+                    )
                     if structured_llm_result.get("document_type") != document_type:
                         log_classification_review_event(
                             application_id=application_id,
@@ -659,6 +665,11 @@ def _build_page_records(
                 },
             }
 
+        extracted_fields = _ensure_page_has_json_details(
+            document_type=document_type,
+            text=text,
+            extracted_fields=extracted_fields,
+        )
         completed_page = {
             "page_number": page_number,
             "page_type": page_type,
@@ -731,6 +742,167 @@ def _record_completed_page_event(
         status=status,
         error=error,
     )
+
+
+def _apply_llm_extraction_fallback(
+    *,
+    deterministic_document_type: str,
+    structured_llm_result: dict[str, Any],
+    text: str,
+    extracted_fields: dict[str, Any],
+) -> dict[str, Any]:
+    if deterministic_document_type != "Unknown":
+        return extracted_fields
+
+    llm_document_type = str(structured_llm_result.get("document_type") or "").strip()
+    if not llm_document_type or llm_document_type == "Unknown":
+        return extracted_fields
+
+    fallback_fields = extract_fields(llm_document_type, text)
+    public_fields = {
+        key: value
+        for key, value in fallback_fields.items()
+        if not str(key).startswith("_") and value not in (None, "", [], {})
+    }
+    if not public_fields:
+        return {
+            **extracted_fields,
+            "_llm_field_extraction": {
+                "source": "structured_llm_classification",
+                "document_type": llm_document_type,
+                "confidence": structured_llm_result.get("confidence"),
+                "status": "no_fields_extracted",
+            },
+        }
+
+    fallback_fields = refine_field_assignments(
+        document_type=llm_document_type,
+        ocr_text=text,
+        extracted_fields=fallback_fields,
+    )
+    fallback_fields["_llm_field_extraction"] = {
+        "source": "structured_llm_classification",
+        "document_type": llm_document_type,
+        "confidence": structured_llm_result.get("confidence"),
+        "status": "fields_extracted",
+        "field_names": sorted(public_fields),
+    }
+    return {
+        **extracted_fields,
+        **fallback_fields,
+    }
+
+
+def _ensure_page_has_json_details(
+    *,
+    document_type: str,
+    text: str,
+    extracted_fields: dict[str, Any],
+) -> dict[str, Any]:
+    if _has_informative_public_fields(extracted_fields):
+        return extracted_fields
+    if not str(text or "").strip():
+        return extracted_fields
+
+    generic_fields = _extract_generic_page_details(document_type=document_type, text=text)
+    if not generic_fields:
+        return extracted_fields
+    return {
+        **extracted_fields,
+        **generic_fields,
+        "_generic_field_extraction": {
+            "source": "ocr_text_generic_fallback",
+            "reason": "No document-specific fields were extracted from this non-empty page.",
+            "status": "fields_extracted",
+        },
+    }
+
+
+def _has_informative_public_fields(fields: dict[str, Any]) -> bool:
+    ignored_fields = {"content_category", "review_flag"}
+    for field_name, value in (fields or {}).items():
+        if str(field_name).startswith("_") or field_name in ignored_fields:
+            continue
+        if value not in (None, "", [], {}):
+            return True
+    return False
+
+
+def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str, Any]:
+    normalized_text = str(text or "").strip()
+    if not normalized_text:
+        return {}
+
+    lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
+    words = re.findall(r"\S+", normalized_text)
+    details: dict[str, Any] = {
+        "generic_document_type": document_type or "Unknown",
+        "generic_text_excerpt": normalized_text[:700],
+        "generic_char_count": len(normalized_text),
+        "generic_word_count": len(words),
+        "generic_line_count": len(lines),
+    }
+
+    detected = _generic_detected_values(normalized_text)
+    for key, value in detected.items():
+        if value:
+            details[key] = value
+
+    keywords = _generic_keywords(normalized_text)
+    if keywords:
+        details["generic_keywords"] = keywords
+    return details
+
+
+def _generic_detected_values(text: str) -> dict[str, list[str]]:
+    return {
+        "generic_pan_numbers": _unique_matches(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", text.upper()),
+        "generic_aadhaar_numbers": _unique_matches(r"\b\d{4}\s?\d{4}\s?\d{4}\b", text),
+        "generic_phone_numbers": _unique_matches(r"\b[6-9]\d{9}\b", text),
+        "generic_ifsc_codes": _unique_matches(r"\b[A-Z]{4}0[A-Z0-9]{6}\b", text.upper()),
+        "generic_dates": _unique_matches(
+            r"\b(?:\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}|\d{4}[/\-\.]\d{2}[/\-\.]\d{2})\b",
+            text,
+        ),
+        "generic_amounts": _unique_matches(
+            r"(?:rs\.?|inr|₹)?\s?\b\d{1,3}(?:,\d{2,3})+(?:\.\d+)?\b|\b\d+\.\d{2}\b",
+            text,
+            flags=re.IGNORECASE,
+        ),
+        "generic_emails": _unique_matches(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, flags=re.IGNORECASE),
+    }
+
+
+def _generic_keywords(text: str) -> list[str]:
+    lowered = text.lower()
+    keyword_map = {
+        "account": ("account", "a/c", "ifsc"),
+        "address": ("address", "village", "district", "tehsil", "pin code"),
+        "amount": ("amount", "loan", "emi", "tenure", "interest"),
+        "credit_report": ("cibil", "crif", "credit score", "score"),
+        "identity": ("pan", "aadhaar", "voter", "election commission", "date of birth"),
+        "property": ("property", "khasra", "plot", "patta", "registry"),
+    }
+    return [
+        label
+        for label, terms in keyword_map.items()
+        if any(term in lowered for term in terms)
+    ]
+
+
+def _unique_matches(pattern: str, text: str, *, flags: int = 0, limit: int = 10) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(pattern, text, flags):
+        value = re.sub(r"\s+", " ", match.group(0)).strip()
+        key = value.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(value)
+        if len(values) >= limit:
+            break
+    return values
 
 
 def _mark_page_phase(
@@ -995,7 +1167,15 @@ def _document_type_from_key(doc_key: str) -> str | None:
         "crif_report": "CRIF Report",
         "cibil": "CIBIL Report",
         "cibil_report": "CIBIL Report",
+        "cersai": "CERSAI Report",
+        "cersai_report": "CERSAI Report",
+        "cheque": "Cheque",
+        "check": "Cheque",
+        "cancelled_cheque": "Cheque",
+        "canceled_check": "Cheque",
         "bank_statement": "Bank Statement",
+        "passbook": "Passbook",
+        "pass_book": "Passbook",
         "salary_slip": "Salary Slip",
         "sanction_letter": "Sanction Letter",
         "loan_agreement": "Loan Agreement",

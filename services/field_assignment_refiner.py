@@ -48,12 +48,15 @@ _PROTECTED_EXACT_FIELDS = {
 _EXPECTED_FIELDS = {
     "Aadhaar": ("applicant_name", "aadhaar_number", "dob", "address", "pin_code"),
     "Bank Statement": ("account_holder_name", "account_number", "ifsc", "statement_period_start", "statement_period_end"),
+    "CERSAI Report": ("applicant_name", "pan_number", "dob", "search_reference_number", "transaction_id", "report_date", "search_result"),
+    "Cheque": ("account_holder_name", "account_number", "cheque_number", "ifsc", "cheque_date", "amount", "is_cancelled"),
     "CIBIL Report": ("applicant_name", "credit_score", "report_date"),
     "CRIF Report": ("applicant_name", "credit_score", "report_date"),
     "Driving License": ("applicant_name", "dl_number", "dob", "validity_date", "address"),
     "Loan Agreement": ("borrower_name", "loan_amount", "tenure", "emi", "roi", "agreement_date"),
     "PAN": ("applicant_name", "father_name", "dob", "pan_number"),
     "PAN Card": ("applicant_name", "father_name", "dob", "pan_number"),
+    "Passbook": ("account_holder_name", "account_number", "ifsc", "customer_id", "passbook_issue_date"),
     "Sanction Letter": ("applicant_name", "loan_amount", "tenure", "emi", "roi"),
     "Voter ID": ("applicant_name", "voter_id_number", "dob", "address"),
 }
@@ -61,11 +64,14 @@ _EXPECTED_FIELDS = {
 _PRIMARY_FIELDS = {
     "Aadhaar": ("applicant_name", "address"),
     "Bank Statement": ("account_holder_name",),
+    "CERSAI Report": ("applicant_name",),
+    "Cheque": ("cheque_number", "account_number"),
     "CIBIL Report": ("applicant_name",),
     "CRIF Report": ("applicant_name",),
     "Driving License": ("applicant_name",),
     "PAN": ("applicant_name",),
     "PAN Card": ("applicant_name",),
+    "Passbook": ("account_holder_name", "account_number"),
     "Voter ID": ("applicant_name",),
 }
 

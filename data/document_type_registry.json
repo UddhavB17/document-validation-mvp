@@ -76,12 +76,21 @@
       "min_confidence": 0.5
     },
     {
+      "type": "CERSAI Report",
+      "priority": 86,
+      "headings": ["CERSAI", "Debtor Based Search Report", "Central Registry of Securitisation Asset Reconstruction and Security Interest of India"],
+      "keywords": ["cersai", "debtor based search report", "central registry of securitisation", "security interest of india", "cersai details", "search criteria", "no match found"],
+      "required_any": ["cersai", "central registry of securitisation", "debtor based search report"],
+      "field_patterns": ["\\bcersai\\b", "debtor\\s+based\\s+search", "search\\s+reference\\s+number", "transaction\\s+id"],
+      "min_confidence": 0.5
+    },
+    {
       "type": "CIBIL Report",
       "priority": 88,
       "headings": ["TransUnion CIBIL", "CIBIL Report", "CIBIL Credit Report", "CIBIL Credit Information Report", "Consumer CIBIL Report"],
       "keywords": ["transunion cibil", "cibil", "cibil score", "control number", "member id", "credit information report", "credit report"],
       "required_any": ["cibil", "transunion cibil"],
-      "negative_keywords": ["crif", "high mark", "crif high mark"],
+      "negative_keywords": ["crif", "high mark", "crif high mark", "cersai", "central registry of securitisation"],
       "field_patterns": ["\\bcibil\\b", "control\\s+number", "member\\s+id"],
       "min_confidence": 0.5
     },
@@ -97,10 +106,11 @@
     },
     {
       "type": "Passbook",
-      "priority": 100,
-      "headings": ["Passbook", "Pass Book", "Savings Bank Passbook", "पासबुक"],
-      "keywords": ["passbook", "pass book", "savings bank passbook", "खाता संख्या", "पासबुक"],
-      "field_patterns": ["account\\s*(number|no)"],
+      "priority": 96,
+      "headings": ["Passbook", "Pass Book", "Savings Bank Passbook", "Bank Passbook", "पासबुक"],
+      "keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "passbook no", "pass book no", "customer id", "खाता संख्या", "पासबुक"],
+      "required_any": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक"],
+      "field_patterns": ["account\\s*(number|no)", "pass\\s*book", "customer\\s*id"],
       "min_confidence": 0.5
     },
     {
@@ -108,7 +118,18 @@
       "priority": 110,
       "headings": ["Bank Statement", "Account Statement", "Statement of Account", "खाता विवरण", "बैंक विवरण"],
       "keywords": ["bank statement", "account statement", "statement of account", "debit", "credit", "balance", "खाता विवरण", "बैंक विवरण"],
+      "negative_keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक"],
       "field_patterns": ["account\\s*(number|no)", "statement\\s+period", "debit.*credit.*balance"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Cheque",
+      "priority": 112,
+      "headings": ["Cheque", "Cancelled Cheque", "Bank Cheque", "Cheque Leaf"],
+      "keywords": ["cheque", "cancelled cheque", "bank cheque", "cheque leaf", "pay", "rupees", "a/c payee", "account payee", "cts"],
+      "required_any": ["cheque", "cancelled cheque", "a/c payee", "account payee", "cts"],
+      "negative_keywords": ["post dated cheque", "post-dated cheque", "pdc", "security cheque"],
+      "field_patterns": ["\\bcheque\\b", "\\b[0-9]{6}\\b", "\\b[A-Z]{4}0[A-Z0-9]{6}\\b"],
       "min_confidence": 0.5
     },
     {

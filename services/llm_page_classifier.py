@@ -93,6 +93,10 @@ def _build_classifier_prompt(text: str) -> str:
         "Use \"None\" only when the page is blank, unreadable, or not a loan document.\n"
         "Do not merge credit bureaus: choose \"CIBIL Report\" only for TransUnion CIBIL/CIBIL pages, "
         "and choose \"CRIF Report\" only for CRIF High Mark/CRIF pages.\n"
+        "Choose \"CERSAI Report\" for CERSAI, debtor-based search, or Central Registry of Securitisation pages.\n"
+        "Do not merge bank documents: choose \"Passbook\" for passbook/pass book pages, "
+        "\"Cheque\" for cheque or cancelled cheque pages, \"PDC\" only for post-dated/security cheques, "
+        "and \"Bank Statement\" only for statement/account-statement pages.\n"
         "Respond with JSON only, no markdown:\n"
         '{"document_type": "...", "confidence": 0.0, "reason": "short reason"}\n\n'
         "Page text:\n"
