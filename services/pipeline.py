@@ -27,6 +27,7 @@ from services.classification_review_log import log_classification_review_event
 from services.content_triage import triage_page_content
 from services.document_classifier import HIGH_CONFIDENCE, classify_page
 from services.exception_aggregator import aggregate
+from services.field_assignment_refiner import refine_field_assignments
 from services.field_verification import verify_all_fields
 from services.field_extractor import extract_fields
 from services.input_classifier import classify_input_text
@@ -580,6 +581,11 @@ def _build_page_records(
                 _mark_page_phase(application_id, page_number, total_pages, "extracting fields")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
                 extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
+                extracted_fields = refine_field_assignments(
+                    document_type=document_type,
+                    ocr_text=text,
+                    extracted_fields=extracted_fields,
+                )
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 classification_meta = {
                     **classification_meta,
