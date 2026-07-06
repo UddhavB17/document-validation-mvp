@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from services.field_assignment_refiner import is_suspicious_assignment
+
 
 def build_ocr_document_json(
     application_id: int,
@@ -63,6 +65,8 @@ def merge_public_extracted_fields(pages: list[dict[str, Any]]) -> dict[str, Any]
             continue
         for field_name, value in fields.items():
             if str(field_name).startswith("_") or value in (None, ""):
+                continue
+            if is_suspicious_assignment(str(field_name), value):
                 continue
             merged.setdefault(str(field_name), value)
     return merged
