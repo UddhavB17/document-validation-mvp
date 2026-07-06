@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from database.models import initialize_schema
-from routes import decisions, upload
+from routes import decisions, upload, verification
 from services.config import log_effective_config
 
 load_dotenv()
@@ -39,6 +39,7 @@ def on_startup() -> None:
 # ── Routers ───────────────────────────────────
 app.include_router(upload.router)
 app.include_router(decisions.router)
+app.include_router(verification.router)
 
 
 # ── Health ────────────────────────────────────

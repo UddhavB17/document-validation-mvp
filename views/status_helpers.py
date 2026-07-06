@@ -142,7 +142,7 @@ def render_page_processing_table(completed_pages: list[dict]) -> None:
                 "Data": page.get("error") or _summarize_fields(fields),
             }
         )
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def render_result_status_guard(

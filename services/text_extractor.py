@@ -52,6 +52,24 @@ class _GroundTruth(TypedDict):
     raw_text: str
 
 
+class _LayoutCell(TypedDict):
+    text: str
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    page: int
+
+
+_NAME_LABELS_PRIORITY: tuple[str, ...] = (
+    "applicant name",
+    "borrower name",
+    "name of applicant",
+    "consumer name",
+    "name",
+)
+
+
 # ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
@@ -113,18 +131,20 @@ def extract_ground_truth(pdf_path: str | Path) -> _GroundTruth:
     doc = fitz.open(path)
 
     digital_parts: list[str] = []
+    layout_cells: list[_LayoutCell] = []
     try:
-        for page in doc:
+        for page_index, page in enumerate(doc):
             chunk = extract_digital_text(page)
             if chunk:
                 digital_parts.append(chunk)
+                layout_cells.extend(_page_layout_cells(page, page_index))
     finally:
         doc.close()
 
     raw_text = "\n".join(digital_parts)
 
     return {
-        "applicant_name": _safe_extract(_extract_applicant_name, raw_text),
+        "applicant_name": _extract_applicant_name_full(layout_cells, raw_text),
         "pan_number":     _safe_extract(_extract_pan_number,     raw_text),
         "loan_amount":    _safe_extract(_extract_loan_amount,    raw_text),
         "phone":          _safe_extract(_extract_phone,          raw_text),
@@ -145,6 +165,16 @@ def _safe_extract(fn, text: str) -> str | None:
         return fn(text)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _extract_applicant_name_full(layout_cells: list[_LayoutCell], raw_text: str) -> str | None:
+    try:
+        name = _extract_applicant_name_by_layout(layout_cells)
+        if name:
+            return name
+    except Exception:  # noqa: BLE001
+        pass
+    return _safe_extract(_extract_applicant_name, raw_text)
 
 
 def _extract_applicant_name(text: str) -> str | None:
@@ -197,14 +227,114 @@ def _clean_name_candidate(value: str) -> str | None:
         "name",
         "आवेदक का नाम",
         "नाम",
+        "gender",
+        "sex",
+        "date of birth",
+        "c/o",
+        "s/o",
+        "d/o",
+        "w/o",
+        "c/o , s/o",
+        "marital status",
+        "landmark",
+        "locality",
+        "city / district",
+        "pin code",
+        "state",
+        "nationality",
+        "category",
+        "occupation",
+        "email",
+        "masked aadhaar number",
     }
     if candidate.lower() in labels or candidate in labels:
         return None
-    if re.search(r"(?:mobile|phone|pan|aadhaar|loan|amount|date|address)", candidate, re.IGNORECASE):
+    if re.search(
+        r"(?:mobile|phone|pan|aadhaar|loan|amount|date|address|gender|"
+        r"marital|landmark|locality|nationality|occupation|email|pin\s*code)",
+        candidate,
+        re.IGNORECASE,
+    ):
         return None
     if len(candidate) > 80:
         return None
     return candidate
+
+
+def _page_layout_cells(fitz_page: "fitz.Page", page_index: int) -> list[_LayoutCell]:
+    try:
+        words = fitz_page.get_text("words")
+    except Exception:  # noqa: BLE001
+        return []
+    grouped: dict[tuple[int, int], list[tuple]] = {}
+    for word in words:
+        x0, y0, x1, y1, text, block_no, line_no, word_no = word
+        if not str(text).strip():
+            continue
+        grouped.setdefault((block_no, line_no), []).append((x0, y0, x1, y1, word_no, text))
+    cells: list[_LayoutCell] = []
+    for items in grouped.values():
+        items.sort(key=lambda it: (it[4], it[0]))
+        text = " ".join(str(it[5]) for it in items).strip()
+        if not text:
+            continue
+        cells.append(
+            {
+                "text": text,
+                "x0": min(it[0] for it in items),
+                "y0": min(it[1] for it in items),
+                "x1": max(it[2] for it in items),
+                "y1": max(it[3] for it in items),
+                "page": page_index,
+            }
+        )
+    return cells
+
+
+def _normalize_label(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().strip(":").lower())
+
+
+def _extract_applicant_name_by_layout(cells: list[_LayoutCell]) -> str | None:
+    if not cells:
+        return None
+    for variant in _NAME_LABELS_PRIORITY:
+        for cell in cells:
+            if _normalize_label(cell["text"]) != variant:
+                continue
+            value = _value_right_of(cells, cell)
+            candidate = _clean_name_candidate(value) if value else None
+            if candidate:
+                return candidate
+    return None
+
+
+def _value_right_of(cells: list[_LayoutCell], label: _LayoutCell) -> str | None:
+    label_mid_y = (label["y0"] + label["y1"]) / 2
+    label_height = max(label["y1"] - label["y0"], 1.0)
+    row_tolerance = max(label_height * 0.6, 4.0)
+    same_row: list[_LayoutCell] = []
+    for cell in cells:
+        if cell is label or cell["page"] != label["page"]:
+            continue
+        cell_mid_y = (cell["y0"] + cell["y1"]) / 2
+        if abs(cell_mid_y - label_mid_y) > row_tolerance:
+            continue
+        if cell["x0"] < label["x1"] - 2:
+            continue
+        same_row.append(cell)
+    if not same_row:
+        return None
+    same_row.sort(key=lambda c: c["x0"])
+    parts = [same_row[0]["text"]]
+    prev_x1 = same_row[0]["x1"]
+    for cell in same_row[1:]:
+        if cell["x0"] - prev_x1 <= 40:
+            parts.append(cell["text"])
+            prev_x1 = cell["x1"]
+        else:
+            break
+    return " ".join(parts).strip() or None
 
 
 def _extract_pan_number(text: str) -> str | None:
