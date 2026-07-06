@@ -103,6 +103,11 @@ def build_structured_classifier_prompt(
     return (
         "You are reviewing structured OCR extraction output from a Loan Against Property document packet.\n"
         "Identify the most likely document type from the provided JSON and OCR text.\n\n"
+        "Use CERSAI Report for CERSAI, debtor-based search, or Central Registry of Securitisation pages. "
+        "Do not call those pages CIBIL or CRIF unless the text explicitly says CIBIL or CRIF.\n\n"
+        "Keep bank document types separate: Passbook is for passbook/pass book pages, "
+        "Cheque is for cheque or cancelled cheque pages, PDC is only for post-dated/security cheques, "
+        "and Bank Statement is only for statement/account-statement pages.\n\n"
         "Return only JSON:\n"
         '{"document_type": "...", "confidence": 0.0, "reason": "short reason"}\n\n'
         f"Known document types:\n{types_list}\n\n"
