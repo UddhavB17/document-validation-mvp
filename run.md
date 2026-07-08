@@ -13,6 +13,26 @@ DMEF has two processes that must both be running at the same time:
 
 Before running for the first time, make sure you have completed the [Setup steps in README.md](README.md#setup).
 
+### Fast Windows setup
+
+From PowerShell in the project root:
+
+```powershell
+.\setup.ps1
+```
+
+This creates `.venv`, installs dependencies, creates `.env` if missing, prepares local data folders, and runs the local health check.
+
+To start both the FastAPI backend and Streamlit UI:
+
+```powershell
+.\run_local.ps1
+```
+
+The script starts the backend with `python -m uvicorn` instead of `uvicorn.exe`, which avoids Windows Application Control blocking the `uvicorn.exe` launcher.
+
+---
+
 Quick checklist:
 - [ ] Python **3.11** installed
 - [ ] `.venv` created with Python 3.11

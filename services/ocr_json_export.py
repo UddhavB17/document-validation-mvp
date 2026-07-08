@@ -76,7 +76,11 @@ def _select_document_pages(
     pages: list[dict[str, Any]],
     document_page_numbers: set[int] | None,
 ) -> list[dict[str, Any]]:
-    sorted_pages = sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+    sorted_pages = [
+        page
+        for page in sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+        if str(page.get("document_type") or "") != "DB Data"
+    ]
     if document_page_numbers is None:
         return sorted_pages
     return [

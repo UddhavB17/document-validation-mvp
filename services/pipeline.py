@@ -20,7 +20,7 @@ from typing import Any
 import fitz
 
 from database.db import get_connection
-from database.models import DocumentVerificationReport
+from database.models import DocumentVerificationReport, GravitonRecord
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
 from services.classification_review_log import log_classification_review_event
@@ -182,7 +182,7 @@ def run_pipeline(
     update_stage(application_id, "processing_pages", "Classifying and extracting page fields")
     pages = _build_page_records(structure["pages"], digital_text_by_page, application_id=application_id)
     update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
-    verification_report, document_page_numbers = _run_document_verification(pdf_path, application_id, pages)
+    verification_report, document_page_numbers = _run_document_verification(pdf_path, application_id, pages, ground_truth)
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
@@ -445,7 +445,41 @@ def _build_page_records(
                 is_readable = bool(text)
                 ocr_confidence = None
                 ocr_metadata = {}
+                document_type = "DB Data"
+                classification = {"confidence": 1.0}
+                extracted_fields = _build_db_data_fields(page_number=page_number, text=text)
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                db_data_page = {
+                    "page_number": page_number,
+                    "page_type": page_type,
+                    "image_path": image_path,
+                    "is_readable": is_readable,
+                    "ocr_text": text,
+                    "ocr_confidence": ocr_confidence,
+                    "document_type": document_type,
+                    "classification_confidence": classification.get("confidence", 0.0),
+                    "detection_method": "db_data",
+                    "detected_page_number": page_number,
+                    "extracted_fields": extracted_fields,
+                }
+                pages.append(db_data_page)
+                page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
+                _record_completed_page_event(
+                    application_id,
+                    page=db_data_page,
+                    total_pages=total_pages,
+                    elapsed_seconds=page_elapsed,
+                    status=page_status,
+                )
+                if application_id is not None:
+                    update_page_progress(
+                        application_id,
+                        processed_pages=len(pages),
+                        total_pages=total_pages,
+                        current_page=page_number,
+                        message=f"Processed {len(pages)}/{total_pages} pages (DB data)",
+                    )
+                continue
             elif page_number not in selected_scanned_pages:
                 text = ""
                 is_readable = None
@@ -742,6 +776,45 @@ def _record_completed_page_event(
         status=status,
         error=error,
     )
+
+
+def _build_db_data_fields(*, page_number: int, text: str) -> dict[str, Any]:
+    payload = _extract_json_payload(text)
+    fields: dict[str, Any] = {
+        "content_category": "db_data",
+        "db_data_page": True,
+        "db_data_source": "digital_pdf_json",
+        "db_data_text_excerpt": str(text or "").strip()[:700],
+        "_classification": {
+            "source": "digital_text",
+            "assigned_type": "DB Data",
+            "detection_method": "db_data",
+            "raw_document_type": "DB Data",
+            "raw_confidence": 1.0,
+            "detected_page_number": page_number,
+        },
+    }
+    if payload:
+        fields["db_data_json"] = payload
+        fields["db_data_json_keys"] = sorted(str(key) for key in payload.keys())
+    return fields
+
+
+def _extract_json_payload(text: str) -> dict[str, Any]:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return {}
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stripped):
+        if char != "{":
+            continue
+        try:
+            payload, _end = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
 
 
 def _apply_llm_extraction_fallback(
@@ -1125,22 +1198,28 @@ def _build_unsupported_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
 ) -> list[dict[str, Any]]:
-    return [
-        {
-            "page_number": int(page_info["page_number"]),
-            "page_type": page_info["page_type"],
-            "image_path": page_info.get("image_path"),
-            "is_readable": bool(digital_text_by_page.get(int(page_info["page_number"]), "")),
-            "ocr_text": digital_text_by_page.get(int(page_info["page_number"]), ""),
-            "ocr_confidence": None,
-            "document_type": "Unknown",
-            "classification_confidence": 0.0,
-            "detection_method": "unknown",
-            "detected_page_number": None,
-            "extracted_fields": {},
-        }
-        for page_info in page_structure
-    ]
+    pages: list[dict[str, Any]] = []
+    for page_info in page_structure:
+        page_number = int(page_info["page_number"])
+        page_type = page_info["page_type"]
+        text = digital_text_by_page.get(page_number, "")
+        document_type = "DB Data" if page_type == "digital" else "Unknown"
+        pages.append(
+            {
+                "page_number": page_number,
+                "page_type": page_type,
+                "image_path": page_info.get("image_path"),
+                "is_readable": bool(text),
+                "ocr_text": text,
+                "ocr_confidence": None,
+                "document_type": document_type,
+                "classification_confidence": 1.0 if document_type == "DB Data" else 0.0,
+                "detection_method": "db_data" if document_type == "DB Data" else "unknown",
+                "detected_page_number": page_number if document_type == "DB Data" else None,
+                "extracted_fields": _build_db_data_fields(page_number=page_number, text=text) if document_type == "DB Data" else {},
+            }
+        )
+    return pages
 
 
 def _coerce_partner_doc(doc_key: str, value: Any) -> tuple[str, str | None, dict[str, Any], float]:
@@ -1272,21 +1351,33 @@ def _run_document_verification(
     pdf_path: Path,
     application_id: int,
     pages: list[dict[str, Any]],
+    ground_truth: dict[str, Any],
 ) -> tuple[DocumentVerificationReport | None, set[int] | None]:
+    used_fallback = False
     try:
         graviton_record, document_pages = parse_verification_pdf(str(pdf_path))
+        document_page_numbers = {int(page["page_number"]) for page in document_pages}
     except VerificationPdfParseError as exc:
-        log_action(
-            application_id,
-            "verification_skipped",
-            {
-                "reason": str(exc),
-                "pdf_path": str(pdf_path),
-            },
-        )
-        return None, None
+        try:
+            graviton_record = GravitonRecord.model_validate(ground_truth)
+        except ValueError as fallback_exc:
+            log_action(
+                application_id,
+                "verification_skipped",
+                {
+                    "reason": str(exc),
+                    "fallback_reason": str(fallback_exc),
+                    "pdf_path": str(pdf_path),
+                },
+            )
+            return None, None
+        used_fallback = True
+        document_page_numbers = {
+            int(page.get("page_number") or 0)
+            for page in pages
+            if str(page.get("document_type") or "") != "DB Data"
+        }
 
-    document_page_numbers = {int(page["page_number"]) for page in document_pages}
     document_only_pages = [
         page
         for page in pages
@@ -1299,10 +1390,11 @@ def _run_document_verification(
         "verification_completed",
         {
             "graviton_application_id": graviton_record.application_id,
-            "document_page_count": len(document_pages),
+            "document_page_count": len(document_page_numbers),
             "overall_match": report.overall_match,
             "match_percentage": report.match_percentage,
             "needs_manual_review": report.needs_manual_review,
+            "db_data_source": "digital_pages" if used_fallback else "verification_pdf_parser",
         },
     )
     return report, document_page_numbers
