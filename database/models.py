@@ -105,6 +105,54 @@ class DocumentVerificationReport(BaseModel):
             return 0.0
         return round((self.matched_fields / self.total_fields_checked) * 100.0, 2)
 
+
+ChecklistStatus = Literal["verified", "needs_review", "missing", "unknown"]
+ChecklistConfidence = Literal["high", "medium", "low"]
+ChecklistExtractionSource = Literal["deterministic", "llm_fallback"]
+
+
+class ChecklistItem(BaseModel):
+    """Reviewer-facing result for one deterministic NDC checklist item."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    item_number: int
+    document_name: str
+    status: ChecklistStatus
+    confidence: ChecklistConfidence
+    confidence_detail: str
+    extracted_fields: dict[str, str | None] = Field(default_factory=dict)
+    extraction_source: ChecklistExtractionSource = "deterministic"
+    narration: str | None = None
+    flagged_reason: str | None = None
+
+
+class ChecklistSummary(BaseModel):
+    """Status counts for the 44-item NDC checklist response."""
+
+    total: int = 44
+    verified: int = 0
+    needs_review: int = 0
+    missing: int = 0
+    unknown: int = 0
+
+
+class ChecklistProcessingMetadata(BaseModel):
+    """Timing metadata for checklist output generation and upstream phases."""
+
+    ocr_time_ms: int = Field(default=0, ge=0)
+    classification_time_ms: int = Field(default=0, ge=0)
+    narration_time_ms: int = Field(default=0, ge=0)
+
+
+class ChecklistVerificationResponse(BaseModel):
+    """Top-level 44-item NDC checklist output for the reviewer UI/API."""
+
+    loan_file_id: str
+    summary: ChecklistSummary
+    items: list[ChecklistItem]
+    processing_metadata: ChecklistProcessingMetadata = Field(default_factory=ChecklistProcessingMetadata)
+
 SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS applications (

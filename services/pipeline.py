@@ -23,6 +23,7 @@ from database.db import get_connection
 from database.models import DocumentVerificationReport, GravitonRecord
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
+from services.checklist_output import build_checklist_verification_response
 from services.classification_review_log import log_classification_review_event
 from services.content_triage import triage_page_content
 from services.document_classifier import HIGH_CONFIDENCE, classify_page
@@ -216,6 +217,14 @@ def run_pipeline(
     anomalies.extend(processing_error_anomalies)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
     pipeline_status = _pipeline_outcome(result["anomalies"], processing_error_anomalies)
+    checklist_verification = build_checklist_verification_response(
+        loan_file_id=str(ground_truth.get("loan_id") or application_id),
+        pages=pages,
+        anomalies=result["anomalies"],
+        product_type=product_type,
+        processing_metadata=_checklist_processing_metadata(progress_snapshot),
+        include_narration=False,
+    )
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
@@ -246,6 +255,7 @@ def run_pipeline(
                 if verification_report is not None
                 else None
             ),
+            "checklist_verification": checklist_verification.model_dump(mode="json"),
         }
     )
     mark_completed(application_id, result["final_status"], pipeline_status)
@@ -353,6 +363,14 @@ def run_partner_json_pipeline(
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
     pipeline_status = _pipeline_outcome(result["anomalies"], [])
+    checklist_verification = build_checklist_verification_response(
+        loan_file_id=str(ground_truth.get("loan_id") or application_id),
+        pages=pages,
+        anomalies=result["anomalies"],
+        product_type=product_type,
+        processing_metadata={},
+        include_narration=False,
+    )
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
@@ -376,6 +394,7 @@ def run_partner_json_pipeline(
             "partial_failure_count": 0,
             "llm_summary": summary,
             "report_path": str(report_path),
+            "checklist_verification": checklist_verification.model_dump(mode="json"),
         }
     )
     mark_completed(application_id, result["final_status"], pipeline_status)
@@ -401,6 +420,18 @@ def _extract_digital_text_by_page(pdf_path: Path) -> dict[int, str]:
         }
     finally:
         doc.close()
+
+
+def _checklist_processing_metadata(progress_snapshot: dict[str, Any]) -> dict[str, int]:
+    completed_pages = progress_snapshot.get("completed_pages") or []
+    ocr_time_ms = int(
+        sum(float(page.get("elapsed_seconds") or 0) for page in completed_pages) * 1000
+    )
+    return {
+        "ocr_time_ms": ocr_time_ms,
+        "classification_time_ms": 0,
+        "narration_time_ms": 0,
+    }
 
 
 def _build_page_records(
