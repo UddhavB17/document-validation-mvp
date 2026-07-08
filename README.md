@@ -39,6 +39,21 @@ Download Python 3.11 from [python.org/downloads](https://www.python.org/download
 
 ---
 
+### Fast Windows setup
+
+From PowerShell in the project root:
+
+```powershell
+.\setup.ps1
+.\run_local.ps1
+```
+
+`setup.ps1` creates the Python 3.11 virtual environment, installs dependencies, creates `.env` if needed, prepares local folders, and runs a local health check.
+
+`run_local.ps1` starts both FastAPI and Streamlit using `python -m ...` commands, which avoids Windows Application Control blocking launcher executables such as `uvicorn.exe`.
+
+---
+
 ### 1. Clone the repo
 
 ```bash

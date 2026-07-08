@@ -55,9 +55,12 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
         "Aadhaar":          _extract_aadhaar,
         "Voter ID":         _extract_voter_id,
         "Driving License":  _extract_driving_license,
+        "CERSAI Report":    _extract_cersai_report,
         "CRIF Report":      _extract_crif_report,
         "CIBIL Report":     _extract_crif_report,
+        "Passbook":         _extract_passbook,
         "Bank Statement":   _extract_bank_statement,
+        "Cheque":           _extract_cheque,
         "Salary Slip":      _extract_salary_slip,
     }
     extractor = _EXTRACTORS.get(document_type)
@@ -219,6 +222,39 @@ def _lines_after_label(text: str, label: str, max_lines: int = 3) -> str | None:
     return None
 
 
+def _value_after_label(text: str, *labels: str) -> str | None:
+    """Return the next useful value after an exact-ish OCR label."""
+    lines = [line.strip() for line in text.splitlines()]
+    normalized_labels = {_normalize_label(label) for label in labels}
+    stop_labels = {
+        "aadhaar",
+        "address",
+        "date of birth",
+        "dob",
+        "mobile number",
+        "name of the debtor",
+        "pan",
+        "search criteria",
+        "search reference number",
+        "transaction id",
+    }
+    for index, line in enumerate(lines):
+        normalized_line = _normalize_label(line)
+        if normalized_line not in normalized_labels:
+            continue
+        for candidate in lines[index + 1: index + 5]:
+            normalized_candidate = _normalize_label(candidate)
+            if not candidate or normalized_candidate in stop_labels:
+                continue
+            return candidate.strip(" :\t\r\n")
+    return None
+
+
+def _normalize_label(value: str) -> str:
+    cleaned = re.sub(r"[^0-9a-z]+", " ", str(value or "").lower())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 def _parse_date(text: str) -> str | None:
     """Parse *text* as a date and return ISO-8601 string, or None on failure."""
     if not _DATEUTIL_AVAILABLE:
@@ -373,6 +409,30 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
     }
 
 
+def _extract_cersai_report(text: str) -> dict[str, Any]:
+    """Extract fields from a CERSAI debtor search report."""
+    t = text.lower()
+    pan_matches = re.findall(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
+    transaction_id = _value_after_label(text, "transaction id", "transaction id / qrf")
+    search_reference = _value_after_label(text, "search reference number")
+    debtor_name = _value_after_label(text, "name of the debtor")
+    search_result = None
+    if "no match found" in t:
+        search_result = "No Match Found"
+    elif "match found" in t:
+        search_result = "Match Found"
+
+    return {
+        "applicant_name": debtor_name,
+        "pan_number": pan_matches[-1] if pan_matches else None,
+        "dob": _extract_date_near(t, "date of birth", "dob"),
+        "search_reference_number": search_reference,
+        "transaction_id": transaction_id,
+        "report_date": _extract_date_near(t, "report downloaded on", "downloaded on", "report date"),
+        "search_result": search_result,
+    }
+
+
 def _extract_crif_report(text: str) -> dict[str, Any]:
     """Extract fields from a CRIF / CIBIL credit report."""
     t = text.lower()
@@ -426,6 +486,54 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         "statement_period_start": period_start,
         "statement_period_end": period_end or _extract_date_near(t, "statement date", "as on", "period ending"),
     }
+
+
+def _extract_passbook(text: str) -> dict[str, Any]:
+    """Extract fields from a bank passbook page."""
+    t = text.lower()
+    account_match = re.search(
+        r"(?:account\s*(?:number|no\.?|#)|a/c\s*(?:no\.?|number)?|खाता\s*संख्या)\s*[:\-\u2013]?\s*([0-9Xx* ]{6,24})",
+        text,
+        re.IGNORECASE,
+    )
+    ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
+    customer_id = re.search(r"(?:customer\s*id|cust\s*id|cif\s*(?:no\.?)?)\s*[:\-\u2013]?\s*([A-Z0-9]{4,24})", text, re.IGNORECASE)
+    return {
+        "account_holder_name": _line_after_label(text, "account holder", "customer name", "name", "नाम"),
+        "account_number": _digits_only(account_match.group(1)) if account_match else None,
+        "ifsc": ifsc_match.group(1) if ifsc_match else None,
+        "customer_id": customer_id.group(1).strip() if customer_id else None,
+        "passbook_issue_date": _extract_date_near(t, "date of issue", "issue date", "printed on"),
+    }
+
+
+def _extract_cheque(text: str) -> dict[str, Any]:
+    """Extract fields from a cheque or cancelled cheque page."""
+    cheque_number = _extract_cheque_number(text)
+    account_match = re.search(
+        r"(?:account\s*(?:number|no\.?)|a/c\s*(?:no\.?|number)?)\s*[:\-\u2013]?\s*([0-9Xx* ]{6,24})",
+        text,
+        re.IGNORECASE,
+    )
+    ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
+    amount = _extract_amount(text.lower(), "rupees", "amount")
+    return {
+        "account_holder_name": _line_after_label(text, "account holder", "name", "pay"),
+        "account_number": _digits_only(account_match.group(1)) if account_match else None,
+        "cheque_number": cheque_number,
+        "ifsc": ifsc_match.group(1) if ifsc_match else None,
+        "cheque_date": _extract_date_near(text.lower(), "date"),
+        "amount": amount,
+        "is_cancelled": "cancelled" in text.lower() or "canceled" in text.lower(),
+    }
+
+
+def _extract_cheque_number(text: str) -> str | None:
+    labeled = re.search(r"(?:cheque\s*(?:number|no\.?)|chq\s*(?:number|no\.?))\s*[:\-\u2013]?\s*(\d{6})", text, re.IGNORECASE)
+    if labeled:
+        return labeled.group(1)
+    candidates = re.findall(r"\b\d{6}\b", text)
+    return candidates[0] if candidates else None
 
 
 def _extract_statement_period(text: str) -> tuple[str | None, str | None]:

@@ -9,6 +9,7 @@ import streamlit as st
 from views.status_helpers import load_application_status
 from pages.activity_page import render_activity_page
 from pages.worklist_page import render_worklist_page
+from services.local_health import collect_local_health
 from views.upload_view import render_upload_page
 
 
@@ -210,6 +211,30 @@ button[data-testid="baseButton-secondary"]:hover {
 """
 
 
+@st.cache_data(ttl=15)
+def _cached_local_health() -> dict:
+    return collect_local_health(check_ollama=True)
+
+
+def _render_sidebar_health() -> None:
+    st.caption("Local health")
+    if st.button("Refresh health", use_container_width=True):
+        _cached_local_health.clear()
+    health = _cached_local_health()
+    status = str(health.get("status") or "unknown")
+    status_class = {
+        "ok": "dmef-status-clean",
+        "warning": "dmef-status-review",
+        "error": "dmef-status-critical",
+    }.get(status, "dmef-status-neutral")
+    st.markdown(f'<span class="{status_class}">{status.upper()}</span>', unsafe_allow_html=True)
+    with st.expander("Setup details", expanded=status != "ok"):
+        for item in health.get("items", []):
+            marker = {"ok": "OK", "warning": "WARN", "error": "ERROR"}.get(item.get("status"), "INFO")
+            st.caption(f"{marker} - {item.get('name')}")
+            st.write(item.get("detail") or "-")
+
+
 def main() -> None:
     st.set_page_config(
         page_title="DMEF - Document Matching Early Finder",
@@ -245,6 +270,8 @@ def main() -> None:
         st.markdown('<div class="dmef-side-block"></div>', unsafe_allow_html=True)
         st.caption("API")
         st.code("127.0.0.1:8000", language="text")
+        st.markdown('<div class="dmef-side-block"></div>', unsafe_allow_html=True)
+        _render_sidebar_health()
 
     if page == "Upload":
         render_upload_page()

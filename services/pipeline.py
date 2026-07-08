@@ -20,15 +20,19 @@ from typing import Any
 import fitz
 
 from database.db import get_connection
+from database.models import DocumentVerificationReport, GravitonRecord
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly, run_checks
 from services.classification_review_log import log_classification_review_event
 from services.content_triage import triage_page_content
 from services.document_classifier import HIGH_CONFIDENCE, classify_page
 from services.exception_aggregator import aggregate
+from services.field_assignment_refiner import refine_field_assignments
+from services.field_verification import verify_all_fields
 from services.field_extractor import extract_fields
 from services.input_classifier import classify_input_text
 from services.llm_service import generate_explanation, summarize_exceptions
+from services.ocr_json_export import merge_public_extracted_fields, save_ocr_document_json
 from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_engine import run_ocr_on_page
 from services.pdf_processor import process_pdf_structure
@@ -39,6 +43,7 @@ from services.processing_policy import (
     selected_scanned_page_numbers,
 )
 from services.progress_tracker import (
+    get_progress,
     mark_completed,
     mark_page_started,
     record_page_completed,
@@ -49,6 +54,8 @@ from services.progress_tracker import (
 from services.report_generator import build_report, save_report_json
 from services.structured_llm_classifier import classify_with_structured_llm
 from services.text_extractor import extract_digital_text, extract_ground_truth
+from services.verification_pdf_parser import VerificationPdfParseError, parse_verification_pdf
+from services.verification_report_store import save_verification_report
 
 try:  # pragma: no cover - exercised when rapidfuzz is available
     from rapidfuzz import fuzz
@@ -174,9 +181,21 @@ def run_pipeline(
 
     update_stage(application_id, "processing_pages", "Classifying and extracting page fields")
     pages = _build_page_records(structure["pages"], digital_text_by_page, application_id=application_id)
+    update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
+    verification_report, document_page_numbers = _run_document_verification(pdf_path, application_id, pages, ground_truth)
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
+    progress_snapshot = get_progress(application_id) or {}
+    ocr_json_path = save_ocr_document_json(
+        application_id,
+        pages,
+        output_dir=output_dir,
+        document_page_numbers=document_page_numbers,
+        page_events=progress_snapshot.get("completed_pages") or [],
+    )
+    if verification_report is not None:
+        save_verification_report(application_id, verification_report)
     _update_uploaded_file_counts(application_id, structure)
 
     update_stage(application_id, "running_checklist", "Running validation checks")
@@ -221,6 +240,12 @@ def run_pipeline(
             "partial_failure_count": len(processing_error_anomalies),
             "llm_summary": summary,
             "report_path": str(report_path),
+            "ocr_json_path": str(ocr_json_path),
+            "verification_report": (
+                verification_report.model_dump(mode="json")
+                if verification_report is not None
+                else None
+            ),
         }
     )
     mark_completed(application_id, result["final_status"], pipeline_status)
@@ -420,7 +445,41 @@ def _build_page_records(
                 is_readable = bool(text)
                 ocr_confidence = None
                 ocr_metadata = {}
+                document_type = "DB Data"
+                classification = {"confidence": 1.0}
+                extracted_fields = _build_db_data_fields(page_number=page_number, text=text)
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                db_data_page = {
+                    "page_number": page_number,
+                    "page_type": page_type,
+                    "image_path": image_path,
+                    "is_readable": is_readable,
+                    "ocr_text": text,
+                    "ocr_confidence": ocr_confidence,
+                    "document_type": document_type,
+                    "classification_confidence": classification.get("confidence", 0.0),
+                    "detection_method": "db_data",
+                    "detected_page_number": page_number,
+                    "extracted_fields": extracted_fields,
+                }
+                pages.append(db_data_page)
+                page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
+                _record_completed_page_event(
+                    application_id,
+                    page=db_data_page,
+                    total_pages=total_pages,
+                    elapsed_seconds=page_elapsed,
+                    status=page_status,
+                )
+                if application_id is not None:
+                    update_page_progress(
+                        application_id,
+                        processed_pages=len(pages),
+                        total_pages=total_pages,
+                        current_page=page_number,
+                        message=f"Processed {len(pages)}/{total_pages} pages (DB data)",
+                    )
+                continue
             elif page_number not in selected_scanned_pages:
                 text = ""
                 is_readable = None
@@ -556,6 +615,11 @@ def _build_page_records(
                 _mark_page_phase(application_id, page_number, total_pages, "extracting fields")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
                 extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
+                extracted_fields = refine_field_assignments(
+                    document_type=document_type,
+                    ocr_text=text,
+                    extracted_fields=extracted_fields,
+                )
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 classification_meta = {
                     **classification_meta,
@@ -583,6 +647,12 @@ def _build_page_records(
                 )
                 if structured_llm_result:
                     extracted_fields["_structured_llm_classification"] = structured_llm_result
+                    extracted_fields = _apply_llm_extraction_fallback(
+                        deterministic_document_type=document_type,
+                        structured_llm_result=structured_llm_result,
+                        text=text,
+                        extracted_fields=extracted_fields,
+                    )
                     if structured_llm_result.get("document_type") != document_type:
                         log_classification_review_event(
                             application_id=application_id,
@@ -629,6 +699,11 @@ def _build_page_records(
                 },
             }
 
+        extracted_fields = _ensure_page_has_json_details(
+            document_type=document_type,
+            text=text,
+            extracted_fields=extracted_fields,
+        )
         completed_page = {
             "page_number": page_number,
             "page_type": page_type,
@@ -701,6 +776,206 @@ def _record_completed_page_event(
         status=status,
         error=error,
     )
+
+
+def _build_db_data_fields(*, page_number: int, text: str) -> dict[str, Any]:
+    payload = _extract_json_payload(text)
+    fields: dict[str, Any] = {
+        "content_category": "db_data",
+        "db_data_page": True,
+        "db_data_source": "digital_pdf_json",
+        "db_data_text_excerpt": str(text or "").strip()[:700],
+        "_classification": {
+            "source": "digital_text",
+            "assigned_type": "DB Data",
+            "detection_method": "db_data",
+            "raw_document_type": "DB Data",
+            "raw_confidence": 1.0,
+            "detected_page_number": page_number,
+        },
+    }
+    if payload:
+        fields["db_data_json"] = payload
+        fields["db_data_json_keys"] = sorted(str(key) for key in payload.keys())
+    return fields
+
+
+def _extract_json_payload(text: str) -> dict[str, Any]:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return {}
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stripped):
+        if char != "{":
+            continue
+        try:
+            payload, _end = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
+def _apply_llm_extraction_fallback(
+    *,
+    deterministic_document_type: str,
+    structured_llm_result: dict[str, Any],
+    text: str,
+    extracted_fields: dict[str, Any],
+) -> dict[str, Any]:
+    if deterministic_document_type != "Unknown":
+        return extracted_fields
+
+    llm_document_type = str(structured_llm_result.get("document_type") or "").strip()
+    if not llm_document_type or llm_document_type == "Unknown":
+        return extracted_fields
+
+    fallback_fields = extract_fields(llm_document_type, text)
+    public_fields = {
+        key: value
+        for key, value in fallback_fields.items()
+        if not str(key).startswith("_") and value not in (None, "", [], {})
+    }
+    if not public_fields:
+        return {
+            **extracted_fields,
+            "_llm_field_extraction": {
+                "source": "structured_llm_classification",
+                "document_type": llm_document_type,
+                "confidence": structured_llm_result.get("confidence"),
+                "status": "no_fields_extracted",
+            },
+        }
+
+    fallback_fields = refine_field_assignments(
+        document_type=llm_document_type,
+        ocr_text=text,
+        extracted_fields=fallback_fields,
+    )
+    fallback_fields["_llm_field_extraction"] = {
+        "source": "structured_llm_classification",
+        "document_type": llm_document_type,
+        "confidence": structured_llm_result.get("confidence"),
+        "status": "fields_extracted",
+        "field_names": sorted(public_fields),
+    }
+    return {
+        **extracted_fields,
+        **fallback_fields,
+    }
+
+
+def _ensure_page_has_json_details(
+    *,
+    document_type: str,
+    text: str,
+    extracted_fields: dict[str, Any],
+) -> dict[str, Any]:
+    if _has_informative_public_fields(extracted_fields):
+        return extracted_fields
+    if not str(text or "").strip():
+        return extracted_fields
+
+    generic_fields = _extract_generic_page_details(document_type=document_type, text=text)
+    if not generic_fields:
+        return extracted_fields
+    return {
+        **extracted_fields,
+        **generic_fields,
+        "_generic_field_extraction": {
+            "source": "ocr_text_generic_fallback",
+            "reason": "No document-specific fields were extracted from this non-empty page.",
+            "status": "fields_extracted",
+        },
+    }
+
+
+def _has_informative_public_fields(fields: dict[str, Any]) -> bool:
+    ignored_fields = {"content_category", "review_flag"}
+    for field_name, value in (fields or {}).items():
+        if str(field_name).startswith("_") or field_name in ignored_fields:
+            continue
+        if value not in (None, "", [], {}):
+            return True
+    return False
+
+
+def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str, Any]:
+    normalized_text = str(text or "").strip()
+    if not normalized_text:
+        return {}
+
+    lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
+    words = re.findall(r"\S+", normalized_text)
+    details: dict[str, Any] = {
+        "generic_document_type": document_type or "Unknown",
+        "generic_text_excerpt": normalized_text[:700],
+        "generic_char_count": len(normalized_text),
+        "generic_word_count": len(words),
+        "generic_line_count": len(lines),
+    }
+
+    detected = _generic_detected_values(normalized_text)
+    for key, value in detected.items():
+        if value:
+            details[key] = value
+
+    keywords = _generic_keywords(normalized_text)
+    if keywords:
+        details["generic_keywords"] = keywords
+    return details
+
+
+def _generic_detected_values(text: str) -> dict[str, list[str]]:
+    return {
+        "generic_pan_numbers": _unique_matches(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", text.upper()),
+        "generic_aadhaar_numbers": _unique_matches(r"\b\d{4}\s?\d{4}\s?\d{4}\b", text),
+        "generic_phone_numbers": _unique_matches(r"\b[6-9]\d{9}\b", text),
+        "generic_ifsc_codes": _unique_matches(r"\b[A-Z]{4}0[A-Z0-9]{6}\b", text.upper()),
+        "generic_dates": _unique_matches(
+            r"\b(?:\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}|\d{4}[/\-\.]\d{2}[/\-\.]\d{2})\b",
+            text,
+        ),
+        "generic_amounts": _unique_matches(
+            r"(?:rs\.?|inr|₹)?\s?\b\d{1,3}(?:,\d{2,3})+(?:\.\d+)?\b|\b\d+\.\d{2}\b",
+            text,
+            flags=re.IGNORECASE,
+        ),
+        "generic_emails": _unique_matches(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, flags=re.IGNORECASE),
+    }
+
+
+def _generic_keywords(text: str) -> list[str]:
+    lowered = text.lower()
+    keyword_map = {
+        "account": ("account", "a/c", "ifsc"),
+        "address": ("address", "village", "district", "tehsil", "pin code"),
+        "amount": ("amount", "loan", "emi", "tenure", "interest"),
+        "credit_report": ("cibil", "crif", "credit score", "score"),
+        "identity": ("pan", "aadhaar", "voter", "election commission", "date of birth"),
+        "property": ("property", "khasra", "plot", "patta", "registry"),
+    }
+    return [
+        label
+        for label, terms in keyword_map.items()
+        if any(term in lowered for term in terms)
+    ]
+
+
+def _unique_matches(pattern: str, text: str, *, flags: int = 0, limit: int = 10) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(pattern, text, flags):
+        value = re.sub(r"\s+", " ", match.group(0)).strip()
+        key = value.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(value)
+        if len(values) >= limit:
+            break
+    return values
 
 
 def _mark_page_phase(
@@ -923,22 +1198,28 @@ def _build_unsupported_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
 ) -> list[dict[str, Any]]:
-    return [
-        {
-            "page_number": int(page_info["page_number"]),
-            "page_type": page_info["page_type"],
-            "image_path": page_info.get("image_path"),
-            "is_readable": bool(digital_text_by_page.get(int(page_info["page_number"]), "")),
-            "ocr_text": digital_text_by_page.get(int(page_info["page_number"]), ""),
-            "ocr_confidence": None,
-            "document_type": "Unknown",
-            "classification_confidence": 0.0,
-            "detection_method": "unknown",
-            "detected_page_number": None,
-            "extracted_fields": {},
-        }
-        for page_info in page_structure
-    ]
+    pages: list[dict[str, Any]] = []
+    for page_info in page_structure:
+        page_number = int(page_info["page_number"])
+        page_type = page_info["page_type"]
+        text = digital_text_by_page.get(page_number, "")
+        document_type = "DB Data" if page_type == "digital" else "Unknown"
+        pages.append(
+            {
+                "page_number": page_number,
+                "page_type": page_type,
+                "image_path": page_info.get("image_path"),
+                "is_readable": bool(text),
+                "ocr_text": text,
+                "ocr_confidence": None,
+                "document_type": document_type,
+                "classification_confidence": 1.0 if document_type == "DB Data" else 0.0,
+                "detection_method": "db_data" if document_type == "DB Data" else "unknown",
+                "detected_page_number": page_number if document_type == "DB Data" else None,
+                "extracted_fields": _build_db_data_fields(page_number=page_number, text=text) if document_type == "DB Data" else {},
+            }
+        )
+    return pages
 
 
 def _coerce_partner_doc(doc_key: str, value: Any) -> tuple[str, str | None, dict[str, Any], float]:
@@ -965,7 +1246,15 @@ def _document_type_from_key(doc_key: str) -> str | None:
         "crif_report": "CRIF Report",
         "cibil": "CIBIL Report",
         "cibil_report": "CIBIL Report",
+        "cersai": "CERSAI Report",
+        "cersai_report": "CERSAI Report",
+        "cheque": "Cheque",
+        "check": "Cheque",
+        "cancelled_cheque": "Cheque",
+        "canceled_check": "Cheque",
         "bank_statement": "Bank Statement",
+        "passbook": "Passbook",
+        "pass_book": "Passbook",
         "salary_slip": "Salary Slip",
         "sanction_letter": "Sanction Letter",
         "loan_agreement": "Loan Agreement",
@@ -1056,6 +1345,59 @@ def _run_checklist_with_fallback(
             )
         )
         return anomalies
+
+
+def _run_document_verification(
+    pdf_path: Path,
+    application_id: int,
+    pages: list[dict[str, Any]],
+    ground_truth: dict[str, Any],
+) -> tuple[DocumentVerificationReport | None, set[int] | None]:
+    used_fallback = False
+    try:
+        graviton_record, document_pages = parse_verification_pdf(str(pdf_path))
+        document_page_numbers = {int(page["page_number"]) for page in document_pages}
+    except VerificationPdfParseError as exc:
+        try:
+            graviton_record = GravitonRecord.model_validate(ground_truth)
+        except ValueError as fallback_exc:
+            log_action(
+                application_id,
+                "verification_skipped",
+                {
+                    "reason": str(exc),
+                    "fallback_reason": str(fallback_exc),
+                    "pdf_path": str(pdf_path),
+                },
+            )
+            return None, None
+        used_fallback = True
+        document_page_numbers = {
+            int(page.get("page_number") or 0)
+            for page in pages
+            if str(page.get("document_type") or "") != "DB Data"
+        }
+
+    document_only_pages = [
+        page
+        for page in pages
+        if int(page.get("page_number") or 0) in document_page_numbers
+    ]
+    extracted_fields = merge_public_extracted_fields(document_only_pages)
+    report = verify_all_fields(extracted_fields, graviton_record)
+    log_action(
+        application_id,
+        "verification_completed",
+        {
+            "graviton_application_id": graviton_record.application_id,
+            "document_page_count": len(document_page_numbers),
+            "overall_match": report.overall_match,
+            "match_percentage": report.match_percentage,
+            "needs_manual_review": report.needs_manual_review,
+            "db_data_source": "digital_pages" if used_fallback else "verification_pdf_parser",
+        },
+    )
+    return report, document_page_numbers
 
 
 def _save_ground_truth(application_id: int, ground_truth: dict[str, Any]) -> None:

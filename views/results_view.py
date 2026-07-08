@@ -15,6 +15,7 @@ import streamlit as st
 from database.db import get_connection
 from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
 from services.checklist_status import build_checklist_status
+from services.ocr_json_export import build_ocr_document_json
 from services.report_generator import generate_excel_report
 from services.reviewer_exceptions import collapse_for_reviewer, summarize_for_display
 from views.status_helpers import render_page_processing_table
@@ -89,7 +90,7 @@ def render_application_results(application_id: int) -> None:
     manual_confirmed = _render_manual_review(product_type)
     _render_document_checklist(data, product_type)
     _render_pages_requiring_review(anomalies)
-    _render_download(application_id)
+    _render_download(application_id, data)
     _render_keyboard_shortcuts_note()
     _render_reviewer_decision(application_id, application.get("status"), manual_confirmed, summary)
 
@@ -425,19 +426,33 @@ def _checklist_status_label(status: str) -> str:
     return "Not checked"
 
 
-def _render_download(application_id: int) -> None:
-    if st.button("Download Anomaly Report (Excel)"):
-        try:
-            report_path = generate_excel_report(application_id)
-            with open(report_path, "rb") as report_file:
-                st.download_button(
-                    "Download Anomaly Report (Excel)",
-                    data=report_file,
-                    file_name=report_path.split("/")[-1],
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-        except Exception as exc:
-            st.error(f"Report generation failed: {exc}")
+def _render_download(application_id: int, data: dict) -> None:
+    st.subheader("Downloads")
+    report_col, json_col = st.columns(2)
+    with report_col:
+        if st.button("Prepare Anomaly Report (Excel)", key=f"excel_report_{application_id}"):
+            try:
+                report_path = generate_excel_report(application_id)
+                with open(report_path, "rb") as report_file:
+                    st.download_button(
+                        "Download Anomaly Report (Excel)",
+                        data=report_file,
+                        file_name=report_path.split("/")[-1],
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"excel_report_download_{application_id}",
+                    )
+            except (OSError, RuntimeError, ValueError) as exc:
+                st.error(f"Report generation failed: {exc}")
+
+    with json_col:
+        document_json = _build_document_ocr_download_payload(application_id, data)
+        st.download_button(
+            "Download Document OCR JSON",
+            data=json.dumps(document_json, indent=2, ensure_ascii=False),
+            file_name=f"application_{application_id}_document_ocr_data.json",
+            mime="application/json",
+            key=f"document_ocr_json_{application_id}",
+        )
 
 
 def _load_latest_decision(application_id: int) -> dict | None:
@@ -481,7 +496,7 @@ def _load_application_result(application_id: int) -> dict | None:
             (application_id,),
         ).fetchall()
 
-    page_dicts = [dict(row) for row in pages]
+    page_dicts = [_coerce_page_row(row) for row in pages]
     document_pages: dict[str, list[int]] = {}
     for page in page_dicts:
         doc_type = page.get("document_type")
@@ -515,6 +530,41 @@ def _coerce_page_event(row: Any) -> dict:
         decoded = {}
     payload["extracted_fields"] = decoded if isinstance(decoded, dict) else {}
     return payload
+
+
+def _coerce_page_row(row: Any) -> dict:
+    payload = dict(row)
+    raw_fields = payload.get("extracted_fields")
+    try:
+        decoded = json.loads(raw_fields) if raw_fields else {}
+    except (TypeError, json.JSONDecodeError):
+        decoded = {}
+    payload["extracted_fields"] = decoded if isinstance(decoded, dict) else {}
+    return payload
+
+
+def _build_document_ocr_download_payload(application_id: int, data: dict) -> dict:
+    saved_payload = _load_saved_document_ocr_json(application_id)
+    if saved_payload is not None:
+        return saved_payload
+
+    return build_ocr_document_json(
+        application_id,
+        data.get("pages") or [],
+        page_events=data.get("page_events") or [],
+    )
+
+
+def _load_saved_document_ocr_json(application_id: int) -> dict | None:
+    path = Path("data/processed") / f"application_{application_id}" / "document_ocr_data.json"
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _page_image_map(pages: list[dict]) -> dict[int, str]:
