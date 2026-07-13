@@ -26,6 +26,11 @@ class _Spinner:
         return False
 
 
+class _FakeColumn:
+    def metric(self, *_args, **_kwargs) -> None:
+        return None
+
+
 class _FakeStreamlit:
     def __init__(self) -> None:
         self.session_state = {}
@@ -47,6 +52,9 @@ class _FakeStreamlit:
 
     def caption(self, message: str) -> None:
         self.write_messages.append(message)
+
+    def columns(self, count: int):
+        return [_FakeColumn() for _ in range(count)]
 
 
 def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
@@ -158,6 +166,72 @@ def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeyp
     assert response.status_code == 400
     assert "File too large" in response.json()["detail"]
     assert not list((tmp_path / "uploads").glob("*.pdf"))
+
+
+def test_mapped_upload_rejects_page_outside_pdf(tmp_path, monkeypatch) -> None:
+    import json
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    pdf_path = tmp_path / "mapped.pdf"
+    _create_pdf(pdf_path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload/mapped",
+        data={
+            "manifest": json.dumps(
+                {
+                    "loan_id": "MAP-OUTSIDE-001",
+                    "reference_data": {"pan_number": "ABCDE1234F"},
+                    "documents": [{"document_type": "PAN", "pages": [2]}],
+                }
+            )
+        },
+        files={"file": ("mapped.pdf", pdf_path.read_bytes(), "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert "exceeds PDF page count 1" in response.json()["detail"]
+    assert not list((tmp_path / "uploads").glob("*.pdf"))
+
+
+def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
+    import json
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
+    pdf_path = tmp_path / "mapped.pdf"
+    _create_pdf(pdf_path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload/mapped",
+        data={
+            "manifest": json.dumps(
+                {
+                    "loan_id": "MAP-VALID-001",
+                    "applicant_name": "Ramesh Kumar",
+                    "reference_data": {"pan_number": "ABCDE1234F"},
+                    "documents": [{"document_type": "PAN", "pages": [1]}],
+                }
+            )
+        },
+        files={"file": ("mapped.pdf", pdf_path.read_bytes(), "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pipeline_status"] == "queued"
+    assert body["mapped_pages"] == [1]
+    assert body["summary_url"] == f"/verification/summary/{body['application_id']}"
+    with db.get_connection() as connection:
+        audit = connection.execute(
+            "SELECT action FROM audit_log WHERE application_id = ?",
+            (body["application_id"],),
+        ).fetchone()
+    assert audit["action"] == "mapped_file_uploaded"
 
 
 def test_upload_view_posts_real_form_metadata(monkeypatch) -> None:

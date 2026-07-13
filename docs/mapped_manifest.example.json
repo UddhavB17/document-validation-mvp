@@ -1,0 +1,32 @@
+{
+  "loan_id": "LAP-EXAMPLE-001",
+  "applicant_name": "Ramesh Kumar",
+  "coapplicant_name": null,
+  "product_type": "LAP",
+  "branch": "Delhi",
+  "reference_data": {
+    "primary": {
+      "applicant_name": "Ramesh Kumar",
+      "aadhaar_number": "123456789012",
+      "pan_number": "ABCDE1234F",
+      "date_of_birth": "1990-04-15",
+      "phone_number": "9876543210",
+      "address": "12 Market Road Delhi",
+      "pin_code": "110001"
+    }
+  },
+  "documents": [
+    {
+      "document_type": "Aadhaar",
+      "applicant_role": "primary",
+      "pages": [12, 13],
+      "required": true
+    },
+    {
+      "document_type": "PAN",
+      "applicant_role": "primary",
+      "pages": [14],
+      "required": true
+    }
+  ]
+}
