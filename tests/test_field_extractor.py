@@ -150,6 +150,35 @@ class TestLoanAgreement:
         for key in ("loan_amount", "tenure", "emi", "roi"):
             assert key in result
 
+
+def test_kfs_uses_loan_detail_extractor() -> None:
+    result = extract_fields(
+        "KFS",
+        "Key Fact Statement\nLoan Amount: Rs. 5,00,000\nTenure: 60 months\nROI: 9.5%\nEMI: 10500",
+    )
+    assert result["loan_amount"] == "500000"
+    assert result["tenure"] == 60
+    assert result["roi"] == pytest.approx(9.5)
+
+
+def test_stamp_duty_extracts_stamp_date() -> None:
+    result = extract_fields("Stamp Duty", "e-Stamp Certificate\nStamp Date: 12/07/2026")
+    assert result["stamp_date"] == "2026-07-12"
+
+
+def test_clearance_report_prefers_negative_status() -> None:
+    result = extract_fields(
+        "Legal Clearance Report",
+        "Legal status is not cleared. Approval remains pending.",
+    )
+    assert result["clearance_status"] == "not cleared"
+
+
+def test_nach_extracts_not_registered_before_registered_substring() -> None:
+    result = extract_fields("NACH Form", "NACH is not registered for Account No: 1234567890")
+    assert result["registration_status"] == "not registered"
+    assert result["account_number"] == "1234567890"
+
     def test_unknown_document_type_returns_empty(self) -> None:
         result = extract_fields("Unknown Document", "some text")
         assert result == {}

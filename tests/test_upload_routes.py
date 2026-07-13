@@ -284,7 +284,7 @@ def test_upload_view_posts_real_form_metadata(monkeypatch) -> None:
     assert not fake_st.error_messages
 
 
-def test_partner_json_view_posts_to_api_and_renders_results(monkeypatch) -> None:
+def test_partner_json_view_posts_to_api_and_defers_results_to_page_render(monkeypatch) -> None:
     import views.upload_view as upload_view
 
     fake_st = _FakeStreamlit()
@@ -319,5 +319,7 @@ def test_partner_json_view_posts_to_api_and_renders_results(monkeypatch) -> None
     upload_view._submit_partner_json(payload)
 
     assert fake_st.session_state["last_uploaded_application_id"] == 99
-    assert rendered == [99]
+    # The page renders the saved application once, after all three tabs. The
+    # submit helper must not render it too or Streamlit creates duplicate keys.
+    assert rendered == []
     assert any("Issues found: 1" in message for message in fake_st.success_messages)

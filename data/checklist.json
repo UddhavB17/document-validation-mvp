@@ -37,6 +37,7 @@
         "Driving License"
       ],
       "check_type": "presence_any",
+      "scope": "each_person",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -53,6 +54,7 @@
         "Driving License"
       ],
       "check_type": "presence_any",
+      "scope": "each_person",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -68,6 +70,7 @@
         "Driving License"
       ],
       "check_type": "presence_any",
+      "scope": "each_borrower",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -84,6 +87,7 @@
         "Utility Bill"
       ],
       "check_type": "presence_any",
+      "scope": "each_borrower",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -95,6 +99,7 @@
       "description": "PAN card mandatory for applicant and all co-applicants",
       "document_type": "PAN",
       "check_type": "presence",
+      "scope": "each_borrower",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -191,8 +196,27 @@
       "s_no": 15,
       "category": "Internal Documents",
       "description": "CRIF for all borrowers, and CIBIL if above 5 lakh sanction amount",
-      "document_type": "CRIF Report",
-      "check_type": "presence",
+      "document_type": [
+        "CRIF Report",
+        "CIBIL Report"
+      ],
+      "check_type": "requirements",
+      "requirements": [
+        {
+          "document_type": "CRIF Report",
+          "scope": "each_borrower"
+        },
+        {
+          "document_type": "CIBIL Report",
+          "scope": "each_borrower",
+          "applies_when": {
+            "field": "sanction_amount",
+            "field_aliases": ["loan_amount"],
+            "operator": ">",
+            "value": 500000
+          }
+        }
+      ],
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -207,6 +231,7 @@
         "Passbook"
       ],
       "check_type": "presence_any",
+      "scope": "banking_people",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -221,6 +246,7 @@
         "Passbook"
       ],
       "check_type": "presence_any",
+      "scope": "banking_people",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -268,8 +294,11 @@
       "s_no": 21,
       "category": "Internal Documents",
       "description": "KFS and Sanction Letter - cross check loan details and structure",
-      "document_type": "Sanction Letter",
-      "check_type": "presence",
+      "document_type": [
+        "KFS",
+        "Sanction Letter"
+      ],
+      "check_type": "presence_all",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -279,8 +308,11 @@
       "s_no": 22,
       "category": "Internal Documents",
       "description": "Insurance Forms - Signed Life and Property with Calculators",
-      "document_type": "Insurance Form",
-      "check_type": "presence",
+      "document_type": [
+        "Life Insurance Form",
+        "Property Insurance Form"
+      ],
+      "check_type": "presence_all",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -391,6 +423,10 @@
         "Shop Establishment Certificate"
       ],
       "check_type": "presence_any",
+      "applies_when": {
+        "field": "business_proof_required",
+        "operator": "truthy"
+      },
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -429,6 +465,10 @@
         "Assessed Income Document"
       ],
       "check_type": "presence_any",
+      "applies_when": {
+        "field": "assessed_income_documents_required",
+        "operator": "truthy"
+      },
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -440,6 +480,10 @@
       "description": "Customer consent letter - Insurance tenure less than loan tenure",
       "document_type": "Insurance Consent Letter",
       "check_type": "presence",
+      "applies_when": {
+        "field": "insurance_consent_required",
+        "operator": "truthy"
+      },
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -484,8 +528,13 @@
       "category": "Technical",
       "description": "Two positive technical reports if loan amount above 20 lakh",
       "document_type": "Technical Report",
-      "check_type": "presence_min_count",
-      "min_count": 2,
+      "check_type": "presence",
+      "applies_when": {
+        "field": "loan_amount",
+        "field_aliases": ["sanction_amount"],
+        "operator": ">",
+        "value": 2000000
+      },
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -560,18 +609,25 @@
       "document_type": "PAN",
       "check_type": "presence_and_match",
       "match_field": "pan_number",
+      "scope": "each_borrower",
       "severity_if_mismatch": "HIGH",
       "ai_checkable": true
     },
     {
       "s_no": 12,
       "description": "Loan details must match system - ROI/Tenure/Loan Amount/EMI",
-      "document_type": "Loan Agreement",
+      "document_type": [
+        "KFS",
+        "Sanction Letter",
+        "Loan Agreement",
+        "Facility Agreement"
+      ],
       "check_type": "field_match",
       "match_fields": [
         "loan_amount",
         "tenure",
-        "emi"
+        "emi",
+        "roi"
       ],
       "severity_if_mismatch": "HIGH",
       "ai_checkable": true
@@ -580,9 +636,84 @@
       "s_no": 17,
       "description": "Bank account vintage of 3 months for disbursement account",
       "document_type": "Bank Statement",
-      "check_type": "date_range",
+      "check_type": "period_minimum_months",
       "min_months": 3,
       "severity_if_fail": "MEDIUM",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 33,
+      "description": "Stamp date must be equal to or older than disbursement date",
+      "document_type": "Stamp Duty",
+      "check_type": "date_not_after",
+      "document_fields": ["stamp_date", "document_date", "issue_date"],
+      "system_field": "disbursement_date",
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 35,
+      "description": "Insurance tenure must be less than loan tenure",
+      "document_type": "Insurance Consent Letter",
+      "check_type": "field_less_than",
+      "document_fields": ["insurance_tenure", "insurance_tenure_months"],
+      "system_field": "tenure",
+      "applies_when": {
+        "field": "insurance_consent_required",
+        "operator": "truthy"
+      },
+      "severity_if_fail": "MEDIUM",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 37,
+      "description": "Legal clearance status must be cleared before disbursement",
+      "document_type": "Legal Clearance Report",
+      "check_type": "required_status",
+      "status_fields": ["clearance_status", "status"],
+      "accepted_statuses": ["clear", "cleared", "positive", "approved"],
+      "rejected_statuses": ["not clear", "not cleared", "negative", "rejected", "pending"],
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 38,
+      "description": "Technical clearance status must be cleared before disbursement",
+      "document_type": ["Technical Clearance Report", "Technical Report"],
+      "check_type": "required_status",
+      "status_fields": ["clearance_status", "report_status", "status"],
+      "accepted_statuses": ["clear", "cleared", "positive", "approved"],
+      "rejected_statuses": ["not clear", "not cleared", "negative", "rejected", "pending"],
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 39,
+      "description": "Two distinct positive technical reports required above 20 lakh",
+      "document_type": "Technical Report",
+      "check_type": "distinct_positive_count",
+      "min_count": 2,
+      "status_fields": ["report_status", "clearance_status", "status"],
+      "accepted_statuses": ["positive", "clear", "cleared", "approved"],
+      "rejected_statuses": ["negative", "rejected", "not clear", "not cleared", "pending"],
+      "applies_when": {
+        "field": "loan_amount",
+        "field_aliases": ["sanction_amount"],
+        "operator": ">",
+        "value": 2000000
+      },
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 40,
+      "description": "ACH/NACH must be registered with correct details",
+      "document_type": "NACH Form",
+      "check_type": "required_status",
+      "status_fields": ["registration_status", "status"],
+      "accepted_statuses": ["registered", "active", "approved"],
+      "rejected_statuses": ["not registered", "inactive", "rejected", "pending"],
+      "severity_if_fail": "HIGH",
       "ai_checkable": true
     }
   ],
@@ -599,9 +730,13 @@
       "Bank Statement",
       "Passbook",
       "CRIF Report",
+      "CIBIL Report",
+      "KFS",
       "Sanction Letter",
       "Loan Agreement",
       "Facility Agreement",
+      "Life Insurance Form",
+      "Property Insurance Form",
       "Insurance Form",
       "Legal Clearance Report",
       "Technical Clearance Report",

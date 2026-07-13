@@ -155,3 +155,135 @@ def test_low_confidence_document_does_not_satisfy_presence() -> None:
     anomalies = run_checks(pages, {}, {}, "LAP")
 
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
+
+
+def _confident_page(page_number: int, document_type: str, **extra) -> dict:
+    return {
+        "page_number": page_number,
+        "document_type": document_type,
+        "page_type": "digital",
+        "classification_confidence": 0.99,
+        **extra,
+    }
+
+
+def test_pan_is_required_for_each_borrower() -> None:
+    pages = [
+        _confident_page(1, "PAN", person_id="primary", extracted_fields={"pan_number": "ABCDE1234F"}),
+        _confident_page(2, "Application Form"),
+        _confident_page(3, "Bank Statement"),
+    ]
+    system_data = {
+        "people": {
+            "primary": {"applicant_name": "A", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "B", "pan_number": "FGHIJ5678K"},
+        }
+    }
+
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+
+    assert any(
+        anomaly["s_no"] == 7 and anomaly.get("person_id") == "coapplicant_1"
+        for anomaly in anomalies
+    )
+    assert not any(
+        anomaly["s_no"] == 7 and anomaly.get("person_id") == "primary"
+        for anomaly in anomalies
+    )
+
+
+def test_cibil_is_required_per_borrower_only_above_five_lakh() -> None:
+    pages = [
+        _confident_page(1, "CRIF Report", person_id="primary"),
+        _confident_page(2, "CRIF Report", person_id="coapplicant_1"),
+        _confident_page(3, "CIBIL Report", person_id="primary"),
+        _confident_page(4, "Application Form"),
+        _confident_page(5, "Bank Statement"),
+    ]
+    system_data = {
+        "loan_amount": "600000",
+        "people": {"primary": {}, "coapplicant_1": {}},
+    }
+
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+
+    assert any(
+        anomaly["s_no"] == 15
+        and anomaly.get("document_type") == "CIBIL Report"
+        and anomaly.get("person_id") == "coapplicant_1"
+        for anomaly in anomalies
+    )
+
+    below_threshold = {**system_data, "loan_amount": "500000"}
+    anomalies = run_checks(pages, below_threshold, below_threshold, "LAP")
+    assert not any(
+        anomaly["s_no"] == 15 and anomaly.get("document_type") == "CIBIL Report"
+        for anomaly in anomalies
+    )
+
+
+def test_kfs_and_sanction_letter_are_both_required() -> None:
+    pages = [
+        _confident_page(1, "Sanction Letter"),
+        _confident_page(2, "Application Form"),
+        _confident_page(3, "Bank Statement"),
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert any(
+        anomaly["s_no"] == 21 and anomaly.get("document_type") == "KFS"
+        for anomaly in anomalies
+    )
+
+
+def test_stamp_date_must_not_be_after_disbursement() -> None:
+    pages = [
+        _confident_page(1, "Stamp Duty", extracted_fields={"stamp_date": "2026-07-20"}),
+        _confident_page(2, "Application Form"),
+        _confident_page(3, "Bank Statement"),
+    ]
+
+    anomalies = run_checks(
+        pages,
+        {"disbursement_date": "2026-07-15"},
+        {"disbursement_date": "2026-07-15"},
+        "LAP",
+    )
+
+    assert any(anomaly["rule_id"] == "DATE_CHECK_S33" for anomaly in anomalies)
+
+
+def test_two_positive_technical_reports_must_be_distinct() -> None:
+    pages = [
+        _confident_page(
+            1, "Technical Report", source_document_id="report-a",
+            extracted_fields={"report_status": "positive"},
+        ),
+        _confident_page(
+            2, "Technical Report", source_document_id="report-a",
+            extracted_fields={"report_status": "positive"},
+        ),
+        _confident_page(3, "Application Form"),
+        _confident_page(4, "Bank Statement"),
+    ]
+    system_data = {"loan_amount": "2500000"}
+
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+    assert any(anomaly["rule_id"] == "COUNT_STATUS_CHECK_S39" for anomaly in anomalies)
+
+    pages[1]["source_document_id"] = "report-b"
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+    assert not any(anomaly["rule_id"] == "COUNT_STATUS_CHECK_S39" for anomaly in anomalies)
+
+
+def test_present_legal_report_with_pending_status_needs_review() -> None:
+    pages = [
+        _confident_page(1, "Legal Clearance Report", extracted_fields={"clearance_status": "pending"}),
+        _confident_page(2, "Application Form"),
+        _confident_page(3, "Bank Statement"),
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert any(anomaly["rule_id"] == "STATUS_CHECK_S37" for anomaly in anomalies)

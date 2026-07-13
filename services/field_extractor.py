@@ -49,6 +49,7 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
     """
     _EXTRACTORS = {
         "Sanction Letter":  _extract_sanction_letter,
+        "KFS":              _extract_sanction_letter,
         "Loan Agreement":   _extract_loan_agreement,
         "PAN":              _extract_pan,
         "PAN Card":         _extract_pan,
@@ -63,6 +64,12 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
         "Cheque":           _extract_cheque,
         "Salary Slip":      _extract_salary_slip,
         "Application Form": _extract_application_form,
+        "Stamp Duty":       _extract_stamp_duty,
+        "Insurance Consent Letter": _extract_insurance_consent,
+        "Legal Clearance Report": _extract_clearance_report,
+        "Technical Clearance Report": _extract_clearance_report,
+        "Technical Report": _extract_clearance_report,
+        "NACH Form":        _extract_nach_form,
     }
     extractor = _EXTRACTORS.get(document_type)
     if extractor is None:
@@ -590,3 +597,68 @@ def _extract_salary_month(text: str) -> str | None:
         re.IGNORECASE,
     )
     return match.group(1).strip() if match else None
+
+
+def _extract_stamp_duty(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    return {
+        "stamp_date": _extract_date_near(
+            lower, "stamp date", "date of stamp", "certificate issued date", "issue date"
+        ),
+        "stamp_certificate_number": _value_after_label(
+            text, "certificate no", "certificate number", "e-stamp number"
+        ),
+    }
+
+
+def _extract_insurance_consent(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    tenure_match = re.search(
+        r"insurance\s+tenure\s*[:\-–]?\s*(\d+)\s*(months?|years?)?", lower
+    )
+    insurance_tenure: int | None = None
+    if tenure_match:
+        insurance_tenure = int(tenure_match.group(1))
+        if str(tenure_match.group(2) or "").startswith("year"):
+            insurance_tenure *= 12
+    return {
+        "insurance_tenure": insurance_tenure,
+        "applicant_name": _line_after_label(text, "applicant name", "customer name", "name"),
+    }
+
+
+def _extract_clearance_report(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    rejected = next(
+        (status for status in ("not cleared", "not clear", "negative", "rejected", "pending") if status in lower),
+        None,
+    )
+    accepted = next(
+        (status for status in ("cleared", "clear", "positive", "approved") if status in lower),
+        None,
+    )
+    return {
+        "clearance_status": rejected or accepted,
+        "report_status": rejected or accepted,
+        "report_date": _extract_date_near(lower, "report date", "date of report", "as on"),
+    }
+
+
+def _extract_nach_form(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    account_match = re.search(
+        r"(?:account\s*(?:number|no\.?|#)|a/c\s*(?:no\.?|number)?)\s*[:\-–]?\s*([0-9Xx* ]{6,24})",
+        text,
+        re.IGNORECASE,
+    )
+    if "not registered" in lower or "registration pending" in lower:
+        registration_status = "not registered"
+    elif "registered" in lower or "registration successful" in lower or "active" in lower:
+        registration_status = "registered"
+    else:
+        registration_status = None
+    return {
+        "registration_status": registration_status,
+        "account_holder_name": _line_after_label(text, "account holder", "customer name", "name"),
+        "account_number": _digits_only(account_match.group(1)) if account_match else None,
+    }

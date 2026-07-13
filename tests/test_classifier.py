@@ -119,7 +119,7 @@ def test_sanction_letter_classified() -> None:
 
 def test_sanction_letter_via_kfs() -> None:
     text = "Key Fact Statement KFS Home Loan"
-    assert _classify(text) == "Sanction Letter"
+    assert _classify(text) == "KFS"
 
 
 def test_crif_classified() -> None:
@@ -140,7 +140,7 @@ def test_crif_high_mark_not_confused_with_cibil() -> None:
 
 def test_insurance_classified() -> None:
     text = "Life Insurance Policy Sum Assured Nominee Premium"
-    assert _classify(text) == "Insurance Form"
+    assert _classify(text) == "Life Insurance Form"
     assert _confidence(text) == 1.0
 
 
@@ -232,4 +232,3 @@ def test_hindi_sanction_letter_classified() -> None:
 def test_hindi_consent_letter_classified() -> None:
     text = "ग्राहक सहमति पत्र बीमा अवधि ऋण अवधि"
     assert _classify(text) == "Consent Letter"
-
