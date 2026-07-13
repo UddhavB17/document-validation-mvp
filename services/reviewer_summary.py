@@ -90,6 +90,8 @@ def _needs_review(anomaly: dict[str, Any]) -> bool:
 def _review_item(anomaly: dict[str, Any]) -> dict[str, Any]:
     return {
         "page_number": anomaly.get("page_number"),
+        "person_id": anomaly.get("person_id"),
+        "matched_person_id": anomaly.get("matched_person_id"),
         "document_type": anomaly.get("document_type"),
         "field": anomaly.get("field_name") or _field_from_rule(anomaly.get("rule_id")),
         "status": anomaly.get("status") or "MANUAL_REVIEW_REQUIRED",

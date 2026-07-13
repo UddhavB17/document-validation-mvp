@@ -65,19 +65,25 @@ def render_upload_page() -> None:
         st.subheader("Trusted JSON + Page Mapping")
         st.caption(
             "Use this path when the company supplies trusted reference values and tells the system "
-            "which PDF pages contain each document. LLM decisions and page classification are skipped."
+            "which PDF pages belong to each person and document. Until the API arrives, paste the "
+            "same contract manually. LLM decisions and page classification are skipped."
         )
         mapped_pdf = st.file_uploader("Mapped loan PDF", type=["pdf"], key="mapped_pdf")
         mapped_json = st.text_area(
             "Trusted manifest JSON",
             height=330,
             placeholder=(
-                '{\n  "loan_id": "LN-001",\n  "applicant_name": "Ramesh Kumar",\n'
-                '  "reference_data": {"aadhaar_number": "123456789012", "pan_number": "ABCDE1234F"},\n'
-                '  "documents": [\n'
-                '    {"document_type": "Aadhaar", "pages": [12, 13]},\n'
-                '    {"document_type": "PAN", "pages": [14]}\n  ]\n}'
+                '{\n  "schema_version": "1.0",\n  "loan_id": "LN-001",\n'
+                '  "people": {\n    "primary": {"applicant_name": "Ramesh Kumar", '
+                '"aadhaar_number": "123456789012", "pan_number": "ABCDE1234F"}\n  },\n'
+                '  "document_index": [\n'
+                '    {"person_id": "primary", "document_type": "Aadhaar", "pages": [12, 13]},\n'
+                '    {"person_id": "primary", "document_type": "PAN", "pages": [14]}\n  ]\n}'
             ),
+        )
+        st.caption(
+            "Your present demo can continue through PDF Upload. This mapped tab is ready for "
+            "manual indexes now and the future company/Google adapter later."
         )
         if st.button("Run Deterministic Verification", type="primary"):
             if mapped_pdf is None or not mapped_json.strip():

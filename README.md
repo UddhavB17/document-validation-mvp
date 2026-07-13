@@ -131,6 +131,20 @@ data with:
 Poll the returned `progress_url`, then retrieve the final deterministic summary
 from the returned `summary_url`.
 
+The preferred versioned contract uses `people` and `document_index`. Every
+observation retains its person ID, document type, field, page, and OCR
+confidence. This allows primary applicants and any number of co-applicants to
+be verified independently, detects contradictory values across mapped pages,
+and flags pages that appear indexed to the wrong person. The older
+`reference_data` + `documents` structure remains accepted for compatibility.
+
+Until the company API and index format are available, paste the example JSON
+manually. `services/company_data_provider.py` separates trusted company values
+from `services/document_index_provider.py`, which handles manual indexing now
+and the future index-PDF format later. Both inputs are composed into the same
+`VerificationManifest`, so the OCR and comparison pipeline does not need to be
+rewritten during integration.
+
 ### 6. Run tests
 
 ```bash

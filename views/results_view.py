@@ -124,6 +124,24 @@ def _render_deterministic_reviewer_summary(application_id: int) -> None:
     st.info(recommendation)
     if pages:
         st.warning(f"Pages to check manually: {', '.join(map(str, pages))}")
+    people = summary.get("people_verification") or {}
+    if people:
+        st.markdown("#### Person-wise identity verification")
+        rows = []
+        for person_id, person in people.items():
+            documents = person.get("documents") or {}
+            for document_type, document in documents.items():
+                rows.append({
+                    "Person": person.get("person_name") or person_id,
+                    "Role ID": person_id,
+                    "Document": document_type,
+                    "Status": document.get("status"),
+                    "Pages": ", ".join(map(str, document.get("pages") or [])),
+                    "Fields observed": ", ".join(document.get("fields") or []),
+                    "Issues": document.get("anomaly_count", 0),
+                })
+        if rows:
+            st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _render_verdict_banner(application: dict, summary: dict) -> None:

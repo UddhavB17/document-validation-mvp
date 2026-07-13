@@ -62,6 +62,7 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
         "Bank Statement":   _extract_bank_statement,
         "Cheque":           _extract_cheque,
         "Salary Slip":      _extract_salary_slip,
+        "Application Form": _extract_application_form,
     }
     extractor = _EXTRACTORS.get(document_type)
     if extractor is None:
@@ -363,6 +364,24 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
         "aadhaar_number": aadhaar_number,
         "dob": _extract_date_near(text.lower(), "date of birth", "dob", "year of birth", "yob"),
         "address": _lines_after_label(text, "address", max_lines=4),
+    }
+
+
+def _extract_application_form(text: str) -> dict[str, Any]:
+    """Extract identity fields commonly repeated in a loan application form."""
+    pan_match = re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
+    aadhaar_match = re.search(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", text)
+    phone_match = re.search(r"(?<!\d)(?:\+?91[\s-]?)?([6-9]\d{9})(?!\d)", text)
+    pin_match = re.search(r"(?:pin\s*code|pincode)\s*[:\-–]?\s*(\d{6})", text, re.IGNORECASE)
+    return {
+        "applicant_name": _line_after_label(
+            text, "applicant name", "borrower name", "name of applicant"
+        ),
+        "pan_number": pan_match.group(1) if pan_match else None,
+        "aadhaar_number": aadhaar_match.group(1).replace(" ", "") if aadhaar_match else None,
+        "date_of_birth": _extract_date_near(text.lower(), "date of birth", "dob"),
+        "phone_number": phone_match.group(1) if phone_match else None,
+        "pin_code": pin_match.group(1) if pin_match else None,
     }
 
 

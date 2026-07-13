@@ -5,6 +5,9 @@ from database.db import get_connection, init_db
 from services.mapped_verification import run_mapped_verification
 from services.reviewer_summary import build_reviewer_summary
 from services.reviewer_summary_store import load_reviewer_summary
+from services.verification_manifest import VerificationManifest
+from services.company_data_provider import CompanyReferenceData, LocalJsonCompanyDataProvider
+from services.document_index_provider import ManualDocumentIndexProvider, compose_verification_manifest
 
 
 class _FakeDocument:
@@ -120,3 +123,139 @@ def test_reviewer_summary_is_clean_without_anomalies() -> None:
     )
     assert summary["overall_status"] == "CLEAN"
     assert summary["pages_to_review"] == []
+
+
+def test_manifest_normalizes_multi_person_contract_and_legacy_contract() -> None:
+    current = VerificationManifest.model_validate({
+        "loan_id": "MAP-MULTI",
+        "people": {
+            "primary": {"applicant_name": "Ramesh", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "Sita", "pan_number": "FGHIJ5678K"},
+        },
+        "document_index": [
+            {"person_id": "primary", "document_type": "PAN", "pages": [1]},
+            {"person_id": "coapplicant_1", "document_type": "PAN", "pages": [2]},
+        ],
+    })
+    assert sorted(current.people) == ["coapplicant_1", "primary"]
+    assert current.pipeline_payload()["documents"][1]["applicant_role"] == "coapplicant_1"
+
+    legacy = VerificationManifest.model_validate({
+        "loan_id": "MAP-LEGACY",
+        "reference_data": {"pan_number": "ABCDE1234F"},
+        "documents": [{"document_type": "PAN", "pages": [1]}],
+    })
+    assert legacy.people["primary"].pan_number == "ABCDE1234F"
+
+
+def test_company_data_and_manual_index_compose_without_pipeline_changes() -> None:
+    reference = LocalJsonCompanyDataProvider({
+        "loan_id": "MAP-COMPOSE",
+        "people": {"primary": {"pan_number": "ABCDE1234F"}},
+    }).get_reference_data("MAP-COMPOSE")
+    assert isinstance(reference, CompanyReferenceData)
+    index = ManualDocumentIndexProvider([
+        {"person_id": "primary", "document_type": "PAN", "pages": [3]}
+    ]).get_document_index("unused.pdf")
+
+    manifest = compose_verification_manifest(reference, index)
+
+    assert manifest.loan_id == "MAP-COMPOSE"
+    assert manifest.document_index[0].pages == [3]
+    assert manifest.pipeline_payload()["reference_data"]["primary"]["pan_number"] == "ABCDE1234F"
+
+
+def test_manifest_rejects_unknown_person_and_conflicting_page_assignment() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown people"):
+        VerificationManifest.model_validate({
+            "loan_id": "MAP-BAD-PERSON",
+            "people": {"primary": {}},
+            "document_index": [
+                {"person_id": "coapplicant_1", "document_type": "PAN", "pages": [1]}
+            ],
+        })
+
+    with pytest.raises(ValueError, match="conflicting mappings"):
+        VerificationManifest.model_validate({
+            "loan_id": "MAP-BAD-PAGE",
+            "people": {"primary": {}, "coapplicant_1": {}},
+            "document_index": [
+                {"person_id": "primary", "document_type": "PAN", "pages": [1]},
+                {"person_id": "coapplicant_1", "document_type": "PAN", "pages": [1]},
+            ],
+        })
+
+
+def test_multi_person_verification_checks_every_distinct_occurrence_and_wrong_owner(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "multi.db")
+    monkeypatch.setattr("services.mapped_verification.open_pdf", lambda _path: _FakeDocument(4))
+    monkeypatch.setattr(
+        "services.mapped_verification.convert_page_to_image",
+        lambda _page, output: str(output),
+    )
+    page_text = {
+        "page_1": "Name: Ramesh Kumar\n1111 2222 3333",
+        "page_2": "Name: Ramesh Kumar\n1111 2222 9999",
+        "page_3": "Name: Ramesh Kumar\nABCDE1234F",
+        # Co-applicant page accidentally contains the primary applicant's PAN.
+        "page_4": "Name: Ramesh Kumar\nABCDE1234F",
+    }
+
+    def fake_ocr(path: str) -> dict:
+        text = next(value for key, value in page_text.items() if key in path)
+        return {"ocr_text": text, "is_readable": True, "confidence": 0.95}
+
+    monkeypatch.setattr("services.mapped_verification.run_ocr_on_page", fake_ocr)
+    application_id = _application()
+    manifest = VerificationManifest.model_validate({
+        "loan_id": "MAP-MULTI",
+        "people": {
+            "primary": {
+                "applicant_name": "Ramesh Kumar",
+                "aadhaar_number": "111122223333",
+                "pan_number": "ABCDE1234F",
+            },
+            "coapplicant_1": {
+                "applicant_name": "Sita Kumar",
+                "pan_number": "FGHIJ5678K",
+            },
+        },
+        "document_index": [
+            {
+                "person_id": "primary", "document_type": "Aadhaar", "pages": [1, 2],
+                "expected_fields": {"aadhaar_number": "111122223333"},
+            },
+            {
+                "person_id": "primary", "document_type": "PAN", "pages": [3],
+                "expected_fields": {"pan_number": "ABCDE1234F"},
+            },
+            {
+                "person_id": "coapplicant_1", "document_type": "PAN", "pages": [4],
+                "expected_fields": {"pan_number": "FGHIJ5678K"},
+            },
+        ],
+    })
+
+    result = run_mapped_verification(
+        tmp_path / "loan.pdf",
+        application_id,
+        manifest.pipeline_payload(),
+        output_dir=tmp_path / "processed",
+    )
+
+    assert result["checked_fields"] == 4
+    assert result["matched_fields"] == 2
+    assert {(item["rule_id"], item["page_number"]) for item in result["anomalies"]} == {
+        ("AADHAAR_NUMBER_MISMATCH", 2),
+        ("INDEX_MAPPING_SUSPECTED", 4),
+    }
+    suspected = next(item for item in result["anomalies"] if item["page_number"] == 4)
+    assert suspected["person_id"] == "coapplicant_1"
+    assert suspected["matched_person_id"] == "primary"
+    assert result["people_verification"]["primary"]["status"] == "NEEDS_REVIEW"
+    assert result["people_verification"]["coapplicant_1"]["status"] == "NEEDS_REVIEW"
+    assert result["reviewer_summary"]["pages_to_review"] == [2, 4]

@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel
 
 from database.db import get_connection, init_db
 from services.file_validator import max_file_size_bytes, validate_file, validate_upload
@@ -23,6 +23,7 @@ from services.progress_tracker import (
 )
 from services.pipeline import run_pipeline
 from services.mapped_verification import run_mapped_verification
+from services.verification_manifest import VerificationManifest
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = Path("data/uploads")
@@ -38,35 +39,6 @@ class PartnerPayload(BaseModel):
     branch: str | None = None
     digital_text: dict
     scanned_docs: dict
-
-
-class MappedDocument(BaseModel):
-    """Trusted routing information for one document in the uploaded PDF."""
-
-    document_type: str = Field(min_length=1)
-    pages: list[int] = Field(min_length=1)
-    applicant_role: str = "primary"
-    expected_fields: dict[str, object] | None = None
-    required: bool = True
-
-    @field_validator("pages")
-    @classmethod
-    def validate_pages(cls, value: list[int]) -> list[int]:
-        if any(page < 1 for page in value):
-            raise ValueError("page numbers are one-based and must be positive")
-        return list(dict.fromkeys(value))
-
-
-class MappedManifest(BaseModel):
-    """Company reference data plus explicit PDF page/document mapping."""
-
-    loan_id: str = Field(min_length=1)
-    applicant_name: str | None = None
-    coapplicant_name: str | None = None
-    product_type: str = "LAP"
-    branch: str | None = None
-    reference_data: dict[str, object]
-    documents: list[MappedDocument] = Field(min_length=1)
 
 
 def _safe_name(value: str) -> str:
@@ -172,7 +144,7 @@ async def upload_mapped_file(
     """Queue deterministic verification without page classification or LLM decisions."""
     init_db()
     try:
-        parsed = MappedManifest.model_validate(json.loads(manifest))
+        parsed = VerificationManifest.model_validate(json.loads(manifest))
     except (json.JSONDecodeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
 
@@ -185,7 +157,7 @@ async def upload_mapped_file(
         file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=validation["error"])
 
-    highest_page = max(page for item in parsed.documents for page in item.pages)
+    highest_page = max(page for item in parsed.document_index for page in item.pages)
     if highest_page > int(validation["total_pages"]):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
@@ -202,8 +174,8 @@ async def upload_mapped_file(
             """,
             (
                 parsed.loan_id,
-                parsed.applicant_name,
-                parsed.coapplicant_name,
+                parsed.people.get("primary").applicant_name if parsed.people.get("primary") else None,
+                _first_coapplicant_name(parsed),
                 parsed.product_type,
                 parsed.branch,
             ),
@@ -214,7 +186,7 @@ async def upload_mapped_file(
             INSERT INTO audit_log (application_id, action, details)
             VALUES (?, 'mapped_file_uploaded', ?)
             """,
-            (application_id, f"Uploaded {file.filename} with {len(parsed.documents)} mapped document(s)"),
+            (application_id, f"Uploaded {file.filename} with {len(parsed.document_index)} mapped document(s)"),
         )
         connection.execute(
             """
@@ -234,7 +206,7 @@ async def upload_mapped_file(
             ),
         )
 
-    mapped_pages = sorted({page for item in parsed.documents for page in item.pages})
+    mapped_pages = sorted({page for item in parsed.document_index for page in item.pages})
     start_tracking(
         application_id,
         total_pages=len(mapped_pages),
@@ -249,7 +221,7 @@ async def upload_mapped_file(
         job_id,
         str(file_path),
         application_id,
-        parsed.model_dump(),
+        parsed.pipeline_payload(),
     )
     return {
         "application_id": application_id,
@@ -260,7 +232,16 @@ async def upload_mapped_file(
         "mapped_pages": mapped_pages,
         "progress_url": f"/upload/{application_id}/progress",
         "summary_url": f"/verification/summary/{application_id}",
+        "people": sorted(parsed.people),
+        "manifest_schema_version": parsed.schema_version,
     }
+
+
+def _first_coapplicant_name(manifest: VerificationManifest) -> str | None:
+    for person_id, person in manifest.people.items():
+        if person_id != "primary" and person.applicant_name:
+            return person.applicant_name
+    return None
 
 
 @router.post("")
