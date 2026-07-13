@@ -1,6 +1,7 @@
 """Upload API routes."""
 
 from datetime import datetime
+import json
 from pathlib import Path
 import re
 
@@ -14,12 +15,15 @@ from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
     mark_failed,
+    mark_completed,
     mark_job_completed,
     mark_job_failed,
     mark_job_started,
     start_tracking,
 )
 from services.pipeline import run_pipeline
+from services.mapped_verification import run_mapped_verification
+from services.verification_manifest import VerificationManifest
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = Path("data/uploads")
@@ -130,6 +134,114 @@ async def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
     if not validation["is_valid"]:
         raise HTTPException(status_code=422, detail=validation["errors"])
     return {"filename": file.filename, "validation": validation}
+
+
+@router.post("/mapped", summary="Verify mapped PDF pages against trusted company JSON")
+async def upload_mapped_file(
+    manifest: str = Form(...),
+    file: UploadFile = File(...),
+) -> dict[str, object]:
+    """Queue deterministic verification without page classification or LLM decisions."""
+    init_db()
+    try:
+        parsed = VerificationManifest.model_validate(json.loads(manifest))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    file_path = UPLOAD_DIR / f"{_safe_name(parsed.loan_id)}_{timestamp}.pdf"
+    file_size_bytes = await _save_upload_stream(file, file_path)
+    validation = validate_file(file_path, file_size_bytes)
+    if not validation["valid"]:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=validation["error"])
+
+    highest_page = max(page for item in parsed.document_index for page in item.pages)
+    if highest_page > int(validation["total_pages"]):
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Mapped page {highest_page} exceeds PDF page count {validation['total_pages']}",
+        )
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO applications (
+                loan_id, applicant_name, coapplicant_name, product_type, branch, status
+            ) VALUES (?, ?, ?, ?, ?, 'processing')
+            """,
+            (
+                parsed.loan_id,
+                parsed.people.get("primary").applicant_name if parsed.people.get("primary") else None,
+                _first_coapplicant_name(parsed),
+                parsed.product_type,
+                parsed.branch,
+            ),
+        )
+        application_id = int(cursor.lastrowid)
+        connection.execute(
+            """
+            INSERT INTO audit_log (application_id, action, details)
+            VALUES (?, 'mapped_file_uploaded', ?)
+            """,
+            (application_id, f"Uploaded {file.filename} with {len(parsed.document_index)} mapped document(s)"),
+        )
+        connection.execute(
+            """
+            INSERT INTO uploaded_files (
+                application_id, file_path, original_filename, file_size_kb,
+                total_pages, digital_pages, scanned_pages
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                application_id,
+                str(file_path),
+                file.filename,
+                round(file_size_bytes / 1024, 2),
+                validation["total_pages"],
+                validation["digital_pages"],
+                validation["scanned_pages"],
+            ),
+        )
+
+    mapped_pages = sorted({page for item in parsed.document_index for page in item.pages})
+    start_tracking(
+        application_id,
+        total_pages=len(mapped_pages),
+        digital_pages=0,
+        scanned_pages=len(mapped_pages),
+        stage="queued",
+        message=f"Queued {len(mapped_pages)} mapped page(s) for deterministic verification",
+    )
+    job_id = create_pipeline_job(application_id)
+    submit_job(
+        _run_mapped_pipeline_task,
+        job_id,
+        str(file_path),
+        application_id,
+        parsed.pipeline_payload(),
+    )
+    return {
+        "application_id": application_id,
+        "job_id": job_id,
+        "loan_id": parsed.loan_id,
+        "status": "processing",
+        "pipeline_status": "queued",
+        "mapped_pages": mapped_pages,
+        "progress_url": f"/upload/{application_id}/progress",
+        "summary_url": f"/verification/summary/{application_id}",
+        "people": sorted(parsed.people),
+        "manifest_schema_version": parsed.schema_version,
+    }
+
+
+def _first_coapplicant_name(manifest: VerificationManifest) -> str | None:
+    for person_id, person in manifest.people.items():
+        if person_id != "primary" and person.applicant_name:
+            return person.applicant_name
+    return None
 
 
 @router.post("")
@@ -268,6 +380,34 @@ def _run_pipeline_task(
             mark_job_failed(job_id, "Pipeline completed with failed outcome")
         else:
             mark_job_completed(job_id)
+    except Exception as exc:  # noqa: BLE001
+        mark_job_failed(job_id, str(exc))
+        mark_failed(application_id, str(exc))
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE applications SET status = ? WHERE id = ?",
+                ("pipeline_failed", application_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_log (application_id, action, details)
+                VALUES (?, ?, ?)
+                """,
+                (application_id, "pipeline_failed", str(exc)),
+            )
+
+
+def _run_mapped_pipeline_task(
+    job_id: int,
+    file_path: str,
+    application_id: int,
+    manifest: dict[str, object],
+) -> None:
+    try:
+        mark_job_started(job_id)
+        result = run_mapped_verification(file_path, application_id, manifest)
+        mark_job_completed(job_id)
+        mark_completed(application_id, str(result["final_status"]), "completed")
     except Exception as exc:  # noqa: BLE001
         mark_job_failed(job_id, str(exc))
         mark_failed(application_id, str(exc))

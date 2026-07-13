@@ -109,6 +109,42 @@ uvicorn main:app --reload
 streamlit run app.py
 ```
 
+### Trusted JSON + mapped-page verification
+
+For the deterministic company workflow, open **Document Intake → Mapped
+Verification**. Upload the PDF and paste a manifest based on
+`docs/mapped_manifest.example.json`.
+
+The `pages` values are one-based PDF page numbers. The mapped path renders and
+OCRs only those pages, uses the supplied `document_type` instead of predicting
+it, compares supported fields against `reference_data`, and does not use an LLM
+to make match/mismatch decisions. When processing completes, the reviewer view
+shows the risk level, exact pages to review, and a deterministic recommended
+action.
+
+The same workflow is available through `POST /upload/mapped` as multipart form
+data with:
+
+- `file`: the PDF
+- `manifest`: the JSON manifest encoded as a string
+
+Poll the returned `progress_url`, then retrieve the final deterministic summary
+from the returned `summary_url`.
+
+The preferred versioned contract uses `people` and `document_index`. Every
+observation retains its person ID, document type, field, page, and OCR
+confidence. This allows primary applicants and any number of co-applicants to
+be verified independently, detects contradictory values across mapped pages,
+and flags pages that appear indexed to the wrong person. The older
+`reference_data` + `documents` structure remains accepted for compatibility.
+
+Until the company API and index format are available, paste the example JSON
+manually. `services/company_data_provider.py` separates trusted company values
+from `services/document_index_provider.py`, which handles manual indexing now
+and the future index-PDF format later. Both inputs are composed into the same
+`VerificationManifest`, so the OCR and comparison pipeline does not need to be
+rewritten during integration.
+
 ### 6. Run tests
 
 ```bash

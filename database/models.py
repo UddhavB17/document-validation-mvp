@@ -105,6 +105,54 @@ class DocumentVerificationReport(BaseModel):
             return 0.0
         return round((self.matched_fields / self.total_fields_checked) * 100.0, 2)
 
+
+ChecklistStatus = Literal["verified", "needs_review", "missing", "unknown"]
+ChecklistConfidence = Literal["high", "medium", "low"]
+ChecklistExtractionSource = Literal["deterministic", "llm_fallback"]
+
+
+class ChecklistItem(BaseModel):
+    """Reviewer-facing result for one deterministic NDC checklist item."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    item_number: int
+    document_name: str
+    status: ChecklistStatus
+    confidence: ChecklistConfidence
+    confidence_detail: str
+    extracted_fields: dict[str, str | None] = Field(default_factory=dict)
+    extraction_source: ChecklistExtractionSource = "deterministic"
+    narration: str | None = None
+    flagged_reason: str | None = None
+
+
+class ChecklistSummary(BaseModel):
+    """Status counts for the 44-item NDC checklist response."""
+
+    total: int = 44
+    verified: int = 0
+    needs_review: int = 0
+    missing: int = 0
+    unknown: int = 0
+
+
+class ChecklistProcessingMetadata(BaseModel):
+    """Timing metadata for checklist output generation and upstream phases."""
+
+    ocr_time_ms: int = Field(default=0, ge=0)
+    classification_time_ms: int = Field(default=0, ge=0)
+    narration_time_ms: int = Field(default=0, ge=0)
+
+
+class ChecklistVerificationResponse(BaseModel):
+    """Top-level 44-item NDC checklist output for the reviewer UI/API."""
+
+    loan_file_id: str
+    summary: ChecklistSummary
+    items: list[ChecklistItem]
+    processing_metadata: ChecklistProcessingMetadata = Field(default_factory=ChecklistProcessingMetadata)
+
 SCHEMA_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS applications (
@@ -282,6 +330,15 @@ SCHEMA_STATEMENTS = [
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS reviewer_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id),
+        summary_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 MIGRATION_STATEMENTS = [
@@ -305,6 +362,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_page ON pipeline_page_events(application_id, page_number)",
     "CREATE INDEX IF NOT EXISTS idx_classification_review_log_application_id ON classification_review_log(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_document_verification_reports_application_id ON document_verification_reports(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_reviewer_summaries_application_id ON reviewer_summaries(application_id)",
 ]
 
 

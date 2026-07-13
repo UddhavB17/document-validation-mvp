@@ -18,6 +18,7 @@ from services.checklist_status import build_checklist_status
 from services.ocr_json_export import build_ocr_document_json
 from services.report_generator import generate_excel_report
 from services.reviewer_exceptions import collapse_for_reviewer, summarize_for_display
+from services.reviewer_summary_store import load_reviewer_summary
 from views.status_helpers import render_page_processing_table
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -49,6 +50,7 @@ def render_application_results(application_id: int) -> None:
         return
 
     application = data["application"]
+    application.setdefault("id", application_id)
     product_type = application.get("product_type") or "LAP"
     ground_truth = data["ground_truth"]
     raw_anomalies = data["anomalies"]
@@ -62,7 +64,7 @@ def render_application_results(application_id: int) -> None:
         <div class="dmef-page-title">
             <h1>Loan File Review - {application['loan_id']}</h1>
             <div class="dmef-caption">
-                Application {application['id']} | {application.get('product_type') or 'LAP'} | {application.get('branch') or '-'}
+                Application {application.get('id', application_id)} | {application.get('product_type') or 'LAP'} | {application.get('branch') or '-'}
             </div>
         </div>
         """,
@@ -70,6 +72,7 @@ def render_application_results(application_id: int) -> None:
     )
     _render_queue_header()
     _render_verdict_banner(application, summary)
+    _render_deterministic_reviewer_summary(application_id)
     _render_summary(application, data, summary, pages, product_type)
     _render_ground_truth(ground_truth, application)
     _render_result_explanation(data)
@@ -101,6 +104,44 @@ def _render_queue_header() -> None:
         return
     index = st.session_state.get("queue_index", 0)
     st.caption(f"Review queue: file {index + 1} of {len(queue)}")
+
+
+def _render_deterministic_reviewer_summary(application_id: int) -> None:
+    summary = load_reviewer_summary(application_id)
+    if not summary:
+        return
+    st.subheader("Reviewer Action Summary")
+    status = str(summary.get("overall_status") or "LIMITED_REVIEW")
+    message = str(summary.get("message") or "")
+    recommendation = str(summary.get("recommendation") or "")
+    pages = summary.get("pages_to_review") or []
+    if status == "CLEAN":
+        st.success(f"{status}: {message}")
+    elif status in {"HIGH_RISK", "FULL_MANUAL_REVIEW"}:
+        st.error(f"{status.replace('_', ' ')}: {message}")
+    else:
+        st.warning(f"{status.replace('_', ' ')}: {message}")
+    st.info(recommendation)
+    if pages:
+        st.warning(f"Pages to check manually: {', '.join(map(str, pages))}")
+    people = summary.get("people_verification") or {}
+    if people:
+        st.markdown("#### Person-wise identity verification")
+        rows = []
+        for person_id, person in people.items():
+            documents = person.get("documents") or {}
+            for document_type, document in documents.items():
+                rows.append({
+                    "Person": person.get("person_name") or person_id,
+                    "Role ID": person_id,
+                    "Document": document_type,
+                    "Status": document.get("status"),
+                    "Pages": ", ".join(map(str, document.get("pages") or [])),
+                    "Fields observed": ", ".join(document.get("fields") or []),
+                    "Issues": document.get("anomaly_count", 0),
+                })
+        if rows:
+            st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _render_verdict_banner(application: dict, summary: dict) -> None:

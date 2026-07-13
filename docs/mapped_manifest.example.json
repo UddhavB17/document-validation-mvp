@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "loan_id": "LAP-EXAMPLE-001",
+  "product_type": "LAP",
+  "branch": "Delhi",
+  "source": "manual_json",
+  "people": {
+    "primary": {
+      "role": "primary",
+      "applicant_name": "Ramesh Kumar",
+      "aadhaar_number": "123456789012",
+      "pan_number": "ABCDE1234F",
+      "date_of_birth": "1990-04-15",
+      "phone_number": "9876543210",
+      "address": "12 Market Road Delhi",
+      "pin_code": "110001"
+    },
+    "coapplicant_1": {
+      "role": "coapplicant",
+      "applicant_name": "Sita Kumar",
+      "aadhaar_number": "987654321098",
+      "pan_number": "FGHIJ5678K",
+      "date_of_birth": "1992-08-21"
+    }
+  },
+  "document_index": [
+    {
+      "source_document_id": "primary-aadhaar",
+      "document_type": "Aadhaar",
+      "person_id": "primary",
+      "pages": [12, 13],
+      "required": true
+    },
+    {
+      "source_document_id": "primary-pan",
+      "document_type": "PAN",
+      "person_id": "primary",
+      "pages": [14],
+      "required": true
+    },
+    {
+      "source_document_id": "coapplicant-1-aadhaar",
+      "document_type": "Aadhaar",
+      "person_id": "coapplicant_1",
+      "pages": [15, 16],
+      "required": true
+    },
+    {
+      "source_document_id": "coapplicant-1-pan",
+      "document_type": "PAN",
+      "person_id": "coapplicant_1",
+      "pages": [17],
+      "required": true
+    }
+  ]
+}
