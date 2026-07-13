@@ -23,7 +23,9 @@ def render_upload_page() -> None:
         """,
         unsafe_allow_html=True,
     )
-    tab_upload, tab_json = st.tabs(["PDF Upload", "Partner JSON Intake"])
+    tab_upload, tab_mapped, tab_json = st.tabs(
+        ["PDF Upload", "Mapped Verification", "Partner JSON Intake"]
+    )
 
     with tab_upload:
         with st.form("upload_form"):
@@ -56,6 +58,37 @@ def render_upload_page() -> None:
                 branch,
                 uploaded_file,
             )
+
+        _render_uploaded_application_result()
+
+    with tab_mapped:
+        st.subheader("Trusted JSON + Page Mapping")
+        st.caption(
+            "Use this path when the company supplies trusted reference values and tells the system "
+            "which PDF pages contain each document. LLM decisions and page classification are skipped."
+        )
+        mapped_pdf = st.file_uploader("Mapped loan PDF", type=["pdf"], key="mapped_pdf")
+        mapped_json = st.text_area(
+            "Trusted manifest JSON",
+            height=330,
+            placeholder=(
+                '{\n  "loan_id": "LN-001",\n  "applicant_name": "Ramesh Kumar",\n'
+                '  "reference_data": {"aadhaar_number": "123456789012", "pan_number": "ABCDE1234F"},\n'
+                '  "documents": [\n'
+                '    {"document_type": "Aadhaar", "pages": [12, 13]},\n'
+                '    {"document_type": "PAN", "pages": [14]}\n  ]\n}'
+            ),
+        )
+        if st.button("Run Deterministic Verification", type="primary"):
+            if mapped_pdf is None or not mapped_json.strip():
+                st.warning("Select the PDF and paste the trusted manifest JSON.")
+            else:
+                try:
+                    manifest_payload = json.loads(mapped_json)
+                except json.JSONDecodeError as exc:
+                    st.error(f"Invalid JSON: {exc}")
+                else:
+                    _submit_mapped_verification(mapped_pdf, manifest_payload)
 
         _render_uploaded_application_result()
 
@@ -168,6 +201,44 @@ def _submit_partner_json(payload: dict) -> None:
     )
     st.write(f"Documents found: {', '.join(result.get('documents_found') or []) or 'None'}")
     render_application_results(int(application_id))
+
+
+def _submit_mapped_verification(uploaded_file, manifest: dict) -> None:
+    validation = validate_upload(uploaded_file.name, file_size_bytes=uploaded_file.size)
+    if not validation["is_valid"]:
+        for error in validation["errors"]:
+            st.error(error)
+        return
+
+    with st.spinner("Uploading mapped pages for deterministic verification..."):
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/upload/mapped",
+                data={"manifest": json.dumps(manifest)},
+                files={
+                    "file": (
+                        uploaded_file.name,
+                        uploaded_file.getvalue(),
+                        "application/pdf",
+                    )
+                },
+                timeout=180,
+            )
+        except requests.RequestException as exc:
+            st.error(f"Mapped verification upload failed: {exc}")
+            return
+
+    if response.status_code >= 400:
+        st.error(_response_error_detail(response, "Mapped verification upload failed"))
+        return
+    result = response.json()
+    application_id = int(result["application_id"])
+    st.session_state["last_uploaded_application_id"] = application_id
+    st.session_state["application_id"] = application_id
+    st.success(
+        f"Application {application_id} queued. "
+        f"Only mapped pages {result.get('mapped_pages') or []} will be OCR-verified."
+    )
 
 
 def _response_error_detail(response: requests.Response, fallback: str) -> str:

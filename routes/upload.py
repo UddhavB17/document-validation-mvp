@@ -1,11 +1,12 @@
 """Upload API routes."""
 
 from datetime import datetime
+import json
 from pathlib import Path
 import re
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from database.db import get_connection, init_db
 from services.file_validator import max_file_size_bytes, validate_file, validate_upload
@@ -14,12 +15,14 @@ from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
     mark_failed,
+    mark_completed,
     mark_job_completed,
     mark_job_failed,
     mark_job_started,
     start_tracking,
 )
 from services.pipeline import run_pipeline
+from services.mapped_verification import run_mapped_verification
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = Path("data/uploads")
@@ -35,6 +38,35 @@ class PartnerPayload(BaseModel):
     branch: str | None = None
     digital_text: dict
     scanned_docs: dict
+
+
+class MappedDocument(BaseModel):
+    """Trusted routing information for one document in the uploaded PDF."""
+
+    document_type: str = Field(min_length=1)
+    pages: list[int] = Field(min_length=1)
+    applicant_role: str = "primary"
+    expected_fields: dict[str, object] | None = None
+    required: bool = True
+
+    @field_validator("pages")
+    @classmethod
+    def validate_pages(cls, value: list[int]) -> list[int]:
+        if any(page < 1 for page in value):
+            raise ValueError("page numbers are one-based and must be positive")
+        return list(dict.fromkeys(value))
+
+
+class MappedManifest(BaseModel):
+    """Company reference data plus explicit PDF page/document mapping."""
+
+    loan_id: str = Field(min_length=1)
+    applicant_name: str | None = None
+    coapplicant_name: str | None = None
+    product_type: str = "LAP"
+    branch: str | None = None
+    reference_data: dict[str, object]
+    documents: list[MappedDocument] = Field(min_length=1)
 
 
 def _safe_name(value: str) -> str:
@@ -130,6 +162,105 @@ async def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
     if not validation["is_valid"]:
         raise HTTPException(status_code=422, detail=validation["errors"])
     return {"filename": file.filename, "validation": validation}
+
+
+@router.post("/mapped", summary="Verify mapped PDF pages against trusted company JSON")
+async def upload_mapped_file(
+    manifest: str = Form(...),
+    file: UploadFile = File(...),
+) -> dict[str, object]:
+    """Queue deterministic verification without page classification or LLM decisions."""
+    init_db()
+    try:
+        parsed = MappedManifest.model_validate(json.loads(manifest))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    file_path = UPLOAD_DIR / f"{_safe_name(parsed.loan_id)}_{timestamp}.pdf"
+    file_size_bytes = await _save_upload_stream(file, file_path)
+    validation = validate_file(file_path, file_size_bytes)
+    if not validation["valid"]:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=validation["error"])
+
+    highest_page = max(page for item in parsed.documents for page in item.pages)
+    if highest_page > int(validation["total_pages"]):
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Mapped page {highest_page} exceeds PDF page count {validation['total_pages']}",
+        )
+
+    with get_connection() as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO applications (
+                loan_id, applicant_name, coapplicant_name, product_type, branch, status
+            ) VALUES (?, ?, ?, ?, ?, 'processing')
+            """,
+            (
+                parsed.loan_id,
+                parsed.applicant_name,
+                parsed.coapplicant_name,
+                parsed.product_type,
+                parsed.branch,
+            ),
+        )
+        application_id = int(cursor.lastrowid)
+        connection.execute(
+            """
+            INSERT INTO audit_log (application_id, action, details)
+            VALUES (?, 'mapped_file_uploaded', ?)
+            """,
+            (application_id, f"Uploaded {file.filename} with {len(parsed.documents)} mapped document(s)"),
+        )
+        connection.execute(
+            """
+            INSERT INTO uploaded_files (
+                application_id, file_path, original_filename, file_size_kb,
+                total_pages, digital_pages, scanned_pages
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                application_id,
+                str(file_path),
+                file.filename,
+                round(file_size_bytes / 1024, 2),
+                validation["total_pages"],
+                validation["digital_pages"],
+                validation["scanned_pages"],
+            ),
+        )
+
+    mapped_pages = sorted({page for item in parsed.documents for page in item.pages})
+    start_tracking(
+        application_id,
+        total_pages=len(mapped_pages),
+        digital_pages=0,
+        scanned_pages=len(mapped_pages),
+        stage="queued",
+        message=f"Queued {len(mapped_pages)} mapped page(s) for deterministic verification",
+    )
+    job_id = create_pipeline_job(application_id)
+    submit_job(
+        _run_mapped_pipeline_task,
+        job_id,
+        str(file_path),
+        application_id,
+        parsed.model_dump(),
+    )
+    return {
+        "application_id": application_id,
+        "job_id": job_id,
+        "loan_id": parsed.loan_id,
+        "status": "processing",
+        "pipeline_status": "queued",
+        "mapped_pages": mapped_pages,
+        "progress_url": f"/upload/{application_id}/progress",
+        "summary_url": f"/verification/summary/{application_id}",
+    }
 
 
 @router.post("")
@@ -268,6 +399,34 @@ def _run_pipeline_task(
             mark_job_failed(job_id, "Pipeline completed with failed outcome")
         else:
             mark_job_completed(job_id)
+    except Exception as exc:  # noqa: BLE001
+        mark_job_failed(job_id, str(exc))
+        mark_failed(application_id, str(exc))
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE applications SET status = ? WHERE id = ?",
+                ("pipeline_failed", application_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_log (application_id, action, details)
+                VALUES (?, ?, ?)
+                """,
+                (application_id, "pipeline_failed", str(exc)),
+            )
+
+
+def _run_mapped_pipeline_task(
+    job_id: int,
+    file_path: str,
+    application_id: int,
+    manifest: dict[str, object],
+) -> None:
+    try:
+        mark_job_started(job_id)
+        result = run_mapped_verification(file_path, application_id, manifest)
+        mark_job_completed(job_id)
+        mark_completed(application_id, str(result["final_status"]), "completed")
     except Exception as exc:  # noqa: BLE001
         mark_job_failed(job_id, str(exc))
         mark_failed(application_id, str(exc))

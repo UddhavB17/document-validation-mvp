@@ -330,6 +330,15 @@ SCHEMA_STATEMENTS = [
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS reviewer_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id),
+        summary_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 MIGRATION_STATEMENTS = [
@@ -353,6 +362,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_page ON pipeline_page_events(application_id, page_number)",
     "CREATE INDEX IF NOT EXISTS idx_classification_review_log_application_id ON classification_review_log(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_document_verification_reports_application_id ON document_verification_reports(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_reviewer_summaries_application_id ON reviewer_summaries(application_id)",
 ]
 
 

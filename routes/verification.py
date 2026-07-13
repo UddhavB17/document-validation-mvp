@@ -11,8 +11,22 @@ from database.db import get_connection, init_db
 from database.models import ChecklistVerificationResponse
 from services.checklist_output import build_checklist_verification_response
 from services.verification_report_store import load_verification_report
+from services.reviewer_summary_store import load_reviewer_summary
 
 router = APIRouter(prefix="/verification", tags=["verification"])
+
+
+@router.get("/summary/{application_id}")
+def get_reviewer_summary(application_id: int) -> dict[str, Any]:
+    """Return the deterministic final summary and exact pages requiring review."""
+    init_db()
+    summary = load_reviewer_summary(application_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reviewer summary is not ready for application {application_id}",
+        )
+    return summary
 
 
 @router.get("/checklist/{application_id}", response_model=ChecklistVerificationResponse)
