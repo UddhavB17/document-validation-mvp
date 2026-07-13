@@ -1,4 +1,4 @@
-"""Optional Ollama classifier that reviews extracted structured fields.
+"""Optional LLM classifier that reviews extracted structured fields.
 
 This module is intentionally isolated from the deterministic classifier.  The
 pipeline may call it after normal classification and field extraction, but its
@@ -16,6 +16,7 @@ from typing import Any
 
 from services.config import get_bool, get_float
 from services.document_classifier import registry_document_types
+from services.llm_client import call_llm_api, llm_endpoint_label, llm_model, llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,9 @@ def classify_with_structured_llm(
     structured_fields: dict[str, Any],
     ocr_text: str,
 ) -> dict[str, Any] | None:
-    """Ask configured Ollama to classify from extracted JSON.
+    """Ask the configured LLM to classify from extracted JSON.
 
-    Returns None whenever the feature is disabled or Ollama is unavailable.
+    Returns None whenever the feature is disabled or the LLM is unavailable.
     Any error is swallowed so normal classification continues unchanged.
     """
     if not is_structured_llm_classifier_enabled():
@@ -47,7 +48,7 @@ def classify_with_structured_llm(
 
     base_url = _classifier_base_url()
     timeout = _classifier_timeout_seconds()
-    if not _is_ollama_available(base_url, timeout):
+    if llm_provider() == "ollama" and not _is_ollama_available(base_url, timeout):
         _log_unavailable()
         return None
 
@@ -120,6 +121,8 @@ def build_structured_classifier_prompt(
 
 
 def _classifier_base_url() -> str:
+    if llm_provider() != "ollama":
+        return llm_endpoint_label()
     if get_bool("OLLAMA_CLASSIFIER_USE_LOCAL", False):
         return _normalize_base_url(os.getenv("LOCAL_OLLAMA_CLASSIFIER_URL") or LOCAL_DEFAULT_URL)
     return _normalize_base_url(
@@ -130,6 +133,8 @@ def _classifier_base_url() -> str:
 
 
 def _classifier_model() -> str:
+    if llm_provider() != "ollama":
+        return llm_model()
     return os.getenv("OLLAMA_CLASSIFIER_MODEL") or os.getenv("LOCAL_LLM_MODEL") or DEFAULT_MODEL
 
 
@@ -163,6 +168,9 @@ def _is_ollama_available(base_url: str, timeout: float) -> bool:
 
 
 def _call_ollama_generate(*, base_url: str, model: str, prompt: str, timeout: float) -> str | None:
+    if llm_provider() != "ollama":
+        return call_llm_api(prompt, max_tokens=180, timeout=int(timeout))
+
     import requests
 
     response = requests.post(
@@ -207,7 +215,7 @@ def _public_structured_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _log_unavailable(error: object | None = None) -> None:
-    message = "Local LLM (remote Ollama) not available - continuing with standard classification"
+    message = f"Configured LLM ({llm_provider()}) not available - continuing with standard classification"
     if error:
         logger.warning("%s: %s", message, error)
     else:

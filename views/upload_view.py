@@ -59,8 +59,6 @@ def render_upload_page() -> None:
                 uploaded_file,
             )
 
-        _render_uploaded_application_result()
-
     with tab_mapped:
         st.subheader("Trusted JSON + Page Mapping")
         st.caption(
@@ -96,8 +94,6 @@ def render_upload_page() -> None:
                 else:
                     _submit_mapped_verification(mapped_pdf, manifest_payload)
 
-        _render_uploaded_application_result()
-
     with tab_json:
         st.subheader("Partner OCR JSON Payload")
         raw_json = st.text_area(
@@ -116,6 +112,8 @@ def render_upload_page() -> None:
                     st.error(f"Invalid JSON: {exc}")
                 else:
                     _submit_partner_json(payload)
+
+    _render_uploaded_application_result()
 
 
 def _submit_upload_form(
@@ -206,7 +204,6 @@ def _submit_partner_json(payload: dict) -> None:
         f"Issues found: {result.get('anomaly_count', 0)}"
     )
     st.write(f"Documents found: {', '.join(result.get('documents_found') or []) or 'None'}")
-    render_application_results(int(application_id))
 
 
 def _submit_mapped_verification(uploaded_file, manifest: dict) -> None:

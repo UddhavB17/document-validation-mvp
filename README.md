@@ -97,6 +97,26 @@ copy .env.example .env  # Windows
 
 Edit `.env` and fill in any values specific to your machine (the defaults work for local development as-is).
 
+### Switching from local Ollama to an API-key LLM
+
+The app defaults to `auto`, which uses an API key when one is present and otherwise falls back to local Ollama:
+
+```env
+LLM_PROVIDER=auto
+LOCAL_LLM_API_URL=http://localhost:11434/api/generate
+LOCAL_LLM_MODEL=llama3.1
+```
+
+When you get an API key, fill in environment values only:
+
+```env
+LLM_API_KEY=your_api_key_here
+LLM_API_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-5.6-luna
+```
+
+You can still force a provider with `LLM_PROVIDER=ollama`, `LLM_PROVIDER=openai`, or `LLM_PROVIDER=openai_compatible`.
+
 ### 5. Run the app
 
 **FastAPI backend** (terminal 1):

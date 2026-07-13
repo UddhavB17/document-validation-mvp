@@ -15,6 +15,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from services.llm_client import has_api_key_configured, llm_endpoint_label, llm_model, llm_provider
 from services.python_runtime import REQUIRED_MAJOR, REQUIRED_MINOR
 
 load_dotenv()
@@ -47,10 +48,12 @@ def collect_local_health(*, check_ollama: bool = True) -> dict[str, Any]:
         _path_item("Upload folder", _env_path("UPLOAD_DIR", "data/uploads"), must_exist=False, parent_required=False),
         _path_item("Page output folder", _env_path("PAGE_OUTPUT_DIR", "data/pages"), must_exist=False, parent_required=False),
         _path_item("Report output folder", _env_path("REPORT_OUTPUT_DIR", "data/reports"), must_exist=False, parent_required=False),
-        _ollama_config_item(),
+        _llm_config_item(),
     ]
-    if check_ollama:
+    if check_ollama and llm_provider() == "ollama":
         items.append(_ollama_connection_item())
+    elif check_ollama and llm_provider() not in {"ollama", "none"}:
+        items.append(_api_key_item())
 
     status = "ok"
     if any(item.required and item.status == "error" for item in items):
@@ -67,9 +70,10 @@ def collect_local_health(*, check_ollama: bool = True) -> dict[str, Any]:
             "page_output_dir": str(_env_path("PAGE_OUTPUT_DIR", "data/pages")),
             "report_output_dir": str(_env_path("REPORT_OUTPUT_DIR", "data/reports")),
         },
-        "ollama": {
-            "url": _ollama_base_url(),
-            "model": _ollama_model(),
+        "llm": {
+            "provider": llm_provider(),
+            "endpoint": llm_endpoint_label(),
+            "model": llm_model(),
         },
     }
 
@@ -124,13 +128,19 @@ def _database_path() -> Path:
     return Path(os.getenv("DATABASE_PATH", "data/dmef.db"))
 
 
-def _ollama_config_item() -> HealthItem:
+def _llm_config_item() -> HealthItem:
     return HealthItem(
-        "Ollama config",
+        "LLM config",
         "ok",
-        f"{_ollama_base_url()} | model={_ollama_model()}",
+        f"provider={llm_provider()} | endpoint={llm_endpoint_label()} | model={llm_model()}",
         required=False,
     )
+
+
+def _api_key_item() -> HealthItem:
+    if has_api_key_configured():
+        return HealthItem("LLM API key", "ok", "API key is configured.", required=False)
+    return HealthItem("LLM API key", "warning", "LLM_API_KEY or OPENAI_API_KEY is empty.", required=False)
 
 
 def _ollama_connection_item() -> HealthItem:

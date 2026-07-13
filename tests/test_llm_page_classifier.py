@@ -1,4 +1,4 @@
-from services.llm_client import call_llm_api, extract_response_text
+from services.llm_client import call_llm_api, extract_response_text, llm_provider
 from services.llm_page_classifier import (
     _parse_classifier_response,
     classify_page_with_llm,
@@ -100,6 +100,7 @@ def test_call_llm_api_uses_local_endpoint(monkeypatch) -> None:
         captured["timeout"] = timeout
         return FakeResponse()
 
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("LOCAL_LLM_API_URL", "http://localhost:11434/api/generate")
     monkeypatch.setenv("LOCAL_LLM_MODEL", "llama3.1")
     monkeypatch.setattr("services.llm_client.requests.post", fake_post)
@@ -107,3 +108,43 @@ def test_call_llm_api_uses_local_endpoint(monkeypatch) -> None:
     assert call_llm_api("hello") == "ok"
     assert captured["url"] == "http://localhost:11434/api/generate"
     assert captured["json"]["model"] == "llama3.1"
+
+
+def test_call_llm_api_uses_api_key_provider(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"choices": [{"message": {"content": "api ok"}}]}
+
+    def fake_post(url: str, json: dict, headers: dict, timeout: int):
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_API_BASE_URL", "https://api.openai.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
+    monkeypatch.setattr("services.llm_client.requests.post", fake_post)
+
+    assert call_llm_api("hello") == "api ok"
+    assert captured["url"] == "https://api.openai.com/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["json"]["model"] == "gpt-5.6-luna"
+    assert captured["json"]["messages"][0]["content"] == "hello"
+
+
+def test_llm_provider_auto_switches_when_api_key_is_present(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "auto")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert llm_provider() == "ollama"
+
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    assert llm_provider() == "openai_compatible"

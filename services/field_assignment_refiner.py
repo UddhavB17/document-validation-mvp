@@ -1,4 +1,4 @@
-"""Refine OCR field assignments with deterministic guards and optional Ollama."""
+"""Refine OCR field assignments with deterministic guards and optional LLM."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 from requests import RequestException
 
 from services.config import get_bool
+from services.llm_client import llm_provider
 from services.structured_llm_classifier import (
     DEFAULT_MODEL,
     _call_ollama_generate,
@@ -82,7 +83,7 @@ def refine_field_assignments(
     ocr_text: str,
     extracted_fields: dict[str, Any],
 ) -> dict[str, Any]:
-    """Clean impossible field values and ask Ollama only when assignment is weak."""
+    """Clean impossible field values and ask the LLM only when assignment is weak."""
     cleaned_fields, deterministic_changes = _remove_suspicious_values(extracted_fields)
     if not _should_call_llm(document_type, cleaned_fields, deterministic_changes):
         return _with_assignment_metadata(cleaned_fields, deterministic_changes, llm_metadata=None)
@@ -151,9 +152,10 @@ def _assign_with_llm(
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     base_url = _classifier_base_url()
     timeout = _classifier_timeout_seconds()
-    metadata = {"source": "ollama", "model": _model(), "endpoint": base_url}
-    if not _is_ollama_available(base_url, timeout):
-        return None, {**metadata, "error": "Ollama unavailable"}
+    provider = llm_provider()
+    metadata = {"source": provider, "model": _model(), "endpoint": base_url}
+    if provider == "ollama" and not _is_ollama_available(base_url, timeout):
+        return None, {**metadata, "error": "LLM unavailable"}
 
     try:
         response_text = _call_ollama_generate(

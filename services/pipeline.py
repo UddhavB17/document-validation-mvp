@@ -476,41 +476,43 @@ def _build_page_records(
                 is_readable = bool(text)
                 ocr_confidence = None
                 ocr_metadata = {}
-                document_type = "DB Data"
-                classification = {"confidence": 1.0}
-                extracted_fields = _build_db_data_fields(page_number=page_number, text=text)
-                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
-                db_data_page = {
-                    "page_number": page_number,
-                    "page_type": page_type,
-                    "image_path": image_path,
-                    "is_readable": is_readable,
-                    "ocr_text": text,
-                    "ocr_confidence": ocr_confidence,
-                    "document_type": document_type,
-                    "classification_confidence": classification.get("confidence", 0.0),
-                    "detection_method": "db_data",
-                    "detected_page_number": page_number,
-                    "extracted_fields": extracted_fields,
-                }
-                pages.append(db_data_page)
-                page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
-                _record_completed_page_event(
-                    application_id,
-                    page=db_data_page,
-                    total_pages=total_pages,
-                    elapsed_seconds=page_elapsed,
-                    status=page_status,
-                )
-                if application_id is not None:
-                    update_page_progress(
+                if _is_starting_json_db_page(page_number=page_number, text=text):
+                    document_type = "DB Data"
+                    classification = {"confidence": 1.0}
+                    extracted_fields = _build_db_data_fields(page_number=page_number, text=text)
+                    _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                    db_data_page = {
+                        "page_number": page_number,
+                        "page_type": page_type,
+                        "image_path": image_path,
+                        "is_readable": is_readable,
+                        "ocr_text": text,
+                        "ocr_confidence": ocr_confidence,
+                        "document_type": document_type,
+                        "classification_confidence": classification.get("confidence", 0.0),
+                        "detection_method": "db_data",
+                        "detected_page_number": page_number,
+                        "extracted_fields": extracted_fields,
+                    }
+                    pages.append(db_data_page)
+                    page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
+                    _record_completed_page_event(
                         application_id,
-                        processed_pages=len(pages),
+                        page=db_data_page,
                         total_pages=total_pages,
-                        current_page=page_number,
-                        message=f"Processed {len(pages)}/{total_pages} pages (DB data)",
+                        elapsed_seconds=page_elapsed,
+                        status=page_status,
                     )
-                continue
+                    if application_id is not None:
+                        update_page_progress(
+                            application_id,
+                            processed_pages=len(pages),
+                            total_pages=total_pages,
+                            current_page=page_number,
+                            message=f"Processed {len(pages)}/{total_pages} pages (DB data)",
+                        )
+                    continue
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
             elif page_number not in selected_scanned_pages:
                 text = ""
                 is_readable = None
@@ -829,6 +831,13 @@ def _build_db_data_fields(*, page_number: int, text: str) -> dict[str, Any]:
         fields["db_data_json"] = payload
         fields["db_data_json_keys"] = sorted(str(key) for key in payload.keys())
     return fields
+
+
+def _is_starting_json_db_page(*, page_number: int, text: str) -> bool:
+    """Return True only for opening digital pages that contain parseable JSON."""
+    if page_number > 3:
+        return False
+    return bool(_extract_json_payload(text))
 
 
 def _extract_json_payload(text: str) -> dict[str, Any]:
@@ -1234,7 +1243,8 @@ def _build_unsupported_page_records(
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
         text = digital_text_by_page.get(page_number, "")
-        document_type = "DB Data" if page_type == "digital" else "Unknown"
+        is_db_data = page_type == "digital" and _is_starting_json_db_page(page_number=page_number, text=text)
+        document_type = "DB Data" if is_db_data else "Unknown"
         pages.append(
             {
                 "page_number": page_number,
@@ -1244,10 +1254,10 @@ def _build_unsupported_page_records(
                 "ocr_text": text,
                 "ocr_confidence": None,
                 "document_type": document_type,
-                "classification_confidence": 1.0 if document_type == "DB Data" else 0.0,
-                "detection_method": "db_data" if document_type == "DB Data" else "unknown",
-                "detected_page_number": page_number if document_type == "DB Data" else None,
-                "extracted_fields": _build_db_data_fields(page_number=page_number, text=text) if document_type == "DB Data" else {},
+                "classification_confidence": 1.0 if is_db_data else 0.0,
+                "detection_method": "db_data" if is_db_data else "unknown",
+                "detected_page_number": page_number if is_db_data else None,
+                "extracted_fields": _build_db_data_fields(page_number=page_number, text=text) if is_db_data else {},
             }
         )
     return pages

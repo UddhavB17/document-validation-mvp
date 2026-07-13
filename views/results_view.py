@@ -90,7 +90,7 @@ def render_application_results(application_id: int) -> None:
         )
     _render_anomaly_expanders(anomalies, page_images)
 
-    manual_confirmed = _render_manual_review(product_type)
+    manual_confirmed = _render_manual_review(application_id, product_type)
     _render_document_checklist(data, product_type)
     _render_pages_requiring_review(anomalies)
     _render_download(application_id, data)
@@ -317,7 +317,7 @@ def _render_document_checklist(data: dict, product_type: str) -> None:
         st.success(f"All {item_count} checklist documents were found in the uploaded file.")
 
 
-def _render_manual_review(product_type: str) -> bool:
+def _render_manual_review(application_id: int, product_type: str) -> bool:
     manual_items = get_human_review_items(product_type)
     st.subheader("Manual Review Required")
     st.warning("Items requiring manual verification cannot be checked automatically.")
@@ -336,7 +336,10 @@ def _render_manual_review(product_type: str) -> bool:
             hide_index=True,
             width="stretch",
         )
-    return st.checkbox("I confirm I have manually verified all items in the above list")
+    return st.checkbox(
+        "I confirm I have manually verified all items in the above list",
+        key=f"manual_review_confirmed_{application_id}",
+    )
 
 
 def _render_pages_requiring_review(anomalies: list[dict]) -> None:
