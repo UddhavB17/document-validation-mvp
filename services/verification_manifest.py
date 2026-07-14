@@ -29,7 +29,7 @@ class IndexedDocument(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     document_type: str = Field(min_length=1)
-    pages: list[int] = Field(min_length=1)
+    pages: list[int] = Field(default_factory=list)
     person_id: str = "primary"
     expected_fields: dict[str, Any] | None = None
     required: bool = True
@@ -138,4 +138,3 @@ class VerificationManifest(BaseModel):
                 for item in self.document_index
             ],
         }
-

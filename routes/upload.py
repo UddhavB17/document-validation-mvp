@@ -4,12 +4,19 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+import shutil
+from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from database.db import get_connection, init_db
-from services.file_validator import max_file_size_bytes, validate_file, validate_upload
+from services.file_validator import (
+    max_file_size_bytes,
+    validate_file,
+    validate_package_upload,
+    validate_upload,
+)
 from services.job_runner import submit_job
 from services.progress_tracker import (
     create_pipeline_job,
@@ -24,6 +31,7 @@ from services.progress_tracker import (
 from services.pipeline import run_pipeline
 from services.mapped_verification import run_mapped_verification
 from services.verification_manifest import VerificationManifest
+from services.zip_package import PackageValidationError, load_package_metadata, normalize_zip_package
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = Path("data/uploads")
@@ -143,10 +151,7 @@ async def upload_mapped_file(
 ) -> dict[str, object]:
     """Queue deterministic verification without page classification or LLM decisions."""
     init_db()
-    try:
-        parsed = VerificationManifest.model_validate(json.loads(manifest))
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+    parsed = _parse_manifest(manifest)
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -157,9 +162,155 @@ async def upload_mapped_file(
         file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=validation["error"])
 
-    highest_page = max(page for item in parsed.document_index for page in item.pages)
-    if highest_page > int(validation["total_pages"]):
+    try:
+        return _queue_mapped_verification(
+            parsed,
+            file_path=file_path,
+            original_filename=file.filename or "mapped.pdf",
+            file_size_bytes=file_size_bytes,
+            validation=validation,
+            audit_action="mapped_file_uploaded",
+        )
+    except Exception:
         file_path.unlink(missing_ok=True)
+        raise
+
+
+@router.post("/package", summary="Prepare an unordered ZIP package for page mapping")
+async def upload_zip_package(file: UploadFile = File(...)) -> dict[str, object]:
+    """Safely normalize ZIP-contained PDFs/images and return stable page ranges."""
+    validation = validate_package_upload(file.filename or "", file_size_bytes=file.size or 0)
+    if not validation["is_valid"]:
+        raise HTTPException(status_code=422, detail=validation["errors"])
+
+    init_db()
+    package_id = uuid4().hex
+    package_dir = UPLOAD_DIR / "packages" / package_id
+    package_dir.mkdir(parents=True, exist_ok=False)
+    zip_path = package_dir / "source.zip"
+    try:
+        await _save_upload_stream(file, zip_path)
+        normalized = normalize_zip_package(zip_path, package_dir)
+        pdf_path = Path(str(normalized["normalized_pdf_path"]))
+        pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
+        if not pdf_validation["valid"]:
+            raise PackageValidationError(str(pdf_validation["error"]))
+        _persist_intake_package(
+            package_id,
+            file.filename or "documents.zip",
+            zip_path,
+            normalized,
+        )
+    except (PackageValidationError, ValueError) as exc:
+        shutil.rmtree(package_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception:
+        shutil.rmtree(package_dir, ignore_errors=True)
+        raise
+
+    return {
+        "package_id": package_id,
+        "source_filename": file.filename,
+        "status": "prepared",
+        "total_files": normalized["total_files"],
+        "total_pages": normalized["total_pages"],
+        "documents": normalized["documents"],
+        "verify_url": f"/upload/package/{package_id}/verify",
+    }
+
+
+@router.get("/package/{package_id}", summary="Get prepared ZIP package inventory")
+def get_zip_package(package_id: str) -> dict[str, object]:
+    row = _get_package_row(package_id)
+    metadata = load_package_metadata(Path(row["normalized_pdf_path"]).parent)
+    return {
+        "package_id": package_id,
+        "source_filename": row["source_filename"],
+        "status": row["status"],
+        "total_files": row["total_files"],
+        "total_pages": row["total_pages"],
+        "documents": metadata["documents"],
+        "verify_url": f"/upload/package/{package_id}/verify",
+    }
+
+
+@router.post("/package/{package_id}/verify", summary="Verify a prepared ZIP package")
+async def verify_zip_package(
+    package_id: str,
+    manifest: str = Form(...),
+) -> dict[str, object]:
+    """Apply a confirmed manifest to the package's normalized internal PDF."""
+    init_db()
+    parsed = _parse_manifest(manifest)
+    row = _get_package_row(package_id)
+    if row["status"] in {"verifying", "processing"}:
+        raise HTTPException(status_code=409, detail="ZIP package verification is already running")
+
+    _validate_package_mapping(package_id, parsed)
+    pdf_path = Path(row["normalized_pdf_path"])
+    if not pdf_path.is_file():
+        raise HTTPException(status_code=410, detail="Prepared ZIP package files are no longer available")
+    pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
+    if not pdf_validation["valid"]:
+        raise HTTPException(status_code=422, detail=pdf_validation["error"])
+
+    with get_connection() as connection:
+        updated = connection.execute(
+            """
+            UPDATE intake_packages SET status = 'verifying'
+            WHERE package_id = ? AND status NOT IN ('verifying', 'processing')
+            """,
+            (package_id,),
+        )
+        if updated.rowcount != 1:
+            raise HTTPException(status_code=409, detail="ZIP package verification has already started")
+    try:
+        result = _queue_mapped_verification(
+            parsed,
+            file_path=pdf_path,
+            original_filename=str(row["source_filename"]),
+            file_size_bytes=pdf_path.stat().st_size,
+            validation=pdf_validation,
+            audit_action="mapped_package_verification_queued",
+            audit_detail=(
+                f"Prepared ZIP package {package_id} with {row['total_files']} source document(s)"
+            ),
+            package_id=package_id,
+        )
+    except Exception:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE intake_packages SET status = 'prepared' WHERE package_id = ?",
+                (package_id,),
+            )
+        raise
+
+    result["package_id"] = package_id
+    result["source_documents"] = int(row["total_files"])
+    return result
+
+
+def _parse_manifest(raw_manifest: str) -> VerificationManifest:
+    try:
+        return VerificationManifest.model_validate(json.loads(raw_manifest))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+
+
+def _queue_mapped_verification(
+    parsed: VerificationManifest,
+    *,
+    file_path: Path,
+    original_filename: str,
+    file_size_bytes: int,
+    validation: dict[str, object],
+    audit_action: str,
+    audit_detail: str | None = None,
+    package_id: str | None = None,
+) -> dict[str, object]:
+    mapped_pages = sorted({page for item in parsed.document_index for page in item.pages})
+    highest_page = max(mapped_pages, default=0)
+    if highest_page > int(validation["total_pages"]):
         raise HTTPException(
             status_code=422,
             detail=f"Mapped page {highest_page} exceeds PDF page count {validation['total_pages']}",
@@ -184,10 +335,24 @@ async def upload_mapped_file(
         connection.execute(
             """
             INSERT INTO audit_log (application_id, action, details)
-            VALUES (?, 'mapped_file_uploaded', ?)
+            VALUES (?, ?, ?)
             """,
-            (application_id, f"Uploaded {file.filename} with {len(parsed.document_index)} mapped document(s)"),
+            (
+                application_id,
+                audit_action,
+                audit_detail
+                or f"Uploaded {original_filename} with {len(parsed.document_index)} mapped document(s)",
+            ),
         )
+        if package_id:
+            connection.execute(
+                """
+                UPDATE intake_packages
+                SET status = 'processing', application_id = ?, verified_at = NULL
+                WHERE package_id = ?
+                """,
+                (application_id, package_id),
+            )
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -198,7 +363,7 @@ async def upload_mapped_file(
             (
                 application_id,
                 str(file_path),
-                file.filename,
+                original_filename,
                 round(file_size_bytes / 1024, 2),
                 validation["total_pages"],
                 validation["digital_pages"],
@@ -206,12 +371,14 @@ async def upload_mapped_file(
             ),
         )
 
-    mapped_pages = sorted({page for item in parsed.document_index for page in item.pages})
+    covers_entire_pdf = len(mapped_pages) == int(validation["total_pages"])
+    initial_digital_pages = int(validation["digital_pages"]) if covers_entire_pdf else 0
+    initial_scanned_pages = int(validation["scanned_pages"]) if covers_entire_pdf else 0
     start_tracking(
         application_id,
         total_pages=len(mapped_pages),
-        digital_pages=0,
-        scanned_pages=len(mapped_pages),
+        digital_pages=initial_digital_pages,
+        scanned_pages=initial_scanned_pages,
         stage="queued",
         message=f"Queued {len(mapped_pages)} mapped page(s) for deterministic verification",
     )
@@ -222,6 +389,7 @@ async def upload_mapped_file(
         str(file_path),
         application_id,
         parsed.pipeline_payload(),
+        package_id,
     )
     return {
         "application_id": application_id,
@@ -235,6 +403,107 @@ async def upload_mapped_file(
         "people": sorted(parsed.people),
         "manifest_schema_version": parsed.schema_version,
     }
+
+
+def _persist_intake_package(
+    package_id: str,
+    source_filename: str,
+    zip_path: Path,
+    normalized: dict[str, object],
+) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO intake_packages (
+                package_id, source_filename, source_zip_path, normalized_pdf_path,
+                total_files, total_pages, status
+            ) VALUES (?, ?, ?, ?, ?, ?, 'prepared')
+            """,
+            (
+                package_id,
+                source_filename,
+                str(zip_path),
+                str(normalized["normalized_pdf_path"]),
+                normalized["total_files"],
+                normalized["total_pages"],
+            ),
+        )
+        for document in normalized["documents"]:
+            connection.execute(
+                """
+                INSERT INTO intake_documents (
+                    package_id, source_document_id, original_filename, file_type,
+                    source_size_bytes, page_count, internal_page_start, internal_page_end
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    package_id,
+                    document["source_document_id"],
+                    document["original_filename"],
+                    document["file_type"],
+                    document["source_size_bytes"],
+                    document["page_count"],
+                    document["internal_page_start"],
+                    document["internal_page_end"],
+                ),
+            )
+
+
+def _get_package_row(package_id: str):
+    if not re.fullmatch(r"[0-9a-f]{32}", package_id):
+        raise HTTPException(status_code=404, detail="ZIP package not found")
+    init_db()
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM intake_packages WHERE package_id = ?",
+            (package_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="ZIP package not found")
+    return row
+
+
+def _validate_package_mapping(package_id: str, manifest: VerificationManifest) -> None:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT source_document_id, internal_page_start, internal_page_end
+            FROM intake_documents WHERE package_id = ?
+            """,
+            (package_id,),
+        ).fetchall()
+    sources = {
+        str(row["source_document_id"]): (
+            int(row["internal_page_start"]),
+            int(row["internal_page_end"]),
+        )
+        for row in rows
+    }
+    for item in manifest.document_index:
+        if not item.pages:
+            continue
+        if not item.source_document_id:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Mapped {item.document_type} pages require source_document_id from the ZIP inventory"
+                ),
+            )
+        page_range = sources.get(item.source_document_id)
+        if page_range is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown ZIP source_document_id: {item.source_document_id}",
+            )
+        outside = [page for page in item.pages if not page_range[0] <= page <= page_range[1]]
+        if outside:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Pages {outside} do not belong to ZIP source {item.source_document_id} "
+                    f"(expected {page_range[0]}-{page_range[1]})"
+                ),
+            )
 
 
 def _first_coapplicant_name(manifest: VerificationManifest) -> str | None:
@@ -402,12 +671,23 @@ def _run_mapped_pipeline_task(
     file_path: str,
     application_id: int,
     manifest: dict[str, object],
+    package_id: str | None = None,
 ) -> None:
     try:
         mark_job_started(job_id)
         result = run_mapped_verification(file_path, application_id, manifest)
         mark_job_completed(job_id)
         mark_completed(application_id, str(result["final_status"]), "completed")
+        if package_id:
+            with get_connection() as connection:
+                connection.execute(
+                    """
+                    UPDATE intake_packages
+                    SET status = 'completed', verified_at = CURRENT_TIMESTAMP
+                    WHERE package_id = ? AND application_id = ?
+                    """,
+                    (package_id, application_id),
+                )
     except Exception as exc:  # noqa: BLE001
         mark_job_failed(job_id, str(exc))
         mark_failed(application_id, str(exc))
@@ -423,6 +703,14 @@ def _run_mapped_pipeline_task(
                 """,
                 (application_id, "pipeline_failed", str(exc)),
             )
+            if package_id:
+                connection.execute(
+                    """
+                    UPDATE intake_packages SET status = 'failed'
+                    WHERE package_id = ? AND application_id = ?
+                    """,
+                    (package_id, application_id),
+                )
 
 
 @router.get("/{application_id}/progress", summary="Get upload processing progress")

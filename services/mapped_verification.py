@@ -22,6 +22,7 @@ from services.pdf_processor import convert_page_to_image, open_pdf
 from services.reviewer_summary import build_reviewer_summary
 from services.reviewer_summary_store import save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
+from services.text_extractor import extract_digital_text
 
 
 VERIFY: dict[str, Callable[[str, str], Any]] = {
@@ -55,6 +56,7 @@ DOCUMENT_FIELDS = {
         "applicant_name", "aadhaar_number", "pan_number", "date_of_birth",
         "phone_number", "address", "pin_code", "loan_amount",
     },
+    "utility bill": {"applicant_name", "address", "pin_code"},
 }
 
 
@@ -65,7 +67,7 @@ def run_mapped_verification(
     *,
     output_dir: str | Path = "data/processed",
 ) -> dict[str, Any]:
-    """OCR only mapped pages and compare fields with trusted reference JSON."""
+    """Extract mapped pages and compare their fields with trusted reference JSON."""
     pdf_path = Path(pdf_path)
     target = Path(output_dir) / f"application_{application_id}" / "mapped_pages"
     document = open_pdf(pdf_path)
@@ -80,9 +82,15 @@ def run_mapped_verification(
         {int(number) for item in manifest.get("documents") or [] for number in item.get("pages") or []}
     )
     processed_page_numbers: set[int] = set()
+    digital_page_numbers: set[int] = set()
+    ocr_page_numbers: set[int] = set()
 
     try:
-        update_stage(application_id, "processing_mapped_pages", "OCR-verifying supplied document pages")
+        update_stage(
+            application_id,
+            "processing_mapped_pages",
+            "Extracting digital text and OCR-verifying scanned mapped pages",
+        )
         for mapping in manifest.get("documents") or []:
             document_type = str(mapping.get("document_type") or "Unknown")
             person_id = str(mapping.get("applicant_role") or mapping.get("person_id") or "primary")
@@ -103,13 +111,27 @@ def run_mapped_verification(
                                               total_pages, "Mapped page does not exist in the PDF.",
                                               person_id=person_id))
                     continue
-                image_path = convert_page_to_image(
-                    document[page_number - 1],
-                    target / f"page_{page_number}.png",
-                )
-                ocr = run_ocr_on_page(str(image_path or ""))
-                text = str(ocr.get("ocr_text") or "")
-                confidence = float(ocr.get("confidence") or 0.0)
+                pdf_page = document[page_number - 1]
+                text = _safe_digital_text(pdf_page)
+                if text:
+                    page_type = "digital"
+                    image_path = None
+                    is_readable = True
+                    confidence = 1.0
+                    text_source = "embedded_text"
+                    digital_page_numbers.add(page_number)
+                else:
+                    page_type = "scanned"
+                    image_path = convert_page_to_image(
+                        pdf_page,
+                        target / f"page_{page_number}.png",
+                    )
+                    ocr = run_ocr_on_page(str(image_path or ""))
+                    text = str(ocr.get("ocr_text") or "")
+                    confidence = float(ocr.get("confidence") or 0.0)
+                    is_readable = bool(text) and bool(ocr.get("is_readable", True))
+                    text_source = "paddle_ocr"
+                    ocr_page_numbers.add(page_number)
                 extracted = extract_fields(document_type, text)
                 for key, value in extracted.items():
                     if not str(key).startswith("_") and value not in (None, ""):
@@ -122,22 +144,23 @@ def run_mapped_verification(
                             "field_name": field,
                             "value": value,
                             "ocr_confidence": confidence,
+                            "text_source": text_source,
                         }
                         observations.append(observation)
                         document_observations.setdefault(field, []).append(observation)
-                if text and ocr.get("is_readable", True):
+                if is_readable:
                     readable_pages.append(page_number)
                 pages.append({
                     "page_number": page_number,
-                    "page_type": "scanned",
+                    "page_type": page_type,
                     "image_path": image_path,
-                    "is_readable": bool(text) and bool(ocr.get("is_readable", True)),
+                    "is_readable": is_readable,
                     "ocr_text": text,
                     "ocr_confidence": confidence,
                     "document_type": document_type,
                     "person_id": person_id,
                     "classification_confidence": 1.0,
-                    "detection_method": "provided_mapping",
+                    "detection_method": f"provided_mapping_{text_source}",
                     "detected_page_number": page_number,
                     "extracted_fields": extracted,
                 })
@@ -149,13 +172,14 @@ def run_mapped_verification(
                     current_page=page_number,
                     message=(
                         f"Verified mapped page {page_number} "
+                        f"via {text_source} "
                         f"({len(processed_page_numbers)}/{total_mapped_pages})"
                     ),
                 )
 
             if not readable_pages:
                 anomalies.append(_anomaly("DOCUMENT_NOT_READABLE", "HIGH", mapped_pages[0], document_type,
-                                          None, None, "OCR could not read the mapped document pages.",
+                                          None, None, "Text extraction could not read the mapped document pages.",
                                           person_id=person_id))
                 continue
 
@@ -221,6 +245,8 @@ def run_mapped_verification(
     result["checked_fields"] = checked_fields
     result["matched_fields"] = matched_fields
     result["mapped_pages_processed"] = len(pages)
+    result["digital_pages_processed"] = len(digital_page_numbers)
+    result["ocr_pages_processed"] = len(ocr_page_numbers)
     result["observations"] = observations
     result["people_verification"] = _build_people_verification(
         reference_data, manifest.get("documents") or [], observations, result["anomalies"]
@@ -228,6 +254,14 @@ def run_mapped_verification(
     result["reviewer_summary"]["people_verification"] = result["people_verification"]
     save_reviewer_summary(application_id, result["reviewer_summary"])
     return result
+
+
+def _safe_digital_text(page: Any) -> str:
+    """Use embedded text when available; page failures safely fall back to OCR."""
+    try:
+        return extract_digital_text(page)
+    except Exception:
+        return ""
 
 
 def _expected_fields(

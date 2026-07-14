@@ -7,6 +7,7 @@ from services.config import get_int
 DEFAULT_MAX_FILE_SIZE_MB = 100
 MAX_FILE_SIZE_BYTES = DEFAULT_MAX_FILE_SIZE_MB * 1024 * 1024
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".pdf"})
+PACKAGE_EXTENSIONS: frozenset[str] = frozenset({".zip"})
 
 
 def max_file_size_bytes() -> int:
@@ -79,6 +80,24 @@ def validate_upload(filename: str, file_size_bytes: int = 0) -> dict[str, object
         errors.append(f"Only PDF files accepted")
 
     if file_size_bytes > max_file_size_bytes():
+        errors.append(f"File too large, max {max_file_size_label()}")
+
+    return {"is_valid": not errors, "errors": errors}
+
+
+def validate_package_upload(filename: str, file_size_bytes: int = 0) -> dict[str, object]:
+    """Lightweight validation before a ZIP package is streamed to disk."""
+    errors: list[str] = []
+    suffix = Path(filename).suffix.lower()
+
+    if not filename or filename.strip() == "":
+        errors.append("Filename must not be empty.")
+    elif suffix not in PACKAGE_EXTENSIONS:
+        errors.append("Only ZIP packages are accepted")
+
+    if file_size_bytes == 0:
+        errors.append("ZIP package is empty")
+    elif file_size_bytes > max_file_size_bytes():
         errors.append(f"File too large, max {max_file_size_label()}")
 
     return {"is_valid": not errors, "errors": errors}

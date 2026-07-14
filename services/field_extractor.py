@@ -63,6 +63,7 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
         "Bank Statement":   _extract_bank_statement,
         "Cheque":           _extract_cheque,
         "Salary Slip":      _extract_salary_slip,
+        "Utility Bill":     _extract_utility_bill,
         "Application Form": _extract_application_form,
         "Stamp Duty":       _extract_stamp_duty,
         "Insurance Consent Letter": _extract_insurance_consent,
@@ -230,6 +231,32 @@ def _lines_after_label(text: str, label: str, max_lines: int = 3) -> str | None:
     return None
 
 
+def _lines_after_label_until_stop(
+    text: str,
+    label: str,
+    *,
+    stop_labels: set[str],
+    max_lines: int = 4,
+) -> str | None:
+    """Return lines after *label* until a known non-address label is reached."""
+    lines = text.splitlines()
+    normalized_stops = {_normalize_label(stop_label) for stop_label in stop_labels}
+    for i, line in enumerate(lines):
+        if label in line.lower():
+            collected: list[str] = []
+            for j in range(i + 1, min(i + 1 + max_lines, len(lines))):
+                part = lines[j].strip()
+                if not part:
+                    continue
+                if _normalize_label(part).split(":")[0] in normalized_stops:
+                    break
+                if any(_normalize_label(part).startswith(stop) for stop in normalized_stops):
+                    break
+                collected.append(part)
+            return " ".join(collected) if collected else None
+    return None
+
+
 def _value_after_label(text: str, *labels: str) -> str | None:
     """Return the next useful value after an exact-ish OCR label."""
     lines = [line.strip() for line in text.splitlines()]
@@ -291,6 +318,24 @@ def _extract_date_near(text_lower: str, *anchors: str) -> str | None:
         match = date_pattern.search(window)
         if match:
             return _parse_date(match.group(0))
+    return None
+
+
+def _extract_date_after_label(text: str, *labels: str) -> str | None:
+    """Extract a date immediately following one of the supplied labels."""
+    date_pattern = (
+        r"\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}"
+        r"|\d{4}[/\-\.]\d{2}[/\-\.]\d{2}"
+        r"|\d{1,2}\s+\w+\s+\d{4}"
+    )
+    for label in labels:
+        match = re.search(
+            rf"{re.escape(label)}\s*[:\-–]?\s*({date_pattern})",
+            text,
+            re.IGNORECASE,
+        )
+        if match:
+            return _parse_date(match.group(1))
     return None
 
 
@@ -389,6 +434,40 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         "date_of_birth": _extract_date_near(text.lower(), "date of birth", "dob"),
         "phone_number": phone_match.group(1) if phone_match else None,
         "pin_code": pin_match.group(1) if pin_match else None,
+    }
+
+
+def _extract_utility_bill(text: str) -> dict[str, Any]:
+    """Extract address-proof fields from electricity/water/gas/phone bills."""
+    consumer_match = re.search(
+        r"(?:consumer|customer|account)\s*(?:name|holder)?\s*[:\-–]?\s*([^\n\r]{3,80})",
+        text,
+        re.IGNORECASE,
+    )
+    pin_match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+    address_stop_labels = {
+        "bill date",
+        "billing date",
+        "due date",
+        "amount",
+        "total amount",
+        "consumer number",
+        "consumer no",
+        "account number",
+        "meter number",
+    }
+    address = (
+        _lines_after_label_until_stop(text, "service address", stop_labels=address_stop_labels)
+        or _lines_after_label_until_stop(text, "billing address", stop_labels=address_stop_labels)
+        or _lines_after_label_until_stop(text, "supply address", stop_labels=address_stop_labels)
+        or _lines_after_label_until_stop(text, "address", stop_labels=address_stop_labels)
+    )
+    return {
+        "applicant_name": _clean_name_like_value(consumer_match.group(1)) if consumer_match else None,
+        "address": address,
+        "pin_code": pin_match.group(1) if pin_match else None,
+        "bill_date": _extract_date_after_label(text, "bill date", "billing date", "issue date"),
+        "due_date": _extract_date_after_label(text, "due date"),
     }
 
 

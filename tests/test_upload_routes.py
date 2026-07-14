@@ -1,5 +1,8 @@
+from io import BytesIO
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi.testclient import TestClient
 
@@ -16,6 +19,14 @@ def _create_pdf(path: Path) -> None:
     page.insert_text((72, 72), "Applicant Name: Ramesh Kumar\nPAN: ABCDE1234F\nLoan Amount: 500000")
     doc.save(path)
     doc.close()
+
+
+def _zip_bytes(files: list[tuple[str, bytes]]) -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:
+        for filename, content in files:
+            archive.writestr(filename, content)
+    return buffer.getvalue()
 
 
 class _Spinner:
@@ -169,8 +180,6 @@ def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeyp
 
 
 def test_mapped_upload_rejects_page_outside_pdf(tmp_path, monkeypatch) -> None:
-    import json
-
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     pdf_path = tmp_path / "mapped.pdf"
@@ -197,8 +206,6 @@ def test_mapped_upload_rejects_page_outside_pdf(tmp_path, monkeypatch) -> None:
 
 
 def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
-    import json
-
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
@@ -232,6 +239,163 @@ def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
             (body["application_id"],),
         ).fetchone()
     assert audit["action"] == "mapped_file_uploaded"
+
+
+def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    pdf_path = tmp_path / "source.pdf"
+    _create_pdf(pdf_path)
+    package = _zip_bytes(
+        [
+            ("Applicant/PAN.pdf", pdf_path.read_bytes()),
+            ("CoApplicant/PAN.pdf", pdf_path.read_bytes()),
+        ]
+    )
+
+    response = TestClient(app).post(
+        "/upload/package",
+        files={"file": ("loan-documents.zip", package, "application/zip")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "prepared"
+    assert body["total_files"] == 2
+    assert body["total_pages"] == 2
+    assert [item["pages"] for item in body["documents"]] == [[1], [2]]
+    with db.get_connection() as connection:
+        package_row = connection.execute(
+            "SELECT status, total_files, total_pages FROM intake_packages WHERE package_id = ?",
+            (body["package_id"],),
+        ).fetchone()
+        document_count = connection.execute(
+            "SELECT COUNT(*) AS total FROM intake_documents WHERE package_id = ?",
+            (body["package_id"],),
+        ).fetchone()["total"]
+    assert dict(package_row) == {"status": "prepared", "total_files": 2, "total_pages": 2}
+    assert document_count == 2
+
+
+def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
+    pdf_path = tmp_path / "source.pdf"
+    _create_pdf(pdf_path)
+    client = TestClient(app)
+    prepared = client.post(
+        "/upload/package",
+        files={
+            "file": (
+                "loan.zip",
+                _zip_bytes([("Applicant/PAN.pdf", pdf_path.read_bytes())]),
+                "application/zip",
+            )
+        },
+    ).json()
+    source = prepared["documents"][0]
+    manifest = {
+        "loan_id": "ZIP-MAPPED-001",
+        "people": {"primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"}},
+        "document_index": [
+            {
+                "source_document_id": source["source_document_id"],
+                "document_type": "PAN",
+                "person_id": "primary",
+                "pages": source["pages"],
+            }
+        ],
+    }
+
+    response = client.post(
+        prepared["verify_url"],
+        data={"manifest": json.dumps(manifest)},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pipeline_status"] == "queued"
+    assert body["mapped_pages"] == [1]
+    assert body["source_documents"] == 1
+    with db.get_connection() as connection:
+        package_row = connection.execute(
+            "SELECT status, application_id FROM intake_packages WHERE package_id = ?",
+            (prepared["package_id"],),
+        ).fetchone()
+        audit = connection.execute(
+            "SELECT action FROM audit_log WHERE application_id = ?",
+            (body["application_id"],),
+        ).fetchone()
+    assert package_row["status"] == "processing"
+    assert package_row["application_id"] == body["application_id"]
+    assert audit["action"] == "mapped_package_verification_queued"
+
+    duplicate = client.post(
+        prepared["verify_url"],
+        data={"manifest": json.dumps(manifest)},
+    )
+    assert duplicate.status_code == 409
+    with db.get_connection() as connection:
+        connection.execute(
+            "UPDATE intake_packages SET status = 'completed' WHERE package_id = ?",
+            (prepared["package_id"],),
+        )
+    retry = client.post(
+        prepared["verify_url"],
+        data={"manifest": json.dumps(manifest)},
+    )
+    assert retry.status_code == 200
+    assert retry.json()["application_id"] != body["application_id"]
+
+
+def test_zip_package_rejects_mapping_to_page_owned_by_another_source(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    pdf_path = tmp_path / "source.pdf"
+    _create_pdf(pdf_path)
+    client = TestClient(app)
+    prepared = client.post(
+        "/upload/package",
+        files={
+            "file": (
+                "loan.zip",
+                _zip_bytes(
+                    [
+                        ("first.pdf", pdf_path.read_bytes()),
+                        ("second.pdf", pdf_path.read_bytes()),
+                    ]
+                ),
+                "application/zip",
+            )
+        },
+    ).json()
+    manifest = {
+        "loan_id": "ZIP-BAD-MAP-001",
+        "people": {"primary": {"applicant_name": "Ramesh Kumar"}},
+        "document_index": [
+            {
+                "source_document_id": prepared["documents"][0]["source_document_id"],
+                "document_type": "PAN",
+                "person_id": "primary",
+                "pages": [2],
+            }
+        ],
+    }
+
+    response = client.post(
+        prepared["verify_url"],
+        data={"manifest": json.dumps(manifest)},
+    )
+
+    assert response.status_code == 422
+    assert "do not belong" in response.json()["detail"]
+    inventory = client.get(f"/upload/package/{prepared['package_id']}").json()
+    assert inventory["status"] == "prepared"
 
 
 def test_upload_view_posts_real_form_metadata(monkeypatch) -> None:

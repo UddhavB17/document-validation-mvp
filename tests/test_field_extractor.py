@@ -184,6 +184,27 @@ def test_nach_extracts_not_registered_before_registered_substring() -> None:
         assert result == {}
 
 
+def test_utility_bill_extracts_address_proof_fields() -> None:
+    result = extract_fields(
+        "Utility Bill",
+        "\n".join([
+            "Electricity Bill",
+            "Consumer Name: Ramesh Kumar",
+            "Service Address",
+            "12 Market Road",
+            "Delhi 110001",
+            "Bill Date: 01/07/2026",
+            "Due Date: 15/07/2026",
+        ]),
+    )
+
+    assert result["applicant_name"] == "Ramesh Kumar"
+    assert result["address"] == "12 Market Road Delhi 110001"
+    assert result["pin_code"] == "110001"
+    assert result["bill_date"] == "2026-07-01"
+    assert result["due_date"] == "2026-07-15"
+
+
 # ════════════════════════════════════════════
 # PAN
 # ════════════════════════════════════════════

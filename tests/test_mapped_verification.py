@@ -24,6 +24,14 @@ class _FakeDocument:
         return None
 
 
+class _DigitalPage:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def get_text(self) -> str:
+        return self.text
+
+
 def _application() -> int:
     init_db()
     with get_connection() as connection:
@@ -92,6 +100,60 @@ def test_mapped_verification_uses_mapping_and_flags_pan_mismatch(tmp_path, monke
     assert load_reviewer_summary(application_id) == result["reviewer_summary"]
 
 
+def test_mapped_verification_uses_embedded_text_without_running_ocr(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "digital.db")
+    document = _FakeDocument(1)
+    document.pages[0] = _DigitalPage(
+        "INCOME TAX DEPARTMENT\nName: Ramesh Kumar\n"
+        "Permanent Account Number ABCDE1234F\nDigital PAN document"
+    )
+    monkeypatch.setattr("services.mapped_verification.open_pdf", lambda _path: document)
+
+    def must_not_run(*_args, **_kwargs):
+        raise AssertionError("Digital mapped pages must not be rendered or sent to PaddleOCR")
+
+    monkeypatch.setattr("services.mapped_verification.convert_page_to_image", must_not_run)
+    monkeypatch.setattr("services.mapped_verification.run_ocr_on_page", must_not_run)
+    application_id = _application()
+
+    result = run_mapped_verification(
+        tmp_path / "digital.pdf",
+        application_id,
+        {
+            "loan_id": "MAP-DIGITAL",
+            "reference_data": {"pan_number": "ABCDE1234F"},
+            "documents": [
+                {
+                    "document_type": "PAN",
+                    "pages": [1],
+                    "expected_fields": {"pan_number": "ABCDE1234F"},
+                }
+            ],
+        },
+        output_dir=tmp_path / "processed",
+    )
+
+    assert result["matched_fields"] == 1
+    assert result["digital_pages_processed"] == 1
+    assert result["ocr_pages_processed"] == 0
+    with get_connection() as connection:
+        page = connection.execute(
+            """
+            SELECT page_type, image_path, detection_method, ocr_confidence
+            FROM pages WHERE application_id = ?
+            """,
+            (application_id,),
+        ).fetchone()
+    assert dict(page) == {
+        "page_type": "digital",
+        "image_path": None,
+        "detection_method": "provided_mapping_embedded_text",
+        "ocr_confidence": 1.0,
+    }
+
+
 def test_reviewer_summary_escalates_many_high_risk_anomalies() -> None:
     anomalies = [
         {
@@ -146,6 +208,19 @@ def test_manifest_normalizes_multi_person_contract_and_legacy_contract() -> None
         "documents": [{"document_type": "PAN", "pages": [1]}],
     })
     assert legacy.people["primary"].pan_number == "ABCDE1234F"
+
+
+def test_manifest_allows_required_document_without_pages_for_missing_check() -> None:
+    manifest = VerificationManifest.model_validate({
+        "loan_id": "MAP-MISSING",
+        "people": {"primary": {"applicant_name": "Ramesh"}},
+        "document_index": [
+            {"person_id": "primary", "document_type": "PAN", "pages": [1]},
+            {"person_id": "primary", "document_type": "Utility Bill", "pages": [], "required": True},
+        ],
+    })
+
+    assert manifest.document_index[1].pages == []
 
 
 def test_company_data_and_manual_index_compose_without_pipeline_changes() -> None:
@@ -259,3 +334,55 @@ def test_multi_person_verification_checks_every_distinct_occurrence_and_wrong_ow
     assert result["people_verification"]["primary"]["status"] == "NEEDS_REVIEW"
     assert result["people_verification"]["coapplicant_1"]["status"] == "NEEDS_REVIEW"
     assert result["reviewer_summary"]["pages_to_review"] == [2, 4]
+
+
+def test_mapped_verification_flags_missing_required_document_and_checks_utility_bill(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "missing.db")
+    monkeypatch.setattr("services.mapped_verification.open_pdf", lambda _path: _FakeDocument(2))
+    monkeypatch.setattr(
+        "services.mapped_verification.convert_page_to_image",
+        lambda _page, output: str(output),
+    )
+    monkeypatch.setattr(
+        "services.mapped_verification.run_ocr_on_page",
+        lambda _path: {
+            "ocr_text": (
+                "Electricity Bill\nConsumer Name: Ramesh Kumar\nService Address\n"
+                "12 Market Road\nDelhi 110001"
+            ),
+            "is_readable": True,
+            "confidence": 0.94,
+        },
+    )
+    application_id = _application()
+    manifest = VerificationManifest.model_validate({
+        "loan_id": "MAP-MISSING",
+        "people": {
+            "primary": {
+                "applicant_name": "Ramesh Kumar",
+                "address": "12 Market Road Delhi",
+                "pin_code": "110001",
+            }
+        },
+        "document_index": [
+            {"person_id": "primary", "document_type": "Utility Bill", "pages": [1]},
+            {"person_id": "primary", "document_type": "PAN", "pages": [], "required": True},
+        ],
+    })
+
+    result = run_mapped_verification(
+        tmp_path / "loan.pdf",
+        application_id,
+        manifest.pipeline_payload(),
+        output_dir=tmp_path / "processed",
+    )
+
+    assert result["mapped_pages_processed"] == 1
+    assert result["checked_fields"] == 3
+    assert result["matched_fields"] == 3
+    assert [item["rule_id"] for item in result["anomalies"]] == ["DOCUMENT_MISSING"]
+    assert result["anomalies"][0]["document_type"] == "PAN"
+    assert result["people_verification"]["primary"]["documents"]["Utility Bill"]["status"] == "MATCH"
+    assert result["people_verification"]["primary"]["documents"]["PAN"]["status"] == "NEEDS_REVIEW"
