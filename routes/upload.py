@@ -2,9 +2,11 @@
 
 from datetime import datetime
 import json
+import logging
 from pathlib import Path
 import re
 import shutil
+import time
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -22,19 +24,18 @@ from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
     mark_failed,
-    mark_completed,
     mark_job_completed,
     mark_job_failed,
     mark_job_started,
     start_tracking,
 )
 from services.pipeline import run_pipeline
-from services.mapped_verification import run_mapped_verification
 from services.verification_manifest import VerificationManifest
 from services.zip_package import PackageValidationError, load_package_metadata, normalize_zip_package
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = Path("data/uploads")
+LOGGER = logging.getLogger(__name__)
 
 
 class PartnerPayload(BaseModel):
@@ -149,7 +150,7 @@ async def upload_mapped_file(
     manifest: str = Form(...),
     file: UploadFile = File(...),
 ) -> dict[str, object]:
-    """Queue deterministic verification without page classification or LLM decisions."""
+    """Queue shared PDF processing plus trusted mapped JSON comparison."""
     init_db()
     parsed = _parse_manifest(manifest)
 
@@ -177,7 +178,10 @@ async def upload_mapped_file(
 
 
 @router.post("/package", summary="Prepare an unordered ZIP package for page mapping")
-async def upload_zip_package(file: UploadFile = File(...)) -> dict[str, object]:
+async def upload_zip_package(
+    file: UploadFile = File(...),
+    background: bool = False,
+) -> dict[str, object]:
     """Safely normalize ZIP-contained PDFs/images and return stable page ranges."""
     validation = validate_package_upload(file.filename or "", file_size_bytes=file.size or 0)
     if not validation["is_valid"]:
@@ -190,6 +194,31 @@ async def upload_zip_package(file: UploadFile = File(...)) -> dict[str, object]:
     zip_path = package_dir / "source.zip"
     try:
         await _save_upload_stream(file, zip_path)
+        if background:
+            _write_package_preparation_progress(
+                package_dir,
+                {
+                    "package_id": package_id,
+                    "status": "queued",
+                    "stage": "queued",
+                    "message": "ZIP uploaded; waiting to scan package contents",
+                    "processed_files": 0,
+                    "total_files": 0,
+                },
+            )
+            submit_job(
+                _prepare_zip_package_task,
+                package_id,
+                file.filename or "documents.zip",
+                zip_path,
+                package_dir,
+            )
+            return {
+                "package_id": package_id,
+                "source_filename": file.filename,
+                "status": "queued",
+                "progress_url": f"/upload/package/{package_id}/preparation",
+            }
         normalized = normalize_zip_package(zip_path, package_dir)
         pdf_path = Path(str(normalized["normalized_pdf_path"]))
         pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
@@ -217,6 +246,22 @@ async def upload_zip_package(file: UploadFile = File(...)) -> dict[str, object]:
         "documents": normalized["documents"],
         "verify_url": f"/upload/package/{package_id}/verify",
     }
+
+
+@router.get(
+    "/package/{package_id}/preparation",
+    summary="Get ZIP preparation progress and per-file logs",
+)
+def get_zip_preparation_progress(package_id: str) -> dict[str, object]:
+    if not re.fullmatch(r"[0-9a-f]{32}", package_id):
+        raise HTTPException(status_code=404, detail="ZIP package not found")
+    progress_path = UPLOAD_DIR / "packages" / package_id / "preparation_progress.json"
+    if not progress_path.is_file():
+        raise HTTPException(status_code=404, detail="ZIP preparation progress not found")
+    try:
+        return json.loads(progress_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=503, detail="ZIP progress is being updated") from exc
 
 
 @router.get("/package/{package_id}", summary="Get prepared ZIP package inventory")
@@ -449,6 +494,128 @@ def _persist_intake_package(
             )
 
 
+def _prepare_zip_package_task(
+    package_id: str,
+    source_filename: str,
+    zip_path: Path,
+    package_dir: Path,
+) -> None:
+    """Normalize one uploaded ZIP while publishing frontend-safe progress events."""
+
+    def publish(event: dict[str, object]) -> None:
+        _write_package_preparation_progress(
+            package_dir,
+            {
+                "package_id": package_id,
+                "status": "preparing",
+                **event,
+            },
+            append_event=True,
+        )
+
+    try:
+        publish(
+            {
+                "stage": "scanning_archive",
+                "message": "Scanning ZIP entries and validating supported file types",
+                "processed_files": 0,
+                "total_files": 0,
+            }
+        )
+        normalized = normalize_zip_package(
+            zip_path,
+            package_dir,
+            progress_callback=publish,
+        )
+        pdf_path = Path(str(normalized["normalized_pdf_path"]))
+        pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
+        if not pdf_validation["valid"]:
+            raise PackageValidationError(str(pdf_validation["error"]))
+        _persist_intake_package(package_id, source_filename, zip_path, normalized)
+        _write_package_preparation_progress(
+            package_dir,
+            {
+                "package_id": package_id,
+                "source_filename": source_filename,
+                "status": "prepared",
+                "stage": "completed",
+                "message": (
+                    f"ZIP preparation complete: {normalized['total_files']} file(s), "
+                    f"{normalized['total_pages']} internal page(s)"
+                ),
+                "processed_files": normalized["total_files"],
+                "total_files": normalized["total_files"],
+                "current_file": None,
+                "total_pages": normalized["total_pages"],
+                "documents": normalized["documents"],
+                "verify_url": f"/upload/package/{package_id}/verify",
+            },
+            append_event=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.exception("ZIP preparation failed for package %s", package_id)
+        _write_package_preparation_progress(
+            package_dir,
+            {
+                "package_id": package_id,
+                "status": "failed",
+                "stage": "failed",
+                "message": "ZIP preparation failed",
+                "error": str(exc),
+            },
+            append_event=True,
+        )
+
+
+def _write_package_preparation_progress(
+    package_dir: Path,
+    update: dict[str, object],
+    *,
+    append_event: bool = False,
+) -> None:
+    progress_path = package_dir / "preparation_progress.json"
+    payload: dict[str, object] = {}
+    if progress_path.is_file():
+        try:
+            payload = json.loads(progress_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            payload = {}
+    events = list(payload.get("events") or [])
+    payload.update(update)
+    payload["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    if append_event:
+        events.append(
+            {
+                "stage": update.get("stage"),
+                "message": update.get("message"),
+                "processed_files": update.get("processed_files"),
+                "total_files": update.get("total_files"),
+                "current_file": update.get("current_file"),
+                "document": update.get("document"),
+                "elapsed_seconds": update.get("elapsed_seconds"),
+                "timestamp": payload["updated_at"],
+            }
+        )
+    payload["events"] = events
+    temporary_path = package_dir / f"preparation_progress.{uuid4().hex}.tmp"
+    temporary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        for attempt in range(8):
+            try:
+                temporary_path.replace(progress_path)
+                return
+            except PermissionError:
+                if attempt == 7:
+                    LOGGER.warning(
+                        "Skipping one ZIP progress update because Windows kept %s locked",
+                        progress_path,
+                    )
+                    return
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def _get_package_row(package_id: str):
     if not re.fullmatch(r"[0-9a-f]{32}", package_id):
         raise HTTPException(status_code=404, detail="ZIP package not found")
@@ -675,9 +842,28 @@ def _run_mapped_pipeline_task(
 ) -> None:
     try:
         mark_job_started(job_id)
-        result = run_mapped_verification(file_path, application_id, manifest)
-        mark_job_completed(job_id)
-        mark_completed(application_id, str(result["final_status"]), "completed")
+        reference_data = manifest.get("reference_data") or {}
+        primary = reference_data.get("primary") if isinstance(reference_data, dict) else {}
+        primary = primary if isinstance(primary, dict) else {}
+        system_data = {
+            **primary,
+            "loan_id": manifest.get("loan_id"),
+            "product_type": manifest.get("product_type") or "LAP",
+            "branch": manifest.get("branch"),
+        }
+        result = run_pipeline(
+            file_path,
+            application_id,
+            system_data=system_data,
+            product_type=str(manifest.get("product_type") or "LAP"),
+            generate_llm_summary=True,
+            mapped_manifest=manifest,
+            source_documents=_load_package_source_documents(package_id),
+        )
+        if result.get("pipeline_status") == "failed":
+            mark_job_failed(job_id, "Pipeline completed with failed outcome")
+        else:
+            mark_job_completed(job_id)
         if package_id:
             with get_connection() as connection:
                 connection.execute(
@@ -711,6 +897,23 @@ def _run_mapped_pipeline_task(
                     """,
                     (package_id, application_id),
                 )
+
+
+def _load_package_source_documents(package_id: str | None) -> list[dict[str, object]]:
+    if not package_id:
+        return []
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT source_document_id, original_filename, file_type, page_count,
+                   internal_page_start, internal_page_end
+            FROM intake_documents
+            WHERE package_id = ?
+            ORDER BY internal_page_start
+            """,
+            (package_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 @router.get("/{application_id}/progress", summary="Get upload processing progress")

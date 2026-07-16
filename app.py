@@ -218,7 +218,7 @@ def _cached_local_health() -> dict:
 
 def _render_sidebar_health() -> None:
     st.caption("Local health")
-    if st.button("Refresh health", use_container_width=True):
+    if st.button("Refresh health", width="stretch"):
         _cached_local_health.clear()
     health = _cached_local_health()
     status = str(health.get("status") or "unknown")

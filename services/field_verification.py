@@ -78,11 +78,13 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify applicant names using rapidfuzz token-sort similarity."""
     return _fuzzy_result(
         field_name="applicant_name",
-        extracted=extracted,
-        db_value=db_value,
+        extracted=_normalize_name(extracted),
+        db_value=_normalize_name(db_value),
         scorer=fuzz.token_sort_ratio,
         threshold=85,
         reason="Name similarity below threshold",
+        original_extracted=extracted,
+        original_db_value=db_value,
     )
 
 
@@ -231,6 +233,13 @@ def _digits(value: Any) -> str:
 
 def _normalize_pan(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def _normalize_name(value: Any) -> str:
+    """Normalize case, punctuation, and repeated whitespace before fuzzy matching."""
+    text = str(value or "").casefold()
+    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
+    return " ".join(text.split())
 
 
 def _valid_pan(value: str) -> bool:

@@ -110,7 +110,7 @@ def render_live_page_results(progress: dict, fallback_message: str) -> None:
         render_processing_loading(progress, status_line)
         return
 
-    st.markdown("### Page Processing")
+    st.markdown("### Live Pipeline Logs")
     st.caption(status_line)
     if progress.get("percentage") is not None:
         st.progress(min(float(progress.get("percentage") or 0) / 100.0, 1.0))
@@ -119,7 +119,7 @@ def render_live_page_results(progress: dict, fallback_message: str) -> None:
 
 
 def render_processing_loading(progress: dict, status_line: str) -> None:
-    st.markdown("### Page Processing")
+    st.markdown("### Live Pipeline Logs")
     st.caption(status_line)
     if progress.get("percentage") is not None:
         st.progress(min(float(progress.get("percentage") or 0) / 100.0, 1.0))
@@ -140,6 +140,59 @@ def render_page_processing_table(completed_pages: list[dict]) -> None:
                 "LLM Document": _llm_document_label(fields),
                 "Time (s)": _format_elapsed(page.get("elapsed_seconds")),
                 "Data": page.get("error") or _summarize_fields(fields),
+            }
+        )
+    st.dataframe(rows, width="stretch", hide_index=True)
+
+
+def render_zip_preparation_progress(progress: dict) -> None:
+    """Render ZIP preparation with the same live-log layout as PDF processing."""
+    processed_files = int(progress.get("processed_files") or 0)
+    total_files = int(progress.get("total_files") or 0)
+    message = str(progress.get("message") or "Preparing ZIP package").strip()
+    current_file = str(progress.get("current_file") or "").strip()
+    status_line = f"Scanning your ZIP package: {processed_files}/{total_files or '?'} files processed"
+    if current_file:
+        status_line += f" | working on {current_file}"
+    if message:
+        status_line += f" | {message}"
+
+    st.markdown("### Live Pipeline Logs")
+    st.caption(status_line)
+    percentage = processed_files / total_files if total_files else 0.0
+    st.progress(min(percentage, 1.0))
+
+    completed_events = [
+        event
+        for event in (progress.get("events") or [])
+        if event.get("stage") == "file_completed"
+    ]
+    if not completed_events:
+        render_processing_banner(status_line)
+        return
+
+    generated_pages = sum(
+        int((event.get("document") or {}).get("page_count") or 0)
+        for event in completed_events
+    )
+    columns = st.columns(4)
+    columns[0].metric("Completed", f"{len(completed_events)}/{total_files or '-'}")
+    columns[1].metric("Failed files", 1 if progress.get("status") == "failed" else 0)
+    columns[2].metric("Generated pages", generated_pages)
+    columns[3].metric("Stage", str(progress.get("stage") or "queued").replace("_", " ").title())
+
+    rows = []
+    for index, event in enumerate(completed_events, start=1):
+        document = event.get("document") or {}
+        rows.append(
+            {
+                "File": index,
+                "Status": "Completed",
+                "Type": str(document.get("file_type") or "").upper() or "Unknown",
+                "Document": document.get("original_filename") or event.get("current_file") or "Unknown",
+                "Output pages": document.get("page_count") or 0,
+                "Time (s)": _format_elapsed(event.get("elapsed_seconds")),
+                "Data": event.get("message") or "Normalized into the internal PDF",
             }
         )
     st.dataframe(rows, width="stretch", hide_index=True)

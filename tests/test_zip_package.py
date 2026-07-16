@@ -51,6 +51,27 @@ def test_zip_package_normalizes_documents_and_preserves_source_ranges(tmp_path: 
         normalized.close()
 
 
+def test_zip_package_emits_per_file_preparation_progress(tmp_path: Path) -> None:
+    source_pdf = tmp_path / "source.pdf"
+    _create_pdf(source_pdf, 2)
+    archive_path = tmp_path / "loan.zip"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+        archive.write(source_pdf, "Applicant/PAN.pdf")
+
+    events: list[dict] = []
+    normalize_zip_package(
+        archive_path,
+        tmp_path / "package",
+        progress_callback=events.append,
+    )
+
+    stages = [event["stage"] for event in events]
+    assert stages == ["inventory_ready", "processing_file", "file_completed", "saving_pdf"]
+    completed = next(event for event in events if event["stage"] == "file_completed")
+    assert completed["current_file"] == "Applicant/PAN.pdf"
+    assert completed["document"]["page_count"] == 2
+
+
 @pytest.mark.parametrize(
     ("member_name", "message"),
     [

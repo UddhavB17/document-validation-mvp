@@ -2,13 +2,14 @@
 
 import json
 import os
+import time
 
 import requests
 import streamlit as st
 
 from services.file_validator import validate_package_upload, validate_upload
 from views.results_view import render_application_results
-from views.status_helpers import render_result_status_guard
+from views.status_helpers import render_result_status_guard, render_zip_preparation_progress
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
@@ -129,7 +130,10 @@ def _render_zip_package_mapping() -> None:
         else:
             _prepare_zip_package(zip_file)
 
-    package = st.session_state.get("prepared_zip_package")
+    if st.session_state.get("preparing_zip_package_id"):
+        package = _render_zip_preparation_status()
+    else:
+        package = st.session_state.get("prepared_zip_package")
     if not package:
         return
 
@@ -147,7 +151,7 @@ def _render_zip_package_mapping() -> None:
         }
         for item in package.get("documents") or []
     ]
-    st.dataframe(inventory, use_container_width=True, hide_index=True)
+    st.dataframe(inventory, width="stretch", hide_index=True)
     st.caption(
         "Use each source_document_id and its internal pages in document_index. A mapped page must "
         "remain inside that source file's displayed page range."
@@ -162,7 +166,7 @@ def _render_zip_package_mapping() -> None:
         height=420,
         key="zip_manifest_json",
     )
-    if st.button("Run ZIP Deterministic Verification", type="primary", key="verify_mapped_zip"):
+    if st.button("Run ZIP Comparison Pipeline", type="primary", key="verify_mapped_zip"):
         manifest_payload = _parse_manifest_text(mapped_json)
         if manifest_payload is not None:
             _submit_zip_package_verification(str(package["package_id"]), manifest_payload)
@@ -227,10 +231,11 @@ def _prepare_zip_package(uploaded_file) -> None:
         for error in validation["errors"]:
             st.error(error)
         return
-    with st.spinner("Validating and normalizing ZIP documents..."):
+    with st.spinner("Uploading ZIP package..."):
         try:
             response = requests.post(
                 f"{API_BASE_URL}/upload/package",
+                params={"background": "true"},
                 files={
                     "file": (
                         uploaded_file.name,
@@ -246,19 +251,67 @@ def _prepare_zip_package(uploaded_file) -> None:
     if response.status_code >= 400:
         st.error(_response_error_detail(response, "ZIP preparation failed"))
         return
-    package = response.json()
-    st.session_state["prepared_zip_package"] = package
-    st.session_state["zip_manifest_json"] = json.dumps(
-        _package_manifest_template(package), indent=2
-    )
-    st.success(
-        f"ZIP prepared: {package['total_files']} source files became "
-        f"{package['total_pages']} stable internal pages."
-    )
+    queued = response.json()
+    st.session_state.pop("prepared_zip_package", None)
+    st.session_state.pop("zip_manifest_json", None)
+    st.session_state["preparing_zip_package_id"] = str(queued["package_id"])
+    st.session_state["zip_preparation_started_at"] = time.monotonic()
+
+
+def _render_zip_preparation_status() -> dict | None:
+    """Poll once and rerun, matching the PDF upload live-processing UX."""
+    package_id = str(st.session_state["preparing_zip_package_id"])
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/upload/package/{package_id}/preparation",
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        st.warning(f"Waiting for ZIP preparation status: {exc}")
+        time.sleep(2)
+        st.rerun()
+        return None
+
+    if response.status_code == 503:
+        st.info("ZIP preparation status is being updated...")
+        time.sleep(1)
+        st.rerun()
+        return None
+    if response.status_code >= 400:
+        st.error(_response_error_detail(response, "Could not load ZIP preparation logs"))
+        st.session_state.pop("preparing_zip_package_id", None)
+        return None
+
+    progress = response.json()
+    render_zip_preparation_progress(progress)
+    status = progress.get("status")
+    if status == "prepared":
+        st.session_state.pop("preparing_zip_package_id", None)
+        st.session_state.pop("zip_preparation_started_at", None)
+        st.session_state["prepared_zip_package"] = progress
+        st.session_state["zip_manifest_json"] = json.dumps(
+            _package_manifest_template(progress), indent=2
+        )
+        st.success(
+            f"ZIP prepared: {progress['total_files']} source files became "
+            f"{progress['total_pages']} stable internal pages."
+        )
+        return progress
+    if status == "failed":
+        st.error(str(progress.get("error") or "ZIP preparation failed"))
+        st.session_state.pop("preparing_zip_package_id", None)
+        return None
+
+    started_at = float(st.session_state.get("zip_preparation_started_at") or time.monotonic())
+    if time.monotonic() - started_at >= 900:
+        st.warning("ZIP preparation is taking longer than expected; completed file logs remain visible.")
+    time.sleep(2)
+    st.rerun()
+    return None
 
 
 def _submit_zip_package_verification(package_id: str, manifest: dict) -> None:
-    with st.spinner("Queueing mapped ZIP pages for deterministic verification..."):
+    with st.spinner("Queueing ZIP documents through the shared PDF comparison pipeline..."):
         try:
             response = requests.post(
                 f"{API_BASE_URL}/upload/package/{package_id}/verify",
@@ -275,9 +328,11 @@ def _submit_zip_package_verification(package_id: str, manifest: dict) -> None:
     application_id = int(result["application_id"])
     st.session_state["last_uploaded_application_id"] = application_id
     st.session_state["application_id"] = application_id
+    st.session_state["last_upload_mode"] = "mapped_zip"
     st.success(
         f"Application {application_id} queued from {result.get('source_documents', 0)} ZIP files. "
-        f"Mapped pages: {result.get('mapped_pages') or []}."
+        "Digital pages use native text, scanned pages use OCR, and every page is classified. "
+        f"JSON comparison pages: {result.get('mapped_pages') or []}."
     )
 
 
@@ -334,6 +389,7 @@ def _submit_upload_form(
     result = response.json()
     st.session_state["last_uploaded_application_id"] = result["application_id"]
     st.session_state["application_id"] = result["application_id"]
+    st.session_state["last_upload_mode"] = "pdf"
     queued_cols = st.columns(4)
     queued_cols[0].metric("Application", result["application_id"])
     queued_cols[1].metric("Total pages", result["total_pages"])
@@ -403,9 +459,11 @@ def _submit_mapped_verification(uploaded_file, manifest: dict) -> None:
     application_id = int(result["application_id"])
     st.session_state["last_uploaded_application_id"] = application_id
     st.session_state["application_id"] = application_id
+    st.session_state["last_upload_mode"] = "mapped_pdf"
     st.success(
         f"Application {application_id} queued. "
-        f"Only mapped pages {result.get('mapped_pages') or []} will be OCR-verified."
+        "Digital pages use native text, scanned pages use OCR, and every page is classified. "
+        f"JSON comparison pages: {result.get('mapped_pages') or []}."
     )
 
 
@@ -425,15 +483,27 @@ def _render_uploaded_application_result() -> None:
         return
 
     st.divider()
+    upload_mode = st.session_state.get("last_upload_mode")
+    if upload_mode in {"mapped_zip", "mapped_pdf"}:
+        st.subheader("Mapped Verification Output")
+        st.caption(
+            "Shared PDF pipeline: native text for digital pages, OCR only for scanned pages, "
+            "LLM document classification, trusted JSON comparison, and the standard final report."
+        )
+        processing_message = "Processing and comparing your mapped loan file"
+        completion_message = "Mapped verification and output generation complete."
+    else:
+        processing_message = "Processing your loan file"
+        completion_message = "PDF processing complete."
     status_slot = st.empty()
     with status_slot.container():
         is_ready = render_result_status_guard(
             int(application_id),
             session_key_prefix=f"upload_{application_id}",
-            processing_message="Processing your loan file",
+            processing_message=processing_message,
         )
     if not is_ready:
         return
 
-    st.success("PDF processing complete.")
+    st.success(completion_message)
     render_application_results(int(application_id))
