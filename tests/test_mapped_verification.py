@@ -2,7 +2,7 @@ from pathlib import Path
 
 import database.db as db
 from database.db import get_connection, init_db
-from services.mapped_verification import run_mapped_verification
+from services.mapped_verification import compare_processed_pages, run_mapped_verification
 from services.reviewer import build_reviewer_summary, load_reviewer_summary
 from services.verification_manifest import VerificationManifest
 from services.company_data_provider import CompanyReferenceData, LocalJsonCompanyDataProvider
@@ -29,6 +29,70 @@ class _DigitalPage:
 
     def get_text(self) -> str:
         return self.text
+
+
+def test_shared_pipeline_comparison_matches_case_insensitive_name_and_classifies_source() -> None:
+    pages = [{
+        "page_number": 1,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": (
+            "INCOME TAX DEPARTMENT\nNAME\nRAMESH KUMAR\n"
+            "Permanent Account Number ABCDE1234F"
+        ),
+        "ocr_confidence": None,
+        "document_type": "PAN",
+        "classification_confidence": 0.98,
+        "extracted_fields": {
+            "applicant_name": "RAMESH KUMAR",
+            "pan_number": "ABCDE1234F",
+            "_structured_llm_classification": {
+                "document_type": "PAN",
+                "confidence": 0.99,
+            },
+        },
+    }]
+    manifest = {
+        "loan_id": "MAP-SHARED",
+        "reference_data": {
+            "primary": {
+                "applicant_name": "Ramesh Kumar",
+                "pan_number": "ABCDE1234F",
+            }
+        },
+        "documents": [{
+            "source_document_id": "file-0001",
+            "applicant_role": "primary",
+            "document_type": "PAN",
+            "pages": [1],
+        }],
+    }
+
+    result = compare_processed_pages(
+        pages,
+        manifest,
+        source_documents=[{
+            "source_document_id": "file-0001",
+            "original_filename": "Applicant/KYC/pan.pdf",
+            "internal_page_start": 1,
+            "internal_page_end": 1,
+        }],
+    )
+
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 2
+    assert result["matched_fields"] == 2
+    assert result["source_classifications"] == [{
+        "source_document_id": "file-0001",
+        "original_filename": "Applicant/KYC/pan.pdf",
+        "pages": [1],
+        "provided_person_ids": ["primary"],
+        "predicted_person_id": "primary",
+        "owner_detection_method": "extracted_identity",
+        "provided_document_types": ["PAN"],
+        "predicted_document_type": "PAN",
+        "document_type_votes": {"PAN": 1},
+    }]
 
 
 def _application() -> int:

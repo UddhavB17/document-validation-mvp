@@ -6,7 +6,8 @@ import json
 from pathlib import Path, PurePosixPath
 import shutil
 import stat
-from typing import Any
+import time
+from typing import Any, Callable
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
 import fitz
@@ -44,7 +45,12 @@ def max_xlsx_columns() -> int:
     return get_int("MAX_XLSX_COLUMNS_PER_SHEET", 50, minimum=1, maximum=500)
 
 
-def normalize_zip_package(zip_path: str | Path, package_dir: str | Path) -> dict[str, Any]:
+def normalize_zip_package(
+    zip_path: str | Path,
+    package_dir: str | Path,
+    *,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     """Validate a ZIP and normalize its PDFs, images and workbooks into one PDF.
 
     Archive order is preserved, while every member receives a generated storage
@@ -62,9 +68,25 @@ def normalize_zip_package(zip_path: str | Path, package_dir: str | Path) -> dict
     try:
         with ZipFile(zip_path) as archive:
             members = _validated_members(archive)
+            _emit_progress(
+                progress_callback,
+                stage="inventory_ready",
+                message=f"Validated {len(members)} supported ZIP document(s)",
+                processed_files=0,
+                total_files=len(members),
+            )
             for sequence, info in enumerate(members, start=1):
+                file_started_at = time.perf_counter()
                 suffix = Path(info.filename).suffix.lower()
                 source_document_id = f"file-{sequence:04d}"
+                _emit_progress(
+                    progress_callback,
+                    stage="processing_file",
+                    message=f"Loading {info.filename}",
+                    processed_files=sequence - 1,
+                    total_files=len(members),
+                    current_file=info.filename,
+                )
                 stored_path = source_dir / f"{source_document_id}{suffix}"
                 with archive.open(info, "r") as source, stored_path.open("wb") as destination:
                     shutil.copyfileobj(source, destination, length=1024 * 1024)
@@ -89,9 +111,27 @@ def normalize_zip_package(zip_path: str | Path, package_dir: str | Path) -> dict
                         **source_metadata,
                     }
                 )
+                _emit_progress(
+                    progress_callback,
+                    stage="file_completed",
+                    message=f"Normalized {info.filename} into {page_count} page(s)",
+                    processed_files=sequence,
+                    total_files=len(members),
+                    current_file=info.filename,
+                    document=inventory[-1],
+                    elapsed_seconds=round(time.perf_counter() - file_started_at, 3),
+                )
 
         if output.page_count == 0:
             raise PackageValidationError("ZIP contains no supported document pages")
+        _emit_progress(
+            progress_callback,
+            stage="saving_pdf",
+            message=f"Saving combined PDF with {output.page_count} page(s)",
+            processed_files=len(inventory),
+            total_files=len(inventory),
+            current_file=None,
+        )
         output.save(normalized_pdf, garbage=4, deflate=True)
     except BadZipFile as exc:
         raise PackageValidationError("File is not a valid ZIP archive") from exc
@@ -111,6 +151,14 @@ def normalize_zip_package(zip_path: str | Path, package_dir: str | Path) -> dict
         json.dumps(result, indent=2), encoding="utf-8"
     )
     return result
+
+
+def _emit_progress(
+    callback: Callable[[dict[str, Any]], None] | None,
+    **event: Any,
+) -> None:
+    if callback is not None:
+        callback(event)
 
 
 def load_package_metadata(package_dir: str | Path) -> dict[str, Any]:

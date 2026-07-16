@@ -91,9 +91,10 @@ def build_report(
     loan_id: str | None = None,
     exceptions: list[dict] | None = None,
     llm_summary: str = "",
+    metadata: dict | None = None,
 ) -> dict:
     exceptions = exceptions or []
-    return {
+    report = {
         "application_id": application_id,
         "loan_id": loan_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -102,6 +103,9 @@ def build_report(
         "llm_summary": llm_summary,
         "exceptions": exceptions,
     }
+    if metadata:
+        report["metadata"] = metadata
+    return report
 
 
 def save_report_json(report: dict) -> Path:

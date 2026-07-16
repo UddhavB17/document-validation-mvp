@@ -241,6 +241,58 @@ def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
     assert audit["action"] == "mapped_file_uploaded"
 
 
+def test_mapped_background_job_uses_shared_pdf_pipeline(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    db.init_db()
+    with db.get_connection() as connection:
+        application_id = int(connection.execute(
+            "INSERT INTO applications (loan_id, status) VALUES (?, 'processing')",
+            ("MAP-SHARED-001",),
+        ).lastrowid)
+    job_id = upload_route.create_pipeline_job(application_id)
+    captured = {}
+
+    def fake_run_pipeline(file_path, passed_application_id, **kwargs):
+        captured.update({
+            "file_path": file_path,
+            "application_id": passed_application_id,
+            **kwargs,
+        })
+        return {"pipeline_status": "completed", "final_status": "CLEAN"}
+
+    monkeypatch.setattr(upload_route, "run_pipeline", fake_run_pipeline)
+    manifest = {
+        "loan_id": "MAP-SHARED-001",
+        "product_type": "LAP",
+        "reference_data": {
+            "primary": {"applicant_name": "Ramesh Kumar"},
+        },
+        "documents": [{
+            "source_document_id": "file-0001",
+            "applicant_role": "primary",
+            "document_type": "PAN",
+            "pages": [1],
+        }],
+    }
+
+    upload_route._run_mapped_pipeline_task(
+        job_id,
+        str(tmp_path / "normalized.pdf"),
+        application_id,
+        manifest,
+    )
+
+    assert captured["application_id"] == application_id
+    assert captured["mapped_manifest"] == manifest
+    assert captured["generate_llm_summary"] is True
+    assert captured["system_data"]["applicant_name"] == "Ramesh Kumar"
+    with db.get_connection() as connection:
+        job = connection.execute(
+            "SELECT status FROM pipeline_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+    assert job["status"] == "completed"
+
+
 def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
     tmp_path, monkeypatch
 ) -> None:
@@ -277,6 +329,89 @@ def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
         ).fetchone()["total"]
     assert dict(package_row) == {"status": "prepared", "total_files": 2, "total_pages": 2}
     assert document_count == 2
+
+
+def test_background_zip_preparation_exposes_frontend_logs(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(
+        upload_route,
+        "submit_job",
+        lambda function, *args, **kwargs: function(*args, **kwargs),
+    )
+    pdf_path = tmp_path / "source.pdf"
+    _create_pdf(pdf_path)
+
+    response = TestClient(app).post(
+        "/upload/package?background=true",
+        files={
+            "file": (
+                "loan.zip",
+                _zip_bytes([("Applicant/PAN.pdf", pdf_path.read_bytes())]),
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    queued = response.json()
+    assert queued["status"] == "queued"
+    progress = TestClient(app).get(queued["progress_url"])
+    assert progress.status_code == 200
+    body = progress.json()
+    assert body["status"] == "prepared"
+    assert body["total_files"] == 1
+    assert body["documents"][0]["original_filename"] == "Applicant/PAN.pdf"
+    assert any(event["stage"] == "file_completed" for event in body["events"])
+
+
+def test_zip_progress_writer_retries_windows_replace_lock(tmp_path, monkeypatch) -> None:
+    package_dir = tmp_path / "package"
+    package_dir.mkdir()
+    original_replace = Path.replace
+    attempts = 0
+
+    def intermittently_locked(path: Path, target: Path):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError(5, "Access is denied", str(target))
+        return original_replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", intermittently_locked)
+
+    upload_route._write_package_preparation_progress(
+        package_dir,
+        {
+            "package_id": "a" * 32,
+            "status": "preparing",
+            "message": "Loading PAN.pdf",
+        },
+        append_event=True,
+    )
+
+    progress = json.loads((package_dir / "preparation_progress.json").read_text(encoding="utf-8"))
+    assert attempts == 3
+    assert progress["status"] == "preparing"
+    assert progress["events"][0]["message"] == "Loading PAN.pdf"
+    assert not list(package_dir.glob("*.tmp"))
+
+
+def test_zip_progress_lock_does_not_fail_package_task(tmp_path, monkeypatch) -> None:
+    package_dir = tmp_path / "package"
+    package_dir.mkdir()
+
+    def always_locked(_path: Path, target: Path):
+        raise PermissionError(5, "Access is denied", str(target))
+
+    monkeypatch.setattr(Path, "replace", always_locked)
+
+    upload_route._write_package_preparation_progress(
+        package_dir,
+        {"package_id": "b" * 32, "status": "preparing"},
+    )
+
+    assert not list(package_dir.glob("*.tmp"))
 
 
 def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) -> None:

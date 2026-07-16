@@ -13,7 +13,7 @@ import requests
 import streamlit as st
 
 from database.db import get_connection
-from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
+from services.checklist_service import get_ai_checkable_items, get_human_review_items
 from services.checklist_status import build_checklist_status
 from services.ocr_json_export import build_ocr_document_json
 from services.report_generator import generate_excel_report
@@ -141,6 +141,34 @@ def _render_deterministic_reviewer_summary(application_id: int) -> None:
                 })
         if rows:
             st.dataframe(rows, width="stretch", hide_index=True)
+    sources = summary.get("source_classifications") or []
+    if sources:
+        st.markdown("#### ZIP source classification")
+        st.caption(
+            "Predicted document and owner are aggregated from shared page classification, "
+            "LLM review, extracted identity fields, and the supplied mapping."
+        )
+        source_rows = []
+        for source in sources:
+            source_rows.append({
+                "Source": source.get("original_filename") or source.get("source_document_id"),
+                "Pages": _compact_page_list(source.get("pages") or []),
+                "Provided owner": ", ".join(source.get("provided_person_ids") or []) or "-",
+                "Predicted owner": source.get("predicted_person_id") or "Unknown",
+                "Owner evidence": source.get("owner_detection_method") or "-",
+                "Provided document": ", ".join(source.get("provided_document_types") or []) or "-",
+                "Predicted document": source.get("predicted_document_type") or "Unknown",
+            })
+        st.dataframe(source_rows, width="stretch", hide_index=True)
+
+
+def _compact_page_list(pages: list[object]) -> str:
+    numbers = sorted({int(page) for page in pages if str(page).isdigit()})
+    if not numbers:
+        return "-"
+    if len(numbers) <= 6:
+        return ", ".join(map(str, numbers))
+    return f"{numbers[0]}-{numbers[-1]} ({len(numbers)} pages)"
 
 
 def _render_verdict_banner(application: dict, summary: dict) -> None:
@@ -277,10 +305,12 @@ def _render_document_checklist(data: dict, product_type: str) -> None:
             "This uploaded file does not look like an MSFC loan file. "
             "Checklist matching is skipped to avoid false positives."
         )
-        st.info("Upload a loan-file packet to run the 44-item checklist.")
+        st.info("Upload a loan-file packet to run the document checklist.")
         return
 
-    checklist_items = get_all_checklist_items(product_type)
+    # Physical/manual verification items are handled separately and should not
+    # appear in the automated document checklist.
+    checklist_items = get_ai_checkable_items(product_type)
     item_count = len(checklist_items)
     st.subheader(f"MSFC Checklist ({item_count} items)")
     rows = build_checklist_status(checklist_items, data["pages"], data["anomalies"])

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
@@ -56,6 +57,12 @@ DOCUMENT_FIELDS = {
         "phone_number", "address", "pin_code", "loan_amount",
     },
     "utility bill": {"applicant_name", "address", "pin_code"},
+    "voter id": {"applicant_name", "date_of_birth", "address"},
+    "cibil report": {"applicant_name"},
+    "crif report": {"applicant_name"},
+    "bank statement": {"applicant_name"},
+    "passbook": {"applicant_name"},
+    "cheque": {"applicant_name"},
 }
 
 
@@ -255,6 +262,255 @@ def run_mapped_verification(
     return result
 
 
+def compare_processed_pages(
+    pages: list[dict[str, Any]],
+    manifest: dict[str, Any],
+    *,
+    source_documents: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Compare shared-pipeline page output with trusted mapped JSON.
+
+    Page rendering, digital-text extraction, OCR, deterministic classification,
+    LLM classification, and field assignment have already happened in the normal
+    PDF pipeline. This function adds trusted ownership/mapping evidence without
+    re-running OCR.
+    """
+    reference_data = manifest.get("reference_data") or {}
+    documents = manifest.get("documents") or []
+    pages_by_number = {
+        int(page.get("page_number") or 0): page
+        for page in pages
+        if page.get("page_number") is not None
+    }
+    anomalies: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
+    checked_fields = 0
+    matched_fields = 0
+
+    for mapping in documents:
+        provided_type = str(mapping.get("document_type") or "Unknown")
+        person_id = str(mapping.get("applicant_role") or mapping.get("person_id") or "primary")
+        source_document_id = mapping.get("source_document_id")
+        mapped_numbers = [int(number) for number in mapping.get("pages") or []]
+        expected = _expected_fields(reference_data, mapping, provided_type)
+        document_observations: dict[str, list[dict[str, Any]]] = {}
+        readable_pages: list[int] = []
+
+        if not mapped_numbers:
+            if mapping.get("required", True):
+                anomalies.append(_anomaly(
+                    "DOCUMENT_MISSING", "HIGH", None, provided_type, None, None,
+                    "No page was mapped for this required document.", person_id=person_id,
+                ))
+            continue
+
+        for page_number in mapped_numbers:
+            page = pages_by_number.get(page_number)
+            if page is None:
+                anomalies.append(_anomaly(
+                    "PAGE_OUT_OF_RANGE", "HIGH", page_number, provided_type,
+                    "Mapped page available in processed PDF", None,
+                    "Mapped page was not produced by the shared PDF pipeline.",
+                    person_id=person_id,
+                ))
+                continue
+
+            fields = page.get("extracted_fields")
+            if not isinstance(fields, dict):
+                fields = {}
+                page["extracted_fields"] = fields
+            mapping_metadata = {
+                "person_id": person_id,
+                "provided_document_type": provided_type,
+                "source_document_id": source_document_id,
+                "pages": mapped_numbers,
+            }
+            fields["_provided_mapping"] = mapping_metadata
+            page["person_id"] = person_id
+            page["source_document_id"] = source_document_id
+            page["provided_document_type"] = provided_type
+
+            text = str(page.get("ocr_text") or "")
+            mapped_fields = extract_fields(provided_type, text) if text else {}
+            fields["_mapped_extraction"] = mapped_fields
+            comparison_fields = {
+                **{key: value for key, value in fields.items() if not str(key).startswith("_")},
+                **{key: value for key, value in mapped_fields.items() if not str(key).startswith("_")},
+            }
+            if page.get("is_readable") is not False and text.strip():
+                readable_pages.append(page_number)
+
+            for key, value in comparison_fields.items():
+                if value in (None, "", [], {}) or str(key).startswith("_"):
+                    continue
+                field = _canonical(key)
+                observation = {
+                    "person_id": person_id,
+                    "document_type": provided_type,
+                    "classified_document_type": page.get("document_type"),
+                    "source_document_id": source_document_id,
+                    "page_number": page_number,
+                    "field_name": field,
+                    "value": value,
+                    "ocr_confidence": page.get("ocr_confidence"),
+                    "text_source": "embedded_text" if page.get("page_type") == "digital" else "paddle_ocr",
+                }
+                observations.append(observation)
+                document_observations.setdefault(field, []).append(observation)
+
+        if not readable_pages:
+            anomalies.append(_anomaly(
+                "DOCUMENT_NOT_READABLE", "HIGH", mapped_numbers[0], provided_type,
+                None, None,
+                "The shared PDF pipeline could not extract text from the mapped document pages.",
+                person_id=person_id,
+            ))
+            continue
+
+        for raw_field, expected_value in expected.items():
+            field = _canonical(raw_field)
+            if field not in VERIFY or expected_value in (None, ""):
+                continue
+            field_observations = document_observations.get(field) or []
+            if not field_observations:
+                checked_fields += 1
+                anomalies.append(_anomaly(
+                    f"{field.upper()}_NOT_FOUND", "MEDIUM", readable_pages[0], provided_type,
+                    expected_value, None, "Expected field was not found with sufficient confidence.",
+                    field, "FIELD_NOT_FOUND", person_id,
+                ))
+                continue
+
+            seen_values: set[str] = set()
+            for observation in field_observations:
+                normalized_key = _comparison_key(field, observation["value"])
+                if normalized_key in seen_values:
+                    continue
+                seen_values.add(normalized_key)
+                checked_fields += 1
+                result = VERIFY[field](str(observation["value"]), str(expected_value))
+                observation["expected_value"] = expected_value
+                observation["status"] = "MATCH" if result.match else "MISMATCH"
+                if result.match:
+                    matched_fields += 1
+                    continue
+                wrong_owner = _find_other_owner(reference_data, person_id, field, observation["value"])
+                if wrong_owner:
+                    anomalies.append(_anomaly(
+                        "INDEX_MAPPING_SUSPECTED", "HIGH", observation["page_number"], provided_type,
+                        expected_value, observation["value"],
+                        f"Value matches {wrong_owner}, not {person_id}; verify the page/person index.",
+                        field, "MISMATCH", person_id, wrong_owner,
+                    ))
+                    continue
+                severity = "HIGH" if field in {"aadhaar_number", "pan_number", "date_of_birth"} else "MEDIUM"
+                anomalies.append(_anomaly(
+                    f"{field.upper()}_MISMATCH", severity, observation["page_number"], provided_type,
+                    expected_value, observation["value"], result.mismatch_reason or "Values do not match.",
+                    field, "MISMATCH", person_id,
+                ))
+
+    source_classifications = _classify_source_documents(
+        pages,
+        documents,
+        reference_data,
+        source_documents or [],
+    )
+    people_verification = _build_people_verification(
+        reference_data, documents, observations, anomalies
+    )
+    return {
+        "anomalies": anomalies,
+        "observations": observations,
+        "checked_fields": checked_fields,
+        "matched_fields": matched_fields,
+        "people_verification": people_verification,
+        "source_classifications": source_classifications,
+    }
+
+
+def _classify_source_documents(
+    pages: list[dict[str, Any]],
+    mappings: list[dict[str, Any]],
+    reference_data: dict[str, Any],
+    source_documents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Aggregate page/LLM classifications and extracted identity per ZIP member."""
+    page_lookup = {int(page.get("page_number") or 0): page for page in pages}
+    inventory = {str(item.get("source_document_id")): item for item in source_documents}
+    grouped: dict[str, dict[str, Any]] = {}
+    for source_id, item in inventory.items():
+        start = int(item.get("internal_page_start") or 0)
+        end = int(item.get("internal_page_end") or 0)
+        grouped[source_id] = {
+            "mappings": [],
+            "pages": set(range(start, end + 1)) if start > 0 and end >= start else set(),
+        }
+    for mapping in mappings:
+        source_id = str(mapping.get("source_document_id") or "unassigned")
+        group = grouped.setdefault(source_id, {"mappings": [], "pages": set()})
+        group["mappings"].append(mapping)
+        group["pages"].update(int(number) for number in mapping.get("pages") or [])
+
+    results: list[dict[str, Any]] = []
+    for source_id, group in grouped.items():
+        source_pages = [page_lookup[number] for number in sorted(group["pages"]) if number in page_lookup]
+        type_votes: Counter[str] = Counter()
+        owner_votes: Counter[str] = Counter()
+        for page in source_pages:
+            fields = page.get("extracted_fields") or {}
+            llm_result = fields.get("_structured_llm_classification") if isinstance(fields, dict) else None
+            llm_type = llm_result.get("document_type") if isinstance(llm_result, dict) else None
+            predicted_type = str(llm_type or page.get("document_type") or "Unknown")
+            if predicted_type not in {"Unknown", "None", "OCR Skipped"}:
+                type_votes[predicted_type] += 1
+            if isinstance(fields, dict):
+                candidate_names = [
+                    fields.get("applicant_name"),
+                    fields.get("account_holder_name"),
+                    fields.get("customer_name"),
+                ]
+                mapped_fields = fields.get("_mapped_extraction")
+                if isinstance(mapped_fields, dict):
+                    candidate_names.append(mapped_fields.get("applicant_name"))
+                for candidate in candidate_names:
+                    candidate_key = _comparison_key("applicant_name", candidate)
+                    if not candidate_key:
+                        continue
+                    for person_id, trusted in reference_data.items():
+                        if not isinstance(trusted, dict):
+                            continue
+                        if candidate_key == _comparison_key("applicant_name", trusted.get("applicant_name")):
+                            owner_votes[str(person_id)] += 1
+
+        provided_owners = sorted({
+            str(item.get("applicant_role") or item.get("person_id") or "primary")
+            for item in group["mappings"]
+        })
+        predicted_owner = owner_votes.most_common(1)[0][0] if owner_votes else (
+            provided_owners[0] if len(provided_owners) == 1 else None
+        )
+        predicted_type = type_votes.most_common(1)[0][0] if type_votes else "Unknown"
+        item = inventory.get(source_id, {})
+        classification = {
+            "source_document_id": source_id,
+            "original_filename": item.get("original_filename"),
+            "pages": sorted(group["pages"]),
+            "provided_person_ids": provided_owners,
+            "predicted_person_id": predicted_owner,
+            "owner_detection_method": "extracted_identity" if owner_votes else "provided_mapping",
+            "provided_document_types": sorted({str(entry.get("document_type") or "Unknown") for entry in group["mappings"]}),
+            "predicted_document_type": predicted_type,
+            "document_type_votes": dict(type_votes),
+        }
+        results.append(classification)
+        for page in source_pages:
+            fields = page.get("extracted_fields")
+            if isinstance(fields, dict):
+                fields["_zip_source_classification"] = classification
+    return results
+
+
 def _safe_digital_text(page: Any) -> str:
     """Use embedded text when available; page failures safely fall back to OCR."""
     try:
@@ -276,7 +532,9 @@ def _expected_fields(
     values = role_data if isinstance(role_data, dict) else reference_data
     allowed = DOCUMENT_FIELDS.get(document_type.strip().lower())
     if not allowed:
-        return values
+        # Do not demand identity fields from photos, screenshots, affidavits,
+        # spreadsheets, or other document types that have no verification contract.
+        return {}
     return {key: value for key, value in values.items() if _canonical(key) in allowed}
 
 

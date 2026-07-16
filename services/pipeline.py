@@ -53,6 +53,7 @@ from services.progress_tracker import (
     update_stage,
 )
 from services.report_generator import build_report, save_report_json
+from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.structured_llm_classifier import classify_with_structured_llm
 from services.text_extractor import extract_digital_text, extract_ground_truth
 from services.verification_pdf_parser import VerificationPdfParseError, parse_verification_pdf
@@ -131,6 +132,8 @@ def run_pipeline(
     system_data: dict[str, Any] | None = None,
     product_type: str = "LAP",
     generate_llm_summary: bool | None = None,
+    mapped_manifest: dict[str, Any] | None = None,
+    source_documents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
     pdf_path = Path(pdf_path)
@@ -149,11 +152,13 @@ def run_pipeline(
     update_stage(application_id, "extracting_digital_text", "Extracting digital text")
     digital_text_by_page = _extract_digital_text_by_page(pdf_path)
     ground_truth = dict(extract_ground_truth(pdf_path))
-    if system_data:
+    if mapped_manifest is not None:
+        ground_truth = _mapped_ground_truth(mapped_manifest, system_data)
+    elif system_data:
         ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
 
     input_classification = classify_input_text(digital_text_by_page)
-    if input_classification["input_type"] == "unsupported":
+    if input_classification["input_type"] == "unsupported" and mapped_manifest is None:
         update_stage(application_id, "unsupported_input", str(input_classification["reason"]))
         pages = _build_unsupported_page_records(structure["pages"], digital_text_by_page)
         result = _finalize_pipeline_result(
@@ -179,11 +184,62 @@ def run_pipeline(
         _update_uploaded_file_counts(application_id, structure)
         log_action(application_id, "input_classified_unsupported", input_classification)
         return result
+    if input_classification["input_type"] == "unsupported" and mapped_manifest is not None:
+        log_action(
+            application_id,
+            "mapped_input_classifier_warning",
+            input_classification,
+        )
 
     update_stage(application_id, "processing_pages", "Classifying and extracting page fields")
-    pages = _build_page_records(structure["pages"], digital_text_by_page, application_id=application_id)
-    update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
-    verification_report, document_page_numbers = _run_document_verification(pdf_path, application_id, pages, ground_truth)
+    source_page_starts = {
+        int(item.get("internal_page_start") or 0)
+        for item in source_documents or []
+        if item.get("internal_page_start") is not None
+    }
+    if mapped_manifest is not None:
+        source_mapping_pages: dict[str, list[int]] = {}
+        for item in mapped_manifest.get("documents") or []:
+            source_id = str(item.get("source_document_id") or "unassigned")
+            source_mapping_pages.setdefault(source_id, []).extend(
+                int(number) for number in item.get("pages") or []
+            )
+        source_page_starts.update(
+            min(numbers) for numbers in source_mapping_pages.values() if numbers
+        )
+    pages = _build_page_records(
+        structure["pages"],
+        digital_text_by_page,
+        application_id=application_id,
+        source_page_starts=source_page_starts,
+    )
+    mapped_result: dict[str, Any] | None = None
+    if mapped_manifest is not None:
+        update_stage(
+            application_id,
+            "verifying_mapped_documents",
+            "Comparing classified ZIP documents with trusted JSON",
+        )
+        from services.mapped_verification import compare_processed_pages
+
+        mapped_result = compare_processed_pages(
+            pages,
+            mapped_manifest,
+            source_documents=source_documents,
+        )
+        verification_report = None
+        document_page_numbers = sorted(
+            {
+                int(number)
+                for item in mapped_manifest.get("documents") or []
+                for number in item.get("pages") or []
+            }
+        )
+    else:
+        update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
+        verification_report, document_page_numbers = _run_document_verification(
+            pdf_path, application_id, pages, ground_truth
+        )
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
@@ -201,6 +257,8 @@ def run_pipeline(
 
     update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
+    if mapped_result is not None:
+        anomalies.extend(mapped_result["anomalies"])
     partial_scan_anomaly = _ocr_budget_anomaly(pages)
     if partial_scan_anomaly is not None:
         anomalies.append(partial_scan_anomaly)
@@ -233,12 +291,35 @@ def run_pipeline(
     if summary:
         _save_llm_summary(application_id, summary)
 
+    if mapped_result is not None:
+        reviewer_summary = build_reviewer_summary(
+            total_pages=len(pages),
+            anomalies=result["anomalies"],
+            checked_fields=int(mapped_result["checked_fields"]),
+            matched_fields=int(mapped_result["matched_fields"]),
+        )
+        reviewer_summary["people_verification"] = mapped_result["people_verification"]
+        reviewer_summary["source_classifications"] = mapped_result["source_classifications"]
+        save_reviewer_summary(application_id, reviewer_summary)
+
     report_path = save_report_json(
         build_report(
             application_id=application_id,
             loan_id=str(ground_truth.get("loan_id") or ""),
             exceptions=result["anomalies"],
             llm_summary=summary or "",
+            metadata=(
+                {
+                    "verification_mode": "mapped_zip_json_comparison",
+                    "checked_fields": mapped_result["checked_fields"],
+                    "matched_fields": mapped_result["matched_fields"],
+                    "people_verification": mapped_result["people_verification"],
+                    "source_classifications": mapped_result["source_classifications"],
+                    "checklist_verification": checklist_verification.model_dump(mode="json"),
+                }
+                if mapped_result is not None
+                else None
+            ),
         )
     )
 
@@ -258,6 +339,17 @@ def run_pipeline(
             "checklist_verification": checklist_verification.model_dump(mode="json"),
         }
     )
+    if mapped_result is not None:
+        result.update(
+            {
+                "verification_mode": "mapped_zip_json_comparison",
+                "checked_fields": mapped_result["checked_fields"],
+                "matched_fields": mapped_result["matched_fields"],
+                "observations": mapped_result["observations"],
+                "people_verification": mapped_result["people_verification"],
+                "source_classifications": mapped_result["source_classifications"],
+            }
+        )
     mark_completed(application_id, result["final_status"], pipeline_status)
     log_action(
         application_id,
@@ -272,6 +364,23 @@ def run_pipeline(
         },
     )
     return result
+
+
+def _mapped_ground_truth(
+    manifest: dict[str, Any],
+    system_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Flatten primary trusted data for checklist/report compatibility."""
+    reference_data = manifest.get("reference_data") or {}
+    primary = reference_data.get("primary") if isinstance(reference_data, dict) else {}
+    primary = primary if isinstance(primary, dict) else {}
+    return {
+        **(system_data or {}),
+        **primary,
+        "loan_id": manifest.get("loan_id") or (system_data or {}).get("loan_id"),
+        "product_type": manifest.get("product_type") or (system_data or {}).get("product_type") or "LAP",
+        "reference_data": reference_data,
+    }
 
 
 def _finalize_pipeline_result(
@@ -438,6 +547,7 @@ def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
     application_id: int | None = None,
+    source_page_starts: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     llm_budget = create_llm_classifier_budget()
@@ -458,6 +568,10 @@ def _build_page_records(
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
         image_path = page_info.get("image_path")
+        if source_page_starts and page_number in source_page_starts:
+            current_type = "Unknown"
+            current_confidence = 0.0
+            current_detected_page = None
         needs_ocr = page_type == "scanned" and page_number in selected_scanned_pages
         if application_id is not None:
             mark_page_started(
