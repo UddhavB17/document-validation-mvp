@@ -3,8 +3,7 @@ from pathlib import Path
 import database.db as db
 from database.db import get_connection, init_db
 from services.mapped_verification import run_mapped_verification
-from services.reviewer_summary import build_reviewer_summary
-from services.reviewer_summary_store import load_reviewer_summary
+from services.reviewer import build_reviewer_summary, load_reviewer_summary
 from services.verification_manifest import VerificationManifest
 from services.company_data_provider import CompanyReferenceData, LocalJsonCompanyDataProvider
 from services.document_index_provider import ManualDocumentIndexProvider, compose_verification_manifest

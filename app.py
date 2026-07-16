@@ -6,10 +6,8 @@ require_python_311()
 
 import streamlit as st
 
-from views.status_helpers import load_application_status
-from pages.activity_page import render_activity_page
-from pages.worklist_page import render_worklist_page
 from services.local_health import collect_local_health
+from views.reviewer_view import load_application_status, render_activity_page, render_worklist_page
 from views.upload_view import render_upload_page
 
 

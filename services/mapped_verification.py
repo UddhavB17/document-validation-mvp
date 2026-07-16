@@ -19,8 +19,7 @@ from services.field_verification import (
 )
 from services.ocr_engine import run_ocr_on_page
 from services.pdf_processor import convert_page_to_image, open_pdf
-from services.reviewer_summary import build_reviewer_summary
-from services.reviewer_summary_store import save_reviewer_summary
+from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
 from services.text_extractor import extract_digital_text
 

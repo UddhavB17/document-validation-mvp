@@ -1,4 +1,4 @@
-from services.reviewer_exceptions import collapse_for_reviewer, compute_final_status, summarize_for_display
+from services.reviewer import collapse_for_reviewer, compute_final_status, summarize_for_display
 
 
 def test_collapses_repeated_unclassified_pages() -> None:

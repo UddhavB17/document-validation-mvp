@@ -8,7 +8,7 @@ import streamlit as st
 
 from services.file_validator import validate_package_upload, validate_upload
 from views.results_view import render_application_results
-from views.status_helpers import render_result_status_guard
+from views.reviewer_view import render_result_status_guard
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 

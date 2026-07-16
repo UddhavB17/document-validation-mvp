@@ -1,15 +1,17 @@
-"""Shared Streamlit status helpers for application result rendering."""
+"""Reviewer worklist, activity page, and shared result-status UI."""
 
 from __future__ import annotations
 
 import json
 import time
 
+import pandas as pd
 import streamlit as st
 
 from database.db import get_connection
 from services.config import get_int
 from services.progress_tracker import get_progress
+from services.reviewer import summarize_for_display
 
 PROCESSING_STATUSES = frozenset({"uploaded", "processing", "ocr_completed"})
 FAILED_STATUSES = frozenset({"pipeline_failed"})
@@ -266,3 +268,176 @@ def _status_label(status: str) -> str:
     if normalized == "skipped":
         return "Skipped"
     return "Completed"
+
+
+def render_worklist_page(items: list[dict] | None = None) -> None:
+    from views.results_view import render_application_results
+
+    st.subheader("Reviewer Worklist")
+    applications = items or _load_worklist()
+
+    queue_col, _ = st.columns([1, 3])
+    if queue_col.button("Start Review Queue", type="primary"):
+        pending = _queue_candidates(applications)
+        if not pending:
+            st.warning("No files waiting for review.")
+        else:
+            st.session_state["queue"] = [item["id"] for item in pending]
+            st.session_state["queue_index"] = 0
+            st.session_state["worklist_application_id"] = pending[0]["id"]
+            st.rerun()
+
+    status_filter = st.radio(
+        "Filter",
+        ["All", "Pending", "Needs Review", "Auto Clean", "Verified"],
+        horizontal=True,
+    )
+    filtered = _filter_applications(applications, status_filter)
+
+    if not filtered:
+        st.info("No applications found.")
+        return
+
+    table_rows = [
+        {
+            "Loan ID": item["loan_id"],
+            "Applicant": item["applicant_name"],
+            "Product": item["product_type"],
+            "Status": item["status"],
+            "Issues": item["reviewer_issues"],
+            "Uploaded": item["created_at"],
+            "application_id": item["id"],
+        }
+        for item in filtered
+    ]
+    st.dataframe(pd.DataFrame(table_rows).drop(columns=["application_id"]), hide_index=True, width="stretch")
+
+    selected_loan = st.selectbox("Open application", [row["Loan ID"] for row in table_rows])
+    if st.button("Show Results"):
+        selected = next(row for row in table_rows if row["Loan ID"] == selected_loan)
+        st.session_state["worklist_application_id"] = selected["application_id"]
+
+    selected_application_id = st.session_state.get("worklist_application_id")
+    if selected_application_id is not None:
+        st.divider()
+        is_ready = render_result_status_guard(
+            int(selected_application_id),
+            session_key_prefix=f"worklist_{selected_application_id}",
+            processing_message="Processing your loan file",
+        )
+        if not is_ready:
+            return
+        render_application_results(int(selected_application_id))
+
+
+def _queue_candidates(applications: list[dict]) -> list[dict]:
+    pending = [
+        item
+        for item in applications
+        if item["status"] in {"NEEDS_REVIEW", "CRITICAL", "ocr_completed", "checklist_run"}
+    ]
+    return sorted(pending, key=lambda item: item["created_at"])
+
+
+def _load_worklist() -> list[dict]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                applications.id,
+                applications.loan_id,
+                applications.applicant_name,
+                applications.product_type,
+                applications.status,
+                applications.created_at
+            FROM applications
+            ORDER BY applications.created_at DESC
+            """
+        ).fetchall()
+
+    applications = []
+    for row in rows:
+        item = dict(row)
+        with get_connection() as connection:
+            anomalies = connection.execute(
+                "SELECT severity, rule_id, page_number, reason, document_type, expected_value, found_value FROM validation_results WHERE application_id = ?",
+                (item["id"],),
+            ).fetchall()
+        summary = summarize_for_display([dict(anomaly) for anomaly in anomalies])
+        item["issues"] = summary["raw_count"]
+        item["reviewer_issues"] = summary["reviewer_count"]
+        applications.append(item)
+    return applications
+
+
+def _filter_applications(applications: list[dict], status_filter: str) -> list[dict]:
+    if status_filter == "All":
+        return applications
+    if status_filter == "Pending":
+        return [item for item in applications if item["status"] in {"uploaded", "processing", "ocr_completed"}]
+    if status_filter == "Needs Review":
+        return [item for item in applications if item["status"] in {"NEEDS_REVIEW", "CRITICAL"}]
+    if status_filter == "Auto Clean":
+        return [item for item in applications if item["status"] == "CLEAN"]
+    if status_filter == "Verified":
+        return [item for item in applications if item["status"] in {"verified", "verified_with_override"}]
+    return applications
+
+
+def render_activity_page() -> None:
+    st.subheader("My Activity")
+    st.caption("Decisions recorded today")
+
+    summary = _load_today_summary()
+    if not summary["rows"]:
+        st.info("No reviewer decisions recorded today.")
+        return
+
+    columns = st.columns(4)
+    columns[0].metric("Files reviewed today", summary["total"])
+    columns[1].metric("Accepted", summary["accepted"])
+    columns[2].metric("Overridden", summary["overridden"])
+    columns[3].metric("Sent back", summary["sent_back"])
+
+    chart_data = pd.DataFrame(
+        [
+            {"Decision": "Accepted", "Count": summary["accepted"]},
+            {"Decision": "Overridden", "Count": summary["overridden"]},
+            {"Decision": "Sent back", "Count": summary["sent_back"]},
+        ]
+    )
+    if summary["total"] > 0:
+        st.bar_chart(chart_data.set_index("Decision"))
+
+    st.dataframe(pd.DataFrame(summary["rows"]), hide_index=True, width="stretch")
+
+
+def _load_today_summary() -> dict:
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                reviewer_decisions.id,
+                reviewer_decisions.application_id,
+                applications.loan_id,
+                reviewer_decisions.decision,
+                reviewer_decisions.decided_at
+            FROM reviewer_decisions
+            JOIN applications ON applications.id = reviewer_decisions.application_id
+            WHERE date(reviewer_decisions.decided_at) = date('now', 'localtime')
+            ORDER BY reviewer_decisions.decided_at DESC
+            """
+        ).fetchall()
+
+    decision_rows = [dict(row) for row in rows]
+    accepted = sum(1 for row in decision_rows if row["decision"] == "ACCEPT")
+    overridden = sum(1 for row in decision_rows if row["decision"] == "OVERRIDE")
+    sent_back = sum(1 for row in decision_rows if row["decision"] == "REQUEST_DOCS")
+
+    return {
+        "total": len(decision_rows),
+        "accepted": accepted,
+        "overridden": overridden,
+        "sent_back": sent_back,
+        "rows": decision_rows,
+    }

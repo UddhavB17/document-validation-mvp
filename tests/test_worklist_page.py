@@ -1,5 +1,4 @@
-from pages.worklist_page import _filter_applications
-from views.status_helpers import get_result_state
+from views.reviewer_view import _filter_applications, get_result_state
 
 
 def test_worklist_filters_separate_auto_clean_from_reviewer_verified() -> None:
