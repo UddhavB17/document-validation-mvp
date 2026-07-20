@@ -89,7 +89,7 @@ def test_missing_pan() -> None:
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
 
 
-def test_physical_only_items_are_manual_review_not_ai_missing() -> None:
+def test_physical_items_remain_manual_review_but_are_checked_for_availability() -> None:
     ai_snos = {item["s_no"] for item in get_ai_checkable_items("LAP")}
     manual_snos = {item["s_no"] for item in get_human_review_items("LAP")}
 
@@ -99,7 +99,7 @@ def test_physical_only_items_are_manual_review_not_ai_missing() -> None:
     assert 41 in manual_snos
 
     anomalies = run_checks([], {}, {}, "LAP")
-    assert not any(anomaly["rule_id"] == "MISSING_DOC_S1" for anomaly in anomalies)
+    assert any(anomaly["rule_id"] == "MISSING_DOC_S1" for anomaly in anomalies)
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
 
 
@@ -287,3 +287,98 @@ def test_present_legal_report_with_pending_status_needs_review() -> None:
     anomalies = run_checks(pages, {}, {}, "LAP")
 
     assert any(anomaly["rule_id"] == "STATUS_CHECK_S37" for anomaly in anomalies)
+
+
+def test_amount_condition_boundaries_from_printed_checklist() -> None:
+    pages = [
+        _confident_page(1, "Application Form"),
+        _confident_page(2, "Bank Statement"),
+        _confident_page(3, "CRIF Report", person_id="primary"),
+    ]
+    common = {"people": {"primary": {"role": "primary"}}, "kyc_details_checked": True}
+
+    for amount, s_no, expected_missing in [
+        (999999, 28, False),
+        (1000000, 28, True),
+        (1499999, 23, False),
+        (1500000, 23, True),
+        (2000000, 39, False),
+        (2000001, 39, True),
+    ]:
+        system_data = {**common, "loan_amount": amount}
+        anomalies = run_checks(pages, system_data, system_data, "LAP")
+        is_missing = any(
+            item.get("s_no") == s_no and item["rule_id"].startswith("MISSING_DOC")
+            for item in anomalies
+        )
+        assert is_missing is expected_missing
+
+
+def test_unknown_condition_is_review_not_silent_skip() -> None:
+    anomalies = run_checks([], {}, {}, "LAP")
+    assert any(item["rule_id"] == "APPLICABILITY_UNKNOWN_S23" for item in anomalies)
+    assert any(item["rule_id"] == "APPLICABILITY_UNKNOWN_S41" for item in anomalies)
+
+
+def test_pdc_count_changes_with_nach_registration() -> None:
+    five_pdcs = [_confident_page(index, "PDC") for index in range(1, 6)]
+    registered = {"nach_registered": True}
+    anomalies = run_checks(five_pdcs, registered, registered, "LAP")
+    assert not any(item.get("s_no") == 41 and item["rule_id"].startswith("MISSING_DOC") for item in anomalies)
+
+    unregistered = {"nach_registered": False}
+    anomalies = run_checks(five_pdcs, unregistered, unregistered, "LAP")
+    assert any(
+        item.get("s_no") == 41
+        and item["rule_id"].startswith("MISSING_DOC")
+        and "10" in str(item.get("expected_value"))
+        for item in anomalies
+    )
+
+
+def test_ach_not_registered_requires_approval_bsv_and_three_nach_forms() -> None:
+    pages = [
+        _confident_page(1, "ACH Approval Document"),
+        _confident_page(2, "Bank Signature Verification"),
+        _confident_page(3, "NACH Form"),
+        _confident_page(4, "NACH Form"),
+    ]
+    system_data = {"nach_registered": False}
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+    assert any(
+        item.get("s_no") == 42
+        and item.get("document_type") == "NACH Form"
+        and "3" in str(item.get("expected_value"))
+        for item in anomalies
+    )
+
+    pages.append(_confident_page(5, "NACH Form"))
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+    assert not any(item.get("s_no") == 42 and item["rule_id"].startswith("MISSING_DOC") for item in anomalies)
+
+
+def test_negative_or_referred_fi_requires_approval_letter() -> None:
+    pages = [_confident_page(1, "FI Report")]
+    negative = {"loan_amount": 1500000, "fi_report_status": "negative"}
+    anomalies = run_checks(pages, negative, negative, "LAP")
+    assert any(
+        item.get("s_no") == 23 and item.get("document_type") == "FI Approval Letter"
+        for item in anomalies
+    )
+
+    positive = {"loan_amount": 1500000, "fi_report_status": "positive"}
+    anomalies = run_checks(pages, positive, positive, "LAP")
+    assert not any(
+        item.get("s_no") == 23 and item.get("document_type") == "FI Approval Letter"
+        for item in anomalies
+    )
+
+
+def test_utility_bill_older_than_two_months_is_rejected() -> None:
+    old_date = (datetime.now() - timedelta(days=75)).date().isoformat()
+    pages = [
+        _confident_page(1, "Utility Bill", extracted_fields={"bill_date": old_date}),
+        _confident_page(2, "Application Form"),
+    ]
+    anomalies = run_checks(pages, {}, {}, "LAP")
+    assert any(item["rule_id"] == "DATE_CHECK_S6" for item in anomalies)

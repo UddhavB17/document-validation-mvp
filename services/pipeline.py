@@ -300,6 +300,7 @@ def run_pipeline(
         pages=pages,
         anomalies=result["anomalies"],
         product_type=product_type,
+        system_data=system_data or ground_truth,
         processing_metadata=_checklist_processing_metadata(progress_snapshot),
         include_narration=False,
     )
@@ -513,6 +514,7 @@ def run_partner_json_pipeline(
         pages=pages,
         anomalies=result["anomalies"],
         product_type=product_type,
+        system_data=system_data or ground_truth,
         processing_metadata={},
         include_narration=False,
     )

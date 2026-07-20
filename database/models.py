@@ -106,7 +106,7 @@ class DocumentVerificationReport(BaseModel):
         return round((self.matched_fields / self.total_fields_checked) * 100.0, 2)
 
 
-ChecklistStatus = Literal["verified", "needs_review", "missing", "unknown"]
+ChecklistStatus = Literal["verified", "needs_review", "missing", "unknown", "not_applicable"]
 ChecklistConfidence = Literal["high", "medium", "low"]
 ChecklistExtractionSource = Literal["deterministic", "llm_fallback"]
 
@@ -135,6 +135,7 @@ class ChecklistSummary(BaseModel):
     needs_review: int = 0
     missing: int = 0
     unknown: int = 0
+    not_applicable: int = 0
 
 
 class ChecklistProcessingMetadata(BaseModel):

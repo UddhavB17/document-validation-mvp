@@ -27,6 +27,21 @@ def test_expanded_registry_document_types(text: str, expected: str) -> None:
     assert classify_page(text)["document_type"] == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("MGNREGA Job Card National Rural Employment Guarantee Job Card Number 123", "MNREGA Job Card"),
+        ("National Population Register NPR Letter issued to resident", "NPR Letter"),
+        ("FORM 97 Declaration in lieu of PAN Form No 97", "Form 97"),
+        ("Pension Payment Order PPO Number 12345 Pensioner Name", "Pension Payment Order"),
+        ("List of Documents LOD original documents held by lender", "List of Documents"),
+        ("FI Approval Field Investigation Approval negative FI approved", "FI Approval Letter"),
+    ],
+)
+def test_new_printed_checklist_document_types_are_classified(text: str, expected: str) -> None:
+    assert classify_page(text)["document_type"] == expected
+
+
 def test_unmatched_page_still_unknown() -> None:
     text = "Random narrative page about lunch plans and weather with no loan-file signals."
     result = classify_page(text)

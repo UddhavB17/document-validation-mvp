@@ -46,6 +46,30 @@
       "min_confidence": 0.5
     },
     {
+      "type": "MNREGA Job Card",
+      "priority": 51,
+      "headings": ["Mahatma Gandhi National Rural Employment Guarantee", "MGNREGA Job Card", "NREGA Job Card"],
+      "keywords": ["mgnrega", "mnrega", "nrega", "job card", "national rural employment guarantee"],
+      "required_any": ["mgnrega", "mnrega", "nrega", "job card"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "NPR Letter",
+      "priority": 52,
+      "headings": ["National Population Register", "NPR Letter"],
+      "keywords": ["national population register", "npr letter", "letter issued by national population register"],
+      "required_any": ["national population register", "npr letter"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Form 97",
+      "priority": 53,
+      "headings": ["Form 97", "Form No. 97"],
+      "keywords": ["form 97", "form no 97", "declaration in lieu of pan"],
+      "required_any": ["form 97", "form no 97"],
+      "min_confidence": 0.5
+    },
+    {
       "type": "KFS",
       "priority": 55,
       "headings": ["Key Fact Statement", "Key Facts Statement", "KFS"],
@@ -227,6 +251,22 @@
       "min_confidence": 0.5
     },
     {
+      "type": "Pension Payment Order",
+      "priority": 181,
+      "headings": ["Pension Payment Order", "PPO"],
+      "keywords": ["pension payment order", "ppo number", "pensioner", "pension disbursing authority"],
+      "required_any": ["pension payment order", "ppo number"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Employer Accommodation Letter",
+      "priority": 182,
+      "headings": ["Accommodation Allotment Letter", "Employer Accommodation Letter", "Quarter Allotment"],
+      "keywords": ["allotment of accommodation", "accommodation allotted", "employer issued", "quarter allotment"],
+      "required_any": ["allotment of accommodation", "accommodation allotted", "quarter allotment"],
+      "min_confidence": 0.5
+    },
+    {
       "type": "Rent Agreement",
       "priority": 185,
       "headings": ["Rent Agreement", "Lease Agreement", "Leave and License Agreement"],
@@ -405,8 +445,17 @@
     {
       "type": "Foreclosure Letter",
       "priority": 335,
-      "headings": ["Foreclosure Letter", "List of Documents", "LOD"],
-      "keywords": ["foreclosure letter", "list of documents", "lod", "loan closure"],
+      "headings": ["Foreclosure Letter", "Loan Foreclosure Statement"],
+      "keywords": ["foreclosure letter", "loan foreclosure", "foreclosure amount", "loan closure"],
+      "required_any": ["foreclosure", "loan closure"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "List of Documents",
+      "priority": 336,
+      "headings": ["List of Documents", "LOD"],
+      "keywords": ["list of documents", "lod", "documents held by lender", "original documents"],
+      "required_any": ["list of documents", "lod"],
       "min_confidence": 0.5
     },
     {
@@ -435,6 +484,15 @@
       "priority": 370,
       "headings": ["FI Report", "Field Investigation", "Field Inquiry Report"],
       "keywords": ["fi report", "field investigation", "field inquiry report", "residence verification"],
+      "negative_keywords": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "FI Approval Letter",
+      "priority": 369,
+      "headings": ["FI Approval", "Field Investigation Approval", "Approval for Negative FI", "Approval for Referred FI"],
+      "keywords": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
+      "required_any": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
       "min_confidence": 0.5
     },
     {

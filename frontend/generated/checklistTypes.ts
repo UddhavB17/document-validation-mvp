@@ -1,7 +1,7 @@
 // Generated from database.models.ChecklistVerificationResponse.
 // Regenerate with scripts/export_checklist_types.py after schema changes.
 
-export type ChecklistStatus = "verified" | "needs_review" | "missing" | "unknown";
+export type ChecklistStatus = "verified" | "needs_review" | "missing" | "unknown" | "not_applicable";
 export type ChecklistConfidence = "high" | "medium" | "low";
 export type ChecklistExtractionSource = "deterministic" | "llm_fallback";
 
@@ -23,6 +23,7 @@ export interface ChecklistSummary {
   needs_review: number;
   missing: number;
   unknown: number;
+  not_applicable: number;
 }
 
 export interface ChecklistProcessingMetadata {

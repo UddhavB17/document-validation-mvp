@@ -13,7 +13,7 @@ import requests
 import streamlit as st
 
 from database.db import get_connection
-from services.checklist_service import get_ai_checkable_items, get_human_review_items
+from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
 from services.checklist_status import build_checklist_status
 from services.ocr_json_export import build_ocr_document_json
 from services.report_generator import generate_excel_report
@@ -329,20 +329,30 @@ def _render_document_checklist(data: dict, product_type: str) -> None:
         st.info("Upload a loan-file packet to run the document checklist.")
         return
 
-    # Physical/manual verification items are handled separately and should not
-    # appear in the automated document checklist.
-    checklist_items = get_ai_checkable_items(product_type)
+    checklist_items = get_all_checklist_items(product_type)
     item_count = len(checklist_items)
     st.subheader(f"MSFC Checklist ({item_count} items)")
-    rows = build_checklist_status(checklist_items, data["pages"], data["anomalies"])
+    raw_json = data.get("ground_truth", {}).get("raw_json")
+    try:
+        system_data = json.loads(raw_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        system_data = {}
+    rows = build_checklist_status(
+        checklist_items,
+        data["pages"],
+        data["anomalies"],
+        system_data=system_data if isinstance(system_data, dict) else {},
+    )
     missing_rows = [row for row in rows if row["status"] == "MISSING"]
     found_rows = [row for row in rows if row["status"] == "FOUND"]
     not_checked_rows = [row for row in rows if row["status"] == "NOT_CHECKED"]
+    not_applicable_rows = [row for row in rows if row["status"] == "NOT_APPLICABLE"]
 
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
     summary_col1.metric("Found", len(found_rows))
     summary_col2.metric("Missing", len(missing_rows))
     summary_col3.metric("Not checked", len(not_checked_rows))
+    summary_col4.metric("Not applicable", len(not_applicable_rows))
 
     display_rows = [
         {
@@ -517,6 +527,8 @@ def _checklist_status_label(status: str) -> str:
         return "Found"
     if status == "MISSING":
         return "Missing"
+    if status == "NOT_APPLICABLE":
+        return "Not applicable"
     return "Not checked"
 
 

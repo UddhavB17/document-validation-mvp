@@ -10,6 +10,7 @@ const statusStyles = {
   needs_review: "border-amber-600/50 bg-amber-950/30 text-amber-100",
   missing: "border-rose-700/50 bg-rose-950/30 text-rose-100",
   unknown: "border-slate-600/60 bg-slate-900 text-slate-100",
+  not_applicable: "border-sky-700/40 bg-sky-950/30 text-sky-100",
 };
 
 const statusIcons = {
@@ -17,6 +18,7 @@ const statusIcons = {
   needs_review: "!",
   missing: "X",
   unknown: "?",
+  not_applicable: "N/A",
 };
 
 export function NdcChecklistReview({ data }: Props) {
@@ -47,10 +49,11 @@ function SummaryBar({ data }: Props) {
     ["Need review", data.summary.needs_review, "text-amber-300"],
     ["Missing", data.summary.missing, "text-rose-300"],
     ["Unknown", data.summary.unknown, "text-slate-300"],
+    ["N/A", data.summary.not_applicable, "text-sky-300"],
   ] as const;
 
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
       {items.map(([label, value, color]) => (
         <div key={label} className="rounded-md border border-slate-800 bg-slate-900 px-4 py-3">
           <div className={`text-xl font-semibold ${color}`}>{value}/{data.summary.total}</div>
@@ -62,7 +65,7 @@ function SummaryBar({ data }: Props) {
 }
 
 function ChecklistRow({ item }: { item: ChecklistItem }) {
-  const expanded = item.status !== "verified";
+  const expanded = item.status !== "verified" && item.status !== "not_applicable";
 
   return (
     <details open={expanded} className="group border-b border-slate-800 last:border-b-0">
