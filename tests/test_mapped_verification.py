@@ -286,6 +286,16 @@ def test_manifest_allows_required_document_without_pages_for_missing_check() -> 
     assert manifest.document_index[1].pages == []
 
 
+def test_manifest_allows_automatic_document_identification_without_index() -> None:
+    manifest = VerificationManifest.model_validate({
+        "loan_id": "MAP-AUTO",
+        "people": {"primary": {"applicant_name": "Ramesh Kumar"}},
+    })
+
+    assert manifest.document_index == []
+    assert manifest.pipeline_payload()["documents"] == []
+
+
 def test_company_data_and_manual_index_compose_without_pipeline_changes() -> None:
     reference = LocalJsonCompanyDataProvider({
         "loan_id": "MAP-COMPOSE",

@@ -215,10 +215,23 @@ def run_pipeline(
     )
     mapped_result: dict[str, Any] | None = None
     if mapped_manifest is not None:
+        automatic_index: dict[str, Any] | None = None
+        if not (mapped_manifest.get("documents") or []):
+            from services.automatic_document_index import build_automatic_document_index
+
+            automatic_index = build_automatic_document_index(
+                pages,
+                mapped_manifest.get("reference_data") or {},
+                source_documents=source_documents,
+            )
+            mapped_manifest = {
+                **mapped_manifest,
+                "documents": automatic_index["documents"],
+            }
         update_stage(
             application_id,
             "verifying_mapped_documents",
-            "Comparing classified ZIP documents with trusted JSON",
+            "Comparing automatically identified documents with trusted JSON",
         )
         from services.mapped_verification import compare_processed_pages
 
@@ -227,6 +240,13 @@ def run_pipeline(
             mapped_manifest,
             source_documents=source_documents,
         )
+        if automatic_index is not None:
+            mapped_result["anomalies"] = [
+                *automatic_index["anomalies"],
+                *mapped_result["anomalies"],
+            ]
+            mapped_result["automatic_document_index"] = automatic_index["documents"]
+            mapped_result["unclassified_pages"] = automatic_index["unclassified_pages"]
         verification_report = None
         document_page_numbers = sorted(
             {
@@ -300,6 +320,10 @@ def run_pipeline(
         )
         reviewer_summary["people_verification"] = mapped_result["people_verification"]
         reviewer_summary["source_classifications"] = mapped_result["source_classifications"]
+        reviewer_summary["automatic_document_index"] = mapped_result.get(
+            "automatic_document_index", []
+        )
+        reviewer_summary["unclassified_pages"] = mapped_result.get("unclassified_pages", [])
         save_reviewer_summary(application_id, reviewer_summary)
 
     report_path = save_report_json(
@@ -310,11 +334,17 @@ def run_pipeline(
             llm_summary=summary or "",
             metadata=(
                 {
-                    "verification_mode": "mapped_zip_json_comparison",
+                    "verification_mode": (
+                        "automatic_json_comparison"
+                        if "automatic_document_index" in mapped_result
+                        else "mapped_zip_json_comparison"
+                    ),
                     "checked_fields": mapped_result["checked_fields"],
                     "matched_fields": mapped_result["matched_fields"],
                     "people_verification": mapped_result["people_verification"],
                     "source_classifications": mapped_result["source_classifications"],
+                    "automatic_document_index": mapped_result.get("automatic_document_index", []),
+                    "unclassified_pages": mapped_result.get("unclassified_pages", []),
                     "checklist_verification": checklist_verification.model_dump(mode="json"),
                 }
                 if mapped_result is not None
@@ -342,12 +372,18 @@ def run_pipeline(
     if mapped_result is not None:
         result.update(
             {
-                "verification_mode": "mapped_zip_json_comparison",
+                "verification_mode": (
+                    "automatic_json_comparison"
+                    if "automatic_document_index" in mapped_result
+                    else "mapped_zip_json_comparison"
+                ),
                 "checked_fields": mapped_result["checked_fields"],
                 "matched_fields": mapped_result["matched_fields"],
                 "observations": mapped_result["observations"],
                 "people_verification": mapped_result["people_verification"],
                 "source_classifications": mapped_result["source_classifications"],
+                "automatic_document_index": mapped_result.get("automatic_document_index", []),
+                "unclassified_pages": mapped_result.get("unclassified_pages", []),
             }
         )
     mark_completed(application_id, result["final_status"], pipeline_status)

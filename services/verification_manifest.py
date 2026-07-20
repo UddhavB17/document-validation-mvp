@@ -53,7 +53,9 @@ class VerificationManifest(BaseModel):
     product_type: str = "LAP"
     branch: str | None = None
     people: dict[str, PersonReference]
-    document_index: list[IndexedDocument] = Field(min_length=1)
+    # Empty means the shared OCR/classification pipeline must build the page
+    # index automatically. Explicit entries remain supported as overrides.
+    document_index: list[IndexedDocument] = Field(default_factory=list)
     source: str = "manual_json"
 
     @model_validator(mode="before")

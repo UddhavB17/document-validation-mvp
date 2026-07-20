@@ -131,16 +131,18 @@ streamlit run app.py
 
 ### Trusted JSON + mapped-page verification
 
-For the deterministic company workflow, open **Document Intake → Mapped
-Verification**. Upload the PDF and paste a manifest based on
-`docs/mapped_manifest.example.json`.
+For the trusted-company-data workflow, open **Document Intake → Automatic
+Verification**. Upload a PDF (or prepare a ZIP) and paste trusted people data
+based on `docs/mapped_manifest.example.json`. Leave `document_index` empty to
+have the shared OCR/classification pipeline identify document types, group
+continuation pages, and infer applicant ownership automatically.
 
-The `pages` values are one-based PDF page numbers. The mapped path renders and
-OCRs only those pages, uses the supplied `document_type` instead of predicting
-it, compares supported fields against `reference_data`, and does not use an LLM
-to make match/mismatch decisions. When processing completes, the reviewer view
-shows the risk level, exact pages to review, and a deterministic recommended
-action.
+Automatic mode processes every page, uses embedded text where available and
+OCR for scans, predicts each document type, and assigns the document to a person
+using extracted identity evidence. Match/mismatch decisions remain
+deterministic. Low-confidence or ambiguous ownership is surfaced for manual
+review instead of being silently guessed. Explicit one-based `pages` mappings
+remain supported as an override when a trusted index is available.
 
 The same workflow is available through `POST /upload/mapped` as multipart form
 data with:

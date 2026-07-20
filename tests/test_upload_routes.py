@@ -241,6 +241,63 @@ def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
     assert audit["action"] == "mapped_file_uploaded"
 
 
+def test_trusted_json_upload_queues_automatic_page_identification(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
+    pdf_path = tmp_path / "automatic.pdf"
+    _create_pdf(pdf_path)
+    client = TestClient(app)
+
+    response = client.post(
+        "/upload/mapped",
+        data={
+            "manifest": json.dumps(
+                {
+                    "loan_id": "AUTO-001",
+                    "people": {
+                        "primary": {
+                            "applicant_name": "Ramesh Kumar",
+                            "pan_number": "ABCDE1234F",
+                        }
+                    },
+                    "document_index": [],
+                }
+            )
+        },
+        files={"file": ("automatic.pdf", pdf_path.read_bytes(), "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["automatic_mapping"] is True
+    assert body["mapped_pages"] == []
+    progress = client.get(body["progress_url"]).json()
+    assert progress["total_pages"] == 1
+
+
+def test_upload_route_accepts_raw_company_database_dump() -> None:
+    parsed = upload_route._parse_manifest(
+        '''
+        Loan Application: RJ000000042
+        {"applicantdetails": {
+          "loanId": 42,
+          "entityName": "Ramesh Kumar",
+          "dob": "01-January-1990"
+        },
+        "camdetails": {
+          "loanId": 42,
+          "loanamount": "500000"
+        }}
+        '''
+    )
+
+    assert parsed.loan_id == "RJ000000042"
+    assert parsed.people["primary"].applicant_name == "Ramesh Kumar"
+    assert parsed.people["primary"].model_extra["loan_amount"] == "500000"
+    assert parsed.document_index == []
+
+
 def test_mapped_background_job_uses_shared_pdf_pipeline(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     db.init_db()

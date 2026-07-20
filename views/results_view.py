@@ -124,6 +124,27 @@ def _render_deterministic_reviewer_summary(application_id: int) -> None:
     if pages:
         st.warning(f"Pages to check manually: {', '.join(map(str, pages))}")
     people = summary.get("people_verification") or {}
+    automatic_index = summary.get("automatic_document_index") or []
+    if automatic_index:
+        st.markdown("#### Automatically identified documents")
+        rows = []
+        for document in automatic_index:
+            mapping = document.get("auto_mapping") or {}
+            rows.append({
+                "Document": document.get("document_type") or "Unknown",
+                "Pages": _compact_page_list(document.get("pages") or []),
+                "Person": document.get("applicant_role") or "Unknown",
+                "Document confidence": f"{float(mapping.get('document_confidence') or 0):.0%}",
+                "Owner confidence": f"{float(mapping.get('owner_confidence') or 0):.0%}",
+                "Owner evidence": ", ".join(mapping.get("owner_evidence") or []) or "-",
+            })
+        st.dataframe(rows, width="stretch", hide_index=True)
+    unclassified_pages = summary.get("unclassified_pages") or []
+    if unclassified_pages:
+        st.warning(
+            "Pages without a confident automatic document/person assignment: "
+            + _compact_page_list(unclassified_pages)
+        )
     if people:
         st.markdown("#### Person-wise identity verification")
         rows = []
@@ -143,20 +164,20 @@ def _render_deterministic_reviewer_summary(application_id: int) -> None:
             st.dataframe(rows, width="stretch", hide_index=True)
     sources = summary.get("source_classifications") or []
     if sources:
-        st.markdown("#### ZIP source classification")
+        st.markdown("#### Source classification")
         st.caption(
             "Predicted document and owner are aggregated from shared page classification, "
-            "LLM review, extracted identity fields, and the supplied mapping."
+            "LLM review, extracted identity fields, and ZIP source boundaries when available."
         )
         source_rows = []
         for source in sources:
             source_rows.append({
                 "Source": source.get("original_filename") or source.get("source_document_id"),
                 "Pages": _compact_page_list(source.get("pages") or []),
-                "Provided owner": ", ".join(source.get("provided_person_ids") or []) or "-",
+                "Assigned owner": ", ".join(source.get("provided_person_ids") or []) or "-",
                 "Predicted owner": source.get("predicted_person_id") or "Unknown",
                 "Owner evidence": source.get("owner_detection_method") or "-",
-                "Provided document": ", ".join(source.get("provided_document_types") or []) or "-",
+                "Assigned document": ", ".join(source.get("provided_document_types") or []) or "-",
                 "Predicted document": source.get("predicted_document_type") or "Unknown",
             })
         st.dataframe(source_rows, width="stretch", hide_index=True)

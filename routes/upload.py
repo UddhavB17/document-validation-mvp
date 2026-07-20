@@ -19,6 +19,11 @@ from services.file_validator import (
     validate_package_upload,
     validate_upload,
 )
+from services.company_dump_adapter import (
+    CompanyDumpConversionError,
+    convert_company_database_dump,
+    is_company_database_dump,
+)
 from services.job_runner import submit_job
 from services.progress_tracker import (
     create_pipeline_job,
@@ -337,8 +342,14 @@ async def verify_zip_package(
 
 def _parse_manifest(raw_manifest: str) -> VerificationManifest:
     try:
-        return VerificationManifest.model_validate(json.loads(raw_manifest))
-    except (json.JSONDecodeError, ValueError) as exc:
+        try:
+            payload = json.loads(raw_manifest)
+        except json.JSONDecodeError:
+            payload = convert_company_database_dump(raw_manifest)
+        if is_company_database_dump(payload):
+            payload = convert_company_database_dump(payload)
+        return VerificationManifest.model_validate(payload)
+    except (json.JSONDecodeError, CompanyDumpConversionError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
 
 
@@ -354,6 +365,7 @@ def _queue_mapped_verification(
     package_id: str | None = None,
 ) -> dict[str, object]:
     mapped_pages = sorted({page for item in parsed.document_index for page in item.pages})
+    automatic_mapping = not parsed.document_index
     highest_page = max(mapped_pages, default=0)
     if highest_page > int(validation["total_pages"]):
         raise HTTPException(
@@ -416,16 +428,20 @@ def _queue_mapped_verification(
             ),
         )
 
-    covers_entire_pdf = len(mapped_pages) == int(validation["total_pages"])
+    covers_entire_pdf = automatic_mapping or len(mapped_pages) == int(validation["total_pages"])
     initial_digital_pages = int(validation["digital_pages"]) if covers_entire_pdf else 0
     initial_scanned_pages = int(validation["scanned_pages"]) if covers_entire_pdf else 0
     start_tracking(
         application_id,
-        total_pages=len(mapped_pages),
+        total_pages=int(validation["total_pages"]) if automatic_mapping else len(mapped_pages),
         digital_pages=initial_digital_pages,
         scanned_pages=initial_scanned_pages,
         stage="queued",
-        message=f"Queued {len(mapped_pages)} mapped page(s) for deterministic verification",
+        message=(
+            f"Queued {validation['total_pages']} page(s) for automatic identification and verification"
+            if automatic_mapping
+            else f"Queued {len(mapped_pages)} mapped page(s) for deterministic verification"
+        ),
     )
     job_id = create_pipeline_job(application_id)
     submit_job(
@@ -443,6 +459,7 @@ def _queue_mapped_verification(
         "status": "processing",
         "pipeline_status": "queued",
         "mapped_pages": mapped_pages,
+        "automatic_mapping": automatic_mapping,
         "progress_url": f"/upload/{application_id}/progress",
         "summary_url": f"/verification/summary/{application_id}",
         "people": sorted(parsed.people),

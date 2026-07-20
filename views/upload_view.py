@@ -8,6 +8,11 @@ import requests
 import streamlit as st
 
 from services.file_validator import validate_package_upload, validate_upload
+from services.company_dump_adapter import (
+    CompanyDumpConversionError,
+    convert_company_database_dump,
+    is_company_database_dump,
+)
 from views.results_view import render_application_results
 from views.reviewer_view import render_result_status_guard, render_zip_preparation_progress
 
@@ -19,96 +24,44 @@ def render_upload_page() -> None:
         """
         <div class="dmef-page-title">
             <h1>Document Intake</h1>
-            <div class="dmef-caption">Upload a loan-file packet, watch page results finish, then review the final checklist output.</div>
+            <div class="dmef-caption">Upload a loan-file packet with trusted reference data, then review the automatic verification output.</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    tab_upload, tab_mapped, tab_json = st.tabs(
-        ["PDF Upload", "Mapped Verification", "Partner JSON Intake"]
+    st.subheader("Automatic Verification")
+    st.caption(
+        "Supply trusted reference values only. The system identifies the document type on every "
+        "PDF page, groups continuation pages, infers the applicant or co-applicant from extracted "
+        "identity fields, and then performs the comparison."
     )
-
-    with tab_upload:
-        with st.form("upload_form"):
-            left, right = st.columns([1.15, 0.85])
-            with left:
-                st.subheader("Application Details")
-                id_col, product_col = st.columns([1, 1])
-                loan_id = id_col.text_input("Loan ID")
-                product_type = product_col.selectbox("Product Type", ["LAP", "MSME", "Personal Loan"])
-                applicant_name = st.text_input("Applicant Name")
-                coapplicant_name = st.text_input("Co-applicant Name")
-                branch = st.text_input("Branch")
-            with right:
-                st.subheader("Document")
-                uploaded_file = st.file_uploader("PDF file", type=["pdf"])
-                if uploaded_file is not None:
-                    size_kb = uploaded_file.size / 1024
-                    st.metric("Selected file size", f"{size_kb:,.0f} KB")
-                    st.caption(uploaded_file.name)
-                else:
-                    st.info("Select one PDF loan packet to begin.")
-            submitted = st.form_submit_button("Submit for processing", type="primary", width="stretch")
-
-        if submitted:
-            _submit_upload_form(
-                loan_id,
-                applicant_name,
-                coapplicant_name,
-                product_type,
-                branch,
-                uploaded_file,
-            )
-
-    with tab_mapped:
-        st.subheader("Trusted JSON + Page Mapping")
-        st.caption(
-            "Use this path when the company supplies trusted reference values and tells the system "
-            "which documents belong to each person. A combined PDF can be mapped directly, or an "
-            "unordered ZIP can first be normalized into stable internal page numbers."
-        )
-        mapped_source = st.radio(
-            "Document source",
-            ["Combined PDF", "Unordered ZIP"],
-            horizontal=True,
-            key="mapped_document_source",
-        )
-        if mapped_source == "Combined PDF":
-            _render_combined_pdf_mapping()
-        else:
-            _render_zip_package_mapping()
-
-    with tab_json:
-        st.subheader("Partner OCR JSON Payload")
-        raw_json = st.text_area(
-            "Paste JSON here",
-            height=300,
-            placeholder='{\n  "loan_id": "LN-001",\n  "digital_text": {},\n  "scanned_docs": {}\n}',
-        )
-
-        if st.button("Run Checklist Evaluation", type="primary"):
-            if not raw_json.strip():
-                st.warning("Please paste the partner JSON first.")
-            else:
-                try:
-                    payload = json.loads(raw_json)
-                except json.JSONDecodeError as exc:
-                    st.error(f"Invalid JSON: {exc}")
-                else:
-                    _submit_partner_json(payload)
+    mapped_source = st.radio(
+        "Document source",
+        ["Combined PDF", "Unordered ZIP"],
+        horizontal=True,
+        key="mapped_document_source",
+    )
+    if mapped_source == "Combined PDF":
+        _render_combined_pdf_mapping()
+    else:
+        _render_zip_package_mapping()
 
     _render_uploaded_application_result()
 
 
 def _render_combined_pdf_mapping() -> None:
-    mapped_pdf = st.file_uploader("Mapped loan PDF", type=["pdf"], key="mapped_pdf")
+    mapped_pdf = st.file_uploader("Loan PDF", type=["pdf"], key="mapped_pdf")
     mapped_json = st.text_area(
-        "Trusted manifest JSON",
+        "Trusted JSON or raw company database dump",
         height=330,
         key="mapped_pdf_manifest_json",
         placeholder=_manifest_placeholder(),
+        help=(
+            "Paste either the canonical manifest or the complete company dump beginning with "
+            "'Loan Application:'. Malformed smart quotes and masked identifiers are handled automatically."
+        ),
     )
-    if st.button("Run Deterministic Verification", type="primary", key="verify_mapped_pdf"):
+    if st.button("Identify and Verify Documents", type="primary", key="verify_mapped_pdf"):
         if mapped_pdf is None or not mapped_json.strip():
             st.warning("Select the PDF and paste the trusted manifest JSON.")
             return
@@ -153,8 +106,8 @@ def _render_zip_package_mapping() -> None:
     ]
     st.dataframe(inventory, width="stretch", hide_index=True)
     st.caption(
-        "Use each source_document_id and its internal pages in document_index. A mapped page must "
-        "remain inside that source file's displayed page range."
+        "The source ranges preserve ZIP file boundaries. Document type, continuation pages, and "
+        "person ownership are identified automatically during OCR processing."
     )
 
     if "zip_manifest_json" not in st.session_state:
@@ -162,11 +115,15 @@ def _render_zip_package_mapping() -> None:
             _package_manifest_template(package), indent=2
         )
     mapped_json = st.text_area(
-        "Trusted manifest JSON for this ZIP",
+        "Trusted JSON or raw company database dump for this ZIP",
         height=420,
         key="zip_manifest_json",
+        help=(
+            "You may replace the template with the complete company database dump; it will be "
+            "converted into applicant and co-applicant reference data automatically."
+        ),
     )
-    if st.button("Run ZIP Comparison Pipeline", type="primary", key="verify_mapped_zip"):
+    if st.button("Identify and Verify ZIP Documents", type="primary", key="verify_mapped_zip"):
         manifest_payload = _parse_manifest_text(mapped_json)
         if manifest_payload is not None:
             _submit_zip_package_verification(str(package["package_id"]), manifest_payload)
@@ -177,9 +134,7 @@ def _manifest_placeholder() -> str:
         '{\n  "schema_version": "1.0",\n  "loan_id": "LN-001",\n'
         '  "people": {\n    "primary": {"applicant_name": "Ramesh Kumar", '
         '"aadhaar_number": "123456789012", "pan_number": "ABCDE1234F"}\n  },\n'
-        '  "document_index": [\n'
-        '    {"source_document_id": "file-0001", "person_id": "primary", '
-        '"document_type": "Aadhaar", "pages": [1, 2]}\n  ]\n}'
+        '  "document_index": []\n}'
     )
 
 
@@ -188,10 +143,32 @@ def _parse_manifest_text(raw_json: str) -> dict | None:
         st.warning("Paste the trusted manifest JSON first.")
         return None
     try:
-        return json.loads(raw_json)
+        payload = json.loads(raw_json)
     except json.JSONDecodeError as exc:
-        st.error(f"Invalid JSON: {exc}")
-        return None
+        try:
+            payload = convert_company_database_dump(raw_json)
+        except CompanyDumpConversionError as conversion_exc:
+            st.error(
+                f"The pasted content is neither valid manifest JSON nor a recognized company dump. "
+                f"JSON error: {exc}. Conversion error: {conversion_exc}"
+            )
+            return None
+        st.success(
+            f"Company database dump converted automatically for {len(payload.get('people') or {})} person(s)."
+        )
+    else:
+        if is_company_database_dump(payload):
+            try:
+                payload = convert_company_database_dump(payload)
+            except CompanyDumpConversionError as exc:
+                st.error(f"Could not convert company database JSON: {exc}")
+                return None
+            st.success(
+                f"Company database JSON converted automatically for {len(payload.get('people') or {})} person(s)."
+            )
+    for warning in payload.get("conversion_warnings") or []:
+        st.warning(str(warning))
+    return payload
 
 
 def _page_range_label(document: dict) -> str:
@@ -205,23 +182,14 @@ def _package_manifest_template(package: dict) -> dict:
         "schema_version": "1.0",
         "loan_id": "REPLACE-WITH-LOAN-ID",
         "product_type": "LAP",
-        "source": "manual_zip_mapping",
+        "source": "automatic_zip_identification",
         "people": {
             "primary": {
                 "role": "primary",
                 "applicant_name": "REPLACE WITH APPLICANT NAME",
             }
         },
-        "document_index": [
-            {
-                "source_document_id": document["source_document_id"],
-                "document_type": "REPLACE WITH DOCUMENT TYPE",
-                "person_id": "primary",
-                "pages": document["pages"],
-                "required": True,
-            }
-            for document in package.get("documents") or []
-        ],
+        "document_index": [],
     }
 
 
@@ -331,8 +299,7 @@ def _submit_zip_package_verification(package_id: str, manifest: dict) -> None:
     st.session_state["last_upload_mode"] = "mapped_zip"
     st.success(
         f"Application {application_id} queued from {result.get('source_documents', 0)} ZIP files. "
-        "Digital pages use native text, scanned pages use OCR, and every page is classified. "
-        f"JSON comparison pages: {result.get('mapped_pages') or []}."
+        "Every page will be classified and assigned to the most likely person automatically."
     )
 
 
@@ -434,7 +401,7 @@ def _submit_mapped_verification(uploaded_file, manifest: dict) -> None:
             st.error(error)
         return
 
-    with st.spinner("Uploading mapped pages for deterministic verification..."):
+    with st.spinner("Uploading pages for automatic identification and verification..."):
         try:
             response = requests.post(
                 f"{API_BASE_URL}/upload/mapped",
@@ -462,8 +429,7 @@ def _submit_mapped_verification(uploaded_file, manifest: dict) -> None:
     st.session_state["last_upload_mode"] = "mapped_pdf"
     st.success(
         f"Application {application_id} queued. "
-        "Digital pages use native text, scanned pages use OCR, and every page is classified. "
-        f"JSON comparison pages: {result.get('mapped_pages') or []}."
+        "Every page will be classified and assigned to the most likely person automatically."
     )
 
 
@@ -485,13 +451,13 @@ def _render_uploaded_application_result() -> None:
     st.divider()
     upload_mode = st.session_state.get("last_upload_mode")
     if upload_mode in {"mapped_zip", "mapped_pdf"}:
-        st.subheader("Mapped Verification Output")
+        st.subheader("Automatic Identification and Verification Output")
         st.caption(
             "Shared PDF pipeline: native text for digital pages, OCR only for scanned pages, "
             "LLM document classification, trusted JSON comparison, and the standard final report."
         )
-        processing_message = "Processing and comparing your mapped loan file"
-        completion_message = "Mapped verification and output generation complete."
+        processing_message = "Identifying documents and comparing the loan file"
+        completion_message = "Automatic identification and verification complete."
     else:
         processing_message = "Processing your loan file"
         completion_message = "PDF processing complete."
