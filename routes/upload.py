@@ -177,10 +177,10 @@ async def upload_mapped_file(
         original_filename = uploaded_name
 
     try:
-        parsed = VerificationManifest.model_validate(json.loads(manifest_text))
-    except (json.JSONDecodeError, ValueError) as exc:
+        parsed = _parse_manifest(manifest_text)
+    except HTTPException:
         file_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+        raise
 
     final_file_path = UPLOAD_DIR / f"{_safe_name(parsed.loan_id)}_{timestamp}.pdf"
     if file_path != final_file_path:
@@ -371,7 +371,7 @@ def _parse_manifest(raw_manifest: str) -> VerificationManifest:
             payload = json.loads(raw_manifest)
         except json.JSONDecodeError:
             payload = convert_company_database_dump(raw_manifest)
-        if is_company_database_dump(payload) or not isinstance(payload, dict) or "loan_id" not in payload:
+        if is_company_database_dump(payload):
             payload = convert_company_database_dump(payload)
         return VerificationManifest.model_validate(payload)
     except ValidationError as exc:
@@ -539,12 +539,25 @@ async def _save_mapped_zip_package(
 
 
 def _decode_manifest_payload(manifest_text: str) -> dict[str, object]:
-    try:
-        payload = json.loads(manifest_text)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+    """Parse manifest text into a raw dict for PDF member selection.
+
+    Handles both standard JSON manifests and raw database dumps.
+    Full Pydantic validation happens later via ``_parse_manifest``.
+    """
+    stripped = manifest_text.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+    else:
+        # Raw database dump — convert and use the resulting dict
+        try:
+            payload = convert_company_database_dump(stripped)
+        except CompanyDumpConversionError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid manifest: {exc}") from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=422, detail="Manifest JSON must be an object")
+        raise HTTPException(status_code=422, detail="Manifest must be a JSON object")
     return payload
 
 

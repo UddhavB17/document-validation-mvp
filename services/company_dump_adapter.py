@@ -15,18 +15,29 @@ class CompanyDumpConversionError(ValueError):
     """Raised when pasted text does not contain enough recognizable company data."""
 
 
+# Keys that only appear in raw database / CRM exports, never in clean manifests
+_DB_VIEW_KEYS = {
+    "applicantdetails", "camdetails", "coapplicantdetails", "applicantkyc",
+    "addressloanview", "addressview", "loanview", "applicant_details", "cam_details",
+    "coapplicant_details", "applicant_kyc", "dbmaker",
+}
+# Keys that only appear in clean VerificationManifest / legacy clean manifests
+_CLEAN_MANIFEST_KEYS = {"people", "schema_version", "documents", "reference_data", "document_index"}
+
+
 def is_company_database_dump(value: Any) -> bool:
     if isinstance(value, dict):
         keys = {str(key).lower() for key in value}
-        if "schema_version" in keys or "people" in keys:
+        # Clean manifest guard: any clean-manifest key → definitely not a dump
+        if keys & _CLEAN_MANIFEST_KEYS or "schema_version" in keys:
             return False
-        if keys & {
-            "applicantdetails", "camdetails", "coapplicantdetails", "applicantkyc",
-            "addressloanview", "addressview", "loanview", "applicant_details", "cam_details",
-            "coapplicant_details", "applicant_kyc", "dbmaker"
-        }:
+        # DB view keys are unambiguous dump indicators
+        if keys & _DB_VIEW_KEYS:
             return True
-        if "loanid" in keys or "loan_id" in keys or "applicationid" in keys or "application_id" in keys:
+        # loan_id / applicationid alone are NOT enough — they also appear in clean manifests.
+        # Only treat them as dumps when NO clean-manifest keys are present AND the only
+        # substantive keys are identifier-like (i.e. no documents/reference_data etc.)
+        if ("loanid" in keys or "applicationid" in keys or "application_id" in keys) and not (keys & _CLEAN_MANIFEST_KEYS):
             return True
     elif isinstance(value, list):
         if value and isinstance(value[0], dict):
@@ -40,15 +51,20 @@ def is_company_database_dump(value: Any) -> bool:
     else:
         text = value
 
-    if '"people"' in text or '"schema_version"' in text or "'people'" in text or "'schema_version'" in text:
+    # Clean manifest guard for serialised forms
+    if any(f'"{k}"' in text or f"'{k}'" in text for k in _CLEAN_MANIFEST_KEYS):
         return False
 
     return bool(
         re.search(r"Loan Application:\s*RJ\d+", text, re.IGNORECASE)
-        or re.search(r'"(?:applicantdetails|camdetails|coapplicantdetails|addressloanview|addressview|loanview|dbmaker)"\s*:', text, re.IGNORECASE)
-        or re.search(r"'(?:applicantdetails|camdetails|coapplicantdetails|addressloanview|addressview|loanview|dbmaker)'\s*:", text, re.IGNORECASE)
-        or re.search(r'"(?:loanid|loan_id|applicationid|application_id)"\s*:', text, re.IGNORECASE)
-        or re.search(r"'(?:loanid|loan_id|applicationid|application_id)'\s*:", text, re.IGNORECASE)
+        or re.search(
+            r'"(?:' + "|".join(_DB_VIEW_KEYS) + r')"\s*:',
+            text, re.IGNORECASE,
+        )
+        or re.search(
+            r"'(?:" + "|".join(_DB_VIEW_KEYS) + r")'\s*:",
+            text, re.IGNORECASE,
+        )
     )
 
 
