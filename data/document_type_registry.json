@@ -46,10 +46,43 @@
       "min_confidence": 0.5
     },
     {
+      "type": "MNREGA Job Card",
+      "priority": 51,
+      "headings": ["Mahatma Gandhi National Rural Employment Guarantee", "MGNREGA Job Card", "NREGA Job Card"],
+      "keywords": ["mgnrega", "mnrega", "nrega", "job card", "national rural employment guarantee"],
+      "required_any": ["mgnrega", "mnrega", "nrega", "job card"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "NPR Letter",
+      "priority": 52,
+      "headings": ["National Population Register", "NPR Letter"],
+      "keywords": ["national population register", "npr letter", "letter issued by national population register"],
+      "required_any": ["national population register", "npr letter"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Form 97",
+      "priority": 53,
+      "headings": ["Form 97", "Form No. 97"],
+      "keywords": ["form 97", "form no 97", "declaration in lieu of pan"],
+      "required_any": ["form 97", "form no 97"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "KFS",
+      "priority": 55,
+      "headings": ["Key Fact Statement", "Key Facts Statement", "KFS"],
+      "keywords": ["key fact statement", "key facts statement", "annual percentage rate", "apr", "kfs"],
+      "required_any": ["key fact statement", "key facts statement", "kfs"],
+      "field_patterns": ["annual\\s+percentage\\s+rate", "loan\\s+amount", "\\btenure\\b"],
+      "min_confidence": 0.5
+    },
+    {
       "type": "Sanction Letter",
       "priority": 60,
-      "headings": ["Sanction Letter", "Loan Sanction", "Key Fact Statement", "KFS", "ऋण स्वीकृति पत्र", "स्वीकृति पत्र"],
-      "keywords": ["sanction letter", "loan sanction", "key fact statement", "kfs", "sanctioned amount", "tenure", "स्वीकृति पत्र", "ऋण स्वीकृति", "स्वीकृत राशि", "अवधि"],
+      "headings": ["Sanction Letter", "Loan Sanction", "ऋण स्वीकृति पत्र", "स्वीकृति पत्र"],
+      "keywords": ["sanction letter", "loan sanction", "sanctioned amount", "tenure", "स्वीकृति पत्र", "ऋण स्वीकृति", "स्वीकृत राशि", "अवधि"],
       "field_patterns": ["sanctioned\\s+amount", "loan\\s+amount", "\\btenure\\b"],
       "min_confidence": 0.5
     },
@@ -118,7 +151,7 @@
       "priority": 110,
       "headings": ["Bank Statement", "Account Statement", "Statement of Account", "खाता विवरण", "बैंक विवरण"],
       "keywords": ["bank statement", "account statement", "statement of account", "debit", "credit", "balance", "खाता विवरण", "बैंक विवरण"],
-      "negative_keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक"],
+      "negative_keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक", "crif", "cibil", "transunion cibil", "cersai"],
       "field_patterns": ["account\\s*(number|no)", "statement\\s+period", "debit.*credit.*balance"],
       "min_confidence": 0.5
     },
@@ -154,6 +187,22 @@
       "headings": ["Income Tax Return", "ITR", "Form 26AS", "Acknowledgement"],
       "keywords": ["income tax return", "itr-", "itr ", "form 26as", "assessment year", "acknowledgement number"],
       "field_patterns": ["assessment\\s+year", "acknowledgement\\s+number"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Life Insurance Form",
+      "priority": 136,
+      "headings": ["Life Insurance Form", "Life Insurance Proposal", "Life Insurance"],
+      "keywords": ["life insurance", "life cover", "life assured", "sum assured", "nominee"],
+      "required_any": ["life insurance", "life cover", "life assured"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Property Insurance Form",
+      "priority": 137,
+      "headings": ["Property Insurance Form", "Property Insurance Proposal", "Property Insurance"],
+      "keywords": ["property insurance", "insured property", "property cover", "building insurance"],
+      "required_any": ["property insurance", "insured property", "property cover"],
       "min_confidence": 0.5
     },
     {
@@ -199,6 +248,22 @@
       "priority": 180,
       "headings": ["Electricity Bill", "Water Bill", "Gas Bill", "Telephone Bill", "Broadband Bill", "Broadband", "Utility Bill"],
       "keywords": ["electricity bill", "water bill", "gas bill", "telephone bill", "broadband", "consumer no", "due date", "बिजली"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Pension Payment Order",
+      "priority": 181,
+      "headings": ["Pension Payment Order", "PPO"],
+      "keywords": ["pension payment order", "ppo number", "pensioner", "pension disbursing authority"],
+      "required_any": ["pension payment order", "ppo number"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "Employer Accommodation Letter",
+      "priority": 182,
+      "headings": ["Accommodation Allotment Letter", "Employer Accommodation Letter", "Quarter Allotment"],
+      "keywords": ["allotment of accommodation", "accommodation allotted", "employer issued", "quarter allotment"],
+      "required_any": ["allotment of accommodation", "accommodation allotted", "quarter allotment"],
       "min_confidence": 0.5
     },
     {
@@ -380,8 +445,17 @@
     {
       "type": "Foreclosure Letter",
       "priority": 335,
-      "headings": ["Foreclosure Letter", "List of Documents", "LOD"],
-      "keywords": ["foreclosure letter", "list of documents", "lod", "loan closure"],
+      "headings": ["Foreclosure Letter", "Loan Foreclosure Statement"],
+      "keywords": ["foreclosure letter", "loan foreclosure", "foreclosure amount", "loan closure"],
+      "required_any": ["foreclosure", "loan closure"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "List of Documents",
+      "priority": 336,
+      "headings": ["List of Documents", "LOD"],
+      "keywords": ["list of documents", "lod", "documents held by lender", "original documents"],
+      "required_any": ["list of documents", "lod"],
       "min_confidence": 0.5
     },
     {
@@ -410,6 +484,15 @@
       "priority": 370,
       "headings": ["FI Report", "Field Investigation", "Field Inquiry Report"],
       "keywords": ["fi report", "field investigation", "field inquiry report", "residence verification"],
+      "negative_keywords": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "FI Approval Letter",
+      "priority": 369,
+      "headings": ["FI Approval", "Field Investigation Approval", "Approval for Negative FI", "Approval for Referred FI"],
+      "keywords": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
+      "required_any": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
       "min_confidence": 0.5
     },
     {

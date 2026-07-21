@@ -12,6 +12,7 @@ from database.models import (
     ChecklistVerificationResponse,
 )
 from services.checklist_service import get_all_checklist_items
+from services.checklist_engine import condition_applies, system_flag_state
 from services.page_quality import confident_pages_for_types
 
 
@@ -22,6 +23,7 @@ def build_checklist_verification_response(
     anomalies: list[dict[str, Any]],
     product_type: str = "LAP",
     processing_metadata: dict[str, Any] | None = None,
+    system_data: dict[str, Any] | None = None,
     include_narration: bool = False,
 ) -> ChecklistVerificationResponse:
     """Convert deterministic checklist output into the reviewer/API contract."""
@@ -33,6 +35,7 @@ def build_checklist_verification_response(
             checklist_item=checklist_item,
             pages=pages,
             item_anomalies=anomalies_by_sno.get(int(checklist_item.get("s_no") or 0), []),
+            system_data=system_data or {},
             include_narration=include_narration,
         )
         for checklist_item in sorted(checklist_items, key=lambda item: int(item.get("s_no") or 0))
@@ -56,6 +59,7 @@ def _build_item(
     checklist_item: dict[str, Any],
     pages: list[dict[str, Any]],
     item_anomalies: list[dict[str, Any]],
+    system_data: dict[str, Any],
     include_narration: bool,
 ) -> ChecklistItem:
     item_number = int(checklist_item.get("s_no") or 0)
@@ -67,14 +71,23 @@ def _build_item(
         if str(anomaly.get("rule_id") or "").startswith("MISSING_DOC")
     ]
     review_anomalies = [anomaly for anomaly in item_anomalies if anomaly not in missing_anomalies]
+    applicability = condition_applies(checklist_item.get("applies_when"), system_data)
+    system_state = (
+        system_flag_state(checklist_item, system_data)
+        if checklist_item.get("check_type") == "system_flag"
+        else None
+    )
 
-    if missing_anomalies:
+    if applicability is False:
+        status = "not_applicable"
+        flagged_reason = None
+    elif missing_anomalies:
         status = "missing"
         flagged_reason = _flagged_reason(missing_anomalies[0])
     elif review_anomalies:
         status = "needs_review"
         flagged_reason = _flagged_reason(review_anomalies[0])
-    elif matched_pages:
+    elif matched_pages or system_state is True:
         status = "verified"
         flagged_reason = None
     else:
@@ -92,6 +105,11 @@ def _build_item(
         status=status,
     )
     extracted_fields = _merge_extracted_fields(matched_pages)
+    if checklist_item.get("check_type") == "system_flag":
+        field = str(checklist_item.get("system_field") or "system_status")
+        value = system_data.get(field)
+        if value not in (None, ""):
+            extracted_fields[field] = str(value)
     extraction_source = "llm_fallback" if any(_used_llm_fallback(page) for page in matched_pages) else "deterministic"
 
     item = ChecklistItem(
@@ -104,7 +122,7 @@ def _build_item(
         extraction_source=extraction_source,
         flagged_reason=flagged_reason,
     )
-    if include_narration and status != "verified":
+    if include_narration and status not in {"verified", "not_applicable"}:
         from services.checklist_narration import narrate_checklist_item
 
         item.narration = narrate_checklist_item(item)
@@ -146,6 +164,10 @@ def _confidence_for_item(
     matched_count = len(matched_pages)
     if status == "missing":
         return "low", f"matched {matched_count} of {required_pages} expected page(s)"
+    if status == "not_applicable":
+        return "high", str(checklist_item.get("condition_description") or "condition is false; item not applicable")
+    if status == "verified" and checklist_item.get("check_type") == "system_flag":
+        return "high", "confirmed by system checklist status"
     if status == "unknown":
         return "low", "no deterministic checklist rule could verify this item"
     if item_anomalies:
@@ -214,6 +236,7 @@ def _summary(items: list[ChecklistItem]) -> ChecklistSummary:
         needs_review=sum(1 for item in items if item.status == "needs_review"),
         missing=sum(1 for item in items if item.status == "missing"),
         unknown=sum(1 for item in items if item.status == "unknown"),
+        not_applicable=sum(1 for item in items if item.status == "not_applicable"),
     )
 
 

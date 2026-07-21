@@ -12,7 +12,7 @@ import json
 
 from database.db import get_connection
 from services.processing_policy import is_internal_document_type
-from services.reviewer_exceptions import compute_final_status
+from services.reviewer import compute_final_status
 
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 

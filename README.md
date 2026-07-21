@@ -101,6 +101,19 @@ Open:
 - Application Review: verdict, reviewer summary, anomalies, checklist, manual review, decisions, and OCR JSON download.
 - My Activity: decisions recorded today.
 
+For the trusted-company-data workflow, open **Document Intake → Automatic
+Verification**. Upload a PDF (or prepare a ZIP) and paste trusted people data
+based on `docs/mapped_manifest.example.json`. Leave `document_index` empty to
+have the shared OCR/classification pipeline identify document types, group
+continuation pages, and infer applicant ownership automatically.
+
+Automatic mode processes every page, uses embedded text where available and
+OCR for scans, predicts each document type, and assigns the document to a person
+using extracted identity evidence. Match/mismatch decisions remain
+deterministic. Low-confidence or ambiguous ownership is surfaced for manual
+review instead of being silently guessed. Explicit one-based `pages` mappings
+remain supported as an override when a trusted index is available.
+
 ## Trusted JSON + Mapped-Page Verification
 
 For deterministic company workflow, open `Document Intake -> Mapped Verification`. Upload the PDF and paste a manifest based on `docs/mapped_manifest.example.json`.

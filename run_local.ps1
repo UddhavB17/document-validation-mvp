@@ -24,6 +24,22 @@ if (-not (Test-Path ".env")) {
 
 New-Item -ItemType Directory -Force -Path "data\logs" | Out-Null
 
+function Assert-PortAvailable {
+    param(
+        [int]$Port,
+        [string]$ServiceName
+    )
+
+    $Listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+    if ($Listeners) {
+        $ProcessIds = ($Listeners | Select-Object -ExpandProperty OwningProcess -Unique) -join ", "
+        throw "$ServiceName port $Port is already in use by PID(s) $ProcessIds. Stop the existing instance before starting DMEF again."
+    }
+}
+
+Assert-PortAvailable -Port $ApiPort -ServiceName "Backend"
+Assert-PortAvailable -Port $UiPort -ServiceName "Streamlit"
+
 if (-not $SkipHealth) {
     Write-Host "Running local health check..." -ForegroundColor Cyan
     & $Python -m services.local_health --fail-on-error
@@ -45,6 +61,7 @@ $Backend = Start-Process `
     -WorkingDirectory $ProjectRoot `
     -RedirectStandardOutput $BackendOut `
     -RedirectStandardError $BackendErr `
+    -WindowStyle Hidden `
     -PassThru
 
 Start-Sleep -Seconds 2
@@ -57,6 +74,7 @@ $Ui = Start-Process `
     -WorkingDirectory (Join-Path $ProjectRoot "frontend") `
     -RedirectStandardOutput $UiOut `
     -RedirectStandardError $UiErr `
+    -WindowStyle Hidden `
     -PassThru
 
 Write-Host ""

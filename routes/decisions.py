@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from database.db import get_connection, init_db
 from services.audit_service import log_action
-from services.reviewer_exceptions import compute_final_status
+from services.reviewer import compute_final_status
 
 router = APIRouter(prefix="/decision", tags=["decision"])
 

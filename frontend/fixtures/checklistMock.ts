@@ -8,6 +8,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     needs_review: 4,
     missing: 1,
     unknown: 1,
+    not_applicable: 0,
   },
   processing_metadata: {
     ocr_time_ms: 76420,

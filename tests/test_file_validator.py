@@ -6,7 +6,13 @@ from fastapi.testclient import TestClient
 import database.db as db
 import routes.upload as upload_route
 from main import app
-from services.file_validator import MAX_FILE_SIZE_BYTES, max_file_size_bytes, validate_file, validate_upload
+from services.file_validator import (
+    MAX_FILE_SIZE_BYTES,
+    max_file_size_bytes,
+    validate_file,
+    validate_package_upload,
+    validate_upload,
+)
 
 
 def _create_pdf(path: Path, text_pages: int = 1, blank_pages: int = 0) -> None:
@@ -74,6 +80,23 @@ def test_validate_upload_uses_configurable_size_limit(monkeypatch: pytest.Monkey
     result = validate_upload("loan.pdf", file_size_bytes=200 * 1024 * 1024)
 
     assert result["is_valid"] is True
+
+
+def test_validate_package_upload_accepts_nonempty_zip() -> None:
+    assert validate_package_upload("documents.ZIP", file_size_bytes=1024) == {
+        "is_valid": True,
+        "errors": [],
+    }
+
+
+def test_validate_package_upload_rejects_pdf_and_empty_zip() -> None:
+    wrong_type = validate_package_upload("documents.pdf", file_size_bytes=1024)
+    empty = validate_package_upload("documents.zip", file_size_bytes=0)
+
+    assert wrong_type["is_valid"] is False
+    assert any("ZIP" in error for error in wrong_type["errors"])
+    assert empty["is_valid"] is False
+    assert "ZIP package is empty" in empty["errors"]
 
 
 def test_valid_pdf(tmp_path: Path) -> None:

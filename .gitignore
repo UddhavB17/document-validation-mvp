@@ -18,7 +18,6 @@ outputs/*
 data/uploads/*
 data/pages/*
 data/reports/*
-data/logs/*
 data/dmef.db
 data/dmef.db-*
 database.db
@@ -30,7 +29,6 @@ data/surya_cache/*
 *.jpg
 *.jpeg
 *.png
-MVP_IMPROVEMENT_RECOMMENDATIONS.md
 
 # Keep repo documentation images explicitly allowed.
 !docs/*.png

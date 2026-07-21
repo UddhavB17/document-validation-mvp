@@ -49,6 +49,7 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
     """
     _EXTRACTORS = {
         "Sanction Letter":  _extract_sanction_letter,
+        "KFS":              _extract_sanction_letter,
         "Loan Agreement":   _extract_loan_agreement,
         "PAN":              _extract_pan,
         "PAN Card":         _extract_pan,
@@ -62,7 +63,14 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
         "Bank Statement":   _extract_bank_statement,
         "Cheque":           _extract_cheque,
         "Salary Slip":      _extract_salary_slip,
+        "Utility Bill":     _extract_utility_bill,
         "Application Form": _extract_application_form,
+        "Stamp Duty":       _extract_stamp_duty,
+        "Insurance Consent Letter": _extract_insurance_consent,
+        "Legal Clearance Report": _extract_clearance_report,
+        "Technical Clearance Report": _extract_clearance_report,
+        "Technical Report": _extract_clearance_report,
+        "NACH Form":        _extract_nach_form,
     }
     extractor = _EXTRACTORS.get(document_type)
     if extractor is None:
@@ -223,6 +231,32 @@ def _lines_after_label(text: str, label: str, max_lines: int = 3) -> str | None:
     return None
 
 
+def _lines_after_label_until_stop(
+    text: str,
+    label: str,
+    *,
+    stop_labels: set[str],
+    max_lines: int = 4,
+) -> str | None:
+    """Return lines after *label* until a known non-address label is reached."""
+    lines = text.splitlines()
+    normalized_stops = {_normalize_label(stop_label) for stop_label in stop_labels}
+    for i, line in enumerate(lines):
+        if label in line.lower():
+            collected: list[str] = []
+            for j in range(i + 1, min(i + 1 + max_lines, len(lines))):
+                part = lines[j].strip()
+                if not part:
+                    continue
+                if _normalize_label(part).split(":")[0] in normalized_stops:
+                    break
+                if any(_normalize_label(part).startswith(stop) for stop in normalized_stops):
+                    break
+                collected.append(part)
+            return " ".join(collected) if collected else None
+    return None
+
+
 def _value_after_label(text: str, *labels: str) -> str | None:
     """Return the next useful value after an exact-ish OCR label."""
     lines = [line.strip() for line in text.splitlines()]
@@ -284,6 +318,24 @@ def _extract_date_near(text_lower: str, *anchors: str) -> str | None:
         match = date_pattern.search(window)
         if match:
             return _parse_date(match.group(0))
+    return None
+
+
+def _extract_date_after_label(text: str, *labels: str) -> str | None:
+    """Extract a date immediately following one of the supplied labels."""
+    date_pattern = (
+        r"\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}"
+        r"|\d{4}[/\-\.]\d{2}[/\-\.]\d{2}"
+        r"|\d{1,2}\s+\w+\s+\d{4}"
+    )
+    for label in labels:
+        match = re.search(
+            rf"{re.escape(label)}\s*[:\-–]?\s*({date_pattern})",
+            text,
+            re.IGNORECASE,
+        )
+        if match:
+            return _parse_date(match.group(1))
     return None
 
 
@@ -382,6 +434,40 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         "date_of_birth": _extract_date_near(text.lower(), "date of birth", "dob"),
         "phone_number": phone_match.group(1) if phone_match else None,
         "pin_code": pin_match.group(1) if pin_match else None,
+    }
+
+
+def _extract_utility_bill(text: str) -> dict[str, Any]:
+    """Extract address-proof fields from electricity/water/gas/phone bills."""
+    consumer_match = re.search(
+        r"(?:consumer|customer|account)\s*(?:name|holder)?\s*[:\-–]?\s*([^\n\r]{3,80})",
+        text,
+        re.IGNORECASE,
+    )
+    pin_match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
+    address_stop_labels = {
+        "bill date",
+        "billing date",
+        "due date",
+        "amount",
+        "total amount",
+        "consumer number",
+        "consumer no",
+        "account number",
+        "meter number",
+    }
+    address = (
+        _lines_after_label_until_stop(text, "service address", stop_labels=address_stop_labels)
+        or _lines_after_label_until_stop(text, "billing address", stop_labels=address_stop_labels)
+        or _lines_after_label_until_stop(text, "supply address", stop_labels=address_stop_labels)
+        or _lines_after_label_until_stop(text, "address", stop_labels=address_stop_labels)
+    )
+    return {
+        "applicant_name": _clean_name_like_value(consumer_match.group(1)) if consumer_match else None,
+        "address": address,
+        "pin_code": pin_match.group(1) if pin_match else None,
+        "bill_date": _extract_date_after_label(text, "bill date", "billing date", "issue date"),
+        "due_date": _extract_date_after_label(text, "due date"),
     }
 
 
@@ -590,3 +676,68 @@ def _extract_salary_month(text: str) -> str | None:
         re.IGNORECASE,
     )
     return match.group(1).strip() if match else None
+
+
+def _extract_stamp_duty(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    return {
+        "stamp_date": _extract_date_near(
+            lower, "stamp date", "date of stamp", "certificate issued date", "issue date"
+        ),
+        "stamp_certificate_number": _value_after_label(
+            text, "certificate no", "certificate number", "e-stamp number"
+        ),
+    }
+
+
+def _extract_insurance_consent(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    tenure_match = re.search(
+        r"insurance\s+tenure\s*[:\-–]?\s*(\d+)\s*(months?|years?)?", lower
+    )
+    insurance_tenure: int | None = None
+    if tenure_match:
+        insurance_tenure = int(tenure_match.group(1))
+        if str(tenure_match.group(2) or "").startswith("year"):
+            insurance_tenure *= 12
+    return {
+        "insurance_tenure": insurance_tenure,
+        "applicant_name": _line_after_label(text, "applicant name", "customer name", "name"),
+    }
+
+
+def _extract_clearance_report(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    rejected = next(
+        (status for status in ("not cleared", "not clear", "negative", "rejected", "pending") if status in lower),
+        None,
+    )
+    accepted = next(
+        (status for status in ("cleared", "clear", "positive", "approved") if status in lower),
+        None,
+    )
+    return {
+        "clearance_status": rejected or accepted,
+        "report_status": rejected or accepted,
+        "report_date": _extract_date_near(lower, "report date", "date of report", "as on"),
+    }
+
+
+def _extract_nach_form(text: str) -> dict[str, Any]:
+    lower = text.lower()
+    account_match = re.search(
+        r"(?:account\s*(?:number|no\.?|#)|a/c\s*(?:no\.?|number)?)\s*[:\-–]?\s*([0-9Xx* ]{6,24})",
+        text,
+        re.IGNORECASE,
+    )
+    if "not registered" in lower or "registration pending" in lower:
+        registration_status = "not registered"
+    elif "registered" in lower or "registration successful" in lower or "active" in lower:
+        registration_status = "registered"
+    else:
+        registration_status = None
+    return {
+        "registration_status": registration_status,
+        "account_holder_name": _line_after_label(text, "account holder", "customer name", "name"),
+        "account_number": _digits_only(account_match.group(1)) if account_match else None,
+    }

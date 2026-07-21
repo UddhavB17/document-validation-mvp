@@ -20,6 +20,12 @@
       "description": "KYC OSV done by MSFC employee with EMP code, name and signature on KYC documents",
       "document_type": "KYC OSV Mark",
       "check_type": "presence",
+      "applies_when": {
+        "field": "kyc_verified_in_graviton",
+        "field_aliases": ["kyc_digitally_verified"],
+        "operator": "falsy"
+      },
+      "condition_description": "Physical OSV evidence is required when KYC is not digitally verified in Graviton",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "HIGH",
@@ -34,9 +40,12 @@
         "Aadhaar",
         "Voter ID",
         "Passport",
-        "Driving License"
+        "Driving License",
+        "MNREGA Job Card",
+        "NPR Letter"
       ],
       "check_type": "presence_any",
+      "scope": "each_person",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -50,9 +59,12 @@
         "Aadhaar",
         "Voter ID",
         "Passport",
-        "Driving License"
+        "Driving License",
+        "MNREGA Job Card",
+        "NPR Letter"
       ],
       "check_type": "presence_any",
+      "scope": "each_person",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -65,9 +77,11 @@
       "document_type": [
         "PAN",
         "Passport",
-        "Driving License"
+        "Driving License",
+        "Bank Signature Verification"
       ],
       "check_type": "presence_any",
+      "scope": "each_borrower",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -81,9 +95,13 @@
         "Aadhaar",
         "Voter ID",
         "Driving License",
-        "Utility Bill"
+        "Utility Bill",
+        "Property Tax Receipt",
+        "Pension Payment Order",
+        "Employer Accommodation Letter"
       ],
       "check_type": "presence_any",
+      "scope": "each_borrower",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -92,9 +110,13 @@
     {
       "s_no": 7,
       "category": "Application Form / KYC",
-      "description": "PAN card mandatory for applicant and all co-applicants",
-      "document_type": "PAN",
-      "check_type": "presence",
+      "description": "PAN card mandatory for applicant and all co-applicants; Form 97 accepted when PAN is unavailable",
+      "document_type": [
+        "PAN",
+        "Form 97"
+      ],
+      "check_type": "presence_any",
+      "scope": "each_borrower",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -103,9 +125,18 @@
     {
       "s_no": 8,
       "category": "Application Form / KYC",
-      "description": "Dual Name / Signature / DOB declaration with applicable stamp duty if required",
-      "document_type": "Dual Name Declaration",
-      "check_type": "presence",
+      "description": "Dual Name / Signature / DOB declaration with applicable stamp duty and authority approval, if required",
+      "document_type": [
+        "Dual Name Declaration",
+        "Approval Letter"
+      ],
+      "check_type": "presence_all",
+      "applies_when": {
+        "field": "identity_mismatch_present",
+        "field_aliases": ["dual_name_declaration_required", "name_signature_dob_mismatch"],
+        "operator": "truthy"
+      },
+      "condition_description": "Required only when a name, signature, or DOB mismatch exists",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -115,21 +146,15 @@
     {
       "s_no": 9,
       "category": "Application Form / KYC",
-      "description": "Approval of authority",
-      "document_type": "Approval Letter",
-      "check_type": "presence",
-      "required": true,
-      "ai_checkable": false,
-      "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "Authority approval is a system/workflow control, not a high-value OCR target."
-    },
-    {
-      "s_no": 10,
-      "category": "Application Form / KYC",
       "description": "Relationship proof between all borrowers",
       "document_type": "Relationship Proof",
       "check_type": "presence",
+      "applies_when": {
+        "field": "borrower_count",
+        "operator": ">",
+        "value": 1
+      },
+      "condition_description": "Required when the case has more than one borrower",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -137,16 +162,36 @@
       "manual_review_reason": "Relationship proof depends on borrower structure and should be verified manually."
     },
     {
-      "s_no": 11,
+      "s_no": 10,
       "category": "Application Form / KYC",
       "description": "Vernacular document if applicable",
       "document_type": "Vernacular Document",
       "check_type": "presence",
+      "applies_when": {
+        "field": "vernacular_required",
+        "field_aliases": ["vernacular_document_required"],
+        "operator": "truthy"
+      },
+      "condition_description": "Required only when vernacular execution is applicable",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
       "manual_review_reason": "Vernacular requirement is conditional; verify manually when applicable."
+    },
+    {
+      "s_no": 11,
+      "category": "System Check",
+      "description": "KYC details checked in system",
+      "document_type": "KYC System Check",
+      "check_type": "system_flag",
+      "system_field": "kyc_details_checked",
+      "system_field_aliases": ["kyc_checked_in_system", "kyc_verified_in_graviton"],
+      "required": true,
+      "ai_checkable": false,
+      "severity_if_missing": "MEDIUM",
+      "review_mode": "manual",
+      "manual_review_reason": "Availability comes from the Graviton/system KYC-check status."
     },
     {
       "s_no": 12,
@@ -191,8 +236,27 @@
       "s_no": 15,
       "category": "Internal Documents",
       "description": "CRIF for all borrowers, and CIBIL if above 5 lakh sanction amount",
-      "document_type": "CRIF Report",
-      "check_type": "presence",
+      "document_type": [
+        "CRIF Report",
+        "CIBIL Report"
+      ],
+      "check_type": "requirements",
+      "requirements": [
+        {
+          "document_type": "CRIF Report",
+          "scope": "each_borrower"
+        },
+        {
+          "document_type": "CIBIL Report",
+          "scope": "each_borrower",
+          "applies_when": {
+            "field": "sanction_amount",
+            "field_aliases": ["loan_amount"],
+            "operator": ">",
+            "value": 500000
+          }
+        }
+      ],
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -207,6 +271,7 @@
         "Passbook"
       ],
       "check_type": "presence_any",
+      "scope": "banking_people",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -221,6 +286,7 @@
         "Passbook"
       ],
       "check_type": "presence_any",
+      "scope": "banking_people",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -268,8 +334,11 @@
       "s_no": 21,
       "category": "Internal Documents",
       "description": "KFS and Sanction Letter - cross check loan details and structure",
-      "document_type": "Sanction Letter",
-      "check_type": "presence",
+      "document_type": [
+        "KFS",
+        "Sanction Letter"
+      ],
+      "check_type": "presence_all",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -279,8 +348,11 @@
       "s_no": 22,
       "category": "Internal Documents",
       "description": "Insurance Forms - Signed Life and Property with Calculators",
-      "document_type": "Insurance Form",
-      "check_type": "presence",
+      "document_type": [
+        "Life Insurance Form",
+        "Property Insurance Form"
+      ],
+      "check_type": "presence_all",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -289,9 +361,32 @@
     {
       "s_no": 23,
       "category": "Internal Documents",
-      "description": "FI report - Field Investigation report",
-      "document_type": "FI Report",
-      "check_type": "presence",
+      "description": "FI report - positive, or approval if negative/referred; applicable for cases of 15 lakh and above",
+      "document_type": [
+        "FI Report",
+        "FI Approval Letter"
+      ],
+      "check_type": "requirements",
+      "requirements": [
+        {
+          "document_type": "FI Report"
+        },
+        {
+          "document_type": "FI Approval Letter",
+          "applies_when": {
+            "field": "fi_report_status",
+            "operator": "in",
+            "value": ["negative", "referred", "refer"]
+          }
+        }
+      ],
+      "applies_when": {
+        "field": "loan_amount",
+        "field_aliases": ["sanction_amount"],
+        "operator": ">=",
+        "value": 1500000
+      },
+      "condition_description": "Required when loan/sanction amount is at least 15 lakh",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -304,6 +399,20 @@
       "description": "Agreement signing photo and video",
       "document_type": "Agreement Signing Photo",
       "check_type": "presence",
+      "applies_when": {
+        "coalesce": [
+          {
+            "field": "manual_loan_agreement",
+            "operator": "truthy"
+          },
+          {
+            "field": "loan_agreement_signing_mode",
+            "operator": "in",
+            "value": ["manual", "physical"]
+          }
+        ]
+      },
+      "condition_description": "Required when the loan agreement is signed manually/physically",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -316,6 +425,12 @@
       "description": "Internal BT Undertaking if required",
       "document_type": "BT Undertaking",
       "check_type": "presence",
+      "applies_when": {
+        "field": "bt_undertaking_required",
+        "field_aliases": ["internal_bt_undertaking_required"],
+        "operator": "truthy"
+      },
+      "condition_description": "Required when the credit/operations workflow marks a BT undertaking as applicable",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -328,6 +443,20 @@
       "description": "Consent Letter for Internal BT / Top-up cases",
       "document_type": "Consent Letter",
       "check_type": "presence",
+      "applies_when": {
+        "coalesce": [
+          {
+            "field": "internal_bt_topup_consent_required",
+            "operator": "truthy"
+          },
+          {
+            "field": "case_type",
+            "operator": "in",
+            "value": ["internal_bt", "internal bt", "top_up", "top-up", "top up"]
+          }
+        ]
+      },
+      "condition_description": "Required for internal balance-transfer or top-up cases",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -340,6 +469,12 @@
       "description": "Guarantee Deed with applicable stamp duty",
       "document_type": "Guarantee Deed",
       "check_type": "presence",
+      "applies_when": {
+        "field": "has_guarantor",
+        "field_aliases": ["guarantee_deed_required"],
+        "operator": "truthy"
+      },
+      "condition_description": "Required when the case has a guarantor/GTR",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "HIGH",
@@ -349,9 +484,16 @@
     {
       "s_no": 28,
       "category": "Internal Documents",
-      "description": "Crime Check Report for cases above 10 lakh",
+      "description": "Crime Check Report for cases of 10 lakh and above",
       "document_type": "Crime Check Report",
       "check_type": "presence",
+      "applies_when": {
+        "field": "loan_amount",
+        "field_aliases": ["sanction_amount"],
+        "operator": ">=",
+        "value": 1000000
+      },
+      "condition_description": "Required when loan/sanction amount is at least 10 lakh",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -391,6 +533,21 @@
         "Shop Establishment Certificate"
       ],
       "check_type": "presence_any",
+      "applies_when": {
+        "coalesce": [
+          {
+            "field": "business_proof_required",
+            "operator": "truthy"
+          },
+          {
+            "field": "customer_profile",
+            "field_aliases": ["employment_type", "applicant_profile"],
+            "operator": "in",
+            "value": ["senp", "sep", "self employed non professional", "self employed professional"]
+          }
+        ]
+      },
+      "condition_description": "Required for SENP/SEP customers or when business proof is marked applicable",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -402,6 +559,12 @@
       "description": "Bank signature verification if NACH not registered at disbursement",
       "document_type": "Bank Signature Verification",
       "check_type": "presence",
+      "applies_when": {
+        "field": "nach_registered",
+        "field_aliases": ["ach_registered"],
+        "operator": "falsy"
+      },
+      "condition_description": "Required when ACH/NACH is not registered at disbursement",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -429,6 +592,12 @@
         "Assessed Income Document"
       ],
       "check_type": "presence_any",
+      "applies_when": {
+        "field": "assessed_income_documents_required",
+        "field_aliases": ["income_documents_required"],
+        "operator": "truthy"
+      },
+      "condition_description": "Required when assessed-income documents are called for by credit policy",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -440,6 +609,22 @@
       "description": "Customer consent letter - Insurance tenure less than loan tenure",
       "document_type": "Insurance Consent Letter",
       "check_type": "presence",
+      "applies_when": {
+        "coalesce": [
+          {
+            "field": "insurance_consent_required",
+            "operator": "truthy"
+          },
+          {
+            "field": "insurance_tenure",
+            "field_aliases": ["insurance_tenure_months"],
+            "operator": "<field",
+            "value_field": "tenure",
+            "value_field_aliases": ["loan_tenure", "loan_tenure_months"]
+          }
+        ]
+      },
+      "condition_description": "Required when insurance tenure is shorter than loan tenure",
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
@@ -449,8 +634,25 @@
       "s_no": 36,
       "category": "Documents required from customer",
       "description": "Foreclosure Letter and LOD if BT case",
-      "document_type": "Foreclosure Letter",
-      "check_type": "presence",
+      "document_type": [
+        "Foreclosure Letter",
+        "List of Documents"
+      ],
+      "check_type": "presence_all",
+      "applies_when": {
+        "coalesce": [
+          {
+            "field": "is_bt_case",
+            "operator": "truthy"
+          },
+          {
+            "field": "case_type",
+            "operator": "in",
+            "value": ["bt", "balance_transfer", "balance transfer", "internal_bt", "internal bt"]
+          }
+        ]
+      },
+      "condition_description": "Required for balance-transfer cases",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -486,6 +688,12 @@
       "document_type": "Technical Report",
       "check_type": "presence_min_count",
       "min_count": 2,
+      "applies_when": {
+        "field": "loan_amount",
+        "field_aliases": ["sanction_amount"],
+        "operator": ">",
+        "value": 2000000
+      },
       "required": true,
       "ai_checkable": true,
       "severity_if_missing": "HIGH",
@@ -505,10 +713,32 @@
     {
       "s_no": 41,
       "category": "Repayments",
-      "description": "PDC count verification document",
+      "description": "Repayment-account PDCs: 5 if ACH is registered; 10 if ACH is not registered",
       "document_type": "PDC",
-      "check_type": "presence_min_count",
-      "min_count": 1,
+      "check_type": "requirements",
+      "requirements": [
+        {
+          "document_type": "PDC",
+          "check_type": "presence_min_count",
+          "min_count": 5,
+          "applies_when": {
+            "field": "nach_registered",
+            "field_aliases": ["ach_registered"],
+            "operator": "truthy"
+          }
+        },
+        {
+          "document_type": "PDC",
+          "check_type": "presence_min_count",
+          "min_count": 10,
+          "applies_when": {
+            "field": "nach_registered",
+            "field_aliases": ["ach_registered"],
+            "operator": "falsy"
+          }
+        }
+      ],
+      "condition_description": "Five PDCs when ACH/NACH is registered; ten when it is not registered",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -518,9 +748,32 @@
     {
       "s_no": 42,
       "category": "Repayments",
-      "description": "ACH not registered - CBO/CEO approval with BSV and physical NACH",
-      "document_type": "ACH Approval Document",
-      "check_type": "presence",
+      "description": "ACH not registered - CBO/CEO approval, BSV, and 3 physical NACH forms",
+      "document_type": [
+        "ACH Approval Document",
+        "Bank Signature Verification",
+        "NACH Form"
+      ],
+      "check_type": "requirements",
+      "requirements": [
+        {
+          "document_type": "ACH Approval Document"
+        },
+        {
+          "document_type": "Bank Signature Verification"
+        },
+        {
+          "document_type": "NACH Form",
+          "check_type": "presence_min_count",
+          "min_count": 3
+        }
+      ],
+      "applies_when": {
+        "field": "nach_registered",
+        "field_aliases": ["ach_registered"],
+        "operator": "falsy"
+      },
+      "condition_description": "Required only when ACH/NACH is not registered",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -534,6 +787,14 @@
       "document_type": "PDC",
       "check_type": "presence_min_count",
       "min_count": 3,
+      "scope": "pdc_people",
+      "applies_when": {
+        "field": "pdc_person_count",
+        "field_aliases": ["qualifying_pdc_person_count"],
+        "operator": ">",
+        "value": 0
+      },
+      "condition_description": "Three PDCs for each qualifying income-earner co-applicant, female non-earner co-applicant, and GTR",
       "required": true,
       "ai_checkable": false,
       "severity_if_missing": "MEDIUM",
@@ -555,23 +816,40 @@
   ],
   "accuracy_check_items": [
     {
+      "s_no": 6,
+      "description": "A utility bill used as deemed OVD must not be more than 2 months old",
+      "document_type": "Utility Bill",
+      "check_type": "document_age_max_months",
+      "document_fields": ["bill_date", "issue_date"],
+      "max_months": 2,
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
       "s_no": 7,
       "description": "PAN number must match application form",
       "document_type": "PAN",
       "check_type": "presence_and_match",
       "match_field": "pan_number",
+      "scope": "each_borrower",
       "severity_if_mismatch": "HIGH",
       "ai_checkable": true
     },
     {
       "s_no": 12,
       "description": "Loan details must match system - ROI/Tenure/Loan Amount/EMI",
-      "document_type": "Loan Agreement",
+      "document_type": [
+        "KFS",
+        "Sanction Letter",
+        "Loan Agreement",
+        "Facility Agreement"
+      ],
       "check_type": "field_match",
       "match_fields": [
         "loan_amount",
         "tenure",
-        "emi"
+        "emi",
+        "roi"
       ],
       "severity_if_mismatch": "HIGH",
       "ai_checkable": true
@@ -580,16 +858,102 @@
       "s_no": 17,
       "description": "Bank account vintage of 3 months for disbursement account",
       "document_type": "Bank Statement",
-      "check_type": "date_range",
+      "check_type": "period_minimum_months",
       "min_months": 3,
       "severity_if_fail": "MEDIUM",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 33,
+      "description": "Stamp date must be equal to or older than disbursement date",
+      "document_type": "Stamp Duty",
+      "check_type": "date_not_after",
+      "document_fields": ["stamp_date", "document_date", "issue_date"],
+      "system_field": "disbursement_date",
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 35,
+      "description": "Insurance tenure must be less than loan tenure",
+      "document_type": "Insurance Consent Letter",
+      "check_type": "field_less_than",
+      "document_fields": ["insurance_tenure", "insurance_tenure_months"],
+      "system_field": "tenure",
+      "applies_when": {
+        "coalesce": [
+          {
+            "field": "insurance_consent_required",
+            "operator": "truthy"
+          },
+          {
+            "field": "insurance_tenure",
+            "field_aliases": ["insurance_tenure_months"],
+            "operator": "<field",
+            "value_field": "tenure",
+            "value_field_aliases": ["loan_tenure", "loan_tenure_months"]
+          }
+        ]
+      },
+      "severity_if_fail": "MEDIUM",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 37,
+      "description": "Legal clearance status must be cleared before disbursement",
+      "document_type": "Legal Clearance Report",
+      "check_type": "required_status",
+      "status_fields": ["clearance_status", "status"],
+      "accepted_statuses": ["clear", "cleared", "positive", "approved"],
+      "rejected_statuses": ["not clear", "not cleared", "negative", "rejected", "pending"],
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 38,
+      "description": "Technical clearance status must be cleared before disbursement",
+      "document_type": ["Technical Clearance Report", "Technical Report"],
+      "check_type": "required_status",
+      "status_fields": ["clearance_status", "report_status", "status"],
+      "accepted_statuses": ["clear", "cleared", "positive", "approved"],
+      "rejected_statuses": ["not clear", "not cleared", "negative", "rejected", "pending"],
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 39,
+      "description": "Two distinct positive technical reports required above 20 lakh",
+      "document_type": "Technical Report",
+      "check_type": "distinct_positive_count",
+      "min_count": 2,
+      "status_fields": ["report_status", "clearance_status", "status"],
+      "accepted_statuses": ["positive", "clear", "cleared", "approved"],
+      "rejected_statuses": ["negative", "rejected", "not clear", "not cleared", "pending"],
+      "applies_when": {
+        "field": "loan_amount",
+        "field_aliases": ["sanction_amount"],
+        "operator": ">",
+        "value": 2000000
+      },
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 40,
+      "description": "ACH/NACH must be registered with correct details",
+      "document_type": "NACH Form",
+      "check_type": "required_status",
+      "status_fields": ["registration_status", "status"],
+      "accepted_statuses": ["registered", "active", "approved"],
+      "rejected_statuses": ["not registered", "inactive", "rejected", "pending"],
+      "severity_if_fail": "HIGH",
       "ai_checkable": true
     }
   ],
   "human_review_items": [],
   "validation_strategy": {
-    "mode": "operations_focused_mvp",
-    "goal": "Reduce operations effort by OCRing and cross-checking high-value identity, banking, credit, loan, insurance, legal, technical, and repayment documents first.",
+    "mode": "full_44_item_conditional_availability",
+    "goal": "Check availability of every applicable NDC checklist item, mark false conditions not applicable, and escalate missing applicability inputs for review.",
     "primary_ocr_targets": [
       "PAN",
       "Aadhaar",
@@ -599,9 +963,13 @@
       "Bank Statement",
       "Passbook",
       "CRIF Report",
+      "CIBIL Report",
+      "KFS",
       "Sanction Letter",
       "Loan Agreement",
       "Facility Agreement",
+      "Life Insurance Form",
+      "Property Insurance Form",
       "Insurance Form",
       "Legal Clearance Report",
       "Technical Clearance Report",
@@ -610,6 +978,23 @@
       "Stamp Duty",
       "Salary Slip"
     ],
-    "manual_review_policy": "Physical-only, media, cheque custody, and conditional workflow controls are shown in Manual Review Required instead of forcing full-packet OCR."
+    "condition_input_fields": {
+      "loan_amount": "Controls CIBIL (>5 lakh), Crime Check (>=10 lakh), FI Report (>=15 lakh), and two technical reports (>20 lakh).",
+      "people": "Person map with role, income_earner, repayment_contributor, and gender; used for per-person KYC/banking/PDC scopes.",
+      "kyc_verified_in_graviton": "When true, physical KYC OSV evidence is not applicable.",
+      "kyc_details_checked": "System completion flag for checklist row 11.",
+      "identity_mismatch_present": "Controls the dual-name/signature/DOB declaration and approval.",
+      "vernacular_required": "Controls vernacular documentation.",
+      "manual_loan_agreement": "Controls agreement-signing photo/video evidence.",
+      "bt_undertaking_required": "Controls the internal BT undertaking.",
+      "case_type": "Controls internal-BT/top-up consent and foreclosure/LOD requirements.",
+      "business_proof_required": "Controls Udyam/GST/shop-establishment proof.",
+      "nach_registered": "Controls BSV, PDC counts, and ACH-not-registered documents.",
+      "assessed_income_documents_required": "Controls assessed-income documents.",
+      "insurance_consent_required": "Controls the insurance-tenure consent letter; may instead be derived from insurance_tenure and tenure.",
+      "fi_report_status": "Negative or referred FI results require an FI approval letter.",
+      "disbursement_date": "Used to validate that stamp duty is dated on or before disbursement."
+    },
+    "manual_review_policy": "Physical, media, cheque-custody, and workflow items are checked for availability across the packet; their execution quality and signatures still require manual review."
   }
 }

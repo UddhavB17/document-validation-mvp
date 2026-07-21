@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from services.page_quality import confident_pages_for_types
+from services.checklist_engine import condition_applies, system_flag_state
 
 
 def _document_types(item: dict[str, Any]) -> list[str]:
@@ -29,6 +30,7 @@ def build_checklist_status(
     checklist_items: list[dict[str, Any]],
     pages: list[dict[str, Any]],
     anomalies: list[dict[str, Any]],
+    system_data: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return one row per checklist item with FOUND / MISSING status."""
     missing_by_sno = {
@@ -37,12 +39,17 @@ def build_checklist_status(
         if anomaly.get("s_no") is not None and str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
     }
 
+    system_data = system_data or {}
     rows: list[dict[str, Any]] = []
     for item in sorted(checklist_items, key=lambda row: int(row.get("s_no") or 0)):
         s_no = int(item.get("s_no") or 0)
         document_types = _document_types(item)
         matched_pages = _pages_for_types(pages, document_types)
-        if matched_pages:
+        applicability = condition_applies(item.get("applies_when"), system_data)
+        system_state = system_flag_state(item, system_data) if item.get("check_type") == "system_flag" else None
+        if applicability is False:
+            status = "NOT_APPLICABLE"
+        elif matched_pages or system_state is True:
             status = "FOUND"
         elif s_no in missing_by_sno:
             status = "MISSING"

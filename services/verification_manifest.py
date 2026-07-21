@@ -29,7 +29,7 @@ class IndexedDocument(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     document_type: str = Field(min_length=1)
-    pages: list[int] = Field(min_length=1)
+    pages: list[int] = Field(default_factory=list)
     person_id: str = "primary"
     expected_fields: dict[str, Any] | None = None
     required: bool = True
@@ -53,7 +53,9 @@ class VerificationManifest(BaseModel):
     product_type: str = "LAP"
     branch: str | None = None
     people: dict[str, PersonReference]
-    document_index: list[IndexedDocument] = Field(min_length=1)
+    # Empty means the shared OCR/classification pipeline must build the page
+    # index automatically. Explicit entries remain supported as overrides.
+    document_index: list[IndexedDocument] = Field(default_factory=list)
     source: str = "manual_json"
 
     @model_validator(mode="before")
@@ -138,4 +140,3 @@ class VerificationManifest(BaseModel):
                 for item in self.document_index
             ],
         }
-
