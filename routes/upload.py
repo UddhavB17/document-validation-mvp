@@ -1,9 +1,11 @@
 """Upload API routes."""
 
 from datetime import datetime
+from io import BytesIO
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import zipfile
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -138,20 +140,37 @@ async def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
 
 @router.post("/mapped", summary="Verify mapped PDF pages against trusted company JSON")
 async def upload_mapped_file(
-    manifest: str = Form(...),
+    manifest: str | None = Form(None),
     file: UploadFile = File(...),
 ) -> dict[str, object]:
     """Queue deterministic verification without page classification or LLM decisions."""
     init_db()
-    try:
-        parsed = VerificationManifest.model_validate(json.loads(manifest))
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
-
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    file_path = UPLOAD_DIR / f"{_safe_name(parsed.loan_id)}_{timestamp}.pdf"
-    file_size_bytes = await _save_upload_stream(file, file_path)
+    uploaded_name = file.filename or "mapped_upload"
+
+    if Path(uploaded_name).suffix.lower() == ".zip":
+        file_path, manifest_text, original_filename = await _save_mapped_zip_package(file, manifest, timestamp)
+    else:
+        if not manifest or not manifest.strip():
+            raise HTTPException(status_code=422, detail="Manifest JSON is required for mapped PDF upload")
+        file_path = UPLOAD_DIR / f"mapped_{timestamp}.pdf"
+        await _save_upload_stream(file, file_path)
+        manifest_text = manifest
+        original_filename = uploaded_name
+
+    try:
+        parsed = VerificationManifest.model_validate(json.loads(manifest_text))
+    except (json.JSONDecodeError, ValueError) as exc:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+
+    final_file_path = UPLOAD_DIR / f"{_safe_name(parsed.loan_id)}_{timestamp}.pdf"
+    if file_path != final_file_path:
+        file_path.replace(final_file_path)
+        file_path = final_file_path
+
+    file_size_bytes = file_path.stat().st_size
     validation = validate_file(file_path, file_size_bytes)
     if not validation["valid"]:
         file_path.unlink(missing_ok=True)
@@ -186,7 +205,7 @@ async def upload_mapped_file(
             INSERT INTO audit_log (application_id, action, details)
             VALUES (?, 'mapped_file_uploaded', ?)
             """,
-            (application_id, f"Uploaded {file.filename} with {len(parsed.document_index)} mapped document(s)"),
+            (application_id, f"Uploaded {original_filename} with {len(parsed.document_index)} mapped document(s)"),
         )
         connection.execute(
             """
@@ -198,7 +217,7 @@ async def upload_mapped_file(
             (
                 application_id,
                 str(file_path),
-                file.filename,
+                original_filename,
                 round(file_size_bytes / 1024, 2),
                 validation["total_pages"],
                 validation["digital_pages"],
@@ -235,6 +254,118 @@ async def upload_mapped_file(
         "people": sorted(parsed.people),
         "manifest_schema_version": parsed.schema_version,
     }
+
+
+async def _save_mapped_zip_package(
+    file: UploadFile,
+    manifest_override: str | None,
+    timestamp: str,
+) -> tuple[Path, str, str]:
+    package_bytes = await _read_upload_bytes(file)
+    try:
+        archive = zipfile.ZipFile(BytesIO(package_bytes))
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
+
+    with archive:
+        members = [
+            member
+            for member in archive.infolist()
+            if not member.is_dir()
+            and not PurePosixPath(member.filename).name.startswith(".")
+            and "__MACOSX" not in PurePosixPath(member.filename).parts
+        ]
+        pdf_members = [member for member in members if PurePosixPath(member.filename).suffix.lower() == ".pdf"]
+        json_members = [member for member in members if PurePosixPath(member.filename).suffix.lower() == ".json"]
+
+        if not manifest_override and len(json_members) != 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Mapped ZIP must contain exactly one JSON manifest file, or paste manifest JSON in the form",
+            )
+        manifest_text = manifest_override or archive.read(json_members[0]).decode("utf-8")
+        manifest_payload = _decode_manifest_payload(manifest_text)
+        pdf_member = _select_pdf_member(pdf_members, manifest_payload)
+
+        original_filename = PurePosixPath(pdf_member.filename).name
+        pdf_bytes = archive.read(pdf_member)
+        if not pdf_bytes:
+            raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
+        if len(pdf_bytes) > max_file_size_bytes():
+            raise HTTPException(status_code=400, detail=f"File too large, max {max_file_size_bytes() // (1024 * 1024)}MB")
+
+    file_path = UPLOAD_DIR / f"mapped_package_{timestamp}.pdf"
+    file_path.write_bytes(pdf_bytes)
+    return file_path, manifest_text, original_filename
+
+
+def _decode_manifest_payload(manifest_text: str) -> dict[str, object]:
+    try:
+        payload = json.loads(manifest_text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Manifest JSON must be an object")
+    return payload
+
+
+def _select_pdf_member(
+    pdf_members: list[zipfile.ZipInfo],
+    manifest_payload: dict[str, object],
+) -> zipfile.ZipInfo:
+    if len(pdf_members) == 1:
+        return pdf_members[0]
+
+    pdf_names = [member.filename for member in pdf_members]
+    if not pdf_members:
+        raise HTTPException(
+            status_code=422,
+            detail="Mapped ZIP does not contain a PDF file. Add one PDF loan packet to the ZIP.",
+        )
+
+    requested_pdf = _manifest_pdf_selector(manifest_payload)
+    if requested_pdf:
+        requested = requested_pdf.replace("\\", "/").strip().lower()
+        matches = [
+            member
+            for member in pdf_members
+            if member.filename.lower() == requested
+            or PurePosixPath(member.filename).name.lower() == requested
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        raise HTTPException(
+            status_code=422,
+            detail=f"Manifest pdf_file '{requested_pdf}' did not match exactly one PDF in the ZIP. Found PDFs: {', '.join(pdf_names)}",
+        )
+
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Mapped ZIP contains multiple PDF files. Add a top-level "
+            f"'pdf_file' value to the manifest. Found PDFs: {', '.join(pdf_names)}"
+        ),
+    )
+
+
+def _manifest_pdf_selector(manifest_payload: dict[str, object]) -> str | None:
+    for key in ("pdf_file", "pdf_filename", "source_pdf", "loan_pdf"):
+        value = manifest_payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+async def _read_upload_bytes(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    bytes_read = 0
+    limit = max_file_size_bytes()
+    while chunk := await file.read(1024 * 1024):
+        bytes_read += len(chunk)
+        if bytes_read > limit:
+            raise HTTPException(status_code=400, detail=f"File too large, max {limit // (1024 * 1024)}MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _first_coapplicant_name(manifest: VerificationManifest) -> str | None:

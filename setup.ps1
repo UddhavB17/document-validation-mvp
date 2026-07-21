@@ -24,8 +24,22 @@ function Require-Python311 {
     }
 }
 
+function Require-Node {
+    $node = Get-Command node.exe -ErrorAction SilentlyContinue
+    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $node -or -not $npm) {
+        throw "Node.js/npm were not found. Install Node.js 20+ and rerun setup.ps1."
+    }
+
+    & node --version | Out-Host
+    & npm.cmd --version | Out-Host
+}
+
 Write-Step "Checking Python 3.11"
 Require-Python311
+
+Write-Step "Checking Node.js"
+Require-Node
 
 Write-Step "Creating virtual environment"
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
@@ -46,6 +60,11 @@ if (-not $SkipInstall) {
     Write-Step "Installing dependencies"
     & $VenvPython -m pip install --upgrade pip
     & $VenvPython -m pip install -r requirements.txt
+
+    Write-Step "Installing frontend dependencies"
+    Push-Location (Join-Path $ProjectRoot "frontend")
+    & npm.cmd install
+    Pop-Location
 } else {
     Write-Host "Skipping dependency install because -SkipInstall was provided"
 }

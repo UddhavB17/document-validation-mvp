@@ -1,0 +1,62 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+import { useHealth } from "@/lib/queries";
+import { statusTone } from "@/lib/format";
+
+const navItems = [
+  { href: "/upload", label: "Upload" },
+  { href: "/worklist", label: "Worklist" },
+  { href: "/activity", label: "My Activity" },
+];
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const health = useHealth();
+
+  return (
+    <div className="flex min-h-screen bg-slate-50 text-slate-900">
+      <aside className="w-64 shrink-0 border-r border-slate-200 bg-white">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <div className="text-xl font-semibold">DMEF</div>
+          <div className="text-sm text-slate-500">Document Matching Early Finder</div>
+        </div>
+        <nav className="space-y-1 px-3 py-4">
+          {navItems.map((item) => {
+            const active = pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`block rounded px-3 py-2 text-sm font-medium ${
+                  active ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+        <div className="mx-5 border-t border-slate-200 py-4 text-sm">
+          <div className="mb-2 font-medium text-slate-700">API</div>
+          <code className="block rounded bg-slate-100 px-2 py-1 text-xs">127.0.0.1:8000</code>
+        </div>
+        <div className="mx-5 border-t border-slate-200 py-4 text-sm">
+          <div className="mb-1 font-medium text-slate-700">Local health</div>
+          {health.isLoading ? (
+            <div className="text-slate-500">Checking...</div>
+          ) : health.isError ? (
+            <div className="text-red-700">API unavailable</div>
+          ) : health.data ? (
+            <div className={statusTone(health.data.status)}>{health.data.status.toUpperCase()}</div>
+          ) : (
+            <div className="text-red-700">API unavailable</div>
+          )}
+        </div>
+      </aside>
+      <main className="min-w-0 flex-1 px-8 py-6">{children}</main>
+    </div>
+  );
+}

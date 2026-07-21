@@ -8,7 +8,7 @@ Scope: issues observed from the latest application run logs and generated output
 
 The backend completed the 237-page run, but the output quality needs hardening. The main issues are:
 
-- Streamlit duplicate rendering caused a UI crash.
+- Legacy duplicate result rendering caused a UI crash.
 - OCR timed out on some pages.
 - One page recorded a hard OCR processing error.
 - Many pages were classified as `Unknown`.
@@ -19,18 +19,18 @@ These are not new product features. They are reliability, reviewer-usability, an
 
 ## Required Changes
 
-### 1. Keep Result Rendering Single-Path in Streamlit
+### 1. Keep Result Rendering Single-Path
 
 Current issue:
-- Streamlit rendered the same result component more than once in one app run.
-- This created duplicate widgets, causing `StreamlitDuplicateElementId`.
+- The legacy UI rendered the same result component more than once in one app run.
+- This created duplicate widgets in that UI runtime.
 
 Required change:
 - Render uploaded application results only once after all upload tabs.
 - Ensure all widgets inside results use stable keys based on `application_id`.
 
 Why this is needed:
-- Streamlit renders all tab contents, including inactive tabs.
+- The old tab runtime rendered all tab contents, including inactive tabs.
 - Any repeated widget without a unique key can crash the page.
 - A reviewer should never lose access to results after a long OCR run because of a UI widget collision.
 

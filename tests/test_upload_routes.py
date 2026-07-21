@@ -1,5 +1,5 @@
 from pathlib import Path
-from types import SimpleNamespace
+import zipfile
 
 from fastapi.testclient import TestClient
 
@@ -16,45 +16,6 @@ def _create_pdf(path: Path) -> None:
     page.insert_text((72, 72), "Applicant Name: Ramesh Kumar\nPAN: ABCDE1234F\nLoan Amount: 500000")
     doc.save(path)
     doc.close()
-
-
-class _Spinner:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
-
-
-class _FakeColumn:
-    def metric(self, *_args, **_kwargs) -> None:
-        return None
-
-
-class _FakeStreamlit:
-    def __init__(self) -> None:
-        self.session_state = {}
-        self.success_messages = []
-        self.error_messages = []
-        self.write_messages = []
-
-    def spinner(self, _message: str) -> _Spinner:
-        return _Spinner()
-
-    def success(self, message: str) -> None:
-        self.success_messages.append(message)
-
-    def error(self, message: str) -> None:
-        self.error_messages.append(message)
-
-    def write(self, message: str) -> None:
-        self.write_messages.append(message)
-
-    def caption(self, message: str) -> None:
-        self.write_messages.append(message)
-
-    def columns(self, count: int):
-        return [_FakeColumn() for _ in range(count)]
 
 
 def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
@@ -234,90 +195,99 @@ def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
     assert audit["action"] == "mapped_file_uploaded"
 
 
-def test_upload_view_posts_real_form_metadata(monkeypatch) -> None:
-    import views.upload_view as upload_view
+def test_mapped_zip_upload_uses_manifest_from_package(tmp_path, monkeypatch) -> None:
+    import json
 
-    fake_st = _FakeStreamlit()
-    posted = {}
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
+    pdf_path = tmp_path / "mapped.pdf"
+    zip_path = tmp_path / "mapped.zip"
+    _create_pdf(pdf_path)
+    manifest = {
+        "loan_id": "MAP-ZIP-001",
+        "applicant_name": "Ramesh Kumar",
+        "reference_data": {"pan_number": "ABCDE1234F"},
+        "documents": [{"document_type": "PAN", "pages": [1]}],
+    }
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.write(pdf_path, "loan_file.pdf")
+        archive.writestr("manifest.json", json.dumps(manifest))
 
-    def fake_post(_url, *, data, files, timeout):
-        posted["data"] = data
-        posted["files"] = files
-        posted["timeout"] = timeout
-        return SimpleNamespace(
-            status_code=200,
-            json=lambda: {
-                "application_id": 42,
-                "status": "processing",
-                "total_pages": 3,
-                "digital_pages": 1,
-                "scanned_pages": 2,
-            },
-        )
-
-    uploaded_file = SimpleNamespace(
-        name="loan.pdf",
-        size=1024,
-        getvalue=lambda: b"%PDF-1.7\n",
+    client = TestClient(app)
+    response = client.post(
+        "/upload/mapped",
+        files={"file": ("mapped.zip", zip_path.read_bytes(), "application/zip")},
     )
 
-    monkeypatch.setattr(upload_view, "st", fake_st)
-    monkeypatch.setattr(upload_view.requests, "post", fake_post)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["loan_id"] == "MAP-ZIP-001"
+    assert body["mapped_pages"] == [1]
 
-    upload_view._submit_upload_form(
-        "LAP-001",
-        "Ramesh Kumar",
-        "Sita Kumar",
-        "MSME",
-        "Delhi",
-        uploaded_file,
+    with db.get_connection() as connection:
+        uploaded = connection.execute(
+            "SELECT original_filename FROM uploaded_files WHERE application_id = ?",
+            (body["application_id"],),
+        ).fetchone()
+    assert uploaded["original_filename"] == "loan_file.pdf"
+
+
+def test_mapped_zip_upload_requires_manifest_when_not_pasted(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    pdf_path = tmp_path / "mapped.pdf"
+    zip_path = tmp_path / "mapped.zip"
+    _create_pdf(pdf_path)
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.write(pdf_path, "loan_file.pdf")
+
+    client = TestClient(app)
+    response = client.post(
+        "/upload/mapped",
+        files={"file": ("mapped.zip", zip_path.read_bytes(), "application/zip")},
     )
 
-    assert posted["data"] == {
-        "loan_id": "LAP-001",
+    assert response.status_code == 422
+    assert "JSON manifest" in response.json()["detail"]
+
+
+def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch) -> None:
+    import json
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
+    selected_pdf = tmp_path / "selected.pdf"
+    other_pdf = tmp_path / "other.pdf"
+    zip_path = tmp_path / "mapped.zip"
+    _create_pdf(selected_pdf)
+    _create_pdf(other_pdf)
+    manifest = {
+        "loan_id": "MAP-ZIP-SELECTED-001",
+        "pdf_file": "selected.pdf",
         "applicant_name": "Ramesh Kumar",
-        "coapplicant_name": "Sita Kumar",
-        "product_type": "MSME",
-        "branch": "Delhi",
+        "reference_data": {"pan_number": "ABCDE1234F"},
+        "documents": [{"document_type": "PAN", "pages": [1]}],
     }
-    assert fake_st.session_state["last_uploaded_application_id"] == 42
-    assert not fake_st.error_messages
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.write(selected_pdf, "selected.pdf")
+        archive.write(other_pdf, "other.pdf")
+        archive.writestr("manifest.json", json.dumps(manifest))
+
+    client = TestClient(app)
+    response = client.post(
+        "/upload/mapped",
+        files={"file": ("mapped.zip", zip_path.read_bytes(), "application/zip")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    with db.get_connection() as connection:
+        uploaded = connection.execute(
+            "SELECT original_filename FROM uploaded_files WHERE application_id = ?",
+            (body["application_id"],),
+        ).fetchone()
+    assert uploaded["original_filename"] == "selected.pdf"
 
 
-def test_partner_json_view_posts_to_api_and_renders_results(monkeypatch) -> None:
-    import views.upload_view as upload_view
-
-    fake_st = _FakeStreamlit()
-    rendered = []
-    payload = {
-        "loan_id": "LAP-JSON-001",
-        "applicant_name": "Ramesh Kumar",
-        "product_type": "LAP",
-        "branch": "Delhi",
-        "digital_text": {"applicant_name": "Ramesh Kumar"},
-        "scanned_docs": {"pan_card": "PAN ABCDE1234F"},
-    }
-
-    def fake_post(url, *, json, timeout):
-        assert url.endswith("/upload/json")
-        assert json == payload
-        assert timeout == 180
-        return SimpleNamespace(
-            status_code=200,
-            json=lambda: {
-                "application_id": 99,
-                "status": "NEEDS_REVIEW",
-                "anomaly_count": 1,
-                "documents_found": ["PAN"],
-            },
-        )
-
-    monkeypatch.setattr(upload_view, "st", fake_st)
-    monkeypatch.setattr(upload_view.requests, "post", fake_post)
-    monkeypatch.setattr(upload_view, "render_application_results", lambda application_id: rendered.append(application_id))
-
-    upload_view._submit_partner_json(payload)
-
-    assert fake_st.session_state["last_uploaded_application_id"] == 99
-    assert rendered == [99]
-    assert any("Issues found: 1" in message for message in fake_st.success_messages)

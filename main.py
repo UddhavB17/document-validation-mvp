@@ -12,9 +12,10 @@ require_python_311()
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from database.models import initialize_schema
-from routes import decisions, upload, verification
+from routes import decisions, review, upload, verification
 from services.config import log_effective_config
 
 load_dotenv()
@@ -26,6 +27,18 @@ app = FastAPI(
         "and surfaces exceptions for human review."
     ),
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ── Startup ───────────────────────────────────
@@ -40,6 +53,7 @@ def on_startup() -> None:
 app.include_router(upload.router)
 app.include_router(decisions.router)
 app.include_router(verification.router)
+app.include_router(review.router)
 
 
 # ── Health ────────────────────────────────────

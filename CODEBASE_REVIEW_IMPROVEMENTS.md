@@ -6,7 +6,7 @@ Scope: review the existing codebase for correctness, maintainability, reliabilit
 
 ## Overall Assessment
 
-The codebase is in a solid MVP state. It has a clear domain split between API routes, Streamlit views, database helpers, services, data registries, and tests. The app also shows good signs of defensive engineering: upload size limits, PDF validation, persistent pipeline progress, registry-driven document classification, structured Pydantic models, and a meaningful test suite.
+The codebase is in a solid MVP state. It has a clear domain split between API routes, the Next.js frontend, database helpers, services, data registries, and tests. The app also shows good signs of defensive engineering: upload size limits, PDF validation, persistent pipeline progress, registry-driven document classification, structured Pydantic models, and a meaningful test suite.
 
 The main improvement need is not more functionality. The main need is hardening: make the environment reproducible, reduce risk in the large orchestration modules, centralize configuration, pin dependencies, and make failures easier to reason about.
 
@@ -33,10 +33,10 @@ Recommended improvements:
 ### 2. Pin dependency versions more safely
 
 Evidence:
-- `requirements.txt` uses broad lower bounds such as `fastapi>=0.111.0`, `streamlit>=1.35.0`, `paddleocr>=2.7.0`, and `pymupdf>=1.24.0`.
+- `requirements.txt` and `frontend/package.json` use broad lower bounds for several runtime dependencies.
 
 Why it matters:
-OCR, PDF parsing, FastAPI, Streamlit, and Pydantic can change behavior across minor releases. Broad lower bounds can break the app even when no code changed.
+OCR, PDF parsing, FastAPI, Next.js, and Pydantic can change behavior across minor releases. Broad lower bounds can break the app even when no code changed.
 
 Recommended improvements:
 - Use upper bounds or a compiled lock file.
@@ -144,8 +144,8 @@ Recommended improvements:
 ### 10. Separate UI styling from app logic
 
 Current state:
-- `app.py` contains a large inline CSS string and app navigation logic.
-- Streamlit views use `unsafe_allow_html` for layout/styling.
+- Keep UI styling in the Next.js frontend rather than backend Python modules.
+- Avoid ad hoc HTML injection patterns in reviewer-facing screens.
 
 Recommended improvements:
 - Move CSS to a dedicated view/theme module.

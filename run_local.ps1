@@ -1,6 +1,6 @@
 param(
     [int]$ApiPort = 8000,
-    [int]$UiPort = 8501,
+    [int]$UiPort = 3000,
     [switch]$SkipHealth
 )
 
@@ -11,6 +11,11 @@ Set-Location $ProjectRoot
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
     throw "Virtual environment not found. Run .\setup.ps1 first."
+}
+
+$Npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if (-not $Npm) {
+    throw "npm.cmd was not found. Install Node.js 20+ and rerun .\setup.ps1."
 }
 
 if (-not (Test-Path ".env")) {
@@ -29,8 +34,8 @@ if (-not $SkipHealth) {
 
 $BackendOut = Join-Path $ProjectRoot "data\logs\backend.out.log"
 $BackendErr = Join-Path $ProjectRoot "data\logs\backend.err.log"
-$UiOut = Join-Path $ProjectRoot "data\logs\streamlit.out.log"
-$UiErr = Join-Path $ProjectRoot "data\logs\streamlit.err.log"
+$UiOut = Join-Path $ProjectRoot "data\logs\next.out.log"
+$UiErr = Join-Path $ProjectRoot "data\logs\next.err.log"
 
 Write-Host ""
 Write-Host "Starting FastAPI backend on http://127.0.0.1:$ApiPort" -ForegroundColor Cyan
@@ -44,11 +49,12 @@ $Backend = Start-Process `
 
 Start-Sleep -Seconds 2
 
-Write-Host "Starting Streamlit UI on http://localhost:$UiPort" -ForegroundColor Cyan
+Write-Host "Starting Next.js UI on http://localhost:$UiPort" -ForegroundColor Cyan
+$env:NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:$ApiPort"
 $Ui = Start-Process `
-    -FilePath $Python `
-    -ArgumentList @("-m", "streamlit", "run", "app.py", "--server.port", "$UiPort") `
-    -WorkingDirectory $ProjectRoot `
+    -FilePath $Npm.Source `
+    -ArgumentList @("run", "dev", "--", "-p", "$UiPort") `
+    -WorkingDirectory (Join-Path $ProjectRoot "frontend") `
     -RedirectStandardOutput $UiOut `
     -RedirectStandardError $UiErr `
     -PassThru
