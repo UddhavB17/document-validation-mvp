@@ -424,7 +424,7 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
               }}
               className="text-xs font-bold text-blue-700 hover:underline flex items-center gap-1"
             >
-              🔄 Upload another ZIP
+              Upload another ZIP
             </button>
           </div>
 

@@ -9,6 +9,7 @@ body {
 }
 
 body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "SF Pro", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background: #f8fafc;
   color: #111827;
 }

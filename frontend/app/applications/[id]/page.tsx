@@ -64,37 +64,36 @@ export default function ApplicationReviewPage() {
           <ProgressPanel applicationId={applicationId} />
         ) : null}
 
-        {/* UX Tab Navigation Bar */}
         <div className="flex flex-wrap gap-1 border-b border-slate-200 mt-6 bg-slate-100/50 p-1 rounded-xl">
           <TabButton
             active={activeTab === "checklist"}
             onClick={() => setActiveTab("checklist")}
           >
-            📋 Checklist & Decisions
+            Checklist & Decisions
           </TabButton>
           <TabButton
             active={activeTab === "anomalies"}
             onClick={() => setActiveTab("anomalies")}
           >
-            ⚠️ Anomalies & Flags ({reviewerCount})
+            Anomalies & Flags ({reviewerCount})
           </TabButton>
           <TabButton
             active={activeTab === "logs"}
             onClick={() => setActiveTab("logs")}
           >
-            🔍 Page Processing Logs
+            Page Processing Logs
           </TabButton>
           <TabButton
             active={activeTab === "all_items"}
             onClick={() => setActiveTab("all_items")}
           >
-            📄 Full Verification List
+            Full Verification List
           </TabButton>
           <TabButton
             active={activeTab === "downloads"}
             onClick={() => setActiveTab("downloads")}
           >
-            📥 Downloads
+            Downloads
           </TabButton>
         </div>
 
@@ -173,7 +172,6 @@ function Verdict({ data }: { data: ApplicationReview }) {
   return (
     <div className={`rounded-xl border-l-4 px-5 py-4 font-bold flex items-center justify-between shadow-sm ${classes}`}>
       <div className="flex items-center gap-3">
-        <span className="text-xl">📢</span>
         <div>
           <div className="text-xs uppercase tracking-wider opacity-70">Audit Result</div>
           <div className="text-sm font-extrabold">{title} — {detail}</div>
@@ -223,8 +221,8 @@ function ReviewerSummary({ data }: { data: ApplicationReview }) {
   const pages = Array.isArray(summary.pages_to_review) ? summary.pages_to_review.join(", ") : "";
   return (
     <section className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
-      <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-        <span>📋</span> Reviewer Action Summary
+      <h2 className="text-base font-bold text-slate-800">
+        Reviewer Action Summary
       </h2>
       <div className="flex flex-wrap items-center gap-3">
         <StatusBadge status={status} />
@@ -233,7 +231,7 @@ function ReviewerSummary({ data }: { data: ApplicationReview }) {
       <p className="text-sm text-slate-600 font-medium leading-relaxed">{asText(summary.recommendation)}</p>
       {pages ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm">
-          💡 Pages to check manually: <span className="font-bold">{pages}</span>
+          Pages to check manually: <span className="font-bold">{pages}</span>
         </div>
       ) : null}
     </section>
@@ -464,8 +462,8 @@ function Downloads({ applicationId }: { applicationId: number }) {
   return (
     <section className="space-y-3">
       <h2 className="text-base font-bold text-slate-800">Downloads</h2>
-      <a className="inline-block rounded-lg border border-slate-300 bg-white hover:bg-slate-55 px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors" href={api.ocrJsonUrl(applicationId)} download>
-        ⬇ Download Document OCR JSON
+      <a className="inline-block rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors" href={api.ocrJsonUrl(applicationId)} download>
+        Download Document OCR JSON
       </a>
     </section>
   );
