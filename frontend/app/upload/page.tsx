@@ -139,9 +139,9 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
         throw new Error("Mapped PDF or ZIP package is required");
       }
       const isZip = file.name.toLowerCase().endsWith(".zip");
-      const manifest = rawManifest.trim() ? JSON.parse(escapeControlCharacters(rawManifest)) : undefined;
+      const manifest = rawManifest.trim() ? getSanitizedManifest(rawManifest) : undefined;
       if (!isZip && !manifest) {
-        throw new Error("Manifest JSON is required when uploading a PDF directly");
+        throw new Error("Manifest JSON or database dump is required when uploading a PDF directly");
       }
       setSubmitting(true);
       onUploaded(await api.uploadMapped({ file, manifest }));
@@ -343,12 +343,7 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
     setError(null);
     setIsVerifying(true);
     try {
-      let manifest: any;
-      try {
-        manifest = JSON.parse(escapeControlCharacters(manifestText));
-      } catch (err) {
-        throw new Error("Invalid manifest JSON. Please ensure it is valid JSON.");
-      }
+      const manifest = getSanitizedManifest(manifestText);
       const res = await api.verifyZipPackage(preparingPackageId, manifest);
       onUploaded(res);
     } catch (err: any) {
@@ -510,5 +505,18 @@ function escapeControlCharacters(jsonString: string): string {
       return "\\u" + hex;
     });
   });
+}
+
+function getSanitizedManifest(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      JSON.parse(escapeControlCharacters(trimmed));
+      return escapeControlCharacters(trimmed);
+    } catch (err: any) {
+      throw new Error(`JSON syntax error: ${err.message}`);
+    }
+  }
+  return trimmed;
 }
 
