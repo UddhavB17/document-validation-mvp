@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useEffect } from "react";
 import { ZodError } from "zod";
 
 import { ErrorMessage, InfoMessage } from "@/components/Message";
@@ -11,7 +11,7 @@ import { ProgressPanel } from "@/components/ProgressPanel";
 import { api, UploadResponse } from "@/lib/api";
 import { uploadFormSchema } from "@/lib/forms";
 
-type Tab = "pdf" | "mapped" | "json";
+type Tab = "pdf" | "mapped" | "json" | "zip";
 
 export default function UploadPage() {
   const [tab, setTab] = useState<Tab>("pdf");
@@ -33,11 +33,15 @@ export default function UploadPage() {
         <TabButton active={tab === "json"} onClick={() => setTab("json")}>
           Partner JSON Intake
         </TabButton>
+        <TabButton active={tab === "zip"} onClick={() => setTab("zip")}>
+          ZIP Package Intake
+        </TabButton>
       </div>
 
       {tab === "pdf" ? <PdfUploadForm onUploaded={setResult} /> : null}
       {tab === "mapped" ? <MappedUploadForm onUploaded={setResult} /> : null}
       {tab === "json" ? <PartnerJsonForm onUploaded={setResult} /> : null}
+      {tab === "zip" ? <ZipPackageForm onUploaded={setResult} /> : null}
 
       {result ? (
         <section className="mt-8 space-y-5 border-t border-slate-200 pt-6">
@@ -231,4 +235,229 @@ function formError(error: unknown): string {
     return error.message;
   }
   return "Request failed";
+}
+
+function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [preparingPackageId, setPreparingPackageId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isPreparing, setIsPreparing] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [manifestText, setManifestText] = useState("");
+
+  useEffect(() => {
+    if (!preparingPackageId) return;
+
+    let active = true;
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.getZipPreparationProgress(preparingPackageId);
+        if (!active) return;
+        setProgress(res);
+        if (res.status === "prepared" || res.status === "failed") {
+          clearInterval(interval);
+          setIsPreparing(false);
+          if (res.status === "failed") {
+            setError(res.error || "ZIP preparation failed");
+            setPreparingPackageId(null);
+          } else {
+            const template = {
+              schema_version: "1.0",
+              loan_id: "LN-" + preparingPackageId.slice(0, 6).toUpperCase(),
+              people: {
+                primary: {
+                  applicant_name: "Ramesh Kumar",
+                  pan_number: "ABCDE1234F",
+                  aadhaar_number: "123456789012"
+                }
+              },
+              document_index: []
+            };
+            setManifestText(JSON.stringify(template, null, 2));
+          }
+        }
+      } catch (err: any) {
+        if (!active) return;
+        clearInterval(interval);
+        setIsPreparing(false);
+        setError(err.message || "Failed to get preparation progress");
+        setPreparingPackageId(null);
+      }
+    }, 2000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [preparingPackageId]);
+
+  async function handlePrepare(event: FormEvent) {
+    event.preventDefault();
+    if (!file) {
+      setError("Please select a ZIP file");
+      return;
+    }
+    setError(null);
+    setProgress(null);
+    setIsPreparing(true);
+    try {
+      const res = await api.prepareZipPackage(file);
+      setPreparingPackageId(res.package_id);
+    } catch (err: any) {
+      setError(err.message || "Failed to start ZIP preparation");
+      setIsPreparing(false);
+    }
+  }
+
+  async function handleVerify(event: FormEvent) {
+    event.preventDefault();
+    if (!preparingPackageId) return;
+    setError(null);
+    setIsVerifying(true);
+    try {
+      let manifest: any;
+      try {
+        manifest = JSON.parse(manifestText);
+      } catch (err) {
+        throw new Error("Invalid manifest JSON. Please ensure it is valid JSON.");
+      }
+      const res = await api.verifyZipPackage(preparingPackageId, manifest);
+      onUploaded(res);
+    } catch (err: any) {
+      setError(err.message || "Verification failed");
+    } finally {
+      setIsVerifying(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {error ? <ErrorMessage message={error} /> : null}
+
+      {!progress || progress.status !== "prepared" ? (
+        <form onSubmit={handlePrepare} className="space-y-4 max-w-xl">
+          <h2 className="text-lg font-semibold">Step 1: Upload and Prepare ZIP</h2>
+          <p className="text-sm text-slate-600">
+            Upload the original ZIP package. Spreadsheets (.xlsx) are automatically rendered to readable PDF sheets, and images (.jpg/.png) are consolidated.
+          </p>
+          <input
+            className="block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+            type="file"
+            accept=".zip,application/zip"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
+          <button
+            type="submit"
+            disabled={isPreparing || !file}
+            className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400"
+          >
+            {isPreparing ? "Preparing ZIP..." : "Prepare ZIP and Build Page Inventory"}
+          </button>
+
+          {isPreparing && progress && (
+            <div className="rounded bg-slate-50 border border-slate-200 p-4 space-y-2">
+              <div className="text-sm font-medium text-slate-700">
+                Stage: {progress.stage || "Initializing"}
+              </div>
+              <div className="text-sm text-slate-600">
+                {progress.message || "Starting ZIP extraction..."}
+              </div>
+              {progress.total_files > 0 && (
+                <div className="w-full bg-slate-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{
+                      width: `${Math.round(((progress.processed_files || 0) / progress.total_files) * 100)}%`
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+        </form>
+      ) : (
+        <form onSubmit={handleVerify} className="space-y-6">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-semibold text-slate-900">Step 2: Review Inventory & Mapped Verification</h2>
+            <button
+              type="button"
+              onClick={() => {
+                setProgress(null);
+                setPreparingPackageId(null);
+                setFile(null);
+              }}
+              className="text-sm text-blue-700 hover:underline"
+            >
+              Upload another ZIP
+            </button>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <Metric label="Package" value={progress.package_id.slice(0, 8)} />
+            <Metric label="Source files" value={progress.total_files} />
+            <Metric label="Internal pages" value={progress.total_pages} />
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-slate-700">Source Files Inventory</h3>
+            <div className="overflow-x-auto rounded border border-slate-200 bg-white">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                <thead className="bg-slate-50 font-medium text-slate-600">
+                  <tr>
+                    <th className="px-4 py-2 border-b">ID</th>
+                    <th className="px-4 py-2 border-b">Filename</th>
+                    <th className="px-4 py-2 border-b">Type</th>
+                    <th className="px-4 py-2 border-b">Worksheets</th>
+                    <th className="px-4 py-2 border-b">Pages</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {progress.documents?.map((doc: any) => (
+                    <tr key={doc.source_document_id}>
+                      <td className="px-4 py-2 font-mono text-xs">{doc.source_document_id}</td>
+                      <td className="px-4 py-2 font-medium">{doc.original_filename}</td>
+                      <td className="px-4 py-2 font-mono text-xs capitalize">{doc.file_type}</td>
+                      <td className="px-4 py-2 text-slate-600">{doc.worksheets?.join(", ") || "-"}</td>
+                      <td className="px-4 py-2 font-mono text-xs">
+                        {doc.internal_page_start === doc.internal_page_end
+                          ? doc.internal_page_start
+                          : `${doc.internal_page_start}-${doc.internal_page_end}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-slate-500">
+              The internal page numbers will correspond to the consolidated PDF page layout for checking.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-slate-700">
+              Trusted JSON or Raw Company Database Dump for this ZIP
+              <span className="block font-normal text-xs text-slate-500 mt-1">
+                Supply the JSON manifest or paste the raw text output from the database application.
+              </span>
+            </label>
+            <textarea
+              value={manifestText}
+              onChange={(e) => setManifestText(e.target.value)}
+              className="h-80 w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Paste manifest or database dump here..."
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isVerifying}
+            className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400"
+          >
+            {isVerifying ? "Verifying..." : "Identify and Verify ZIP Documents"}
+          </button>
+        </form>
+      )}
+    </div>
+  );
 }

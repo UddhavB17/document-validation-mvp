@@ -12,8 +12,7 @@ from database.db import get_connection, init_db
 from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
 from services.checklist_status import build_checklist_status
 from services.ocr_json_export import build_ocr_document_json
-from services.reviewer_exceptions import summarize_for_display
-from services.reviewer_summary_store import load_reviewer_summary
+from services.reviewer import load_reviewer_summary, summarize_for_display
 
 router = APIRouter(prefix="/review", tags=["review"])
 

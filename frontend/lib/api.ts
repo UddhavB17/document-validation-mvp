@@ -5,6 +5,56 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8
 const nullableString = z.string().nullable().optional();
 const recordSchema = z.record(z.unknown());
 
+export const zipDocumentSchema = z.object({
+  source_document_id: z.string(),
+  original_filename: z.string(),
+  file_type: z.string(),
+  source_size_bytes: z.number(),
+  page_count: z.number(),
+  internal_page_start: z.number(),
+  internal_page_end: z.number(),
+  worksheets: z.array(z.string()).nullable().optional(),
+});
+
+export const zipProgressEventSchema = z.object({
+  stage: z.string().nullable().optional(),
+  message: z.string().nullable().optional(),
+  processed_files: z.number().nullable().optional(),
+  total_files: z.number().nullable().optional(),
+  current_file: nullableString,
+  elapsed_seconds: z.number().nullable().optional(),
+  timestamp: nullableString,
+});
+
+export const zipPreparationProgressSchema = z.object({
+  package_id: z.string(),
+  status: z.string(),
+  stage: nullableString,
+  message: nullableString,
+  processed_files: z.number().optional(),
+  total_files: z.number().optional(),
+  current_file: nullableString,
+  total_pages: z.number().optional(),
+  documents: z.array(zipDocumentSchema).optional(),
+  verify_url: nullableString,
+  error: nullableString,
+  events: z.array(zipProgressEventSchema).optional(),
+});
+
+export const zipPackageUploadResponseSchema = z.object({
+  package_id: z.string(),
+  status: z.string(),
+  progress_url: z.string(),
+  verify_url: z.string().optional(),
+  total_files: z.number().optional(),
+  total_pages: z.number().optional(),
+  documents: z.array(zipDocumentSchema).optional(),
+});
+
+export type ZipDocument = z.infer<typeof zipDocumentSchema>;
+export type ZipPreparationProgress = z.infer<typeof zipPreparationProgressSchema>;
+export type ZipPackageUploadResponse = z.infer<typeof zipPackageUploadResponseSchema>;
+
 export const healthSchema = z.object({
   status: z.string(),
   version: z.string().optional(),
@@ -236,6 +286,26 @@ export const api = {
     return parseResponse(response, uploadResponseSchema);
   },
   uploadPartnerJson: (payload: unknown) => postJson("/upload/json", payload, uploadResponseSchema),
+  prepareZipPackage: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch(`${API_BASE_URL}/upload/package?background=true`, {
+      method: "POST",
+      body: formData,
+    });
+    return parseResponse(response, zipPackageUploadResponseSchema);
+  },
+  getZipPreparationProgress: (packageId: string) =>
+    getJson(`/upload/package/${packageId}/progress`, zipPreparationProgressSchema),
+  verifyZipPackage: async (packageId: string, manifest: unknown) => {
+    const formData = new FormData();
+    formData.append("manifest", JSON.stringify(manifest));
+    const response = await fetch(`${API_BASE_URL}/upload/package/${packageId}/verify`, {
+      method: "POST",
+      body: formData,
+    });
+    return parseResponse(response, uploadResponseSchema);
+  },
   createDecision: (payload: { application_id: number; decision: string; reviewer_note: string }) =>
     postJson("/decision", payload, decisionSchema),
   undoDecision: (decisionId: number) => postJson(`/decision/${decisionId}/undo`, {}, decisionSchema),

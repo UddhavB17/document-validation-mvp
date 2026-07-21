@@ -196,7 +196,7 @@ async def upload_mapped_file(
         return _queue_mapped_verification(
             parsed,
             file_path=file_path,
-            original_filename=file.filename or "mapped.pdf",
+            original_filename=original_filename,
             file_size_bytes=file_size_bytes,
             validation=validation,
             audit_action="mapped_file_uploaded",
