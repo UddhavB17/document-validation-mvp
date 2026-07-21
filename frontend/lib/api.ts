@@ -296,7 +296,7 @@ export const api = {
     return parseResponse(response, zipPackageUploadResponseSchema);
   },
   getZipPreparationProgress: (packageId: string) =>
-    getJson(`/upload/package/${packageId}/progress`, zipPreparationProgressSchema),
+    getJson(`/upload/package/${packageId}/preparation`, zipPreparationProgressSchema),
   verifyZipPackage: async (packageId: string, manifest: unknown) => {
     const formData = new FormData();
     formData.append("manifest", JSON.stringify(manifest));
