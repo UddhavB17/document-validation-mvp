@@ -18,11 +18,11 @@ class CompanyDumpConversionError(ValueError):
 def is_company_database_dump(value: str | dict[str, Any]) -> bool:
     if isinstance(value, dict):
         keys = {str(key).lower() for key in value}
-        return bool(keys & {"applicantdetails", "camdetails", "coapplicantdetails", "applicantkyc"})
+        return bool(keys & {"applicantdetails", "camdetails", "coapplicantdetails", "applicantkyc", "addressloanview", "addressview", "loanview"})
     text = str(value or "")
     return bool(
         re.search(r"Loan Application:\s*RJ\d+", text, re.IGNORECASE)
-        or re.search(r'"(?:applicantdetails|camdetails|coapplicantdetails)"\s*:', text, re.IGNORECASE)
+        or re.search(r'"(?:applicantdetails|camdetails|coapplicantdetails|addressloanview|addressview|loanview)"\s*:', text, re.IGNORECASE)
     )
 
 
@@ -41,7 +41,7 @@ def convert_company_database_dump(value: str | dict[str, Any]) -> dict[str, Any]
     if not is_company_database_dump(text):
         raise CompanyDumpConversionError("The pasted content is not a recognized company database dump.")
 
-    applicant = _first_object(text, "applicantdetails")
+    applicant = _first_object(text, "applicantdetails") or _first_object(text, "addressloanview") or _first_object(text, "addressview")
     cam = _first_object(text, "camdetails")
     applicant_kyc = _first_object(text, "applicantkyc")
     applicant_address = _first_object(text, "applicantaddressdetails")
@@ -50,10 +50,10 @@ def convert_company_database_dump(value: str | dict[str, Any]) -> dict[str, Any]
     entity_addresses = _array_objects(text, "entityaddressdetails")
     dbmaker = _first_object(text, "dbmaker")
 
-    primary_name = _value(applicant, "entityName") or _value(cam, "applicantname")
+    primary_name = _value(applicant, "entityName") or _value(applicant, "applicantName") or _value(cam, "applicantname")
     if not primary_name:
         raise CompanyDumpConversionError(
-            "Could not find applicantdetails.entityName or camdetails.applicantname in the dump."
+            "Could not find applicantdetails.entityName, addressloanview.entityName/applicantName, or camdetails.applicantname in the dump."
         )
 
     warnings: list[str] = []
@@ -124,9 +124,9 @@ def _person(
 ) -> dict[str, Any]:
     person: dict[str, Any] = {"role": role}
     _copy_if_present(person, "date_of_birth", _valid_date(_value(details, "dob")))
-    _copy_if_present(person, "phone_number", _valid_digits(_value(details, "mobileNo"), 10))
-    _copy_if_present(person, "pan_number", _valid_pan(_value(kyc, "panNumber")))
-    aadhaar = _value(kyc, "aadhaarNumber")
+    _copy_if_present(person, "phone_number", _valid_digits(_value(details, "mobileNo") or _value(details, "phone"), 10))
+    _copy_if_present(person, "pan_number", _valid_pan(_value(kyc, "panNumber") or _value(details, "panNumber") or _value(details, "pan")))
+    aadhaar = _value(kyc, "aadhaarNumber") or _value(details, "aadhaarNumber") or _value(details, "aadhaar")
     valid_aadhaar = _valid_digits(aadhaar, 12)
     if valid_aadhaar:
         person["aadhaar_number"] = valid_aadhaar
@@ -134,9 +134,9 @@ def _person(
         person["aadhaar_last4"] = _masked_last4(aadhaar)
         warnings.append("Masked Aadhaar values were retained as last-four evidence and excluded from exact matching.")
 
-    address_value = _value(address, "address") or _value(details, "communicationAddress")
+    address_value = _value(address, "address") or _value(details, "communicationAddress") or _value(details, "address")
     _copy_if_present(person, "address", _clean_text(address_value))
-    _copy_if_present(person, "pin_code", _valid_digits(_value(address, "pincode"), 6))
+    _copy_if_present(person, "pin_code", _valid_digits(_value(address, "pincode") or _value(details, "pincode"), 6))
     return person
 
 
