@@ -24,7 +24,7 @@ if (-not (Test-Path ".env")) {
 
 New-Item -ItemType Directory -Force -Path "data\logs" | Out-Null
 
-function Assert-PortAvailable {
+function Clear-Port {
     param(
         [int]$Port,
         [string]$ServiceName
@@ -32,13 +32,15 @@ function Assert-PortAvailable {
 
     $Listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     if ($Listeners) {
-        $ProcessIds = ($Listeners | Select-Object -ExpandProperty OwningProcess -Unique) -join ", "
-        throw "$ServiceName port $Port is already in use by PID(s) $ProcessIds. Stop the existing instance before starting DMEF again."
+        $ProcessIds = $Listeners | Select-Object -ExpandProperty OwningProcess -Unique
+        Write-Host "Stopping existing $ServiceName process(es) on port $Port (PID: $($ProcessIds -join ', '))..." -ForegroundColor Yellow
+        $ProcessIds | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 800
     }
 }
 
-Assert-PortAvailable -Port $ApiPort -ServiceName "Backend"
-Assert-PortAvailable -Port $UiPort -ServiceName "Streamlit"
+Clear-Port -Port $ApiPort -ServiceName "Backend"
+Clear-Port -Port $UiPort -ServiceName "UI (Next.js)"
 
 if (-not $SkipHealth) {
     Write-Host "Running local health check..." -ForegroundColor Cyan
