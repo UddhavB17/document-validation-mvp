@@ -21,6 +21,7 @@ from services.file_validator import (
     validate_package_upload,
     validate_upload,
 )
+from pydantic import ValidationError
 from services.company_dump_adapter import (
     CompanyDumpConversionError,
     convert_company_database_dump,
@@ -373,8 +374,11 @@ def _parse_manifest(raw_manifest: str) -> VerificationManifest:
         if is_company_database_dump(payload) or not isinstance(payload, dict) or "loan_id" not in payload:
             payload = convert_company_database_dump(payload)
         return VerificationManifest.model_validate(payload)
+    except ValidationError as exc:
+        # Surface Pydantic field errors verbatim so users see exactly which field failed
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (json.JSONDecodeError, CompanyDumpConversionError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"Invalid manifest: {exc}") from exc
 
 
 def _queue_mapped_verification(
