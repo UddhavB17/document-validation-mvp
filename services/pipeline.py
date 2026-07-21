@@ -212,6 +212,7 @@ def run_pipeline(
         digital_text_by_page,
         application_id=application_id,
         source_page_starts=source_page_starts,
+        source_documents=source_documents,
     )
     mapped_result: dict[str, Any] | None = None
     if mapped_manifest is not None:
@@ -591,6 +592,7 @@ def _build_page_records(
     digital_text_by_page: dict[int, str],
     application_id: int | None = None,
     source_page_starts: set[int] | None = None,
+    source_documents: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     llm_budget = create_llm_classifier_budget()
@@ -754,6 +756,17 @@ def _build_page_records(
                 }
             elif triage["category"] == "handwritten" and (ocr_confidence is None or float(ocr_confidence) < 0.70):
                 document_type = "Unknown"
+                detection_method = "triage_low_confidence"
+                if source_documents:
+                    for doc in source_documents:
+                        start = doc.get("internal_page_start")
+                        end = doc.get("internal_page_end")
+                        if start is not None and end is not None and start <= page_number <= end:
+                            inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                            if inferred:
+                                document_type = inferred
+                                detection_method = "filename_inference"
+                            break
                 classification = {"confidence": 0.0}
                 extracted_fields = {
                     **extracted_fields,
@@ -762,7 +775,7 @@ def _build_page_records(
                     "_classification": {
                         "source": "triage",
                         "assigned_type": document_type,
-                        "detection_method": "triage_low_confidence",
+                        "detection_method": detection_method,
                         "raw_document_type": document_type,
                         "raw_confidence": 0.0,
                         "detected_page_number": None,
@@ -797,7 +810,18 @@ def _build_page_records(
                 )
                 document_type = assigned["document_type"]
                 classification = {"confidence": assigned["confidence"]}
-                if assigned["detection_method"] == "detected":
+                detection_method = assigned["detection_method"]
+                if document_type == "Unknown" and source_documents:
+                    for doc in source_documents:
+                        start = doc.get("internal_page_start")
+                        end = doc.get("internal_page_end")
+                        if start is not None and end is not None and start <= page_number <= end:
+                            inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                            if inferred:
+                                document_type = inferred
+                                detection_method = "filename_inference"
+                            break
+                if detection_method == "detected":
                     current_type = document_type
                     current_confidence = float(assigned["confidence"] or 0.0)
                     current_detected_page = page_number
@@ -814,7 +838,7 @@ def _build_page_records(
                 classification_meta = {
                     **classification_meta,
                     "assigned_type": document_type,
-                    "detection_method": assigned["detection_method"],
+                    "detection_method": detection_method,
                     "raw_document_type": assigned["raw_document_type"],
                     "raw_confidence": assigned["raw_confidence"],
                     "detected_page_number": assigned["detected_page_number"],
@@ -877,13 +901,24 @@ def _build_page_records(
             is_readable = False
             ocr_confidence = 0.0
             document_type = "Unknown"
+            detection_method = "unknown"
+            if source_documents:
+                for doc in source_documents:
+                    start = doc.get("internal_page_start")
+                    end = doc.get("internal_page_end")
+                    if start is not None and end is not None and start <= page_number <= end:
+                        inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                        if inferred:
+                            document_type = inferred
+                            detection_method = "filename_inference"
+                        break
             classification = {"confidence": 0.0}
             extracted_fields = {
                 "_processing_error": str(exc),
                 "_classification": {
-                    "assigned_type": "Unknown",
-                    "detection_method": "unknown",
-                    "raw_document_type": "Unknown",
+                    "assigned_type": document_type,
+                    "detection_method": detection_method,
+                    "raw_document_type": document_type,
                     "raw_confidence": 0.0,
                     "detected_page_number": None,
                 },
@@ -1696,3 +1731,66 @@ def _save_llm_summary(application_id: int, summary: str) -> None:
             "UPDATE applications SET llm_summary = ? WHERE id = ?",
             (summary, application_id),
         )
+
+
+def _infer_document_type_from_filename(filename: str) -> str | None:
+    if not filename:
+        return None
+    lower = filename.lower().replace("\\", "/")
+
+    # Check for direct keyword matches in the whole path
+    if "pan" in lower:
+        return "PAN Card"
+    if "aadhar" in lower or "aadhaar" in lower or "uidai" in lower:
+        return "Aadhaar Card"
+    if "passport" in lower:
+        return "Passport"
+    if "driving" in lower or "dl " in lower or "licence" in lower or "license" in lower:
+        return "Driving License"
+    if "voter" in lower or "epic" in lower:
+        return "Voter ID"
+    if "cheque" in lower or "check" in lower:
+        return "Cheque"
+    if "statement" in lower or "bank_stmt" in lower or "bank stmt" in lower or "bankstmt" in lower:
+        return "Bank Statement"
+    if "utility" in lower or "bill" in lower or "electricity" in lower or "water" in lower or "gas_bill" in lower:
+        return "Utility Bill"
+    if "sanction" in lower or "loan_sanction" in lower:
+        return "Sanction Letter"
+    if "agreement" in lower or "contract" in lower or "loan_agreement" in lower:
+        return "Loan Agreement"
+    if "salary" in lower or "pay slip" in lower or "payslip" in lower or "salary_slip" in lower:
+        return "Salary Slip"
+    if "kfs" in lower or "key fact" in lower:
+        return "KFS (Key Fact Statement)"
+
+    # If it's a generic file name like page_1.png, image.jpg, scan.pdf, etc.,
+    # we can try to use the parent folder name if it exists.
+    parts = [p for p in lower.split("/") if p]
+    if len(parts) > 1:
+        parent = parts[-2]
+        # Ignore generic parent folders
+        if parent not in {"sources", "source", "uploads", "documents", "files", "temp", "tmp", "pages"}:
+            cleaned = parent.replace("_", " ").replace("-", " ")
+            return " ".join(word.capitalize() for word in cleaned.split())
+
+    # Fallback to the file base name if it is not generic
+    base_name = Path(parts[-1]).stem
+    generic_patterns = {
+        "image", "img", "scan", "page", "document", "doc", "file", "photo", "pic",
+        "output", "export", "pdf", "unnamed", "untitled", "unknown"
+    }
+    cleaned_base = base_name.replace("_", " ").replace("-", " ").strip()
+    words = cleaned_base.split()
+
+    is_generic = True
+    for word in words:
+        word_clean = "".join(c for c in word.lower() if c.isalpha())
+        if word_clean and word_clean not in generic_patterns:
+            is_generic = False
+            break
+
+    if not is_generic and cleaned_base:
+        return " ".join(word.capitalize() for word in words)
+
+    return None
