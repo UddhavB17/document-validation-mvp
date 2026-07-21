@@ -139,7 +139,7 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
         throw new Error("Mapped PDF or ZIP package is required");
       }
       const isZip = file.name.toLowerCase().endsWith(".zip");
-      const manifest = rawManifest.trim() ? JSON.parse(rawManifest) : undefined;
+      const manifest = rawManifest.trim() ? JSON.parse(escapeControlCharacters(rawManifest)) : undefined;
       if (!isZip && !manifest) {
         throw new Error("Manifest JSON is required when uploading a PDF directly");
       }
@@ -188,7 +188,7 @@ function PartnerJsonForm({ onUploaded }: { onUploaded: (result: UploadResponse) 
     setError(null);
     try {
       const form = new FormData(event.currentTarget);
-      const payload = JSON.parse(String(form.get("payload") ?? ""));
+      const payload = JSON.parse(escapeControlCharacters(String(form.get("payload") ?? "")));
       setSubmitting(true);
       onUploaded(await api.uploadPartnerJson(payload));
     } catch (err) {
@@ -345,7 +345,7 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
     try {
       let manifest: any;
       try {
-        manifest = JSON.parse(manifestText);
+        manifest = JSON.parse(escapeControlCharacters(manifestText));
       } catch (err) {
         throw new Error("Invalid manifest JSON. Please ensure it is valid JSON.");
       }
@@ -496,3 +496,19 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
     </div>
   );
 }
+
+function escapeControlCharacters(jsonString: string): string {
+  // Matches string literals in JSON (enclosed in double quotes, handling escaped quotes)
+  return jsonString.replace(/"([^"\\]|\\.)*"/g, (match) => {
+    // Escape control characters inside matched string literal values
+    return match.replace(/[\x00-\x1f]/g, (char) => {
+      if (char === "\n") return "\\n";
+      if (char === "\r") return "\\r";
+      if (char === "\t") return "\\t";
+      // Convert other control characters to standard Unicode escape sequence \u00xx
+      const hex = char.charCodeAt(0).toString(16).padStart(4, "0");
+      return "\\u" + hex;
+    });
+  });
+}
+
