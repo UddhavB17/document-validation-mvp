@@ -370,7 +370,7 @@ def _parse_manifest(raw_manifest: str) -> VerificationManifest:
             payload = json.loads(raw_manifest)
         except json.JSONDecodeError:
             payload = convert_company_database_dump(raw_manifest)
-        if is_company_database_dump(payload):
+        if is_company_database_dump(payload) or not isinstance(payload, dict) or "loan_id" not in payload:
             payload = convert_company_database_dump(payload)
         return VerificationManifest.model_validate(payload)
     except (json.JSONDecodeError, CompanyDumpConversionError, ValueError) as exc:

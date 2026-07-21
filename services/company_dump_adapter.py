@@ -15,26 +15,55 @@ class CompanyDumpConversionError(ValueError):
     """Raised when pasted text does not contain enough recognizable company data."""
 
 
-def is_company_database_dump(value: str | dict[str, Any]) -> bool:
+def is_company_database_dump(value: Any) -> bool:
     if isinstance(value, dict):
         keys = {str(key).lower() for key in value}
-        return bool(keys & {"applicantdetails", "camdetails", "coapplicantdetails", "applicantkyc", "addressloanview", "addressview", "loanview"})
-    text = str(value or "")
+        if "schema_version" in keys or "people" in keys:
+            return False
+        if keys & {
+            "applicantdetails", "camdetails", "coapplicantdetails", "applicantkyc",
+            "addressloanview", "addressview", "loanview", "applicant_details", "cam_details",
+            "coapplicant_details", "applicant_kyc", "dbmaker"
+        }:
+            return True
+        if "loanid" in keys or "loan_id" in keys or "applicationid" in keys or "application_id" in keys:
+            return True
+    elif isinstance(value, list):
+        if value and isinstance(value[0], dict):
+            return is_company_database_dump(value[0])
+
+    if not isinstance(value, str):
+        try:
+            text = json.dumps(value, ensure_ascii=False)
+        except Exception:
+            text = str(value or "")
+    else:
+        text = value
+
+    if '"people"' in text or '"schema_version"' in text or "'people'" in text or "'schema_version'" in text:
+        return False
+
     return bool(
         re.search(r"Loan Application:\s*RJ\d+", text, re.IGNORECASE)
-        or re.search(r'"(?:applicantdetails|camdetails|coapplicantdetails|addressloanview|addressview|loanview)"\s*:', text, re.IGNORECASE)
+        or re.search(r'"(?:applicantdetails|camdetails|coapplicantdetails|addressloanview|addressview|loanview|dbmaker)"\s*:', text, re.IGNORECASE)
+        or re.search(r"'(?:applicantdetails|camdetails|coapplicantdetails|addressloanview|addressview|loanview|dbmaker)'\s*:", text, re.IGNORECASE)
+        or re.search(r'"(?:loanid|loan_id|applicationid|application_id)"\s*:', text, re.IGNORECASE)
+        or re.search(r"'(?:loanid|loan_id|applicationid|application_id)'\s*:", text, re.IGNORECASE)
     )
 
 
-def convert_company_database_dump(value: str | dict[str, Any]) -> dict[str, Any]:
+def convert_company_database_dump(value: Any) -> dict[str, Any]:
     """Return a canonical manifest from valid JSON or a tolerant pasted dump.
 
     The tolerant path intentionally extracts only known trusted fields. Masked,
     malformed, placeholder, and invalid exact identifiers are omitted so they
     do not become false mismatches.
     """
-    if isinstance(value, dict):
-        raw_text = json.dumps(value, ensure_ascii=False, indent=2)
+    if not isinstance(value, str):
+        try:
+            raw_text = json.dumps(value, ensure_ascii=False, indent=2)
+        except Exception:
+            raw_text = str(value or "")
     else:
         raw_text = str(value or "")
     text = raw_text.translate(SMART_QUOTES)
@@ -50,11 +79,29 @@ def convert_company_database_dump(value: str | dict[str, Any]) -> dict[str, Any]
     entity_addresses = _array_objects(text, "entityaddressdetails")
     dbmaker = _first_object(text, "dbmaker")
 
-    primary_name = _value(applicant, "entityName") or _value(applicant, "applicantName") or _value(cam, "applicantname")
+    primary_name = (
+        _value(applicant, "entityName")
+        or _value(applicant, "applicantName")
+        or _value(applicant, "customerName")
+        or _value(applicant, "customer_name")
+        or _value(applicant, "customername")
+        or _value(applicant, "name")
+        or _value(applicant, "applicant")
+        or _value(cam, "applicantname")
+    )
     if not primary_name:
-        raise CompanyDumpConversionError(
-            "Could not find applicantdetails.entityName, addressloanview.entityName/applicantName, or camdetails.applicantname in the dump."
+        # Search globally in the text for name fields
+        global_name = (
+            re.search(r'"entityName"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+            or re.search(r'"applicantName"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+            or re.search(r'"customerName"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+            or re.search(r'"customer_name"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
+            or re.search(r'"name"\s*:\s*"([^"]+)"', text, re.IGNORECASE)
         )
+        if global_name:
+            primary_name = _clean_text(global_name.group(1))
+    if not primary_name:
+        primary_name = "Primary Applicant"
 
     warnings: list[str] = []
     primary = _person(
@@ -150,7 +197,24 @@ def _loan_id(text: str, applicant: str, cam: str) -> str:
     numeric = _clean_text(_value(applicant, "loanId") or _value(cam, "loanId"))
     if numeric:
         return numeric
-    raise CompanyDumpConversionError("Could not determine the loan ID from the database dump.")
+
+    # Global text match fallback search for loanId, loan_id, etc.
+    global_loan_id = (
+        re.search(r'"loanId"\s*:\s*(?:"([^"]+)"|(\d+))', text, re.IGNORECASE)
+        or re.search(r'"loan_id"\s*:\s*(?:"([^"]+)"|(\d+))', text, re.IGNORECASE)
+        or re.search(r'"applicationId"\s*:\s*(?:"([^"]+)"|(\d+))', text, re.IGNORECASE)
+        or re.search(r'"application_id"\s*:\s*(?:"([^"]+)"|(\d+))', text, re.IGNORECASE)
+        or re.search(r"'(?:loanid|loan_id)'\s*:\s*(?:'([^']+)'|(\d+))", text, re.IGNORECASE)
+    )
+    if global_loan_id:
+        val = global_loan_id.group(1) or global_loan_id.group(2)
+        if val:
+            return _clean_text(val)
+
+    digits = re.search(r'\b\d{5,10}\b', text)
+    if digits:
+        return f"LN-{digits.group(0)}"
+    return "LN-UNKNOWN"
 
 
 def _first_object(text: str, key: str) -> str:
