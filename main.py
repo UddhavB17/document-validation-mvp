@@ -60,3 +60,40 @@ app.include_router(review.router)
 @app.get("/health", tags=["meta"])
 def health_check() -> dict[str, str]:
     return {"status": "ok", "version": app.version}
+
+
+# ── Shutdown ──────────────────────────────────
+@app.post("/shutdown", tags=["meta"])
+def shutdown() -> dict[str, str]:
+    """Gracefully shutdown Next.js UI and FastAPI backend."""
+    import threading
+    import time
+    import subprocess
+    import os
+    import signal
+    import sys
+
+    def perform_shutdown():
+        time.sleep(0.5)  # Wait for the API response to be sent
+        # Attempt to kill UI on port 3000
+        try:
+            if sys.platform == "win32":
+                output = subprocess.check_output("netstat -ano", shell=True).decode()
+                for line in output.splitlines():
+                    if ":3000" in line and "LISTENING" in line:
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            pid = parts[-1]
+                            subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+            else:
+                output = subprocess.check_output("lsof -i :3000 -t", shell=True).decode().strip()
+                if output:
+                    for pid in output.split():
+                        subprocess.run(f"kill -9 {pid}", shell=True, capture_output=True)
+        except Exception:
+            pass
+        # Kill the FastAPI backend process
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    threading.Thread(target=perform_shutdown, daemon=True).start()
+    return {"message": "DMEF services shutting down..."}

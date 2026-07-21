@@ -54,6 +54,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="text-red-700">API unavailable</div>
           )}
         </div>
+        {!health.isError && health.data && (
+          <div className="mx-5 border-t border-slate-200 py-3">
+            <button
+              type="button"
+              onClick={async () => {
+                if (window.confirm("Are you sure you want to stop DMEF? This will shut down both the Backend and UI servers.")) {
+                  try {
+                    const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+                    await fetch(`${baseUrl}/shutdown`, { method: "POST" });
+                  } catch (e) {
+                    // Ignored: request will drop since server is shutting down
+                  }
+                  window.alert("DMEF program has been stopped. You can now close this browser tab.");
+                }
+              }}
+              className="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 shadow-sm transition-all duration-150 hover:bg-red-100 hover:text-red-800 active:scale-[0.98] select-none text-center block"
+            >
+              Stop DMEF
+            </button>
+          </div>
+        )}
       </aside>
       <main className="min-w-0 flex-1 px-8 py-6">{children}</main>
     </div>
