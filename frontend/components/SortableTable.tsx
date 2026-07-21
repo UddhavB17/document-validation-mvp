@@ -28,15 +28,15 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
   }, [columns, rows, sort]);
 
   return (
-    <div className="overflow-x-auto rounded border border-slate-200 bg-white">
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
       <table className="min-w-full divide-y divide-slate-200 text-sm">
-        <thead className="bg-slate-100 text-left text-xs font-semibold uppercase text-slate-600">
+        <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
           <tr>
             {columns.map((column) => (
-              <th key={column.key} className="whitespace-nowrap px-3 py-2">
+              <th key={column.key} className="whitespace-nowrap px-4 py-3">
                 <button
                   type="button"
-                  className="font-semibold"
+                  className="font-bold hover:text-slate-800 transition-colors duration-150 flex items-center gap-1"
                   onClick={() =>
                     setSort((current) =>
                       current?.key === column.key
@@ -46,7 +46,11 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
                   }
                 >
                   {column.header}
-                  {sort?.key === column.key ? ` ${sort.direction === "asc" ? "Asc" : "Desc"}` : ""}
+                  {sort?.key === column.key ? (
+                    <span className="text-[10px] text-blue-600 font-mono">
+                      {sort.direction === "asc" ? " ▲" : " ▼"}
+                    </span>
+                  ) : null}
                 </button>
               </th>
             ))}
@@ -54,9 +58,9 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
         </thead>
         <tbody className="divide-y divide-slate-100">
           {sortedRows.map((row, index) => (
-            <tr key={index} className="align-top">
+            <tr key={index} className="align-top hover:bg-slate-50/50 transition-colors duration-100">
               {columns.map((column) => (
-                <td key={column.key} className="px-3 py-2 text-slate-800">
+                <td key={column.key} className="px-4 py-3.5 text-slate-700 font-medium">
                   {column.value(row)}
                 </td>
               ))}

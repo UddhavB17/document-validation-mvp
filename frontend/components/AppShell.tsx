@@ -30,9 +30,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`block rounded px-3 py-2 text-sm font-medium ${
-                  active ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"
-                }`}
+                className={`block rounded px-3 py-2 text-sm font-medium ${active ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"
+                  }`}
               >
                 {item.label}
               </Link>

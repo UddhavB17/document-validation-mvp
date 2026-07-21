@@ -5,6 +5,7 @@
 html,
 body {
   min-height: 100%;
+  background-color: #f8fafc;
 }
 
 body {
@@ -12,9 +13,18 @@ body {
   color: #111827;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.15);
 }

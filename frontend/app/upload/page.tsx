@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { ProgressPanel } from "@/components/ProgressPanel";
 import { api, UploadResponse } from "@/lib/api";
 import { uploadFormSchema } from "@/lib/forms";
+import { StatusBadge } from "@/components/StatusBadge";
 
 type Tab = "pdf" | "mapped" | "json" | "zip";
 
@@ -23,7 +24,7 @@ export default function UploadPage() {
         title="Document Intake"
         description="Upload a loan-file packet, watch page results finish, then review the final checklist output."
       />
-      <div className="mb-5 flex gap-2 border-b border-slate-200">
+      <div className="mb-6 flex gap-2 border-b border-slate-200">
         <TabButton active={tab === "pdf"} onClick={() => setTab("pdf")}>
           PDF Upload
         </TabButton>
@@ -38,23 +39,25 @@ export default function UploadPage() {
         </TabButton>
       </div>
 
-      {tab === "pdf" ? <PdfUploadForm onUploaded={setResult} /> : null}
-      {tab === "mapped" ? <MappedUploadForm onUploaded={setResult} /> : null}
-      {tab === "json" ? <PartnerJsonForm onUploaded={setResult} /> : null}
-      {tab === "zip" ? <ZipPackageForm onUploaded={setResult} /> : null}
+      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+        {tab === "pdf" ? <PdfUploadForm onUploaded={setResult} /> : null}
+        {tab === "mapped" ? <MappedUploadForm onUploaded={setResult} /> : null}
+        {tab === "json" ? <PartnerJsonForm onUploaded={setResult} /> : null}
+        {tab === "zip" ? <ZipPackageForm onUploaded={setResult} /> : null}
+      </div>
 
       {result ? (
-        <section className="mt-8 space-y-5 border-t border-slate-200 pt-6">
+        <section className="mt-8 space-y-6 border-t border-slate-200 pt-6">
           <InfoMessage message={`Application ${result.application_id} accepted with status ${result.status}.`} />
-          <div className="grid grid-cols-4 gap-3">
-            <Metric label="Application" value={result.application_id} />
-            <Metric label="Total pages" value={result.total_pages ?? "-"} />
-            <Metric label="Digital" value={result.digital_pages ?? "-"} />
-            <Metric label="Scanned" value={result.scanned_pages ?? "-"} />
+          <div className="grid grid-cols-4 gap-4">
+            <Metric label="Application ID" value={result.application_id} />
+            <Metric label="Total Pages" value={result.total_pages ?? "-"} />
+            <Metric label="Digital Count" value={result.digital_pages ?? "-"} />
+            <Metric label="Scanned Count" value={result.scanned_pages ?? "-"} />
           </div>
           <ProgressPanel applicationId={result.application_id} />
-          <Link className="inline-block rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white" href={`/applications/${result.application_id}`}>
-            Open review
+          <Link className="inline-block rounded-lg bg-blue-50 border border-blue-200 px-5 py-2.5 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-100 transition-colors duration-150" href={`/applications/${result.application_id}`}>
+            Open Completed Review
           </Link>
         </section>
       ) : null}
@@ -91,10 +94,10 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
   }
 
   return (
-    <form className="grid grid-cols-[1.15fr_0.85fr] gap-6" onSubmit={submit}>
+    <form className="grid grid-cols-1 md:grid-cols-2 gap-6" onSubmit={submit}>
       {error ? <div className="col-span-2"><ErrorMessage message={error} /></div> : null}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Application Details</h2>
+        <h2 className="text-lg font-bold text-slate-800">Application Details</h2>
         <div className="grid grid-cols-2 gap-4">
           <TextField name="loanId" label="Loan ID" required />
           <SelectField name="productType" label="Product Type" options={["LAP", "MSME", "Personal Loan"]} />
@@ -103,11 +106,16 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
         <TextField name="coapplicantName" label="Co-applicant Name" />
         <TextField name="branch" label="Branch" required />
       </section>
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold">Document</h2>
-        <input className="block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm" name="file" type="file" accept="application/pdf" />
-        <p className="text-sm text-slate-600">Select one PDF loan packet to begin.</p>
-        <button disabled={isSubmitting} className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400">
+      <section className="space-y-4 flex flex-col justify-between">
+        <div className="space-y-4">
+          <h2 className="text-lg font-bold text-slate-800">Document File</h2>
+          <label className="block">
+            <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Loan Packet PDF</span>
+            <input className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-slate-300 bg-white file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none" name="file" type="file" accept="application/pdf" />
+          </label>
+          <p className="text-xs text-slate-500 font-medium">Select a single PDF file containing all applicant KYC and loan documentation.</p>
+        </div>
+        <button disabled={isSubmitting} className="w-full md:w-auto px-5 py-3 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500">
           {isSubmitting ? "Submitting..." : "Submit for processing"}
         </button>
       </section>
@@ -146,16 +154,25 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
   }
 
   return (
-    <form className="space-y-4" onSubmit={submit}>
+    <form className="space-y-5" onSubmit={submit}>
       {error ? <ErrorMessage message={error} /> : null}
-      <h2 className="text-lg font-semibold">Trusted JSON + Page Mapping</h2>
-      <input className="block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm" name="file" type="file" accept="application/pdf,.pdf,application/zip,.zip" />
-      <textarea
-        className="h-80 w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm"
-        name="manifest"
-        placeholder='Paste manifest JSON here, or upload a ZIP containing one PDF and one JSON manifest. If the ZIP has multiple PDFs, include "pdf_file": "loan-file.pdf" in the manifest.'
-      />
-      <button disabled={isSubmitting} className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400">
+      <div className="space-y-2">
+        <h2 className="text-lg font-bold text-slate-800">Trusted JSON + Page Mapping</h2>
+        <p className="text-xs text-slate-500 font-medium">Verify pages in a PDF using deterministic templates and database hashes.</p>
+      </div>
+      <label className="block">
+        <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Select file (PDF or ZIP package)</span>
+        <input className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-slate-300 bg-white file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none" name="file" type="file" accept="application/pdf,.pdf,application/zip,.zip" />
+      </label>
+      <label className="block">
+        <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Manifest JSON</span>
+        <textarea
+          className="h-64 w-full rounded-lg border border-slate-300 bg-white px-4 py-3 font-mono text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 shadow-sm"
+          name="manifest"
+          placeholder='Paste manifest JSON here, or upload a ZIP containing one PDF and one JSON manifest. If the ZIP has multiple PDFs, include "pdf_file": "loan-file.pdf" in the manifest.'
+        />
+      </label>
+      <button disabled={isSubmitting} className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500">
         {isSubmitting ? "Submitting..." : "Run Deterministic Verification"}
       </button>
     </form>
@@ -182,11 +199,17 @@ function PartnerJsonForm({ onUploaded }: { onUploaded: (result: UploadResponse) 
   }
 
   return (
-    <form className="space-y-4" onSubmit={submit}>
+    <form className="space-y-5" onSubmit={submit}>
       {error ? <ErrorMessage message={error} /> : null}
-      <h2 className="text-lg font-semibold">Partner OCR JSON Payload</h2>
-      <textarea className="h-80 w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm" name="payload" placeholder='{"loan_id":"LN-001","digital_text":{},"scanned_docs":{}}' />
-      <button disabled={isSubmitting} className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400">
+      <div className="space-y-2">
+        <h2 className="text-lg font-bold text-slate-800">Partner OCR JSON Payload</h2>
+        <p className="text-xs text-slate-500 font-medium">Evaluate the checklist engine directly using a pre-extracted partner OCR JSON payload.</p>
+      </div>
+      <label className="block">
+        <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">OCR JSON Payload</span>
+        <textarea className="h-64 w-full rounded-lg border border-slate-300 bg-white px-4 py-3 font-mono text-sm text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 shadow-sm" name="payload" placeholder='{"loan_id":"LN-001","digital_text":{},"scanned_docs":{}}' />
+      </label>
+      <button disabled={isSubmitting} className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500">
         {isSubmitting ? "Submitting..." : "Run Checklist Evaluation"}
       </button>
     </form>
@@ -198,7 +221,11 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
     <button
       type="button"
       onClick={onClick}
-      className={`border-b-2 px-4 py-2 text-sm font-medium ${active ? "border-blue-700 text-blue-700" : "border-transparent text-slate-600"}`}
+      className={`border-b-2 px-5 py-3 text-sm font-semibold transition-all duration-150 select-none ${
+        active 
+          ? "border-blue-700 text-blue-700 font-bold" 
+          : "border-transparent text-slate-500 hover:text-slate-800"
+      }`}
     >
       {children}
     </button>
@@ -207,20 +234,20 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
 
 function TextField({ name, label, required = false }: { name: string; label: string; required?: boolean }) {
   return (
-    <label className="block text-sm font-medium text-slate-700">
-      {label}
-      <input className="mt-1 block w-full rounded border border-slate-300 px-3 py-2" name={name} required={required} />
+    <label className="block text-sm font-medium">
+      <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">{label}</span>
+      <input className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 shadow-sm" name={name} required={required} />
     </label>
   );
 }
 
 function SelectField({ name, label, options }: { name: string; label: string; options: string[] }) {
   return (
-    <label className="block text-sm font-medium text-slate-700">
-      {label}
-      <select className="mt-1 block w-full rounded border border-slate-300 px-3 py-2" name={name}>
+    <label className="block text-sm font-medium">
+      <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">{label}</span>
+      <select className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 shadow-sm cursor-pointer" name={name}>
         {options.map((option) => (
-          <option key={option}>{option}</option>
+          <option key={option} className="bg-white text-slate-900">{option}</option>
         ))}
       </select>
     </label>
@@ -336,37 +363,45 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
       {error ? <ErrorMessage message={error} /> : null}
 
       {!progress || progress.status !== "prepared" ? (
-        <form onSubmit={handlePrepare} className="space-y-4 max-w-xl">
-          <h2 className="text-lg font-semibold">Step 1: Upload and Prepare ZIP</h2>
-          <p className="text-sm text-slate-600">
-            Upload the original ZIP package. Spreadsheets (.xlsx) are automatically rendered to readable PDF sheets, and images (.jpg/.png) are consolidated.
-          </p>
-          <input
-            className="block w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-            type="file"
-            accept=".zip,application/zip"
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-          />
+        <form onSubmit={handlePrepare} className="space-y-5 max-w-xl">
+          <div className="space-y-2">
+            <h2 className="text-lg font-bold text-slate-800">Step 1: Upload and Prepare ZIP Folder</h2>
+            <p className="text-xs text-slate-550 font-medium leading-relaxed">
+              Upload the original ZIP package. Spreadsheets (.xlsx) are automatically rendered to readable PDF sheets, and images (.jpg/.png) are consolidated.
+            </p>
+          </div>
+          <label className="block">
+            <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Intake ZIP Archive</span>
+            <input
+              className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-slate-300 bg-white file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none"
+              type="file"
+              accept=".zip,application/zip"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+          </label>
           <button
             type="submit"
             disabled={isPreparing || !file}
-            className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400"
+            className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500"
           >
-            {isPreparing ? "Preparing ZIP..." : "Prepare ZIP and Build Page Inventory"}
+            {isPreparing ? "Preparing ZIP Archive..." : "Extract ZIP and Build Page Inventory"}
           </button>
 
           {isPreparing && progress && (
-            <div className="rounded bg-slate-50 border border-slate-200 p-4 space-y-2">
-              <div className="text-sm font-medium text-slate-700">
-                Stage: {progress.stage || "Initializing"}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 space-y-3 shadow-inner">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-wider">
+                <span>Stage: {progress.stage || "Initializing"}</span>
+                <span className="text-blue-700 font-mono">
+                  {progress.processed_files || 0} / {progress.total_files || 0} files
+                </span>
               </div>
-              <div className="text-sm text-slate-600">
+              <div className="text-sm font-semibold text-slate-800">
                 {progress.message || "Starting ZIP extraction..."}
               </div>
               {progress.total_files > 0 && (
-                <div className="w-full bg-slate-200 rounded-full h-2">
+                <div className="w-full bg-slate-200 border border-slate-300 rounded-full h-2.5 overflow-hidden shadow-inner">
                   <div
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    className="bg-blue-600 h-full rounded-full transition-all duration-300"
                     style={{
                       width: `${Math.round(((progress.processed_files || 0) / progress.total_files) * 100)}%`
                     }}
@@ -378,8 +413,8 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
         </form>
       ) : (
         <form onSubmit={handleVerify} className="space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-lg font-semibold text-slate-900">Step 2: Review Inventory & Mapped Verification</h2>
+          <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+            <h2 className="text-lg font-bold text-slate-800">Step 2: Review Inventory & Mapped Verification</h2>
             <button
               type="button"
               onClick={() => {
@@ -387,55 +422,55 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
                 setPreparingPackageId(null);
                 setFile(null);
               }}
-              className="text-sm text-blue-700 hover:underline"
+              className="text-xs font-bold text-blue-700 hover:underline flex items-center gap-1"
             >
-              Upload another ZIP
+              🔄 Upload another ZIP
             </button>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
-            <Metric label="Package" value={progress.package_id.slice(0, 8)} />
+            <Metric label="Package ID" value={progress.package_id.slice(0, 8)} />
             <Metric label="Source files" value={progress.total_files} />
             <Metric label="Internal pages" value={progress.total_pages} />
           </div>
 
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-slate-700">Source Files Inventory</h3>
-            <div className="overflow-x-auto rounded border border-slate-200 bg-white">
-              <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-                <thead className="bg-slate-50 font-medium text-slate-600">
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-slate-700">Source Files Inventory</h3>
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                <thead className="bg-slate-50 font-bold uppercase tracking-wider text-slate-500">
                   <tr>
-                    <th className="px-4 py-2 border-b">ID</th>
-                    <th className="px-4 py-2 border-b">Filename</th>
-                    <th className="px-4 py-2 border-b">Type</th>
-                    <th className="px-4 py-2 border-b">Worksheets</th>
-                    <th className="px-4 py-2 border-b">Pages</th>
+                    <th className="px-4 py-3 border-b border-slate-200">ID</th>
+                    <th className="px-4 py-3 border-b border-slate-200">Filename</th>
+                    <th className="px-4 py-3 border-b border-slate-200">Type</th>
+                    <th className="px-4 py-3 border-b border-slate-200">Worksheets</th>
+                    <th className="px-4 py-3 border-b border-slate-200">Page Ranges</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-slate-700">
                   {progress.documents?.map((doc: any) => (
-                    <tr key={doc.source_document_id}>
-                      <td className="px-4 py-2 font-mono text-xs">{doc.source_document_id}</td>
-                      <td className="px-4 py-2 font-medium">{doc.original_filename}</td>
-                      <td className="px-4 py-2 font-mono text-xs capitalize">{doc.file_type}</td>
-                      <td className="px-4 py-2 text-slate-600">{doc.worksheets?.join(", ") || "-"}</td>
-                      <td className="px-4 py-2 font-mono text-xs">
+                    <tr key={doc.source_document_id} className="hover:bg-slate-50/50 transition-colors duration-100">
+                      <td className="px-4 py-3 font-mono text-blue-700 font-semibold">{doc.source_document_id}</td>
+                      <td className="px-4 py-3 font-semibold">{doc.original_filename}</td>
+                      <td className="px-4 py-3"><StatusBadge status={doc.file_type} /></td>
+                      <td className="px-4 py-3 text-slate-500 font-medium">{doc.worksheets?.join(", ") || "-"}</td>
+                      <td className="px-4 py-3 font-mono font-semibold text-slate-800">
                         {doc.internal_page_start === doc.internal_page_end
                           ? doc.internal_page_start
-                          : `${doc.internal_page_start}-${doc.internal_page_end}`}
+                          : `${doc.internal_page_start} - ${doc.internal_page_end}`}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-slate-500">
-              The internal page numbers will correspond to the consolidated PDF page layout for checking.
+            <p className="text-[11px] text-slate-500 font-medium">
+              * Note: The internal page numbers correspond to the consolidated PDF page layout for verification matches.
             </p>
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700">
+            <label className="block text-sm font-bold text-slate-700">
               Trusted JSON or Raw Company Database Dump for this ZIP
               <span className="block font-normal text-xs text-slate-500 mt-1">
                 Supply the JSON manifest or paste the raw text output from the database application.
@@ -444,7 +479,7 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
             <textarea
               value={manifestText}
               onChange={(e) => setManifestText(e.target.value)}
-              className="h-80 w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="h-80 w-full rounded-lg border border-slate-300 bg-white px-4 py-3 font-mono text-sm text-slate-900 placeholder-slate-400 focus:border-blue-650 focus:outline-none focus:ring-1 focus:ring-blue-650 shadow-sm"
               placeholder="Paste manifest or database dump here..."
             />
           </div>
@@ -452,7 +487,7 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
           <button
             type="submit"
             disabled={isVerifying}
-            className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white disabled:bg-slate-400"
+            className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500"
           >
             {isVerifying ? "Verifying..." : "Identify and Verify ZIP Documents"}
           </button>

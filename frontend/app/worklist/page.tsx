@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { ErrorMessage, InfoMessage, LoadingMessage } from "@/components/Message";
+import { Metric } from "@/components/Metric";
 import { PageHeader } from "@/components/PageHeader";
 import { SortableTable } from "@/components/SortableTable";
+import { StatusBadge } from "@/components/StatusBadge";
 import { WorklistItem } from "@/lib/api";
-import { statusTone } from "@/lib/format";
 import { useWorklist } from "@/lib/queries";
 
 const filters = ["All", "Pending", "Needs Review", "Auto Clean", "Verified"] as const;
@@ -19,6 +20,16 @@ export default function WorklistPage() {
   const [queue, setQueue] = useState<number[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
 
+  const stats = useMemo(() => {
+    const items = worklist.data?.items ?? [];
+    return {
+      total: items.length,
+      needsReview: items.filter(i => ["NEEDS_REVIEW", "CRITICAL"].includes(i.status)).length,
+      clean: items.filter(i => i.status === "CLEAN").length,
+      pending: items.filter(i => ["uploaded", "processing", "ocr_completed"].includes(i.status)).length,
+    };
+  }, [worklist.data?.items]);
+
   const filtered = useMemo(() => {
     const items = worklist.data?.items ?? [];
     return items.filter((item) => matchesFilter(item, filter));
@@ -28,15 +39,23 @@ export default function WorklistPage() {
 
   return (
     <>
-      <PageHeader title="Reviewer Worklist" />
+      <PageHeader title="Reviewer Worklist" description="Manage incoming loan application validations and audit exceptions." />
       {worklist.isLoading ? <LoadingMessage /> : null}
       {worklist.isError ? <ErrorMessage message="Unable to load worklist." /> : null}
       {worklist.data ? (
-        <div className="space-y-5">
-          <div className="flex items-center justify-between gap-4">
+        <div className="space-y-6">
+          {/* Dashboard Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Metric label="Total Files" value={stats.total} />
+            <Metric label="Needs Attention" value={stats.needsReview} />
+            <Metric label="Auto-Verified Clean" value={stats.clean} />
+            <Metric label="Processing Queue" value={stats.pending} />
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-2">
             <button
               type="button"
-              className="rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white"
+              className="px-4 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-colors duration-150 shadow-sm active:scale-[0.98] select-none"
               onClick={() => {
                 const pending = queueCandidates(worklist.data.items);
                 setQueue(pending.map((item) => item.id));
@@ -45,14 +64,16 @@ export default function WorklistPage() {
             >
               Start Review Queue
             </button>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {filters.map((item) => (
                 <button
                   type="button"
                   key={item}
                   onClick={() => setFilter(item)}
-                  className={`rounded border px-3 py-1.5 text-sm ${
-                    filter === item ? "border-blue-700 bg-blue-50 text-blue-700" : "border-slate-300 bg-white text-slate-700"
+                  className={`rounded-lg border px-4 py-2 text-sm font-semibold transition-all duration-150 ${
+                    filter === item
+                      ? "border-blue-600 bg-blue-50 text-blue-700 shadow-sm"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800"
                   }`}
                 >
                   {item}
@@ -64,7 +85,7 @@ export default function WorklistPage() {
             <InfoMessage message={`Review queue: file ${queueIndex + 1} of ${queue.length}.`} />
           ) : null}
           {queueApplicationId ? (
-            <Link className="inline-block rounded bg-blue-700 px-4 py-2 text-sm font-medium text-white" href={`/applications/${queueApplicationId}`}>
+            <Link className="inline-block rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 px-4 py-2 text-sm font-bold text-blue-750 shadow-sm transition-all duration-150" href={`/applications/${queueApplicationId}`}>
               Open queue item
             </Link>
           ) : null}
@@ -77,7 +98,7 @@ export default function WorklistPage() {
                 {
                   key: "loan",
                   header: "Loan ID",
-                  value: (row) => <Link className="font-medium text-blue-700" href={`/applications/${row.id}`}>{row.loan_id}</Link>,
+                  value: (row) => <Link className="font-bold text-blue-700 hover:text-blue-600 transition-colors duration-150 hover:underline" href={`/applications/${row.id}`}>{row.loan_id}</Link>,
                   sortValue: (row) => row.loan_id,
                 },
                 { key: "applicant", header: "Applicant", value: (row) => row.applicant_name ?? "-", sortValue: (row) => row.applicant_name },
@@ -85,7 +106,7 @@ export default function WorklistPage() {
                 {
                   key: "status",
                   header: "Status",
-                  value: (row) => <span className={`font-medium ${statusTone(row.status)}`}>{row.status}</span>,
+                  value: (row) => <StatusBadge status={row.status} />,
                   sortValue: (row) => row.status,
                 },
                 { key: "issues", header: "Issues", value: (row) => row.reviewer_issues, sortValue: (row) => row.reviewer_issues },
