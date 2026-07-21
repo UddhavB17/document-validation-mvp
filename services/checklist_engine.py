@@ -592,6 +592,7 @@ def _run_accuracy_checks(
         if check_type == "presence_and_match":
             doc_pages = _matching_pages(pages, document_type)
             if doc_pages:
+                emitted_fields: set[str] = set()
                 for page in doc_pages:
                     expected_data = system_data
                     person_id = str(page.get("person_id") or page.get("applicant_role") or "")
@@ -602,6 +603,10 @@ def _run_accuracy_checks(
                         page.get("extracted_fields", {}), expected_data, [item["match_field"]]
                     )
                     for mismatch in mismatches:
+                        field_key = f"{person_id}:{mismatch['field']}"
+                        if field_key in emitted_fields:
+                            continue
+                        emitted_fields.add(field_key)
                         anomalies.append(
                             build_anomaly(
                                 rule_id=f"FIELD_MISMATCH_S{s_no}",
@@ -619,11 +624,16 @@ def _run_accuracy_checks(
         elif check_type == "field_match":
             doc_pages = _matching_pages(pages, document_type)
             if doc_pages:
+                emitted_fields: set[str] = set()
                 for page in doc_pages:
                     mismatches = check_field_match(
                         page.get("extracted_fields", {}), system_data, item.get("match_fields", [])
                     )
                     for mismatch in mismatches:
+                        field_name = str(mismatch["field"])
+                        if field_name in emitted_fields:
+                            continue
+                        emitted_fields.add(field_name)
                         anomalies.append(
                             build_anomaly(
                                 rule_id=f"FIELD_MISMATCH_S{s_no}",
@@ -760,18 +770,30 @@ def _run_accuracy_checks(
             doc_pages = _matching_pages(pages, document_type)
             accepted = item.get("accepted_statuses") or ["clear", "cleared", "positive", "approved", "registered"]
             rejected = item.get("rejected_statuses") or ["not clear", "not cleared", "negative", "rejected", "pending"]
-            for page in doc_pages:
-                if not _is_positive_status(page, accepted, rejected, item.get("status_fields") or ["status"]):
-                    anomalies.append(
-                        build_anomaly(
-                            rule_id=f"STATUS_CHECK_S{s_no}", s_no=s_no,
-                            severity=item.get("severity_if_fail", "HIGH"),
-                            expected_value=" / ".join(accepted),
-                            found_value=_page_status(page, item.get("status_fields") or ["status"])[:160] or "Status not found",
-                            reason=description, page_number=page.get("page_number"),
-                            document_type=str(page.get("document_type") or document_type),
-                        )
+            failing_pages = [
+                page for page in doc_pages
+                if not _is_positive_status(page, accepted, rejected, item.get("status_fields") or ["status"])
+            ]
+            if failing_pages:
+                first = failing_pages[0]
+                page_preview = ", ".join(
+                    str(page.get("page_number")) for page in failing_pages[:6] if page.get("page_number") is not None
+                )
+                if len(failing_pages) > 6:
+                    page_preview += f", … (+{len(failing_pages) - 6} more)"
+                anomalies.append(
+                    build_anomaly(
+                        rule_id=f"STATUS_CHECK_S{s_no}", s_no=s_no,
+                        severity=item.get("severity_if_fail", "HIGH"),
+                        expected_value=" / ".join(accepted),
+                        found_value=(
+                            f"{_page_status(first, item.get('status_fields') or ['status'])[:120] or 'Status not found'}"
+                            + (f" across {len(failing_pages)} page(s): {page_preview}" if len(failing_pages) > 1 else "")
+                        ),
+                        reason=description, page_number=first.get("page_number"),
+                        document_type=str(first.get("document_type") or document_type),
                     )
+                )
 
         elif check_type == "distinct_positive_count":
             doc_pages = _matching_pages(pages, document_type)
@@ -883,6 +905,14 @@ def _non_loan_relevance_anomaly(
 def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
     anomalies: list[dict] = []
     pan_pages = _find_pages_any_confidence(pages, "PAN")
+    ocr_threshold = float(effective_config().min_scanned_ocr_confidence)
+    image_heavy_types = {
+        "property image",
+        "gps",
+        "photo",
+        "screenshot",
+        "ocr skipped",
+    }
 
     for page in pages:
         if is_ocr_skipped_page(page):
@@ -890,6 +920,10 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
 
         page_number = page.get("page_number")
         document_type = page.get("document_type")
+        doc_type_key = str(document_type or "").strip().lower()
+        if doc_type_key in image_heavy_types:
+            continue
+
         if page.get("is_readable") is False:
             anomalies.append(
                 build_anomaly(
@@ -905,13 +939,13 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
             )
 
         confidence = page.get("ocr_confidence", page.get("confidence"))
-        if page.get("page_type") == "scanned" and confidence is not None and confidence < 0.70:
+        if page.get("page_type") == "scanned" and confidence is not None and confidence < ocr_threshold:
             anomalies.append(
                 build_anomaly(
                     "LOW_OCR_CONFIDENCE",
                     None,
                     "LOW",
-                    "Confidence above 70%",
+                    f"Confidence above {ocr_threshold:.0%}",
                     f"{confidence:.0%} confidence",
                     "OCR confidence below acceptable threshold",
                     page_number,

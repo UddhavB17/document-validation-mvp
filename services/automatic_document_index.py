@@ -66,17 +66,35 @@ def build_automatic_document_index(
     for group in groups:
         document_type = str(group["document_type"])
         person = _infer_person(group["pages_data"], reference_data, document_type)
-        if person["person_id"] is None:
-            anomalies.append(
-                _mapping_anomaly(
-                    "AUTO_OWNER_UNRESOLVED",
-                    group,
-                    "The document type was identified, but no applicant identity matched trusted data.",
-                )
-            )
-            continue
+        is_loan_level = document_type.strip().lower() in LOAN_LEVEL_DOCUMENT_TYPES
 
-        if person["confidence"] < 0.60 and len(reference_data) > 1:
+        if person["person_id"] is None:
+            if is_loan_level and reference_data:
+                default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+                person = {
+                    "person_id": default_id,
+                    "confidence": 0.35,
+                    "evidence": ["loan_level_document_default"],
+                }
+            else:
+                anomalies.append(
+                    _mapping_anomaly(
+                        "AUTO_OWNER_UNRESOLVED",
+                        group,
+                        "The document type was identified, but no applicant identity matched trusted data.",
+                    )
+                )
+                continue
+
+        # Loan-level docs are intentionally assigned to primary with modest confidence.
+        # Do not emit per-fragment LOW_CONFIDENCE noise for that default.
+        loan_level_evidence = {"loan_level_document", "loan_level_document_default"}
+        if (
+            person["confidence"] < 0.60
+            and len(reference_data) > 1
+            and not is_loan_level
+            and not loan_level_evidence.intersection(person["evidence"])
+        ):
             anomalies.append(
                 _mapping_anomaly(
                     "AUTO_OWNER_LOW_CONFIDENCE",
@@ -137,11 +155,19 @@ def _group_pages(
             continue
         source_id = source_by_page.get(page_number)
         starts_document = page.get("detected_page_number") == page_number
+        is_loan_level = document_type.strip().lower() in LOAN_LEVEL_DOCUMENT_TYPES
+        # Loan agreements / sanction letters often mis-detect every page as "page 1".
+        # Do not fragment those within the same ZIP member.
+        split_on_heading = (
+            starts_document
+            and page_number not in (current or {}).get("pages", [])
+            and not is_loan_level
+        )
         new_group = (
             current is None
             or current["document_type"] != document_type
             or current.get("zip_source_id") != source_id
-            or (starts_document and page_number not in current["pages"])
+            or split_on_heading
         )
         if new_group:
             generated_id = source_id or f"auto-{page_number:04d}-{_slug(document_type)}"

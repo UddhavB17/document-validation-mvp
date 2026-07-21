@@ -417,7 +417,8 @@ def _load_worklist() -> list[dict]:
                 (item["id"],),
             ).fetchall()
         summary = summarize_for_display([dict(anomaly) for anomaly in anomalies])
-        item["issues"] = summary["raw_count"]
+        item["issues"] = summary["reviewer_count"]
+        item["raw_issues"] = summary["raw_count"]
         item["reviewer_issues"] = summary["reviewer_count"]
         applications.append(item)
     return applications

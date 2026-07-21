@@ -1,8 +1,8 @@
 """Reviewer exception handling, deterministic summaries, and persistence.
 
-Large loan files can produce hundreds of per-page LOW severity flags
-(UNCLASSIFIED_PAGE, LOW_OCR_CONFIDENCE, UNREADABLE_PAGE). Operations teams
-need a short actionable list, not one row per scanned page.
+Large loan files can produce hundreds of per-page / per-group flags
+(UNCLASSIFIED_PAGE, AUTO_OWNER_*, LOAN_AMOUNT_NOT_FOUND, …). Operations teams
+need a short actionable list, not one row per scanned page or document fragment.
 """
 
 from __future__ import annotations
@@ -21,59 +21,70 @@ IDENTITY_RULES = {
     "DATE_OF_BIRTH_MISMATCH",
 }
 
-# Per-page quality flags that should be summarized, not listed one-by-one.
+# Noise that should be summarized, not listed one-by-one.
 _COLLAPSIBLE_RULES = frozenset(
     {
         "UNCLASSIFIED_PAGE",
         "LOW_OCR_CONFIDENCE",
         "UNREADABLE_PAGE",
+        "AUTO_OWNER_UNRESOLVED",
+        "AUTO_OWNER_LOW_CONFIDENCE",
+        "LOAN_AMOUNT_NOT_FOUND",
+        "APPLICANT_NAME_NOT_FOUND",
+        "PIN_CODE_NOT_FOUND",
+        "DATE_OF_BIRTH_NOT_FOUND",
+        "ADDRESS_NOT_FOUND",
+        "PHONE_NUMBER_NOT_FOUND",
+        "AADHAAR_NUMBER_NOT_FOUND",
+        "PAN_NUMBER_NOT_FOUND",
     }
+)
+
+# Checklist / field rules that often fire once per page of the same document.
+_COLLAPSIBLE_PREFIXES = (
+    "FIELD_MISMATCH_S",
+    "STATUS_CHECK_S",
+    "PERIOD_CHECK_S",
+    "APPLICABILITY_UNKNOWN_S",
 )
 
 _SUMMARY_REASONS = {
     "UNCLASSIFIED_PAGE": "Pages could not be classified automatically",
     "LOW_OCR_CONFIDENCE": "OCR confidence below threshold on scanned pages",
     "UNREADABLE_PAGE": "Scanned pages flagged as blurry or unreadable",
+    "AUTO_OWNER_UNRESOLVED": "Document groups could not be matched to an applicant",
+    "AUTO_OWNER_LOW_CONFIDENCE": "Document groups assigned to an applicant with weak identity evidence",
+    "LOAN_AMOUNT_NOT_FOUND": "Loan amount missing from mapped loan documents",
+    "APPLICANT_NAME_NOT_FOUND": "Applicant name missing from mapped documents",
+    "PIN_CODE_NOT_FOUND": "PIN code missing from mapped documents",
+    "DATE_OF_BIRTH_NOT_FOUND": "Date of birth missing from mapped documents",
+    "ADDRESS_NOT_FOUND": "Address missing from mapped documents",
+    "PHONE_NUMBER_NOT_FOUND": "Phone number missing from mapped documents",
+    "AADHAAR_NUMBER_NOT_FOUND": "Aadhaar number missing from mapped documents",
+    "PAN_NUMBER_NOT_FOUND": "PAN number missing from mapped documents",
 }
 
 
 def collapse_for_reviewer(anomalies: list[dict]) -> list[dict]:
     """Return a deduplicated list suitable for the reviewer UI."""
     actionable: list[dict] = []
-    buckets: dict[str, list[dict]] = {rule: [] for rule in _COLLAPSIBLE_RULES}
+    buckets: dict[str, list[dict]] = {}
 
     for anomaly in anomalies:
         rule_id = str(anomaly.get("rule_id") or "")
-        if rule_id in _COLLAPSIBLE_RULES:
-            buckets[rule_id].append(anomaly)
-        else:
+        bucket_key = _collapse_bucket_key(rule_id)
+        if bucket_key is None:
             actionable.append(anomaly)
+            continue
+        buckets.setdefault(bucket_key, []).append(anomaly)
 
-    for rule_id, items in buckets.items():
+    for bucket_key, items in buckets.items():
         if not items:
             continue
         if len(items) == 1:
             actionable.append(items[0])
             continue
-        pages = sorted({item.get("page_number") for item in items if item.get("page_number") is not None})
-        severities = {str(item.get("severity", "LOW")).upper() for item in items}
-        severity = "MEDIUM" if "MEDIUM" in severities else "LOW"
-        page_preview = ", ".join(map(str, pages[:8]))
-        if len(pages) > 8:
-            page_preview += f", … (+{len(pages) - 8} more)"
-        actionable.append(
-            {
-                "rule_id": f"{rule_id}_SUMMARY",
-                "severity": severity,
-                "document_type": items[0].get("document_type"),
-                "expected_value": items[0].get("expected_value"),
-                "found_value": f"{len(items)} page(s): {page_preview}" if pages else f"{len(items)} page(s)",
-                "page_number": pages[0] if pages else None,
-                "reason": f"{_SUMMARY_REASONS[rule_id]} ({len(items)} pages)",
-                "collapsed_page_numbers": pages,
-                "collapsed_count": len(items),
-            }
-        )
+        actionable.append(_build_summary(bucket_key, items))
 
     return _sort_anomalies(actionable)
 
@@ -123,16 +134,17 @@ def build_reviewer_summary(
     matched_fields: int = 0,
 ) -> dict[str, Any]:
     """Return an auditable, non-LLM recommendation for the final reviewer."""
-    review_anomalies = [item for item in anomalies if _needs_review(item)]
+    collapsed = collapse_for_reviewer(anomalies)
+    review_anomalies = [item for item in collapsed if _needs_review(item)]
     pages = sorted(
         {
-            int(item["page_number"])
+            int(page)
             for item in review_anomalies
-            if item.get("page_number") not in (None, "")
+            for page in _pages_from_anomaly(item)
         }
     )
     severity_counts = Counter(str(item.get("severity") or "LOW").upper() for item in review_anomalies)
-    rule_ids = {str(item.get("rule_id") or "") for item in review_anomalies}
+    rule_ids = {str(item.get("rule_id") or "").removesuffix("_SUMMARY") for item in review_anomalies}
     high_count = severity_counts["HIGH"]
     processing_failure = bool(
         rule_ids & {"PAGE_PROCESSING_ERROR", "OCR_BUDGET_PARTIAL_SCAN", "DOCUMENT_NOT_READABLE"}
@@ -164,7 +176,8 @@ def build_reviewer_summary(
         message = (
             f"Checked {checked_fields} field(s): {matched_fields} matched and "
             f"{max(0, checked_fields - matched_fields)} require attention. "
-            f"Found {len(review_anomalies)} review item(s) across {len(pages)} page(s)."
+            f"Found {len(review_anomalies)} review item(s) "
+            f"(collapsed from {len(anomalies)} raw flags) across {len(pages)} page(s)."
         )
 
     return {
@@ -175,14 +188,87 @@ def build_reviewer_summary(
         "checked_fields": checked_fields,
         "matched_fields": matched_fields,
         "anomaly_count": len(review_anomalies),
+        "raw_anomaly_count": len(anomalies),
         "severity_counts": {
             "high": severity_counts["HIGH"],
             "medium": severity_counts["MEDIUM"],
             "low": severity_counts["LOW"],
         },
-        "pages_to_review": pages,
+        "pages_to_review": pages[:80],
         "review_items": [_review_item(item) for item in review_anomalies],
     }
+
+
+def _collapse_bucket_key(rule_id: str) -> str | None:
+    if rule_id in _COLLAPSIBLE_RULES:
+        return rule_id
+    for prefix in _COLLAPSIBLE_PREFIXES:
+        if rule_id.startswith(prefix):
+            return rule_id
+    if rule_id.endswith("_MISMATCH") and rule_id not in IDENTITY_RULES:
+        return rule_id
+    return None
+
+
+def _build_summary(rule_id: str, items: list[dict]) -> dict:
+    pages = sorted(
+        {
+            int(page)
+            for item in items
+            for page in _pages_from_anomaly(item)
+        }
+    )
+    severities = {str(item.get("severity", "LOW")).upper() for item in items}
+    if "HIGH" in severities:
+        severity = "HIGH"
+    elif "MEDIUM" in severities:
+        severity = "MEDIUM"
+    else:
+        severity = "LOW"
+
+    doc_types = Counter(
+        str(item.get("document_type") or "Unknown") for item in items if item.get("document_type")
+    )
+    doc_preview = ", ".join(f"{name}×{count}" for name, count in doc_types.most_common(4))
+    page_preview = ", ".join(map(str, pages[:8]))
+    if len(pages) > 8:
+        page_preview += f", … (+{len(pages) - 8} more)"
+
+    found_parts = [f"{len(items)} occurrence(s)"]
+    if page_preview:
+        found_parts.append(f"pages {page_preview}")
+    if doc_preview:
+        found_parts.append(doc_preview)
+
+    reason = _SUMMARY_REASONS.get(rule_id)
+    if reason is None:
+        reason = items[0].get("reason") or f"Repeated {rule_id} flags"
+    reason = f"{reason} ({len(items)} occurrences)"
+
+    return {
+        "rule_id": f"{rule_id}_SUMMARY",
+        "severity": severity,
+        "document_type": items[0].get("document_type"),
+        "person_id": items[0].get("person_id"),
+        "field_name": items[0].get("field_name"),
+        "expected_value": items[0].get("expected_value"),
+        "found_value": "; ".join(found_parts),
+        "page_number": pages[0] if pages else None,
+        "reason": reason,
+        "collapsed_page_numbers": pages,
+        "collapsed_count": len(items),
+        "collapsed_document_types": dict(doc_types),
+    }
+
+
+def _pages_from_anomaly(item: dict[str, Any]) -> list[int]:
+    collapsed = item.get("collapsed_page_numbers")
+    if isinstance(collapsed, list) and collapsed:
+        return [int(page) for page in collapsed if page is not None]
+    page = item.get("page_number")
+    if page in (None, ""):
+        return []
+    return [int(page)]
 
 
 def _needs_review(anomaly: dict[str, Any]) -> bool:
@@ -201,11 +287,12 @@ def _review_item(anomaly: dict[str, Any]) -> dict[str, Any]:
         "reason": anomaly.get("reason") or anomaly.get("found_value"),
         "expected_masked": _mask(anomaly.get("expected_value")),
         "extracted_masked": _mask(anomaly.get("found_value")),
+        "collapsed_count": anomaly.get("collapsed_count"),
     }
 
 
 def _field_from_rule(rule_id: Any) -> str | None:
-    value = str(rule_id or "")
+    value = str(rule_id or "").removesuffix("_SUMMARY")
     for suffix in ("_MISMATCH", "_NOT_FOUND", "_NOT_READABLE", "_LOW_CONFIDENCE"):
         if value.endswith(suffix):
             return value[: -len(suffix)].lower()

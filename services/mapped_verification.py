@@ -65,6 +65,19 @@ DOCUMENT_FIELDS = {
     "cheque": {"applicant_name"},
 }
 
+# These types are often split across many ZIP members / page groups. Verify
+# fields once per (person, document type), not once per fragment.
+_AGGREGATED_FIELD_DOC_TYPES = frozenset(
+    {
+        "sanction letter",
+        "loan agreement",
+        "application form",
+        "stamp duty",
+        "insurance consent",
+        "nach form",
+    }
+)
+
 
 def run_mapped_verification(
     pdf_path: str | Path,
@@ -286,6 +299,8 @@ def compare_processed_pages(
     observations: list[dict[str, Any]] = []
     checked_fields = 0
     matched_fields = 0
+    # For loan-level / multi-fragment types: collect once, verify once.
+    aggregated: dict[tuple[str, str], dict[str, Any]] = {}
 
     for mapping in documents:
         provided_type = str(mapping.get("document_type") or "Unknown")
@@ -295,6 +310,8 @@ def compare_processed_pages(
         expected = _expected_fields(reference_data, mapping, provided_type)
         document_observations: dict[str, list[dict[str, Any]]] = {}
         readable_pages: list[int] = []
+        aggregate_key = (person_id, provided_type.strip().lower())
+        should_aggregate = provided_type.strip().lower() in _AGGREGATED_FIELD_DOC_TYPES
 
         if not mapped_numbers:
             if mapping.get("required", True):
@@ -367,48 +384,48 @@ def compare_processed_pages(
             ))
             continue
 
-        for raw_field, expected_value in expected.items():
-            field = _canonical(raw_field)
-            if field not in VERIFY or expected_value in (None, ""):
-                continue
-            field_observations = document_observations.get(field) or []
-            if not field_observations:
-                checked_fields += 1
-                anomalies.append(_anomaly(
-                    f"{field.upper()}_NOT_FOUND", "MEDIUM", readable_pages[0], provided_type,
-                    expected_value, None, "Expected field was not found with sufficient confidence.",
-                    field, "FIELD_NOT_FOUND", person_id,
-                ))
-                continue
+        if should_aggregate:
+            bucket = aggregated.setdefault(
+                aggregate_key,
+                {
+                    "person_id": person_id,
+                    "document_type": provided_type,
+                    "expected": expected,
+                    "observations": {},
+                    "readable_pages": [],
+                },
+            )
+            bucket["expected"].update(expected)
+            bucket["readable_pages"].extend(readable_pages)
+            for field, field_observations in document_observations.items():
+                bucket["observations"].setdefault(field, []).extend(field_observations)
+            continue
 
-            seen_values: set[str] = set()
-            for observation in field_observations:
-                normalized_key = _comparison_key(field, observation["value"])
-                if normalized_key in seen_values:
-                    continue
-                seen_values.add(normalized_key)
-                checked_fields += 1
-                result = VERIFY[field](str(observation["value"]), str(expected_value))
-                observation["expected_value"] = expected_value
-                observation["status"] = "MATCH" if result.match else "MISMATCH"
-                if result.match:
-                    matched_fields += 1
-                    continue
-                wrong_owner = _find_other_owner(reference_data, person_id, field, observation["value"])
-                if wrong_owner:
-                    anomalies.append(_anomaly(
-                        "INDEX_MAPPING_SUSPECTED", "HIGH", observation["page_number"], provided_type,
-                        expected_value, observation["value"],
-                        f"Value matches {wrong_owner}, not {person_id}; verify the page/person index.",
-                        field, "MISMATCH", person_id, wrong_owner,
-                    ))
-                    continue
-                severity = "HIGH" if field in {"aadhaar_number", "pan_number", "date_of_birth"} else "MEDIUM"
-                anomalies.append(_anomaly(
-                    f"{field.upper()}_MISMATCH", severity, observation["page_number"], provided_type,
-                    expected_value, observation["value"], result.mismatch_reason or "Values do not match.",
-                    field, "MISMATCH", person_id,
-                ))
+        field_stats = _verify_document_fields(
+            expected=expected,
+            document_observations=document_observations,
+            readable_pages=readable_pages,
+            provided_type=provided_type,
+            person_id=person_id,
+            reference_data=reference_data,
+            anomalies=anomalies,
+        )
+        checked_fields += field_stats["checked"]
+        matched_fields += field_stats["matched"]
+
+    for bucket in aggregated.values():
+        field_stats = _verify_document_fields(
+            expected=bucket["expected"],
+            document_observations=bucket["observations"],
+            readable_pages=sorted(set(bucket["readable_pages"])),
+            provided_type=bucket["document_type"],
+            person_id=bucket["person_id"],
+            reference_data=reference_data,
+            anomalies=anomalies,
+            prefer_any_match=True,
+        )
+        checked_fields += field_stats["checked"]
+        matched_fields += field_stats["matched"]
 
     source_classifications = _classify_source_documents(
         pages,
@@ -427,6 +444,88 @@ def compare_processed_pages(
         "people_verification": people_verification,
         "source_classifications": source_classifications,
     }
+
+
+def _verify_document_fields(
+    *,
+    expected: dict[str, Any],
+    document_observations: dict[str, list[dict[str, Any]]],
+    readable_pages: list[int],
+    provided_type: str,
+    person_id: str,
+    reference_data: dict[str, Any],
+    anomalies: list[dict[str, Any]],
+    prefer_any_match: bool = False,
+) -> dict[str, int]:
+    """Compare extracted observations against expected values for one document unit."""
+    checked = 0
+    matched = 0
+    for raw_field, expected_value in expected.items():
+        field = _canonical(raw_field)
+        if field not in VERIFY or expected_value in (None, ""):
+            continue
+        field_observations = document_observations.get(field) or []
+        if not field_observations:
+            checked += 1
+            anomalies.append(_anomaly(
+                f"{field.upper()}_NOT_FOUND", "MEDIUM", readable_pages[0] if readable_pages else None,
+                provided_type, expected_value, None,
+                "Expected field was not found with sufficient confidence.",
+                field, "FIELD_NOT_FOUND", person_id,
+            ))
+            continue
+
+        if prefer_any_match:
+            # One success across any fragment is enough for loan-level packets.
+            matching = [
+                observation for observation in field_observations
+                if VERIFY[field](str(observation["value"]), str(expected_value)).match
+            ]
+            checked += 1
+            if matching:
+                matched += 1
+                for observation in matching:
+                    observation["expected_value"] = expected_value
+                    observation["status"] = "MATCH"
+                continue
+            # Fall through to report the first distinct mismatch only.
+
+        seen_values: set[str] = set()
+        emitted_mismatch = False
+        for observation in field_observations:
+            normalized_key = _comparison_key(field, observation["value"])
+            if normalized_key in seen_values:
+                continue
+            seen_values.add(normalized_key)
+            if not prefer_any_match:
+                checked += 1
+            result = VERIFY[field](str(observation["value"]), str(expected_value))
+            observation["expected_value"] = expected_value
+            observation["status"] = "MATCH" if result.match else "MISMATCH"
+            if result.match:
+                if not prefer_any_match:
+                    matched += 1
+                continue
+            if prefer_any_match and emitted_mismatch:
+                continue
+            wrong_owner = _find_other_owner(reference_data, person_id, field, observation["value"])
+            if wrong_owner:
+                anomalies.append(_anomaly(
+                    "INDEX_MAPPING_SUSPECTED", "HIGH", observation["page_number"], provided_type,
+                    expected_value, observation["value"],
+                    f"Value matches {wrong_owner}, not {person_id}; verify the page/person index.",
+                    field, "MISMATCH", person_id, wrong_owner,
+                ))
+                emitted_mismatch = True
+                continue
+            severity = "HIGH" if field in {"aadhaar_number", "pan_number", "date_of_birth"} else "MEDIUM"
+            anomalies.append(_anomaly(
+                f"{field.upper()}_MISMATCH", severity, observation["page_number"], provided_type,
+                expected_value, observation["value"], result.mismatch_reason or "Values do not match.",
+                field, "MISMATCH", person_id,
+            ))
+            emitted_mismatch = True
+    return {"checked": checked, "matched": matched}
 
 
 def _classify_source_documents(

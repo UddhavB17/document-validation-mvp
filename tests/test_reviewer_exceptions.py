@@ -17,6 +17,37 @@ def test_collapses_repeated_unclassified_pages() -> None:
     assert collapsed[0]["collapsed_count"] == 115
 
 
+def test_collapses_auto_owner_and_field_not_found_noise() -> None:
+    anomalies = (
+        [
+            {
+                "rule_id": "AUTO_OWNER_UNRESOLVED",
+                "severity": "MEDIUM",
+                "page_number": page,
+                "document_type": "Bank Statement",
+            }
+            for page in range(1, 21)
+        ]
+        + [
+            {
+                "rule_id": "LOAN_AMOUNT_NOT_FOUND",
+                "severity": "MEDIUM",
+                "page_number": page,
+                "document_type": "Loan Agreement",
+            }
+            for page in range(30, 60)
+        ]
+        + [{"rule_id": "MISSING_DOC_S7", "severity": "HIGH", "reason": "PAN missing"}]
+    )
+    collapsed = collapse_for_reviewer(anomalies)
+    assert len(collapsed) == 3
+    assert {item["rule_id"] for item in collapsed} == {
+        "MISSING_DOC_S7",
+        "AUTO_OWNER_UNRESOLVED_SUMMARY",
+        "LOAN_AMOUNT_NOT_FOUND_SUMMARY",
+    }
+
+
 def test_keeps_high_severity_checklist_items() -> None:
     anomalies = [
         {"rule_id": "MISSING_DOC_S7", "severity": "HIGH", "reason": "PAN missing"},

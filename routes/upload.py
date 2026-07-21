@@ -138,7 +138,8 @@ async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
         "pipeline_status": result["pipeline_status"],
         "documents_found": result["documents_found"],
         "documents_missing": result["documents_missing"],
-        "anomaly_count": len(result["anomalies"]),
+        "anomaly_count": result.get("actionable_anomaly_count", len(result["anomalies"])),
+        "raw_anomaly_count": len(result["anomalies"]),
     }
 
 

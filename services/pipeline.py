@@ -388,18 +388,23 @@ def run_pipeline(
             }
         )
     mark_completed(application_id, result["final_status"], pipeline_status)
+    from services.reviewer import collapse_for_reviewer
+
+    actionable_count = len(collapse_for_reviewer(result["anomalies"]))
     log_action(
         application_id,
         "pipeline_completed",
         {
             "total_pages": result["total_pages"],
-            "anomaly_count": len(result["anomalies"]),
+            "anomaly_count": actionable_count,
+            "raw_anomaly_count": len(result["anomalies"]),
             "final_status": result["final_status"],
             "pipeline_status": pipeline_status,
             "partial_failure_count": len(processing_error_anomalies),
             "report_path": str(report_path),
         },
     )
+    result["actionable_anomaly_count"] = actionable_count
     return result
 
 

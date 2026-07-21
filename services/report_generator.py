@@ -94,14 +94,19 @@ def build_report(
     metadata: dict | None = None,
 ) -> dict:
     exceptions = exceptions or []
+    from services.reviewer import collapse_for_reviewer
+
+    actionable = collapse_for_reviewer(exceptions)
     report = {
         "application_id": application_id,
         "loan_id": loan_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_exceptions": len(exceptions),
-        "high_severity_count": sum(1 for e in exceptions if str(e.get("severity")).upper() == "HIGH"),
+        "actionable_exception_count": len(actionable),
+        "high_severity_count": sum(1 for e in actionable if str(e.get("severity")).upper() == "HIGH"),
         "llm_summary": llm_summary,
         "exceptions": exceptions,
+        "actionable_exceptions": actionable,
     }
     if metadata:
         report["metadata"] = metadata

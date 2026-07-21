@@ -95,6 +95,68 @@ def test_shared_pipeline_comparison_matches_case_insensitive_name_and_classifies
     }]
 
 
+def test_loan_level_field_checks_run_once_across_fragments() -> None:
+    pages = [
+        {
+            "page_number": 1,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Loan Agreement page 1",
+            "document_type": "Loan Agreement",
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 2,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Loan Agreement Borrower RAMESH KUMAR Loan Amount 500000",
+            "document_type": "Loan Agreement",
+            "extracted_fields": {"applicant_name": "RAMESH KUMAR", "loan_amount": "500000"},
+        },
+        {
+            "page_number": 3,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Loan Agreement continuation",
+            "document_type": "Loan Agreement",
+            "extracted_fields": {},
+        },
+    ]
+    result = compare_processed_pages(
+        pages,
+        {
+            "loan_id": "MAP-LA",
+            "reference_data": {
+                "primary": {"applicant_name": "Ramesh Kumar", "loan_amount": "500000"},
+            },
+            "documents": [
+                {
+                    "source_document_id": "la-1",
+                    "applicant_role": "primary",
+                    "document_type": "Loan Agreement",
+                    "pages": [1],
+                },
+                {
+                    "source_document_id": "la-2",
+                    "applicant_role": "primary",
+                    "document_type": "Loan Agreement",
+                    "pages": [2],
+                },
+                {
+                    "source_document_id": "la-3",
+                    "applicant_role": "primary",
+                    "document_type": "Loan Agreement",
+                    "pages": [3],
+                },
+            ],
+        },
+    )
+
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 2
+    assert result["matched_fields"] == 2
+
+
 def _application() -> int:
     init_db()
     with get_connection() as connection:

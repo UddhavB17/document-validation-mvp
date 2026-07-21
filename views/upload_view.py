@@ -390,6 +390,11 @@ def _submit_partner_json(payload: dict) -> None:
         f"{application_id} | "
         f"Status: {result['status']} | "
         f"Issues found: {result.get('anomaly_count', 0)}"
+        + (
+            f" (from {result['raw_anomaly_count']} raw flags)"
+            if result.get("raw_anomaly_count") and result.get("raw_anomaly_count") != result.get("anomaly_count")
+            else ""
+        )
     )
     st.write(f"Documents found: {', '.join(result.get('documents_found') or []) or 'None'}")
 
