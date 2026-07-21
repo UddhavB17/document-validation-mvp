@@ -437,7 +437,8 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
                   <tr>
                     <th className="px-4 py-3 border-b border-slate-200">ID</th>
                     <th className="px-4 py-3 border-b border-slate-200">Filename</th>
-                    <th className="px-4 py-3 border-b border-slate-200">Type</th>
+                    <th className="px-4 py-3 border-b border-slate-200">Inferred Document</th>
+                    <th className="px-4 py-3 border-b border-slate-200">Format</th>
                     <th className="px-4 py-3 border-b border-slate-200">Worksheets</th>
                     <th className="px-4 py-3 border-b border-slate-200">Page Ranges</th>
                   </tr>
@@ -447,6 +448,11 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
                     <tr key={doc.source_document_id} className="hover:bg-slate-50/50 transition-colors duration-100">
                       <td className="px-4 py-3 font-mono text-blue-700 font-semibold">{doc.source_document_id}</td>
                       <td className="px-4 py-3 font-semibold">{doc.original_filename}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-800">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                          {inferDocumentType(doc.original_filename)}
+                        </span>
+                      </td>
                       <td className="px-4 py-3"><StatusBadge status={doc.file_type} /></td>
                       <td className="px-4 py-3 text-slate-500 font-medium">{doc.worksheets?.join(", ") || "-"}</td>
                       <td className="px-4 py-3 font-mono font-semibold text-slate-800">
@@ -520,3 +526,79 @@ function getSanitizedManifest(text: string): string {
   return trimmed;
 }
 
+function inferDocumentType(filename: string): string {
+  const lower = filename.toLowerCase().replace(/\\/g, "/");
+
+  if (lower.includes("pan")) {
+    return "PAN Card";
+  }
+  if (lower.includes("aadhar") || lower.includes("aadhaar") || lower.includes("uidai")) {
+    return "Aadhaar Card";
+  }
+  if (lower.includes("passport")) {
+    return "Passport";
+  }
+  if (
+    lower.includes("driving") ||
+    lower.includes("dl ") ||
+    lower.includes(" licence") ||
+    lower.includes(" license")
+  ) {
+    return "Driving License";
+  }
+  if (lower.includes("voter") || lower.includes("epic")) {
+    return "Voter ID";
+  }
+  if (lower.includes("cheque") || lower.includes("check")) {
+    return "Cheque";
+  }
+  if (
+    lower.includes("statement") ||
+    lower.includes("bank_stmt") ||
+    lower.includes("bank stmt") ||
+    lower.includes("bankstmt")
+  ) {
+    return "Bank Statement";
+  }
+  if (
+    lower.includes("utility") ||
+    lower.includes("bill") ||
+    lower.includes("electricity") ||
+    lower.includes("water") ||
+    lower.includes("gas_bill")
+  ) {
+    return "Utility Bill";
+  }
+  if (lower.includes("sanction") || lower.includes("loan_sanction")) {
+    return "Sanction Letter";
+  }
+  if (lower.includes("agreement") || lower.includes("contract") || lower.includes("loan_agreement")) {
+    return "Loan Agreement";
+  }
+  if (
+    lower.includes("salary") ||
+    lower.includes("pay slip") ||
+    lower.includes("payslip") ||
+    lower.includes("salary_slip")
+  ) {
+    return "Salary Slip";
+  }
+  if (lower.includes("kfs") || lower.includes("key fact")) {
+    return "KFS (Key Fact Statement)";
+  }
+
+  // If there's a parent folder name, format and use it
+  const parts = lower.split("/");
+  if (parts.length > 1) {
+    const parentFolder = parts[parts.length - 2];
+    return parentFolder
+      .replace(/[_-]/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  // Otherwise, clean up the file name (without extension)
+  const baseName = parts[parts.length - 1].replace(/\.[^/.]+$/, "");
+  return baseName
+    .replace(/[_-]/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
