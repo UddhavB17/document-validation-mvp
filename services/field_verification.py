@@ -259,7 +259,15 @@ def _parse_supported_date(value: Any) -> datetime | None:
     text = str(value or "").strip()
     if not text:
         return None
-    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %b %Y", "%d %B %Y"):
+    from dateutil import parser
+    try:
+        return parser.parse(text)
+    except (ValueError, TypeError, OverflowError):
+        pass
+    for fmt in (
+        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %b %Y", "%d %B %Y",
+        "%d-%b-%Y", "%d-%B-%Y", "%b %d, %Y", "%B %d, %Y"
+    ):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
