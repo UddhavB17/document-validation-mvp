@@ -56,10 +56,16 @@ def aggregate(
         {anomaly.get("page_number") for anomaly in sorted_anomalies if anomaly.get("page_number") is not None}
     )
 
-    if not sorted_anomalies:
+    # Filter out missing document presence anomalies from active anomalies and flags list
+    active_anomalies = [
+        anomaly for anomaly in sorted_anomalies
+        if not str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
+    ]
+
+    if not active_anomalies:
         final_status = "CLEAN"
     else:
-        final_status = compute_final_status(sorted_anomalies)
+        final_status = compute_final_status(active_anomalies)
 
     result = {
         "total_pages": len(pages),
@@ -68,13 +74,13 @@ def aggregate(
         "ground_truth": ground_truth,
         "documents_found": documents_found,
         "documents_missing": documents_missing,
-        "anomalies": sorted_anomalies,
+        "anomalies": active_anomalies,
         "pages_with_issues": pages_with_issues,
         "final_status": final_status,
     }
 
     if application_id is not None:
-        save_aggregation(application_id, sorted_anomalies, final_status)
+        save_aggregation(application_id, active_anomalies, final_status)
 
     return result
 

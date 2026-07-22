@@ -299,7 +299,7 @@ def run_pipeline(
     checklist_verification = build_checklist_verification_response(
         loan_file_id=str(ground_truth.get("loan_id") or application_id),
         pages=pages,
-        anomalies=result["anomalies"],
+        anomalies=anomalies,
         product_type=product_type,
         system_data=system_data or ground_truth,
         processing_metadata=_checklist_processing_metadata(progress_snapshot),
@@ -518,7 +518,7 @@ def run_partner_json_pipeline(
     checklist_verification = build_checklist_verification_response(
         loan_file_id=str(ground_truth.get("loan_id") or application_id),
         pages=pages,
-        anomalies=result["anomalies"],
+        anomalies=anomalies,
         product_type=product_type,
         system_data=system_data or ground_truth,
         processing_metadata={},
