@@ -47,7 +47,13 @@ def call_llm_messages(
 
 
 def llm_provider() -> str:
-    provider = _clean_env_value(os.getenv("LLM_PROVIDER") or "auto").lower()
+    from services.config import get_setting
+    db_val = get_setting("llm_provider")
+    if db_val is not None:
+        provider = str(db_val).strip().lower()
+    else:
+        provider = _clean_env_value(os.getenv("LLM_PROVIDER") or "auto").lower()
+
     if provider in {"", "auto"}:
         return "openai_compatible" if _api_key() else "ollama"
     if provider in {"local", "local_ollama"}:
@@ -60,17 +66,34 @@ def llm_provider() -> str:
 
 
 def llm_model() -> str:
+    from services.config import get_setting
+
     if llm_provider() == "ollama":
+        env_local = _clean_env_value(os.getenv("LOCAL_LLM_MODEL"))
+        if env_local:
+            return env_local
+
+        db_val = get_setting("llm_model")
+        if db_val is not None:
+            return str(db_val).strip()
+
         return (
-            _clean_env_value(os.getenv("LOCAL_LLM_MODEL"))
-            or _clean_env_value(os.getenv("LLM_MODEL"))
+            _clean_env_value(os.getenv("LLM_MODEL"))
             or DEFAULT_LOCAL_MODEL
         )
-    return (
-        _clean_env_value(os.getenv("LLM_MODEL"))
-        or _clean_env_value(os.getenv("OPENAI_MODEL"))
-        or DEFAULT_API_MODEL
-    )
+    else:
+        env_openai = _clean_env_value(os.getenv("OPENAI_MODEL"))
+        if env_openai:
+            return env_openai
+
+        db_val = get_setting("llm_model")
+        if db_val is not None:
+            return str(db_val).strip()
+
+        return (
+            _clean_env_value(os.getenv("LLM_MODEL"))
+            or DEFAULT_API_MODEL
+        )
 
 
 def llm_endpoint_label() -> str:

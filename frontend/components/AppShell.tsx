@@ -10,6 +10,7 @@ const navItems = [
   { href: "/upload", label: "Upload" },
   { href: "/worklist", label: "Worklist" },
   { href: "/activity", label: "My Activity" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

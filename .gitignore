@@ -40,3 +40,7 @@ data/surya_cache/*
 !data/uploads/.gitkeep
 !data/pages/.gitkeep
 !data/reports/.gitkeep
+
+# Logs
+data/logs/*
+*.log

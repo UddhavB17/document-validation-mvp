@@ -618,6 +618,24 @@ def _safe_digital_text(page: Any) -> str:
         return ""
 
 
+def _get_allowed_fields_for_type(document_type: str) -> set[str] | None:
+    doc_lower = document_type.strip().lower()
+    norm_key = doc_lower.replace(" ", "_")
+    if norm_key == "pan_card":
+        norm_key = "pan"
+    elif norm_key == "cibil_report":
+        norm_key = "cibil"
+    elif norm_key == "crif_report":
+        norm_key = "crif"
+
+    from services.config import get_setting
+    db_fields = get_setting(f"required_fields.{norm_key}")
+    if isinstance(db_fields, list):
+        return set(db_fields)
+
+    return DOCUMENT_FIELDS.get(doc_lower)
+
+
 def _expected_fields(
     reference_data: dict[str, Any],
     document: dict[str, Any],
@@ -629,7 +647,7 @@ def _expected_fields(
     role = str(document.get("applicant_role") or "primary")
     role_data = reference_data.get(role)
     values = role_data if isinstance(role_data, dict) else reference_data
-    allowed = DOCUMENT_FIELDS.get(document_type.strip().lower())
+    allowed = _get_allowed_fields_for_type(document_type)
     if not allowed:
         # Do not demand identity fields from photos, screenshots, affidavits,
         # spreadsheets, or other document types that have no verification contract.

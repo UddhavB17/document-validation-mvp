@@ -29,6 +29,15 @@ _health_cache: dict[str, tuple[bool, float]] = {}
 
 
 def is_structured_llm_classifier_enabled() -> bool:
+    import os
+    raw_env = os.getenv("ENABLE_STRUCTURED_LLM_CLASSIFIER")
+    if raw_env is not None:
+        return raw_env.strip().lower() in ("1", "true", "yes", "on")
+
+    from services.config import get_setting
+    db_enabled = get_setting("llm_enabled")
+    if db_enabled is not None:
+        return bool(db_enabled)
     return get_bool("ENABLE_STRUCTURED_LLM_CLASSIFIER", False)
 
 

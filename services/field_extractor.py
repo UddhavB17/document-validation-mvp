@@ -183,8 +183,8 @@ def _line_after_label(text: str, *labels: str) -> str | None:
                 candidate = _clean_name_like_value(parts[1])
                 if candidate:
                     return candidate
-            # Else next non-empty line
-            for j in range(i + 1, len(lines)):
+            # Else next non-empty line (bounded to 8 lines max)
+            for j in range(i + 1, min(len(lines), i + 9)):
                 candidate = _clean_name_like_value(lines[j])
                 if candidate:
                     return candidate

@@ -376,4 +376,4 @@ def _soft_timeout_seconds() -> int:
 
 
 def _hard_timeout_seconds() -> int:
-    return get_int("OCR_HARD_TIMEOUT_SECONDS", 60, minimum=1)
+    return get_int("OCR_HARD_TIMEOUT_SECONDS", 100, minimum=1)

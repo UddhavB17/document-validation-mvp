@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database.models import initialize_schema
-from routes import decisions, review, upload, verification
+from routes import decisions, review, upload, verification, settings
 from services.config import log_effective_config
 
 load_dotenv()
@@ -54,6 +54,7 @@ app.include_router(upload.router)
 app.include_router(decisions.router)
 app.include_router(verification.router)
 app.include_router(review.router)
+app.include_router(settings.router)
 
 
 # ── Health ────────────────────────────────────

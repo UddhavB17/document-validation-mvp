@@ -16,6 +16,15 @@ _MAX_TEXT_CHARS = 3500
 
 
 def is_llm_page_classifier_enabled() -> bool:
+    import os
+    raw_env = os.getenv("ENABLE_LLM_PAGE_CLASSIFIER")
+    if raw_env is not None:
+        return raw_env.strip().lower() in ("1", "true", "yes", "on")
+
+    from services.config import get_setting
+    db_enabled = get_setting("llm_enabled")
+    if db_enabled is not None:
+        return bool(db_enabled)
     return get_bool("ENABLE_LLM_PAGE_CLASSIFIER", False)
 
 

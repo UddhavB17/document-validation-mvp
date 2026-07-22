@@ -976,7 +976,75 @@ def _build_page_records(
             current_page=pages[-1]["page_number"],
             message=f"Processed {len(pages)}/{total_pages} pages",
         )
+    pages = _smooth_page_classifications(pages, application_id, total_pages)
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+
+
+def _smooth_page_classifications(
+    pages: list[dict[str, Any]],
+    application_id: int | None,
+    total_pages: int,
+) -> list[dict[str, Any]]:
+    if len(pages) < 3:
+        return pages
+
+    sorted_pages = sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+    for i in range(1, len(sorted_pages) - 1):
+        prev_page = sorted_pages[i - 1]
+        curr_page = sorted_pages[i]
+        next_page = sorted_pages[i + 1]
+
+        if curr_page.get("document_type") == "Unknown":
+            prev_type = prev_page.get("document_type")
+            next_type = next_page.get("document_type")
+            if prev_type != "Unknown" and prev_type == next_type:
+                curr_page["document_type"] = prev_type
+                curr_page["classification_confidence"] = round(
+                    (prev_page.get("classification_confidence", 0.70) + next_page.get("classification_confidence", 0.70)) / 2.0,
+                    3,
+                )
+                curr_page["detection_method"] = "sandwich_smoothed"
+
+                text = curr_page.get("ocr_text", "")
+                from services.field_extractor import extract_fields
+                from services.field_assignment_refiner import refine_field_assignments
+
+                extracted_fields = extract_fields(prev_type, text)
+                extracted_fields = refine_field_assignments(
+                    document_type=prev_type,
+                    ocr_text=text,
+                    extracted_fields=extracted_fields,
+                )
+
+                orig_cls = curr_page.get("extracted_fields", {}).get("_classification", {})
+                if isinstance(orig_cls, dict):
+                    orig_cls["assigned_type"] = prev_type
+                    orig_cls["detection_method"] = "sandwich_smoothed"
+                else:
+                    orig_cls = {
+                        "assigned_type": prev_type,
+                        "detection_method": "sandwich_smoothed",
+                        "raw_document_type": "Unknown",
+                        "raw_confidence": 0.0,
+                        "detected_page_number": curr_page.get("page_number"),
+                        "triage": {},
+                    }
+                extracted_fields["_classification"] = orig_cls
+                curr_page["extracted_fields"] = extracted_fields
+
+                if application_id is not None:
+                    record_page_completed(
+                        application_id,
+                        page_number=int(curr_page.get("page_number") or 0),
+                        total_pages=total_pages,
+                        page_type=curr_page.get("page_type"),
+                        document_type=prev_type,
+                        elapsed_seconds=0.0,
+                        extracted_fields=extracted_fields,
+                        status="completed",
+                        error=None,
+                    )
+    return sorted_pages
 
 
 def _record_completed_page_event(
@@ -1411,6 +1479,7 @@ def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
                 "extracted_fields": extracted_fields,
             }
         )
+    pages = _smooth_page_classifications(pages, None, len(pages))
     return pages
 
 

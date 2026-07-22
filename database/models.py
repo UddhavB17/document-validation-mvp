@@ -368,6 +368,17 @@ SCHEMA_STATEMENTS = [
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS system_settings (
+        config_key TEXT PRIMARY KEY,
+        config_value TEXT NOT NULL,
+        value_type TEXT NOT NULL DEFAULT 'str',
+        category TEXT NOT NULL DEFAULT 'general',
+        label TEXT,
+        description TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 MIGRATION_STATEMENTS = [
