@@ -1138,24 +1138,12 @@ def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str,
     if not normalized_text:
         return {}
 
-    lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
-    words = re.findall(r"\S+", normalized_text)
-    details: dict[str, Any] = {
-        "generic_document_type": document_type or "Unknown",
-        "generic_text_excerpt": normalized_text[:700],
-        "generic_char_count": len(normalized_text),
-        "generic_word_count": len(words),
-        "generic_line_count": len(lines),
-    }
-
+    details: dict[str, Any] = {}
     detected = _generic_detected_values(normalized_text)
     for key, value in detected.items():
         if value:
             details[key] = value
 
-    keywords = _generic_keywords(normalized_text)
-    if keywords:
-        details["generic_keywords"] = keywords
     return details
 
 

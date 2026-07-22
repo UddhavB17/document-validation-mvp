@@ -195,6 +195,14 @@ def _clean_name_like_value(value: str) -> str | None:
     candidate = value.strip(" :\t\r\n")
     if not candidate:
         return None
+
+    # A candidate name must not contain digits (dates, times, stamp IDs, years)
+    if re.search(r"\d", candidate):
+        return None
+
+    candidate_lower = candidate.lower()
+
+    # Common labels and form noise
     labels = {
         "applicant name",
         "borrower name",
@@ -207,13 +215,44 @@ def _clean_name_like_value(value: str) -> str | None:
         "s/o",
         "d/o",
         "w/o",
+        "c/o",
         "आवेदक का नाम",
         "नाम",
+        "husband name",
+        "husband's name",
+        "wife's name",
+        "wife name",
     }
-    if candidate.lower() in labels or candidate in labels:
+    if candidate_lower in labels:
         return None
-    if len(candidate) > 100:
+
+    # Filter out common headings, system text, and metadata
+    rejected_keywords = {
+        "endorsement", "execution", "presentation", "registration", "registrar",
+        "government", "ministry", "department", "commission", "tax", "income",
+        "permanent account", "unique identification", "uidai", "aadhaar", "passport",
+        "licence", "license", "voter id", "cheque", "check", "sanction letter",
+        "loan agreement", "facility agreement", "checklist", "form no", "form 60",
+        "form 97", "signature", "thumb", "impression", "photo", "office use",
+        "campaign", "abhijan", "prashasan", "camp", "sl no", "s.no", "serial",
+        "page", "date", "time", "place", "status", "type", "data", "unknown",
+        "particulars", "description", "details", "applicant", "co-applicant",
+        "coapplicant", "borrower", "guarantor", "witness", "officer", "manager"
+    }
+
+    for kw in rejected_keywords:
+        if kw in candidate_lower:
+            return None
+
+    # Check if it has a realistic name length and character composition
+    # Names are usually between 3 and 70 characters
+    if len(candidate) < 3 or len(candidate) > 70:
         return None
+
+    # Check that it contains at least some letters (not just punctuation/special chars)
+    if not any(c.isalpha() for c in candidate):
+        return None
+
     return candidate
 
 
