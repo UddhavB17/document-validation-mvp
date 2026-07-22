@@ -703,9 +703,21 @@ def _find_other_owner(
     for other_id, data in reference_data.items():
         if other_id == person_id or not isinstance(data, dict):
             continue
-        expected = data.get(field)
-        if expected not in (None, "") and _comparison_key(field, expected) == found:
-            return str(other_id)
+        expected = None
+        for k, v in data.items():
+            if _canonical(k) == field:
+                expected = v
+                break
+        if expected not in (None, ""):
+            if _comparison_key(field, expected) == found:
+                return str(other_id)
+            validator = VERIFY.get(field)
+            if validator:
+                try:
+                    if validator(str(found_value), str(expected)).match:
+                        return str(other_id)
+                except Exception:
+                    pass
     return None
 
 
