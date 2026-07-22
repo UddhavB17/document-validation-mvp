@@ -201,8 +201,6 @@ def test_utility_bill_extracts_address_proof_fields() -> None:
     assert result["applicant_name"] == "Ramesh Kumar"
     assert result["address"] == "12 Market Road Delhi 110001"
     assert result["pin_code"] == "110001"
-    assert result["bill_date"] == "2026-07-01"
-    assert result["due_date"] == "2026-07-15"
 
 
 # ════════════════════════════════════════════
@@ -397,15 +395,6 @@ class TestBankStatement:
         assert result["account_number"] == "123456789012"
         assert result["ifsc"] == "HDFC0001234"
 
-    def test_statement_period_extracted(self) -> None:
-        result = self._extract("Statement Period: 01/01/2026 to 31/03/2026")
-        assert result["statement_period_start"] == "2026-01-01"
-        assert result["statement_period_end"] == "2026-03-31"
-
-    def test_statement_end_date_fallback(self) -> None:
-        result = self._extract("Statement Date: 30/04/2026")
-        assert result["statement_period_end"] == "2026-04-30"
-
 
 # ════════════════════════════════════════════
 # SALARY SLIP
@@ -424,8 +413,6 @@ class TestSalarySlip:
             "Gross Salary: Rs. 75,000\n"
             "Net Salary: Rs. 62,500"
         )
-        assert result["employee_name"] == "Neha Rao"
-        assert result["employer_name"] == "ABC Pvt Ltd"
+        assert result["applicant_name"] == "Neha Rao"
         assert result["salary_month"] == "March 2026"
-        assert result["gross_salary"] == "75000"
         assert result["net_salary"] == "62500"

@@ -505,8 +505,6 @@ def _extract_utility_bill(text: str) -> dict[str, Any]:
         "applicant_name": _clean_name_like_value(consumer_match.group(1)) if consumer_match else None,
         "address": address,
         "pin_code": pin_match.group(1) if pin_match else None,
-        "bill_date": _extract_date_after_label(text, "bill date", "billing date", "issue date"),
-        "due_date": _extract_date_after_label(text, "due date"),
     }
 
 
@@ -569,11 +567,8 @@ def _extract_cersai_report(text: str) -> dict[str, Any]:
     return {
         "applicant_name": debtor_name,
         "pan_number": pan_matches[-1] if pan_matches else None,
-        "dob": _extract_date_near(t, "date of birth", "dob"),
-        "search_reference_number": search_reference,
-        "transaction_id": transaction_id,
-        "report_date": _extract_date_near(t, "report downloaded on", "downloaded on", "report date"),
         "search_result": search_result,
+        "report_date": _extract_date_near(t, "report downloaded on", "downloaded on", "report date"),
     }
 
 
@@ -622,13 +617,10 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         re.IGNORECASE,
     )
     ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
-    period_start, period_end = _extract_statement_period(text)
     return {
         "account_holder_name": _line_after_label(text, "account holder", "customer name", "name"),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
-        "statement_period_start": period_start,
-        "statement_period_end": period_end or _extract_date_near(t, "statement date", "as on", "period ending"),
     }
 
 
@@ -641,13 +633,10 @@ def _extract_passbook(text: str) -> dict[str, Any]:
         re.IGNORECASE,
     )
     ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
-    customer_id = re.search(r"(?:customer\s*id|cust\s*id|cif\s*(?:no\.?)?)\s*[:\-\u2013]?\s*([A-Z0-9]{4,24})", text, re.IGNORECASE)
     return {
         "account_holder_name": _line_after_label(text, "account holder", "customer name", "name", "नाम"),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
-        "customer_id": customer_id.group(1).strip() if customer_id else None,
-        "passbook_issue_date": _extract_date_near(t, "date of issue", "issue date", "printed on"),
     }
 
 
@@ -700,9 +689,7 @@ def _extract_salary_slip(text: str) -> dict[str, Any]:
     """Extract fields from a salary slip."""
     t = text.lower()
     return {
-        "employee_name": _line_after_label(text, "employee name", "name"),
-        "employer_name": _line_after_label(text, "employer", "company", "organization", "organisation"),
-        "gross_salary": _extract_amount(t, "gross salary", "gross pay", "gross earnings"),
+        "applicant_name": _line_after_label(text, "employee name", "name"),
         "net_salary": _extract_amount(t, "net salary", "net pay", "take home"),
         "salary_month": _extract_salary_month(text),
     }
