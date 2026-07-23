@@ -11,7 +11,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { WorklistItem } from "@/lib/api";
 import { useWorklist } from "@/lib/queries";
 
-const filters = ["All", "Pending", "Needs Review", "Auto Clean", "Verified"] as const;
+const filters = ["All", "Pending", "Recovery", "Needs Review", "Auto Clean", "Verified"] as const;
 type Filter = (typeof filters)[number];
 
 export default function WorklistPage() {
@@ -24,9 +24,10 @@ export default function WorklistPage() {
     const items = worklist.data?.items ?? [];
     return {
       total: items.length,
-      needsReview: items.filter(i => ["NEEDS_REVIEW", "CRITICAL"].includes(i.status)).length,
+      needsReview: items.filter(i => i.business_issues > 0).length,
+      qualityWarnings: items.filter(i => i.processing_warnings > 0).length,
       clean: items.filter(i => i.status === "CLEAN").length,
-      pending: items.filter(i => ["uploaded", "processing", "ocr_completed"].includes(i.status)).length,
+      recovery: items.filter(i => i.pipeline_retryable).length,
     };
   }, [worklist.data?.items]);
 
@@ -45,11 +46,12 @@ export default function WorklistPage() {
       {worklist.data ? (
         <div className="space-y-6">
           {/* Dashboard Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <Metric label="Total Files" value={stats.total} />
-            <Metric label="Needs Attention" value={stats.needsReview} />
+            <Metric label="Business Exceptions" value={stats.needsReview} />
+            <Metric label="Quality Warnings" value={stats.qualityWarnings} />
             <Metric label="Auto-Verified Clean" value={stats.clean} />
-            <Metric label="Processing Queue" value={stats.pending} />
+            <Metric label="Recovery Needed" value={stats.recovery} />
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-2">
@@ -105,11 +107,18 @@ export default function WorklistPage() {
                 { key: "product", header: "Product", value: (row) => row.product_type ?? "-", sortValue: (row) => row.product_type },
                 {
                   key: "status",
-                  header: "Status",
+                  header: "Decision",
                   value: (row) => <StatusBadge status={row.status} />,
                   sortValue: (row) => row.status,
                 },
-                { key: "issues", header: "Issues", value: (row) => row.reviewer_issues, sortValue: (row) => row.reviewer_issues },
+                {
+                  key: "pipeline",
+                  header: "Pipeline",
+                  value: (row) => <StatusBadge status={row.pipeline_status} />,
+                  sortValue: (row) => row.pipeline_status,
+                },
+                { key: "business", header: "Business", value: (row) => row.business_issues, sortValue: (row) => row.business_issues },
+                { key: "quality", header: "Quality", value: (row) => row.processing_warnings, sortValue: (row) => row.processing_warnings },
                 { key: "uploaded", header: "Uploaded", value: (row) => row.created_at, sortValue: (row) => row.created_at },
               ]}
             />
@@ -125,7 +134,10 @@ function matchesFilter(item: WorklistItem, filter: Filter): boolean {
     return true;
   }
   if (filter === "Pending") {
-    return ["uploaded", "processing", "ocr_completed"].includes(item.status);
+    return ["queued", "processing"].includes(item.pipeline_status);
+  }
+  if (filter === "Recovery") {
+    return item.pipeline_retryable;
   }
   if (filter === "Needs Review") {
     return ["NEEDS_REVIEW", "CRITICAL"].includes(item.status);

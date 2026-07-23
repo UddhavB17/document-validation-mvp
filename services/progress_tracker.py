@@ -7,6 +7,11 @@ import json
 from typing import Any
 
 from database.db import get_connection
+from services.config import get_int
+
+
+ACTIVE_PROGRESS_STATES = frozenset({"queued", "processing"})
+RETRYABLE_PROGRESS_STATES = frozenset({"stale", "failed", "completed_with_warnings"})
 
 
 def _utc_now_iso() -> str:
@@ -298,13 +303,46 @@ def get_progress(application_id: int) -> dict[str, Any] | None:
         page_payload = dict(page_row)
         page_payload["extracted_fields"] = _decode_json(page_payload.get("extracted_fields"))
         completed_pages.append(page_payload)
-    eta_seconds = _estimate_eta_seconds(payload)
+    operational_status = operational_progress_status(payload)
+    eta_seconds = _estimate_eta_seconds({**payload, "status": operational_status})
     payload["eta_seconds"] = eta_seconds
     payload["last_processed_page"] = payload.pop("current_page")
     payload["progress_text"] = f"{payload['processed_pages']}/{payload['total_pages']} pages processed"
     payload["pipeline_outcome"] = payload["status"]
+    payload["operational_status"] = operational_status
+    payload["is_stale"] = operational_status == "stale"
+    payload["retryable"] = operational_status in RETRYABLE_PROGRESS_STATES
     payload["completed_pages"] = completed_pages
     return payload
+
+
+def operational_progress_status(progress: dict[str, Any] | None) -> str:
+    """Return a reviewer-friendly pipeline state, including stale detection."""
+    if not progress:
+        return "not_started"
+    status = str(progress.get("status") or "queued").lower()
+    if status == "partial_failed":
+        return "completed_with_warnings"
+    if status in {"completed", "failed"}:
+        return status
+    if status in ACTIVE_PROGRESS_STATES and _is_stale_timestamp(progress.get("updated_at")):
+        return "stale"
+    if status in ACTIVE_PROGRESS_STATES:
+        return status
+    return status
+
+
+def _is_stale_timestamp(value: Any) -> bool:
+    if not value:
+        return False
+    try:
+        updated = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    stale_minutes = get_int("DMEF_STALE_JOB_MINUTES", 30, minimum=1)
+    return (datetime.now(timezone.utc) - updated).total_seconds() > stale_minutes * 60
 
 
 def create_pipeline_job(application_id: int, job_type: str = "pdf_pipeline") -> int:

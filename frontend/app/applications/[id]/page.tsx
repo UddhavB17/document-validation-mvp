@@ -60,7 +60,11 @@ export default function ApplicationReviewPage() {
         {/* Consolidated Overview Header */}
         <Overview data={review.data} />
 
-        {["uploaded", "processing", "ocr_completed"].includes(String(review.data.application.status)) ? (
+        {[
+          "uploaded",
+          "processing",
+          "ocr_completed",
+        ].includes(String(review.data.application.status)) || review.data.progress?.retryable ? (
           <ProgressPanel applicationId={applicationId} />
         ) : null}
 
@@ -109,7 +113,7 @@ export default function ApplicationReviewPage() {
           {activeTab === "anomalies" ? (
             <div className="space-y-6">
               <ResultExplanation data={review.data} />
-              <Anomalies anomalies={review.data.summary.reviewer_anomalies} />
+              <Anomalies applicationId={applicationId} data={review.data} />
             </div>
           ) : null}
 
@@ -155,12 +159,29 @@ function TabButton({
 
 function Verdict({ data }: { data: ApplicationReview }) {
   const status = String(data.application.status ?? "NEEDS_REVIEW");
+  const pipelineStatus = String(data.progress?.operational_status ?? "not_started");
   const reviewerCount = data.summary.reviewer_count;
   const highCount = data.summary.high_count;
   let title = "NEEDS REVIEW";
   let detail = `${reviewerCount} issue(s) to check`;
   let classes = "border-amber-300 bg-amber-50 text-amber-900";
-  if (status === "CLEAN" || reviewerCount === 0) {
+  if (pipelineStatus === "stale") {
+    title = "STALE";
+    detail = "Processing stopped reporting progress; recovery is required";
+    classes = "border-red-300 bg-red-50 text-red-900";
+  } else if (pipelineStatus === "failed") {
+    title = "FAILED";
+    detail = "Processing failed; retry before making a decision";
+    classes = "border-red-300 bg-red-50 text-red-900";
+  } else if (["queued", "processing"].includes(pipelineStatus)) {
+    title = "PROCESSING";
+    detail = "Validation is not complete";
+    classes = "border-blue-300 bg-blue-50 text-blue-900";
+  } else if (pipelineStatus === "completed_with_warnings") {
+    title = "COMPLETED WITH WARNINGS";
+    detail = `${reviewerCount} issue(s) plus page-level processing warnings`;
+    classes = "border-amber-300 bg-amber-50 text-amber-900";
+  } else if (status === "CLEAN" || (pipelineStatus === "completed" && reviewerCount === 0)) {
     title = "CLEAN";
     detail = "No checklist issues found";
     classes = "border-emerald-300 bg-emerald-50 text-emerald-900";
@@ -282,61 +303,203 @@ function PageProcessing({ data }: { data: ApplicationReview }) {
   );
 }
 
-function Anomalies({ anomalies }: { anomalies: Anomaly[] }) {
-  if (anomalies.length === 0) {
+function Anomalies({ applicationId, data }: { applicationId: number; data: ApplicationReview }) {
+  const [selectedEvidence, setSelectedEvidence] = useState<{ anomaly: Anomaly; pageNumber: number } | null>(null);
+  const business = data.summary.business_anomalies;
+  const processing = data.summary.processing_warnings;
+  if (business.length === 0 && processing.length === 0) {
     return (
       <section className="space-y-3">
-        <h2 className="text-base font-bold text-slate-800">System Anomalies</h2>
+        <h2 className="text-base font-bold text-slate-800">Exceptions and Quality Warnings</h2>
         <InfoMessage message="No issues detected." />
       </section>
     );
   }
   return (
+    <section className="space-y-4">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]">
+        <div className="space-y-6">
+          <AnomalyGroup
+            title={`Business Checklist Exceptions (${business.length})`}
+            description="Document, identity, field, date, and policy exceptions that can affect the operational decision."
+            anomalies={business}
+            tone="business"
+            onSelectEvidence={(anomaly, pageNumber) => setSelectedEvidence({ anomaly, pageNumber })}
+          />
+          <AnomalyGroup
+            title={`Processing Quality Warnings (${processing.length})`}
+            description="OCR, classification, ownership, and page-processing limitations. These require evidence review but are not business failures by themselves."
+            anomalies={processing}
+            tone="processing"
+            onSelectEvidence={(anomaly, pageNumber) => setSelectedEvidence({ anomaly, pageNumber })}
+          />
+        </div>
+        <EvidenceViewer applicationId={applicationId} data={data} selection={selectedEvidence} />
+      </div>
+    </section>
+  );
+}
+
+function AnomalyGroup({
+  title,
+  description,
+  anomalies,
+  tone,
+  onSelectEvidence,
+}: {
+  title: string;
+  description: string;
+  anomalies: Anomaly[];
+  tone: "business" | "processing";
+  onSelectEvidence: (anomaly: Anomaly, pageNumber: number) => void;
+}) {
+  return (
     <section className="space-y-3">
-      <h2 className="text-base font-bold text-slate-800">System Anomalies & Flags</h2>
+      <div className={`rounded-xl border px-4 py-3 ${tone === "business" ? "border-red-200 bg-red-50" : "border-blue-200 bg-blue-50"}`}>
+        <h2 className="text-base font-bold text-slate-900">{title}</h2>
+        <p className="mt-1 text-xs font-medium text-slate-600">{description}</p>
+      </div>
+      {anomalies.length === 0 ? <InfoMessage message={`No ${tone === "business" ? "business exceptions" : "processing warnings"}.`} /> : null}
       <div className="space-y-2">
         {anomalies.map((anomaly, index) => {
           const isHigh = anomaly.severity === "HIGH";
-          const severityColors = isHigh 
-            ? "border-red-200 bg-red-50 text-red-800" 
+          const pages = anomaly.collapsed_page_numbers?.length
+            ? anomaly.collapsed_page_numbers
+            : typeof anomaly.page_number === "number"
+            ? [anomaly.page_number]
+            : [];
+          const severityColors = isHigh
+            ? "border-red-200 bg-red-50 text-red-800"
             : anomaly.severity === "MEDIUM"
             ? "border-amber-200 bg-amber-50 text-amber-800"
             : "border-slate-200 bg-slate-50 text-slate-800";
           return (
-            <details key={anomaly.id ?? index} className={`rounded-xl border ${severityColors} overflow-hidden shadow-sm`} open={index === 0 && isHigh}>
-              <summary className="cursor-pointer px-4 py-3 font-semibold hover:bg-slate-100 flex items-center justify-between select-none">
+            <details key={`${anomaly.rule_id}-${anomaly.id ?? index}`} className={`overflow-hidden rounded-xl border shadow-sm ${severityColors}`} open={index === 0 && isHigh}>
+              <summary className="flex cursor-pointer items-center justify-between px-4 py-3 font-semibold hover:bg-white/50">
                 <div className="flex items-center gap-3">
-                  <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                    isHigh ? "bg-red-200 text-red-800" : anomaly.severity === "MEDIUM" ? "bg-amber-200 text-amber-800" : "bg-slate-200 text-slate-800"
-                  }`}>
-                    {anomaly.severity}
-                  </span>
-                  <span className="text-sm">Page {anomaly.page_number ?? "Global"} — {anomaly.reason ?? anomaly.rule_id}</span>
+                  <span className="inline-flex rounded bg-white/70 px-2 py-0.5 text-[10px] font-bold uppercase">{anomaly.severity}</span>
+                  <span className="text-sm">{anomaly.reason ?? anomaly.rule_id}</span>
                 </div>
               </summary>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 border-t border-slate-200 bg-white px-4 py-3 text-xs">
-                <div>
-                  <div className="font-semibold text-slate-500 uppercase tracking-wider mb-1">Expected</div>
-                  <div className="font-mono text-slate-800 break-all">{asText(anomaly.expected_value)}</div>
+              <div className="space-y-4 border-t border-slate-200 bg-white px-4 py-3 text-xs">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <EvidenceValue label="Expected" value={anomaly.expected_value} />
+                  <EvidenceValue label="Found" value={anomaly.found_value} />
+                  <EvidenceValue label="Rule ID" value={anomaly.rule_id} />
                 </div>
-                <div>
-                  <div className="font-semibold text-slate-500 uppercase tracking-wider mb-1">Found</div>
-                  <div className="font-mono text-slate-800 break-all">{asText(anomaly.found_value)}</div>
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-500 uppercase tracking-wider mb-1">Rule ID</div>
-                  <code className="text-blue-700 font-mono">{anomaly.rule_id}</code>
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-500 uppercase tracking-wider mb-1">Affected Pages</div>
-                  <div className="font-mono text-slate-800">{anomaly.collapsed_page_numbers?.join(", ") ?? anomaly.page_number ?? "Global"}</div>
-                </div>
+                {pages.length ? (
+                  <div>
+                    <div className="mb-2 font-semibold uppercase tracking-wider text-slate-500">Open source evidence</div>
+                    <div className="flex flex-wrap gap-2">
+                      {pages.slice(0, 12).map((pageNumber) => (
+                        <button
+                          key={pageNumber}
+                          type="button"
+                          onClick={() => onSelectEvidence(anomaly, pageNumber)}
+                          className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 font-bold text-blue-700 hover:bg-blue-100"
+                        >
+                          Page {pageNumber}
+                        </button>
+                      ))}
+                      {pages.length > 12 ? <span className="px-2 py-1.5 font-semibold text-slate-500">+{pages.length - 12} more pages</span> : null}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="font-medium text-slate-500">This is a file-level exception with no single source page.</p>
+                )}
               </div>
             </details>
           );
         })}
       </div>
     </section>
+  );
+}
+
+function EvidenceViewer({
+  applicationId,
+  data,
+  selection,
+}: {
+  applicationId: number;
+  data: ApplicationReview;
+  selection: { anomaly: Anomaly; pageNumber: number } | null;
+}) {
+  if (!selection) {
+    return (
+      <aside className="sticky top-4 flex h-[70vh] items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+        <div>
+          <div className="text-base font-bold text-slate-700">Source Evidence Viewer</div>
+          <p className="mt-2 max-w-sm text-sm text-slate-500">Select a page from an exception to open the original PDF beside its expected and extracted values.</p>
+        </div>
+      </aside>
+    );
+  }
+  const page = data.pages.find((item) => Number(item.page_number) === selection.pageNumber);
+  const ocrText = typeof page?.ocr_text === "string" ? page.ocr_text : "";
+  return (
+    <aside className="sticky top-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Original source evidence</div>
+            <div className="font-bold text-slate-900">Page {selection.pageNumber} · {asText(page?.document_type ?? selection.anomaly.document_type)}</div>
+          </div>
+          <a href={api.sourcePdfUrl(applicationId, selection.pageNumber)} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-700 hover:underline">Open full PDF</a>
+        </div>
+      </div>
+      <div
+        key={selection.pageNumber}
+        className="flex h-[46vh] items-start justify-center overflow-auto bg-slate-800 p-4"
+      >
+        {/* The evidence image is generated by the local API and needs its natural aspect ratio. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={api.sourcePageImageUrl(applicationId, selection.pageNumber)}
+          alt={`Original source PDF page ${selection.pageNumber}`}
+          className="h-auto max-w-full bg-white shadow-lg"
+        />
+      </div>
+      <div className="max-h-[24vh] space-y-3 overflow-auto border-t border-slate-200 p-4 text-xs">
+        <div className="grid grid-cols-2 gap-3">
+          <EvidenceValue label="Expected" value={selection.anomaly.expected_value} />
+          <EvidenceValue label="Extracted / Found" value={selection.anomaly.found_value} />
+        </div>
+        <div>
+          <div className="mb-1 font-semibold uppercase tracking-wider text-slate-500">Extracted page text</div>
+          <div className="whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono leading-relaxed text-slate-100">
+            {ocrText ? <HighlightedEvidenceText text={ocrText.slice(0, 3500)} needle={selection.anomaly.found_value ?? ""} /> : "No OCR text was extracted for this page. Review the original image above."}
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function EvidenceValue({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div>
+      <div className="mb-1 font-semibold uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="break-all font-mono text-slate-800">{asText(value)}</div>
+    </div>
+  );
+}
+
+function HighlightedEvidenceText({ text, needle }: { text: string; needle: string }) {
+  const cleanedNeedle = needle.trim();
+  if (cleanedNeedle.length < 4) {
+    return <>{text}</>;
+  }
+  const index = text.toLowerCase().indexOf(cleanedNeedle.toLowerCase());
+  if (index < 0) {
+    return <>{text}</>;
+  }
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="rounded bg-amber-300 px-0.5 text-slate-950">{text.slice(index, index + cleanedNeedle.length)}</mark>
+      {text.slice(index + cleanedNeedle.length)}
+    </>
   );
 }
 

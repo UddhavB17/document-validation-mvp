@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, Response
 
 from database.db import get_connection, init_db
 from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
 from services.checklist_status import build_checklist_status
 from services.ocr_json_export import build_ocr_document_json
+from services.progress_tracker import get_progress
+from services.reprocessing import ReprocessConflictError, queue_application_reprocess
 from services.reviewer import load_reviewer_summary, summarize_for_display
 
 router = APIRouter(prefix="/review", tags=["review"])
@@ -33,6 +36,7 @@ def get_worklist() -> dict[str, list[dict[str, Any]]]:
         items = []
         for row in rows:
             item = dict(row)
+            progress = get_progress(int(item["id"]))
             anomalies = connection.execute(
                 """
                 SELECT severity, rule_id, page_number, reason, document_type, expected_value, found_value
@@ -44,6 +48,12 @@ def get_worklist() -> dict[str, list[dict[str, Any]]]:
             summary = summarize_for_display([dict(anomaly) for anomaly in anomalies])
             item["issues"] = summary["raw_count"]
             item["reviewer_issues"] = summary["reviewer_count"]
+            item["business_issues"] = summary["business_count"]
+            item["processing_warnings"] = summary["processing_warning_count"]
+            item["pipeline_status"] = (
+                progress.get("operational_status") if progress else "not_started"
+            )
+            item["pipeline_retryable"] = bool(progress and progress.get("retryable"))
             items.append(item)
 
     return {"items": items}
@@ -115,7 +125,91 @@ def get_application_review(application_id: int) -> dict[str, Any]:
             "total": len(ai_items),
         },
         "latest_decision": _load_latest_decision(application_id),
+        "progress": get_progress(application_id),
     }
+
+
+@router.get("/applications/{application_id}/source-pdf", summary="View the original PDF evidence")
+def get_application_source_pdf(application_id: int) -> FileResponse:
+    init_db()
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT file_path, original_filename
+            FROM uploaded_files
+            WHERE application_id = ?
+            ORDER BY uploaded_at DESC
+            LIMIT 1
+            """,
+            (application_id,),
+        ).fetchone()
+    if row is None or not row["file_path"]:
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+    file_path = Path(str(row["file_path"]))
+    if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=str(row["original_filename"] or file_path.name),
+        content_disposition_type="inline",
+    )
+
+
+@router.get(
+    "/applications/{application_id}/source-page/{page_number}",
+    summary="Render one source PDF page for evidence review",
+)
+def get_application_source_page(application_id: int, page_number: int) -> Response:
+    if page_number < 1:
+        raise HTTPException(status_code=422, detail="Page number must be one or greater")
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT file_path FROM uploaded_files
+            WHERE application_id = ?
+            ORDER BY uploaded_at DESC
+            LIMIT 1
+            """,
+            (application_id,),
+        ).fetchone()
+    if row is None or not row["file_path"]:
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+    file_path = Path(str(row["file_path"]))
+    if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=404, detail="Source PDF not found")
+
+    import fitz
+
+    try:
+        with fitz.open(file_path) as document:
+            if page_number > document.page_count:
+                raise HTTPException(status_code=404, detail="Source page not found")
+            page = document.load_page(page_number - 1)
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            image_bytes = pixmap.tobytes("png")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail="Source PDF could not be rendered") from exc
+    return Response(
+        content=image_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+@router.post("/applications/{application_id}/reprocess", summary="Retry a stale or failed PDF pipeline")
+def reprocess_application(application_id: int) -> dict[str, Any]:
+    init_db()
+    try:
+        return queue_application_reprocess(application_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
+    except ReprocessConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/applications/{application_id}/ocr-json")

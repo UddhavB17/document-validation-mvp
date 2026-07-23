@@ -99,6 +99,9 @@ export const progressSchema = z.object({
   current_page: z.number().nullable().optional(),
   percentage: z.number().nullable().optional(),
   status: z.string().optional(),
+  operational_status: z.string().optional(),
+  is_stale: z.boolean().optional(),
+  retryable: z.boolean().optional(),
   message: nullableString,
   error: nullableString,
   eta_seconds: z.number().nullable().optional(),
@@ -114,6 +117,10 @@ export const worklistItemSchema = z.object({
   created_at: z.string(),
   issues: z.number(),
   reviewer_issues: z.number(),
+  business_issues: z.number(),
+  processing_warnings: z.number(),
+  pipeline_status: z.string(),
+  pipeline_retryable: z.boolean(),
 });
 
 export const worklistSchema = z.object({
@@ -187,6 +194,10 @@ export const applicationReviewSchema = z.object({
     reviewer_count: z.number(),
     high_count: z.number(),
     reviewer_anomalies: z.array(anomalySchema),
+    business_count: z.number(),
+    processing_warning_count: z.number(),
+    business_anomalies: z.array(anomalySchema),
+    processing_warnings: z.array(anomalySchema),
   }),
   reviewer_summary: recordSchema.nullable(),
   manual_review_items: z.array(recordSchema),
@@ -202,6 +213,15 @@ export const applicationReviewSchema = z.object({
     total: z.number(),
   }),
   latest_decision: decisionSchema.nullable(),
+  progress: progressSchema.nullable(),
+});
+
+export const reprocessResponseSchema = z.object({
+  application_id: z.number(),
+  job_id: z.number(),
+  status: z.string(),
+  pipeline_status: z.string(),
+  previous_pipeline_status: z.string(),
 });
 
 export type Health = z.infer<typeof healthSchema>;
@@ -309,5 +329,13 @@ export const api = {
   createDecision: (payload: { application_id: number; decision: string; reviewer_note: string }) =>
     postJson("/decision", payload, decisionSchema),
   undoDecision: (decisionId: number) => postJson(`/decision/${decisionId}/undo`, {}, decisionSchema),
+  reprocessApplication: (applicationId: number) =>
+    postJson(`/review/applications/${applicationId}/reprocess`, {}, reprocessResponseSchema),
+  sourcePdfUrl: (applicationId: number, pageNumber?: number) => {
+    const base = `${API_BASE_URL}/review/applications/${applicationId}/source-pdf`;
+    return pageNumber ? `${base}#page=${pageNumber}&zoom=page-width` : base;
+  },
+  sourcePageImageUrl: (applicationId: number, pageNumber: number) =>
+    `${API_BASE_URL}/review/applications/${applicationId}/source-page/${pageNumber}`,
   ocrJsonUrl: (applicationId: number) => `${API_BASE_URL}/review/applications/${applicationId}/ocr-json`,
 };

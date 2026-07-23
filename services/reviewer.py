@@ -15,6 +15,19 @@ from database.db import get_connection
 
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
+PROCESSING_QUALITY_RULES = frozenset(
+    {
+        "UNCLASSIFIED_PAGE",
+        "LOW_OCR_CONFIDENCE",
+        "UNREADABLE_PAGE",
+        "PAGE_PROCESSING_ERROR",
+        "OCR_BUDGET_PARTIAL_SCAN",
+        "DOCUMENT_NOT_READABLE",
+        "AUTO_OWNER_UNRESOLVED",
+        "AUTO_OWNER_LOW_CONFIDENCE",
+    }
+)
+
 IDENTITY_RULES = {
     "AADHAAR_NUMBER_MISMATCH",
     "PAN_NUMBER_MISMATCH",
@@ -95,14 +108,33 @@ def summarize_for_display(anomalies: list[dict]) -> dict[str, int | list[dict]]:
     high = [item for item in collapsed if str(item.get("severity", "")).upper() == "HIGH"]
     medium = [item for item in collapsed if str(item.get("severity", "")).upper() == "MEDIUM"]
     low = [item for item in collapsed if str(item.get("severity", "")).upper() == "LOW"]
+    business_anomalies, processing_warnings = split_reviewer_anomalies(collapsed)
     return {
         "reviewer_anomalies": collapsed,
+        "business_anomalies": business_anomalies,
+        "processing_warnings": processing_warnings,
         "reviewer_count": len(collapsed),
+        "business_count": len(business_anomalies),
+        "processing_warning_count": len(processing_warnings),
         "raw_count": len(anomalies),
         "high_count": len(high),
         "medium_count": len(medium),
         "low_count": len(low),
     }
+
+
+def split_reviewer_anomalies(anomalies: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Separate business-rule exceptions from OCR/classification quality warnings."""
+    business: list[dict] = []
+    processing: list[dict] = []
+    for anomaly in anomalies:
+        rule_id = str(anomaly.get("rule_id") or "")
+        base_rule_id = rule_id.removesuffix("_SUMMARY")
+        if base_rule_id in PROCESSING_QUALITY_RULES or base_rule_id.startswith("PAGE_PROCESSING_"):
+            processing.append(anomaly)
+        else:
+            business.append(anomaly)
+    return business, processing
 
 
 def compute_final_status(anomalies: list[dict]) -> str:

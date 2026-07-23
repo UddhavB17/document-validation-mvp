@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState, useEffect } from "react";
+import { FormEvent, useState, useEffect, useRef } from "react";
 import { ZodError } from "zod";
 
 import { ErrorMessage, InfoMessage } from "@/components/Message";
@@ -68,6 +68,8 @@ export default function UploadPage() {
 function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -86,6 +88,7 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
       setSubmitting(true);
       onUploaded(await api.uploadPdf(payload));
       formElement.reset();
+      setSelectedFile(null);
     } catch (err) {
       setError(formError(err));
     } finally {
@@ -111,11 +114,28 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
           <h2 className="text-lg font-bold text-slate-800">Document File</h2>
           <label className="block">
             <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Loan Packet PDF</span>
-            <input className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-slate-300 bg-white file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none" name="file" type="file" accept="application/pdf" />
+            <input
+              ref={fileInputRef}
+              className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-slate-300 bg-white file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none"
+              name="file"
+              type="file"
+              accept="application/pdf,.pdf"
+              required
+              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+            />
           </label>
           <p className="text-xs text-slate-500 font-medium">Select a single PDF file containing all applicant KYC and loan documentation.</p>
+          {selectedFile ? (
+            <PdfFilePreview
+              file={selectedFile}
+              onRemove={() => {
+                setSelectedFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+            />
+          ) : null}
         </div>
-        <button disabled={isSubmitting} className="w-full md:w-auto px-5 py-3 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500">
+        <button disabled={isSubmitting || !selectedFile} className="w-full md:w-auto px-5 py-3 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500">
           {isSubmitting ? "Submitting..." : "Submit for processing"}
         </button>
       </section>
@@ -126,6 +146,8 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
 function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -146,6 +168,7 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
       setSubmitting(true);
       onUploaded(await api.uploadMapped({ file, manifest }));
       formElement.reset();
+      setSelectedFile(null);
     } catch (err) {
       setError(formError(err));
     } finally {
@@ -162,8 +185,25 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
       </div>
       <label className="block">
         <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Select file (PDF or ZIP package)</span>
-        <input className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-slate-300 bg-white file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none" name="file" type="file" accept="application/pdf,.pdf,application/zip,.zip" />
+        <input
+          ref={fileInputRef}
+          className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-slate-300 bg-white file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none"
+          name="file"
+          type="file"
+          accept="application/pdf,.pdf,application/zip,.zip"
+          required
+          onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
+        />
       </label>
+      {selectedFile && isPdfFile(selectedFile) ? (
+        <PdfFilePreview
+          file={selectedFile}
+          onRemove={() => {
+            setSelectedFile(null);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          }}
+        />
+      ) : null}
       <label className="block">
         <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Manifest JSON</span>
         <textarea
@@ -172,11 +212,72 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
           placeholder='Paste manifest JSON here, or upload a ZIP containing one PDF and one JSON manifest. If the ZIP has multiple PDFs, include "pdf_file": "loan-file.pdf" in the manifest.'
         />
       </label>
-      <button disabled={isSubmitting} className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500">
+      <button disabled={isSubmitting || !selectedFile} className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-all duration-150 shadow-sm disabled:bg-slate-300 disabled:text-slate-500">
         {isSubmitting ? "Submitting..." : "Run Deterministic Verification"}
       </button>
     </form>
   );
+}
+
+function PdfFilePreview({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [objectUrl, setObjectUrl] = useState("");
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const nextUrl = URL.createObjectURL(file);
+    setObjectUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [file]);
+
+  function openPreview() {
+    if (!objectUrl) return;
+    const previewWindow = window.open(objectUrl, "_blank");
+    if (!previewWindow) {
+      setPreviewError("The browser blocked the preview tab. Allow pop-ups for this local app and try again.");
+      return;
+    }
+    previewWindow.opener = null;
+    setPreviewError(null);
+  }
+
+  return (
+    <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-xs font-bold uppercase tracking-wider text-blue-700">Selected PDF</div>
+          <div className="truncate text-sm font-bold text-slate-900" title={file.name}>{file.name}</div>
+          <div className="text-xs font-medium text-slate-500">{formatFileSize(file.size)} · Opens locally in a new tab for confirmation</div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <button
+            type="button"
+            onClick={openPreview}
+            disabled={!objectUrl}
+            className="rounded-lg bg-blue-700 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-600 disabled:bg-slate-300"
+          >
+            Open PDF Preview
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+      {previewError ? <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">{previewError}</div> : null}
+    </div>
+  );
+}
+
+function isPdfFile(file: File): boolean {
+  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function PartnerJsonForm({ onUploaded }: { onUploaded: (result: UploadResponse) => void }) {

@@ -33,8 +33,25 @@ export function useProgress(applicationId: number | null) {
     queryKey: ["progress", applicationId],
     queryFn: () => api.progress(applicationId as number),
     enabled: applicationId !== null,
-    refetchInterval: 2000,
+    refetchInterval: (query) => {
+      const status = String(query.state.data?.operational_status ?? query.state.data?.status ?? "");
+      return ["queued", "processing"].includes(status) ? 2000 : false;
+    },
     retry: false,
+  });
+}
+
+export function useReprocessApplication(applicationId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.reprocessApplication(applicationId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["progress", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["applicationReview", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["worklist"] }),
+      ]);
+    },
   });
 }
 

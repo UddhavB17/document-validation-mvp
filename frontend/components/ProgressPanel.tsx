@@ -1,13 +1,14 @@
 "use client";
 
-import { useProgress } from "@/lib/queries";
+import { useProgress, useReprocessApplication } from "@/lib/queries";
 import { formatSeconds } from "@/lib/format";
-import { LoadingMessage } from "./Message";
+import { ErrorMessage, InfoMessage, LoadingMessage } from "./Message";
 import { Metric } from "./Metric";
 import { SortableTable } from "./SortableTable";
 
 export function ProgressPanel({ applicationId }: { applicationId: number }) {
   const progress = useProgress(applicationId);
+  const reprocess = useReprocessApplication(applicationId);
 
   if (progress.isLoading) {
     return <LoadingMessage message="Loading processing progress..." />;
@@ -21,6 +22,7 @@ export function ProgressPanel({ applicationId }: { applicationId: number }) {
     return null;
   }
   const completedPages = data.completed_pages ?? [];
+  const operationalStatus = data.operational_status ?? data.status ?? "unknown";
 
   return (
     <section className="space-y-4">
@@ -31,6 +33,29 @@ export function ProgressPanel({ applicationId }: { applicationId: number }) {
             `: ${data.processed_pages ?? 0}/${data.total_pages ?? 0} pages processed`}
         </p>
       </div>
+      {operationalStatus === "stale" ? (
+        <ErrorMessage message="Processing has not reported progress within the expected window. The job is marked stale and can be safely retried." />
+      ) : null}
+      {operationalStatus === "failed" ? (
+        <ErrorMessage message={data.error ?? "Processing failed. The original PDF is available for a recovery run."} />
+      ) : null}
+      {operationalStatus === "completed_with_warnings" ? (
+        <InfoMessage message="Processing completed with page-level warnings. Review the quality warnings below or run the file again." />
+      ) : null}
+      {data.retryable ? (
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={reprocess.isPending}
+            onClick={() => reprocess.mutate()}
+            className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-600 disabled:bg-slate-300"
+          >
+            {reprocess.isPending ? "Queuing recovery..." : "Retry processing"}
+          </button>
+          <span className="text-xs font-medium text-slate-500">Reprocesses the stored source PDF and records a new audit event.</span>
+        </div>
+      ) : null}
+      {reprocess.isError ? <ErrorMessage message={reprocess.error.message} /> : null}
       <div className="h-2 rounded bg-slate-200">
         <div className="h-2 rounded bg-blue-600" style={{ width: `${Math.min(data.percentage ?? 0, 100)}%` }} />
       </div>
@@ -38,7 +63,7 @@ export function ProgressPanel({ applicationId }: { applicationId: number }) {
         <Metric label="Completed" value={`${completedPages.length}/${data.total_pages ?? "-"}`} />
         <Metric label="Digital" value={data.digital_pages ?? "-"} />
         <Metric label="Scanned" value={data.scanned_pages ?? "-"} />
-        <Metric label="Status" value={data.status ?? "-"} />
+        <Metric label="Pipeline Status" value={operationalStatus} />
       </div>
       {completedPages.length > 0 ? (
         <SortableTable

@@ -1,4 +1,9 @@
-from services.reviewer import collapse_for_reviewer, compute_final_status, summarize_for_display
+from services.reviewer import (
+    collapse_for_reviewer,
+    compute_final_status,
+    split_reviewer_anomalies,
+    summarize_for_display,
+)
 
 
 def test_collapses_repeated_unclassified_pages() -> None:
@@ -75,3 +80,20 @@ def test_summarize_for_display_counts() -> None:
     assert summary["raw_count"] == 11
     assert summary["reviewer_count"] == 2
     assert summary["high_count"] == 1
+
+
+def test_separates_business_exceptions_from_processing_warnings() -> None:
+    business, processing = split_reviewer_anomalies(
+        [
+            {"rule_id": "MISSING_DOC_S7", "severity": "HIGH"},
+            {"rule_id": "PAN_NUMBER_MISMATCH", "severity": "HIGH"},
+            {"rule_id": "LOW_OCR_CONFIDENCE_SUMMARY", "severity": "LOW"},
+            {"rule_id": "PAGE_PROCESSING_ERROR", "severity": "MEDIUM"},
+        ]
+    )
+
+    assert [item["rule_id"] for item in business] == ["MISSING_DOC_S7", "PAN_NUMBER_MISMATCH"]
+    assert [item["rule_id"] for item in processing] == [
+        "LOW_OCR_CONFIDENCE_SUMMARY",
+        "PAGE_PROCESSING_ERROR",
+    ]
