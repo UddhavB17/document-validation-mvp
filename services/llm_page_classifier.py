@@ -57,6 +57,64 @@ def needs_llm_classification(
     return False
 
 
+def normalize_llm_document_type(doc_type: str) -> str:
+    """Normalize and map loose LLM document type names to exact registry values."""
+    cleaned = str(doc_type or "").strip().lower()
+    if not cleaned or cleaned in {"none", "unknown", "null"}:
+        return "None"
+
+    # Direct match check (ignoring case/whitespace)
+    for valid_type in VALID_DOCUMENT_TYPES:
+        if valid_type.strip().lower() == cleaned:
+            return valid_type
+
+    # Common aliases & substring matches
+    if "aadhaar" in cleaned or "aadhar" in cleaned:
+        return "Aadhaar"
+    if "pan" in cleaned:
+        return "PAN Card"
+    if "passport" in cleaned:
+        return "Passport"
+    if "driving" in cleaned or "licence" in cleaned or "license" in cleaned:
+        return "Driving License"
+    if "voter" in cleaned:
+        return "Voter ID"
+    if "mnrega" in cleaned:
+        return "MNREGA Job Card"
+    if "npr" in cleaned:
+        return "NPR Letter"
+    if "utility" in cleaned or "electricity" in cleaned or "bill" in cleaned:
+        return "Utility Bill"
+    if "bank statement" in cleaned or "statement" in cleaned:
+        return "Bank Statement"
+    if "passbook" in cleaned or "pass book" in cleaned:
+        return "Passbook"
+    if "cheque" in cleaned:
+        return "Cheque"
+    if "pdc" in cleaned:
+        return "PDC"
+    if "cibil" in cleaned:
+        return "CIBIL Report"
+    if "crif" in cleaned:
+        return "CRIF Report"
+    if "cersai" in cleaned:
+        return "CERSAI Report"
+    if "loan agreement" in cleaned or "agreement" in cleaned:
+        return "Loan Agreement"
+    if "sanction" in cleaned:
+        return "Sanction Letter"
+    if "stamp" in cleaned:
+        return "Stamp Duty"
+    if "technical" in cleaned:
+        return "Technical Report"
+    if "valuation" in cleaned:
+        return "Valuation Report"
+    if "nach" in cleaned:
+        return "NACH Form"
+
+    return "None"
+
+
 def classify_page_with_llm(text: str) -> dict[str, Any] | None:
     """Classify page text using the local LLM. Returns None on failure."""
     cleaned = (text or "").strip()
@@ -76,7 +134,9 @@ def classify_page_with_llm(text: str) -> dict[str, Any] | None:
     if not parsed:
         return None
 
-    document_type = str(parsed.get("document_type") or "None")
+    raw_document_type = str(parsed.get("document_type") or "None")
+    document_type = normalize_llm_document_type(raw_document_type)
+    
     if document_type not in VALID_DOCUMENT_TYPES:
         return None
 
@@ -106,32 +166,30 @@ def _build_classifier_prompt(text: str) -> str:
         "Do not merge bank documents: choose \"Passbook\" for passbook/pass book pages, "
         "\"Cheque\" for cheque or cancelled cheque pages, \"PDC\" only for post-dated/security cheques, "
         "and \"Bank Statement\" only for statement/account-statement pages.\n"
-        "Respond with JSON only, no markdown:\n"
-        '{"document_type": "...", "confidence": 0.0, "reason": "short reason"}\n\n'
+        "Respond with TOON (Token-Oriented Object Notation) format only, no markdown, no json:\n"
+        "document_type: \"...\"\n"
+        "confidence: 0.0\n"
+        "reason: \"short reason\"\n\n"
         "Page text:\n"
         f"{text}"
     )
 
 
 def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
-    stripped = response_text.strip()
-    if not stripped:
+    cleaned = response_text.strip()
+    if not cleaned:
         return None
 
-    candidates = [stripped]
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    # Strip markdown code blocks (handling both toon, json, or generic code fences)
+    fence_match = re.search(r"```(?:toon|json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
     if fence_match:
-        candidates.insert(0, fence_match.group(1))
+        cleaned = fence_match.group(1).strip()
 
-    brace_match = re.search(r"\{.*\}", stripped, re.DOTALL)
-    if brace_match:
-        candidates.append(brace_match.group(0))
-
-    for candidate in candidates:
-        try:
-            payload = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict) and payload.get("document_type"):
-            return payload
+    try:
+        from toon import decode
+        parsed = decode(cleaned)
+        if isinstance(parsed, dict) and parsed.get("document_type"):
+            return parsed
+    except Exception:
+        pass
     return None
