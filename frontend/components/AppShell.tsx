@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -16,10 +17,13 @@ const navItems = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const health = useHealth();
+  const [isSidebarHidden, setIsSidebarHidden] = useState(false);
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900">
-      <aside className="w-64 shrink-0 border-r border-slate-200 bg-white sticky top-0 h-screen overflow-y-auto">
+      <aside className={`shrink-0 border-r border-slate-200 bg-white sticky top-0 h-screen overflow-y-auto transition-all duration-300 ${
+        isSidebarHidden ? "w-0 border-none overflow-hidden" : "w-64"
+      }`}>
         <div className="border-b border-slate-200 px-5 py-4">
           <div className="text-xl font-semibold">DMEF</div>
           <div className="text-sm text-slate-500">Document Matching Early Finder</div>
@@ -77,7 +81,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </aside>
-      <main className="min-w-0 flex-1 px-8 py-6">{children}</main>
+
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="flex h-14 items-center border-b border-slate-200 bg-white px-6">
+          <button
+            type="button"
+            onClick={() => setIsSidebarHidden(!isSidebarHidden)}
+            className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-800 active:scale-95 transition-all select-none"
+            title={isSidebarHidden ? "Reveal Navigation Sidebar" : "Hide Navigation Sidebar"}
+          >
+            {isSidebarHidden ? (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 4.5l7.5 7.5-7.5 7.5m-6-15l7.5 7.5-7.5 7.5" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5" />
+              </svg>
+            )}
+          </button>
+          <div className="ml-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+            Document Validation Dashboard
+          </div>
+        </header>
+        <main className="min-w-0 flex-1 px-8 py-6">{children}</main>
+      </div>
     </div>
   );
 }
