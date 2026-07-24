@@ -19,7 +19,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-slate-50 text-slate-900">
-      <aside className="w-64 shrink-0 border-r border-slate-200 bg-white">
+      <aside className="w-64 shrink-0 border-r border-slate-200 bg-white sticky top-0 h-screen overflow-y-auto">
         <div className="border-b border-slate-200 px-5 py-4">
           <div className="text-xl font-semibold">DMEF</div>
           <div className="text-sm text-slate-500">Document Matching Early Finder</div>

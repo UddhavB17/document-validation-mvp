@@ -28,9 +28,9 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
   }, [columns, rows, sort]);
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-      <table className="min-w-full divide-y divide-slate-200 text-sm">
-        <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+    <div className="overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm max-h-[600px]">
+      <table className="min-w-full divide-y divide-slate-200 text-sm relative">
+        <thead className="sticky top-0 bg-slate-50 text-left text-xs font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200 z-10">
           <tr>
             {columns.map((column) => (
               <th key={column.key} className="whitespace-nowrap px-4 py-3">

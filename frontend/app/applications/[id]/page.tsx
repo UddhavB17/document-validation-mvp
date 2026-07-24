@@ -337,7 +337,7 @@ function AiAuditInsights({
         <div className="bg-white border border-slate-150 rounded-xl p-5 shadow-xs space-y-2">
           <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Executive Summary</h3>
           <p className="text-sm font-semibold text-slate-700 leading-relaxed italic">
-            "{parsed.overall_summary}"
+            &ldquo;{parsed.overall_summary}&rdquo;
           </p>
         </div>
 
@@ -473,24 +473,35 @@ function Anomalies({ applicationId, data }: { applicationId: number; data: Appli
       </section>
     );
   }
+
+  const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number) => {
+    setSelectedEvidence({ anomaly, pageNumber });
+    setTimeout(() => {
+      const viewer = document.getElementById("evidence-viewer");
+      if (viewer) {
+        viewer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }, 100);
+  };
+
   return (
     <section className="space-y-4">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)] items-start">
         <div className="space-y-6">
-          <AiAuditInsights data={data} onSelectEvidence={(anomaly, pageNumber) => setSelectedEvidence({ anomaly, pageNumber })} />
+          <AiAuditInsights data={data} onSelectEvidence={handleSelectEvidence} />
           <AnomalyGroup
             title={`Business Checklist Exceptions (${business.length})`}
             description="Document, identity, field, date, and policy exceptions that can affect the operational decision."
             anomalies={business}
             tone="business"
-            onSelectEvidence={(anomaly, pageNumber) => setSelectedEvidence({ anomaly, pageNumber })}
+            onSelectEvidence={handleSelectEvidence}
           />
           <AnomalyGroup
             title={`Processing Quality Warnings (${processing.length})`}
             description="OCR, classification, ownership, and page-processing limitations. These require evidence review but are not business failures by themselves."
             anomalies={processing}
             tone="processing"
-            onSelectEvidence={(anomaly, pageNumber) => setSelectedEvidence({ anomaly, pageNumber })}
+            onSelectEvidence={handleSelectEvidence}
           />
         </div>
         <EvidenceViewer applicationId={applicationId} data={data} selection={selectedEvidence} />
@@ -586,7 +597,7 @@ function EvidenceViewer({
 }) {
   if (!selection) {
     return (
-      <aside className="sticky top-4 flex h-[70vh] items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+      <aside id="evidence-viewer" className="sticky top-4 flex h-[70vh] items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
         <div>
           <div className="text-base font-bold text-slate-700">Source Evidence Viewer</div>
           <p className="mt-2 max-w-sm text-sm text-slate-500">Select a page from an exception to open the original PDF beside its expected and extracted values.</p>
@@ -597,7 +608,7 @@ function EvidenceViewer({
   const page = data.pages.find((item) => Number(item.page_number) === selection.pageNumber);
   const ocrText = typeof page?.ocr_text === "string" ? page.ocr_text : "";
   return (
-    <aside className="sticky top-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+    <aside id="evidence-viewer" className="sticky top-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
         <div className="flex items-center justify-between gap-4">
           <div>
