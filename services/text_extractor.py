@@ -76,6 +76,34 @@ _NAME_LABELS_PRIORITY: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
+def clean_xml_and_metadata(text: str) -> str:
+    """Filter out XML signature tags, certificate structures and base64 strings."""
+    if not text:
+        return ""
+    lines = text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip XML signature tags and signature metadata keywords
+        if any(tag in stripped for tag in (
+            "X509Certificate", "X509SubjectName", "X509Data", 
+            "SignatureValue", "DigestValue", "Signature", 
+            "SignedInfo", "KeyInfo", "CanonicalizationMethod", 
+            "SignatureMethod", "Transform", "DigestMethod"
+        )):
+            continue
+        # Strip standard XML tags
+        line_no_xml = re.sub(r"<[^>]+>", "", line).strip()
+        if not line_no_xml and line.strip():
+            continue
+        # Skip base64-encoded strings (often > 60 chars without whitespace, alphanumeric + / = )
+        if len(line_no_xml) > 60 and " " not in line_no_xml:
+            if re.match(r"^[A-Za-z0-9+/=]+$", line_no_xml):
+                continue
+        cleaned_lines.append(line_no_xml)
+    return "\n".join(cleaned_lines).strip()
+
+
 def extract_digital_text(fitz_page: fitz.Page) -> str:
     """Return the stripped text of *fitz_page* if it is a digital page.
 
@@ -91,7 +119,9 @@ def extract_digital_text(fitz_page: fitz.Page) -> str:
         or an empty string when the page is scanned / blank.
     """
     text = fitz_page.get_text().strip()
-    return text if len(text) > _DIGITAL_THRESHOLD else ""
+    cleaned = clean_xml_and_metadata(text)
+    return cleaned if len(cleaned) > _DIGITAL_THRESHOLD else ""
+
 
 
 def extract_ground_truth(pdf_path: str | Path) -> _GroundTruth:

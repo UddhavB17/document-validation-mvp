@@ -350,3 +350,27 @@ class TestMissingFieldsReturnNone:
         assert result["applicant_name"] == "Sunita Rao"
         assert result["pan_number"] == "QWERT5678Y"
         assert result["loan_amount"] == "300000"
+
+
+def test_clean_xml_and_metadata() -> None:
+    from services.text_extractor import clean_xml_and_metadata
+
+    raw_text = (
+        "Applicant Name: Ramesh Kumar\n"
+        "Address: 123 Main St\n"
+        "EGOVERNANCE DIVISION 4th FLOOR ELECTRONICS NIKETAN 6,ST=Delhi,L=South Delhi,OU=NATIONAL E GOVERNANCE DEPARTMENT</X509SubjectName><X509Certificate>MIIHoDCCBoigAwIBAgIQQ57Nm//OnytCGpUn9iXWUTANBgkqhkiG9w0BAQsFAD\n"
+        "<SignatureValue>some_long_base64_signature_value</SignatureValue>\n"
+        "<KeyInfo>some key details</KeyInfo>\n"
+        "Jhalawar, Rajasthan, India, 326502\n"
+    )
+
+    cleaned = clean_xml_and_metadata(raw_text)
+
+    # XML elements/lines should be skipped/stripped
+    assert "X509Certificate" not in cleaned
+    assert "SignatureValue" not in cleaned
+    assert "KeyInfo" not in cleaned
+    assert "Ramesh Kumar" in cleaned
+    assert "123 Main St" in cleaned
+    assert "Jhalawar, Rajasthan, India, 326502" in cleaned
+
