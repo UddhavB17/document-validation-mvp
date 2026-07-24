@@ -382,3 +382,43 @@ def test_utility_bill_older_than_two_months_is_rejected() -> None:
     ]
     anomalies = run_checks(pages, {}, {}, "LAP")
     assert any(item["rule_id"] == "DATE_CHECK_S6" for item in anomalies)
+
+
+def test_coapplicant_presence_and_match_verifies_against_correct_person() -> None:
+    """Ensure that a co-applicant's PAN is matched against their own reference data, not the primary applicant's."""
+    pages = [
+        _confident_page(
+            1,
+            "PAN Card",
+            person_id="coapplicant_1",
+            extracted_fields={"pan_number": "BBEPL4329P"},
+        ),
+        _confident_page(2, "Application Form"),
+    ]
+
+    system_data = {
+        "pan_number": "BCXPL9010K",  # primary PAN
+        "applicant_name": "Peeru Lal",
+        "reference_data": {
+            "primary": {
+                "person_id": "primary",
+                "applicant_name": "Peeru Lal",
+                "pan_number": "BCXPL9010K",
+            },
+            "coapplicant_1": {
+                "person_id": "coapplicant_1",
+                "applicant_name": "Unkar Lal",
+                "pan_number": "BBEPL4329P",
+            },
+        },
+    }
+
+    # If the fix works:
+    # 1. It checks the coapplicant_1 page against coapplicant_1 reference PAN ("BBEPL4329P") and finds a MATCH.
+    # 2. No FIELD_MISMATCH anomaly should be produced.
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+    mismatch_anomalies = [
+        item for item in anomalies if item.get("rule_id", "").startswith("FIELD_MISMATCH")
+    ]
+    assert not mismatch_anomalies, f"Found unexpected mismatch anomalies: {mismatch_anomalies}"
+

@@ -154,6 +154,11 @@ def run_pipeline(
     ground_truth = dict(extract_ground_truth(pdf_path))
     if mapped_manifest is not None:
         ground_truth = _mapped_ground_truth(mapped_manifest, system_data)
+        if system_data is not None:
+            if "reference_data" not in system_data:
+                system_data["reference_data"] = ground_truth.get("reference_data")
+            if "people" not in system_data:
+                system_data["people"] = ground_truth.get("reference_data")
     elif system_data:
         ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
 

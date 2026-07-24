@@ -1020,6 +1020,8 @@ def _run_mapped_pipeline_task(
             "loan_id": manifest.get("loan_id"),
             "product_type": manifest.get("product_type") or "LAP",
             "branch": manifest.get("branch"),
+            "reference_data": reference_data,
+            "people": reference_data,
         }
         result = run_pipeline(
             file_path,
