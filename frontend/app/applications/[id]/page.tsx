@@ -347,6 +347,10 @@ function AiAuditInsights({
             <div className="grid gap-4 md:grid-cols-1">
               {parsed.page_summaries.map((item, index) => {
                 const hasPage = typeof item.page_number === "number" || (typeof item.page_number === "string" && item.page_number);
+                const correspondingAnomaly = data.anomalies.find(a => 
+                  a.page_number === Number(item.page_number) || 
+                  a.collapsed_page_numbers?.includes(Number(item.page_number))
+                );
                 return (
                   <div key={index} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden flex flex-col hover:border-violet-300 transition-colors duration-200">
                     <div className="bg-slate-50/50 border-b border-slate-150 px-4 py-2.5 flex items-center justify-between">
@@ -360,17 +364,14 @@ function AiAuditInsights({
                         <button
                           type="button"
                           onClick={() => {
-                            const correspondingAnomaly = data.anomalies.find(a => 
-                              a.page_number === Number(item.page_number) || 
-                              a.collapsed_page_numbers?.includes(Number(item.page_number))
-                            ) || { 
+                            const anomalyToSelect = correspondingAnomaly || { 
                               page_number: Number(item.page_number), 
                               document_type: item.document_type,
                               rule_id: "AI_PAGE_REVIEW",
                               severity: "INFO",
                               reason: item.problem_description
                             };
-                            onSelectEvidence(correspondingAnomaly, Number(item.page_number));
+                            onSelectEvidence(anomalyToSelect, Number(item.page_number));
                           }}
                           className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition-colors"
                         >
@@ -399,7 +400,14 @@ function AiAuditInsights({
                           <div className="flex gap-2">
                             <span className="text-rose-500 font-bold">⚠️</span>
                             <div>
-                              <div className="font-bold text-rose-800">Anomaly Detected</div>
+                              <div className="font-bold text-rose-800 flex items-center gap-2">
+                                <span>Anomaly Detected</span>
+                                {correspondingAnomaly ? (
+                                  <span className="rounded bg-rose-100 text-rose-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider">
+                                    {correspondingAnomaly.rule_id}
+                                  </span>
+                                ) : null}
+                              </div>
                               <div className="mt-0.5 text-rose-750 font-medium leading-relaxed">{item.problem_description}</div>
                             </div>
                           </div>
@@ -548,13 +556,19 @@ function AnomalyGroup({
               <summary className="flex cursor-pointer items-center justify-between px-4 py-3 font-semibold hover:bg-white/50">
                 <div className="flex items-center gap-3">
                   <span className="inline-flex rounded bg-white/70 px-2 py-0.5 text-[10px] font-bold uppercase">{anomaly.severity}</span>
+                  {anomaly.document_type ? (
+                    <span className="inline-flex rounded bg-white/70 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                      {anomaly.document_type}
+                    </span>
+                  ) : null}
                   <span className="text-sm">{anomaly.reason ?? anomaly.rule_id}</span>
                 </div>
               </summary>
               <div className="space-y-4 border-t border-slate-200 bg-white px-4 py-3 text-xs">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
                   <EvidenceValue label="Expected" value={anomaly.expected_value} />
                   <EvidenceValue label="Found" value={anomaly.found_value} />
+                  <EvidenceValue label="Document Type" value={anomaly.document_type ?? "File-level"} />
                   <EvidenceValue label="Rule ID" value={anomaly.rule_id} />
                 </div>
                 {pages.length ? (
