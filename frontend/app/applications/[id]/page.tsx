@@ -42,6 +42,7 @@ export default function ApplicationReviewPage() {
   const applicationId = Number(params.id);
   const review = useApplicationReview(Number.isFinite(applicationId) ? applicationId : null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("checklist");
+  const [selectedEvidence, setSelectedEvidence] = useState<{ anomaly: Anomaly; pageNumber: number } | null>(null);
 
   if (!Number.isFinite(applicationId)) {
     return <ErrorMessage message="Invalid application ID." />;
@@ -59,6 +60,28 @@ export default function ApplicationReviewPage() {
 
   const loanId = asText(review.data.application.loan_id);
   const reviewerCount = review.data.summary.reviewer_count;
+
+  const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number) => {
+    setSelectedEvidence({ anomaly, pageNumber });
+    setTimeout(() => {
+      const viewer = document.getElementById("evidence-viewer");
+      if (viewer) {
+        viewer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }, 100);
+  };
+
+  const handleSelectPageOnly = (pageNumber: number, title: string, reason: string) => {
+    const mockAnomaly: Anomaly = {
+      rule_id: "PAGE_PREVIEW",
+      severity: "INFO",
+      document_type: title,
+      reason: reason,
+      expected_value: "-",
+      found_value: `Page ${pageNumber}`
+    };
+    handleSelectEvidence(mockAnomaly, pageNumber);
+  };
 
   return (
     <>
@@ -113,33 +136,64 @@ export default function ApplicationReviewPage() {
           </TabButton>
         </div>
 
-        {/* Active Tab Card */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[300px]">
-          {activeTab === "checklist" ? (
-            <div className="space-y-6">
-              <ReviewerSummary data={review.data} />
-              <ManualReviewAndDecision applicationId={applicationId} data={review.data} />
-            </div>
-          ) : null}
+        {/* Dynamic Global Side-by-Side Viewport */}
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(580px,1.3fr)] items-start">
+          {/* Active Tab Card */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[300px]">
+            {activeTab === "checklist" ? (
+              <div className="space-y-6">
+                <ReviewerSummary
+                  data={review.data}
+                  onSelectPage={(pageNo) => handleSelectPageOnly(pageNo, "Manual Review Page", "Requested check by reviewer")}
+                />
+                <ManualReviewAndDecision
+                  applicationId={applicationId}
+                  data={review.data}
+                  onSelectPage={(pageNo) => handleSelectPageOnly(pageNo, "Manual Check", "Manual item verification review")}
+                />
+              </div>
+            ) : null}
 
-          {activeTab === "anomalies" ? (
-            <div className="space-y-6">
-              <ResultExplanation data={review.data} />
-              <Anomalies applicationId={applicationId} data={review.data} />
-            </div>
-          ) : null}
+            {activeTab === "anomalies" ? (
+              <div className="space-y-6">
+                <ResultExplanation data={review.data} />
+                <Anomalies
+                  applicationId={applicationId}
+                  data={review.data}
+                  onSelectEvidence={handleSelectEvidence}
+                />
+              </div>
+            ) : null}
 
-          {activeTab === "logs" ? (
-            <PageProcessing data={review.data} />
-          ) : null}
+            {activeTab === "logs" ? (
+              <PageProcessing
+                data={review.data}
+                onSelectPage={(pageNo, docType) => handleSelectPageOnly(pageNo, docType || "Processing Page", "Processing log validation review")}
+              />
+            ) : null}
 
-          {activeTab === "all_items" ? (
-            <Checklist data={review.data} />
-          ) : null}
+            {activeTab === "all_items" ? (
+              <Checklist
+                data={review.data}
+                onSelectPage={(row, pageNo) => {
+                  const mockAnomaly: Anomaly = {
+                    rule_id: row.s_no ? `CHECK_${row.s_no}` : "CHECKLIST_PREVIEW",
+                    severity: "INFO",
+                    reason: row.description || "Verification List Preview",
+                    document_type: row.looked || row.description || "Document Preview",
+                    expected_value: "-",
+                    found_value: `Page ${pageNo}`
+                  };
+                  handleSelectEvidence(mockAnomaly, pageNo);
+                }}
+              />
+            ) : null}
 
-          {activeTab === "downloads" ? (
-            <Downloads applicationId={applicationId} />
-          ) : null}
+            {activeTab === "downloads" ? (
+              <Downloads applicationId={applicationId} />
+            ) : null}
+          </div>
+          <EvidenceViewer applicationId={applicationId} data={review.data} selection={selectedEvidence} />
         </div>
       </div>
     </>
@@ -245,13 +299,13 @@ function Overview({ data }: { data: ApplicationReview }) {
   );
 }
 
-function ReviewerSummary({ data }: { data: ApplicationReview }) {
+function ReviewerSummary({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number) => void }) {
   const summary = data.reviewer_summary;
   if (!summary) {
     return null;
   }
   const status = String(summary.overall_status ?? "LIMITED_REVIEW");
-  const pages = Array.isArray(summary.pages_to_review) ? summary.pages_to_review.join(", ") : "";
+  const pagesToReview = Array.isArray(summary.pages_to_review) ? summary.pages_to_review.filter((n): n is number => typeof n === "number" || !isNaN(Number(n))).map(Number) : [];
   return (
     <section className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
       <h2 className="text-base font-bold text-slate-800">
@@ -262,9 +316,19 @@ function ReviewerSummary({ data }: { data: ApplicationReview }) {
         <span className="text-sm text-slate-700 font-bold">{asText(summary.message)}</span>
       </div>
       <p className="text-sm text-slate-600 font-medium leading-relaxed">{asText(summary.recommendation)}</p>
-      {pages ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm">
-          Pages to check manually: <span className="font-bold">{pages}</span>
+      {pagesToReview.length > 0 ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm flex flex-wrap items-center gap-2">
+          <span>Pages to check manually:</span>
+          {pagesToReview.map((pageNumber) => (
+            <button
+              key={pageNumber}
+              type="button"
+              onClick={() => onSelectPage?.(pageNumber)}
+              className="rounded border border-amber-300 bg-white px-2.5 py-0.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition-colors"
+            >
+              Page {pageNumber}
+            </button>
+          ))}
         </div>
       ) : null}
     </section>
@@ -463,7 +527,7 @@ function ResultExplanation({ data }: { data: ApplicationReview }) {
   );
 }
 
-function PageProcessing({ data }: { data: ApplicationReview }) {
+function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType?: string) => void }) {
   if (data.page_events.length === 0) {
     return <InfoMessage message="No page events logged." />;
   }
@@ -473,7 +537,24 @@ function PageProcessing({ data }: { data: ApplicationReview }) {
       <SortableTable
         rows={data.page_events}
         columns={[
-          { key: "page", header: "Page", value: (row) => row.page_number ?? "-", sortValue: (row) => row.page_number },
+          {
+            key: "page",
+            header: "Page",
+            value: (row) => {
+              const pageNo = row.page_number;
+              if (typeof pageNo !== "number") return "-";
+              return (
+                <button
+                  type="button"
+                  onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)}
+                  className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-750 hover:bg-blue-100 transition-colors"
+                >
+                  Page {pageNo}
+                </button>
+              );
+            },
+            sortValue: (row) => row.page_number
+          },
           { key: "status", header: "Status", value: (row) => <StatusBadge status={row.status ?? "unknown"} />, sortValue: (row) => row.status },
           { key: "type", header: "Type", value: (row) => row.page_type ?? "-", sortValue: (row) => row.page_type },
           { key: "document", header: "Document", value: (row) => row.document_type ?? "Unknown", sortValue: (row) => row.document_type },
@@ -486,8 +567,15 @@ function PageProcessing({ data }: { data: ApplicationReview }) {
   );
 }
 
-function Anomalies({ applicationId, data }: { applicationId: number; data: ApplicationReview }) {
-  const [selectedEvidence, setSelectedEvidence] = useState<{ anomaly: Anomaly; pageNumber: number } | null>(null);
+function Anomalies({
+  applicationId,
+  data,
+  onSelectEvidence,
+}: {
+  applicationId: number;
+  data: ApplicationReview;
+  onSelectEvidence: (anomaly: Anomaly, pageNumber: number) => void;
+}) {
   const business = data.summary.business_anomalies;
   const processing = data.summary.processing_warnings;
   if (business.length === 0 && processing.length === 0) {
@@ -499,38 +587,23 @@ function Anomalies({ applicationId, data }: { applicationId: number; data: Appli
     );
   }
 
-  const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number) => {
-    setSelectedEvidence({ anomaly, pageNumber });
-    setTimeout(() => {
-      const viewer = document.getElementById("evidence-viewer");
-      if (viewer) {
-        viewer.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-    }, 100);
-  };
-
   return (
-    <section className="space-y-4">
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(580px,1.3fr)] items-start">
-        <div className="space-y-6">
-          <AiAuditInsights data={data} onSelectEvidence={handleSelectEvidence} />
-          <AnomalyGroup
-            title={`Business Checklist Exceptions (${business.length})`}
-            description="Document, identity, field, date, and policy exceptions that can affect the operational decision."
-            anomalies={business}
-            tone="business"
-            onSelectEvidence={handleSelectEvidence}
-          />
-          <AnomalyGroup
-            title={`Processing Quality Warnings (${processing.length})`}
-            description="OCR, classification, ownership, and page-processing limitations. These require evidence review but are not business failures by themselves."
-            anomalies={processing}
-            tone="processing"
-            onSelectEvidence={handleSelectEvidence}
-          />
-        </div>
-        <EvidenceViewer applicationId={applicationId} data={data} selection={selectedEvidence} />
-      </div>
+    <section className="space-y-6">
+      <AiAuditInsights data={data} onSelectEvidence={onSelectEvidence} />
+      <AnomalyGroup
+        title={`Business Checklist Exceptions (${business.length})`}
+        description="Document, identity, field, date, and policy exceptions that can affect the operational decision."
+        anomalies={business}
+        tone="business"
+        onSelectEvidence={onSelectEvidence}
+      />
+      <AnomalyGroup
+        title={`Processing Quality Warnings (${processing.length})`}
+        description="OCR, classification, ownership, and page-processing limitations. These require evidence review but are not business failures by themselves."
+        anomalies={processing}
+        tone="processing"
+        onSelectEvidence={onSelectEvidence}
+      />
     </section>
   );
 }
@@ -634,7 +707,7 @@ function EvidenceViewer({
       <aside id="evidence-viewer" className="sticky top-4 flex h-[70vh] items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
         <div>
           <div className="text-base font-bold text-slate-700">Source Evidence Viewer</div>
-          <p className="mt-2 max-w-sm text-sm text-slate-500">Select a page from an exception to open the original PDF beside its expected and extracted values.</p>
+          <p className="mt-2 max-w-sm text-sm text-slate-500">Select any page number from the checklist, anomalies, or logs to preview the document page here.</p>
         </div>
       </aside>
     );
@@ -707,7 +780,7 @@ function HighlightedEvidenceText({ text, needle }: { text: string; needle: strin
   );
 }
 
-function ManualReviewAndDecision({ applicationId, data }: { applicationId: number; data: ApplicationReview }) {
+function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applicationId: number; data: ApplicationReview; onSelectPage?: (pageNo: number) => void }) {
   const [manualConfirmed, setManualConfirmed] = useState(false);
   const [note, setNote] = useState("");
   const [showRequestDocs, setShowRequestDocs] = useState(false);
@@ -802,7 +875,7 @@ function ManualReviewAndDecision({ applicationId, data }: { applicationId: numbe
   );
 }
 
-function Checklist({ data }: { data: ApplicationReview }) {
+function Checklist({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (row: any, pageNo: number) => void }) {
   return (
     <section className="space-y-4">
       <h2 className="text-base font-bold text-slate-800">MSFC Checklist ({data.checklist.total} items)</h2>
@@ -818,7 +891,34 @@ function Checklist({ data }: { data: ApplicationReview }) {
           { key: "status", header: "Status", value: (row) => <StatusBadge status={row.status} />, sortValue: (row) => row.status },
           { key: "description", header: "Description", value: (row) => row.description, sortValue: (row) => row.description },
           { key: "looked", header: "Looked for", value: (row) => row.document_types, sortValue: (row) => row.document_types },
-          { key: "pages", header: "Pages", value: (row) => row.pages, sortValue: (row) => row.pages },
+          {
+            key: "pages",
+            header: "Pages",
+            value: (row) => {
+              const pageStr = String(row.pages ?? "").trim();
+              if (!pageStr) return "-";
+              const pageNumbers = pageStr
+                .split(/,\s*/)
+                .map(Number)
+                .filter((n) => !isNaN(n) && n > 0);
+              if (pageNumbers.length === 0) return pageStr;
+              return (
+                <div className="flex flex-wrap gap-1">
+                  {pageNumbers.map((pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      onClick={() => onSelectPage?.(row, pageNumber)}
+                      className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-750 hover:bg-blue-100 transition-colors"
+                    >
+                      Page {pageNumber}
+                    </button>
+                  ))}
+                </div>
+              );
+            },
+            sortValue: (row) => row.pages
+          },
         ]}
       />
     </section>
