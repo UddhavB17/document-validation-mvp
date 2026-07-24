@@ -23,6 +23,18 @@ const rejectionReasons = {
   "Signature missing": "Required signature is missing. Please upload a signed copy.",
 };
 
+const severityBadgeColors = {
+  HIGH: "bg-red-100 text-red-800 border border-red-200",
+  MEDIUM: "bg-amber-100 text-amber-800 border border-amber-200",
+  LOW: "bg-blue-50 text-blue-700 border border-blue-200",
+  INFO: "bg-slate-100 text-slate-700 border border-slate-200",
+};
+
+function getSeverityBadgeColor(severity: string | null | undefined) {
+  const clean = String(severity ?? "INFO").toUpperCase();
+  return severityBadgeColors[clean as keyof typeof severityBadgeColors] ?? severityBadgeColors.INFO;
+}
+
 type ActiveTab = "checklist" | "anomalies" | "logs" | "all_items" | "downloads";
 
 export default function ApplicationReviewPage() {
@@ -404,7 +416,7 @@ function AiAuditInsights({
                                 <span>Anomaly Detected</span>
                                 {correspondingAnomaly ? (
                                   <>
-                                    <span className="rounded bg-rose-100 text-rose-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider animate-pulse animate-duration-1000">
+                                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider animate-pulse animate-duration-1000 ${getSeverityBadgeColor(correspondingAnomaly.severity)}`}>
                                       {correspondingAnomaly.severity}
                                     </span>
                                     <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider">
@@ -560,7 +572,9 @@ function AnomalyGroup({
             <details key={`${anomaly.rule_id}-${anomaly.id ?? index}`} className={`overflow-hidden rounded-xl border shadow-sm ${severityColors}`} open={index === 0 && isHigh}>
               <summary className="flex cursor-pointer items-center justify-between px-4 py-3 font-semibold hover:bg-white/50">
                 <div className="flex items-center gap-3">
-                  <span className="inline-flex rounded bg-white/70 px-2 py-0.5 text-[10px] font-bold uppercase">{anomaly.severity}</span>
+                  <span className={`inline-flex rounded px-2 py-0.5 text-[10px] font-bold uppercase ${getSeverityBadgeColor(anomaly.severity)}`}>
+                    {anomaly.severity}
+                  </span>
                   {anomaly.document_type ? (
                     <span className="inline-flex rounded bg-white/70 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
                       {anomaly.document_type}
