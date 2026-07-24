@@ -770,30 +770,68 @@ def _run_accuracy_checks(
             doc_pages = _matching_pages(pages, document_type)
             accepted = item.get("accepted_statuses") or ["clear", "cleared", "positive", "approved", "registered"]
             rejected = item.get("rejected_statuses") or ["not clear", "not cleared", "negative", "rejected", "pending"]
-            failing_pages = [
+            status_fields = item.get("status_fields") or ["status"]
+
+            # Partition pages: those that pass vs those that fail the status check.
+            passing_pages = [
                 page for page in doc_pages
-                if not _is_positive_status(page, accepted, rejected, item.get("status_fields") or ["status"])
+                if _is_positive_status(page, accepted, rejected, status_fields)
             ]
-            if failing_pages:
-                first = failing_pages[0]
-                page_preview = ", ".join(
-                    str(page.get("page_number")) for page in failing_pages[:6] if page.get("page_number") is not None
-                )
-                if len(failing_pages) > 6:
-                    page_preview += f", … (+{len(failing_pages) - 6} more)"
-                anomalies.append(
-                    build_anomaly(
-                        rule_id=f"STATUS_CHECK_S{s_no}", s_no=s_no,
-                        severity=item.get("severity_if_fail", "HIGH"),
-                        expected_value=" / ".join(accepted),
-                        found_value=(
-                            f"{_page_status(first, item.get('status_fields') or ['status'])[:120] or 'Status not found'}"
-                            + (f" across {len(failing_pages)} page(s): {page_preview}" if len(failing_pages) > 1 else "")
-                        ),
-                        reason=description, page_number=first.get("page_number"),
-                        document_type=str(first.get("document_type") or document_type),
+            # If ANY page in the document group has a passing status, treat the
+            # whole document as cleared — no anomaly needed.
+            if passing_pages:
+                pass  # at least one page confirms clearance
+            else:
+                failing_pages = [page for page in doc_pages if page not in passing_pages]
+                if failing_pages:
+                    first = failing_pages[0]
+                    # Check if the failing page relied on full OCR text (no dedicated
+                    # status field found) AND has low OCR confidence.
+                    first_has_status_field = any(
+                        (page.get("extracted_fields") or {}).get(sf) not in (None, "")
+                        for page in failing_pages[:1]
+                        for sf in status_fields
                     )
-                )
+                    first_ocr_conf = float(first.get("ocr_confidence") or 1.0)
+                    low_conf_fallback = not first_has_status_field and first_ocr_conf < 0.60
+
+                    page_preview = ", ".join(
+                        str(page.get("page_number")) for page in failing_pages[:6] if page.get("page_number") is not None
+                    )
+                    if len(failing_pages) > 6:
+                        page_preview += f", … (+{len(failing_pages) - 6} more)"
+
+                    if low_conf_fallback:
+                        # Cannot verify status reliably — emit a softer warning instead
+                        anomalies.append(
+                            build_anomaly(
+                                rule_id=f"STATUS_UNVERIFIABLE_LOW_OCR_S{s_no}", s_no=s_no,
+                                severity="MEDIUM",
+                                expected_value=" / ".join(accepted),
+                                found_value=(
+                                    f"OCR confidence {first_ocr_conf:.0%} — status field not extractable"
+                                    + (f" across {len(failing_pages)} page(s): {page_preview}" if len(failing_pages) > 1 else "")
+                                ),
+                                reason=f"{description} (low OCR confidence; manual review required)",
+                                page_number=first.get("page_number"),
+                                document_type=str(first.get("document_type") or document_type),
+                            )
+                        )
+                    else:
+                        anomalies.append(
+                            build_anomaly(
+                                rule_id=f"STATUS_CHECK_S{s_no}", s_no=s_no,
+                                severity=item.get("severity_if_fail", "HIGH"),
+                                expected_value=" / ".join(accepted),
+                                found_value=(
+                                    f"{_page_status(first, status_fields)[:120] or 'Status not found'}"
+                                    + (f" across {len(failing_pages)} page(s): {page_preview}" if len(failing_pages) > 1 else "")
+                                ),
+                                reason=description, page_number=first.get("page_number"),
+                                document_type=str(first.get("document_type") or document_type),
+                            )
+                        )
+
 
         elif check_type == "distinct_positive_count":
             doc_pages = _matching_pages(pages, document_type)

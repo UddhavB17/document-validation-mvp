@@ -75,9 +75,17 @@ _AGGREGATED_FIELD_DOC_TYPES = frozenset(
         "stamp duty",
         "insurance consent",
         "nach form",
+        # Multi-page statement/financial documents: name appears on first page only
+        "bank statement",
+        "passbook",
+        "cheque",
+        "cibil report",
+        "crif report",
     }
 )
 
+# Below this OCR confidence on a scanned page we cannot trust field extraction.
+_LOW_OCR_CONFIDENCE_THRESHOLD = 0.55
 
 def run_mapped_verification(
     pdf_path: str | Path,
@@ -460,15 +468,33 @@ def _verify_document_fields(
     """Compare extracted observations against expected values for one document unit."""
     checked = 0
     matched = 0
+
+    # Determine which readable pages have low OCR confidence so we can suppress
+    # spurious NOT_FOUND / MISMATCH anomalies for genuinely unreadable pages.
+    low_confidence_pages_emitted: set[int] = set()
+
     for raw_field, expected_value in expected.items():
         field = _canonical(raw_field)
         if field not in VERIFY or expected_value in (None, ""):
             continue
         field_observations = document_observations.get(field) or []
         if not field_observations:
+            page_number = readable_pages[0] if readable_pages else None
+            # If the first readable page has low OCR confidence, suppress the
+            # NOT_FOUND anomaly and emit a LOW_CONFIDENCE_PAGE once per page.
+            first_page_conf = _page_ocr_confidence(document_observations, readable_pages)
+            if first_page_conf is not None and first_page_conf < _LOW_OCR_CONFIDENCE_THRESHOLD:
+                if page_number is not None and page_number not in low_confidence_pages_emitted:
+                    low_confidence_pages_emitted.add(page_number)
+                    anomalies.append(_anomaly(
+                        "LOW_CONFIDENCE_PAGE", "LOW", page_number, provided_type,
+                        "Readable OCR text", f"OCR confidence {first_page_conf:.0%} — field extraction unreliable",
+                        "ocr_confidence", "MANUAL_REVIEW_REQUIRED", person_id,
+                    ))
+                continue  # Skip individual field anomalies for low-confidence pages
             checked += 1
             anomalies.append(_anomaly(
-                f"{field.upper()}_NOT_FOUND", "MEDIUM", readable_pages[0] if readable_pages else None,
+                f"{field.upper()}_NOT_FOUND", "MEDIUM", page_number if readable_pages else None,
                 provided_type, expected_value, None,
                 "Expected field was not found with sufficient confidence.",
                 field, "FIELD_NOT_FOUND", person_id,
@@ -508,6 +534,22 @@ def _verify_document_fields(
                 continue
             if prefer_any_match and emitted_mismatch:
                 continue
+
+            # Gate mismatch anomalies on OCR confidence
+            page_conf = float(observation.get("ocr_confidence") or 1.0)
+            if page_conf < _LOW_OCR_CONFIDENCE_THRESHOLD:
+                # Don't escalate low-confidence mismatches; emit one page-level warning
+                page_number = observation.get("page_number")
+                if page_number is not None and page_number not in low_confidence_pages_emitted:
+                    low_confidence_pages_emitted.add(page_number)
+                    anomalies.append(_anomaly(
+                        "LOW_CONFIDENCE_PAGE", "LOW", page_number, provided_type,
+                        "Reliable OCR text", f"OCR confidence {page_conf:.0%} — field comparison unreliable",
+                        "ocr_confidence", "MANUAL_REVIEW_REQUIRED", person_id,
+                    ))
+                emitted_mismatch = True
+                continue
+
             wrong_owner = _find_other_owner(reference_data, person_id, field, observation["value"])
             if wrong_owner:
                 anomalies.append(_anomaly(
@@ -518,7 +560,7 @@ def _verify_document_fields(
                 ))
                 emitted_mismatch = True
                 continue
-            severity = "HIGH" if field in {"aadhaar_number", "pan_number", "date_of_birth"} else "MEDIUM"
+            severity = "HIGH" if field in {"aadhaar_number", "pan_number"} else "MEDIUM"
             anomalies.append(_anomaly(
                 f"{field.upper()}_MISMATCH", severity, observation["page_number"], provided_type,
                 expected_value, observation["value"], result.mismatch_reason or "Values do not match.",
@@ -658,6 +700,29 @@ def _expected_fields(
 def _canonical(field: Any) -> str:
     value = str(field or "").strip().lower()
     return ALIASES.get(value, value)
+
+
+def _page_ocr_confidence(
+    document_observations: dict[str, list[dict[str, Any]]],
+    readable_pages: list[int],
+) -> float | None:
+    """Return the OCR confidence for the first readable page, or None if unavailable.
+
+    Looks for any observation on the first readable page that has an
+    ``ocr_confidence`` key.  Digital (embedded-text) pages always have
+    confidence 1.0 and are never below the threshold.
+    """
+    if not readable_pages:
+        return None
+    first_page = readable_pages[0]
+    for obs_list in document_observations.values():
+        for obs in obs_list:
+            if obs.get("page_number") == first_page:
+                conf = obs.get("ocr_confidence")
+                if conf is not None:
+                    return float(conf)
+    return None
+
 
 
 def _anomaly(

@@ -33,6 +33,15 @@ try:
 except ImportError:  # pragma: no cover
     _DATEUTIL_AVAILABLE = False
 
+# Lazy import to avoid circular dependency; only used inside extractors.
+def _xml_cleaner(text: str) -> str:
+    """Strip XML/digital-signature content from page text before field extraction."""
+    try:
+        from services.text_extractor import clean_xml_and_metadata  # noqa: PLC0415
+        return clean_xml_and_metadata(text)
+    except Exception:  # pragma: no cover
+        return text
+
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────
 
@@ -226,8 +235,9 @@ def _clean_name_like_value(value: str) -> str | None:
     if candidate_lower in labels:
         return None
 
-    # Filter out common headings, system text, and metadata
+    # Filter out common headings, system text, OCR form labels, and metadata
     rejected_keywords = {
+        # Document/system headings
         "endorsement", "execution", "presentation", "registration", "registrar",
         "government", "ministry", "department", "commission", "tax", "income",
         "permanent account", "unique identification", "uidai", "aadhaar", "passport",
@@ -237,12 +247,28 @@ def _clean_name_like_value(value: str) -> str | None:
         "campaign", "abhijan", "prashasan", "camp", "sl no", "s.no", "serial",
         "page", "date", "time", "place", "status", "type", "data", "unknown",
         "particulars", "description", "details", "applicant", "co-applicant",
-        "coapplicant", "borrower", "guarantor", "witness", "officer", "manager"
+        "coapplicant", "borrower", "guarantor", "witness", "officer", "manager",
+        # Common OCR form labels that bleed into name extraction
+        "gender", "birth", "address", "city", "district", "state", "country",
+        "pin", "mobile", "phone", "email", "institution", "bank", "branch",
+        "account", "number", "no.", "ref", "reference", "issue", "issued",
+        "expiry", "valid", "validity", "nationality", "religion", "caste",
+        "male", "female", "transgender", "dob", "yob", "age", "profile",
+        "purpose", "declaration", "consent", "note", "information", "report",
     }
 
     for kw in rejected_keywords:
         if kw in candidate_lower:
             return None
+
+    # Reject XML namespace strings, URLs, and base64 content
+    if any(pat in candidate for pat in ("xmlns", "http://", "https://", "<", ">", "=", "/>")):
+        return None
+
+    # Reject values that are a single word with ≤ 3 characters
+    words = [w for w in candidate.split() if w]
+    if len(words) == 1 and len(words[0]) <= 3:
+        return None
 
     # Check if it has a realistic name length and character composition
     # Names are usually between 3 and 70 characters
@@ -431,6 +457,7 @@ def _extract_loan_agreement(text: str) -> dict[str, Any]:
 
 def _extract_pan(text: str) -> dict[str, Any]:
     """Extract fields from a PAN card."""
+    text = _xml_cleaner(text)
     pan_match = re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
     return {
         "applicant_name": _line_after_label(
@@ -448,6 +475,7 @@ def _extract_pan(text: str) -> dict[str, Any]:
 
 def _extract_aadhaar(text: str) -> dict[str, Any]:
     """Extract fields from an Aadhaar card."""
+    text = _xml_cleaner(text)
     aadhaar_match = re.search(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", text)
     aadhaar_number = aadhaar_match.group(1).replace(" ", "") if aadhaar_match else None
     return {

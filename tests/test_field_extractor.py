@@ -416,3 +416,110 @@ class TestSalarySlip:
         assert result["applicant_name"] == "Neha Rao"
         assert result["salary_month"] == "March 2026"
         assert result["net_salary"] == "62500"
+
+
+# ════════════════════════════════════════════
+# FALSE-POSITIVE FIX: Name label rejection
+# ════════════════════════════════════════════
+
+class TestNameLabelRejection:
+    """Ensure OCR form labels never leak through as extracted applicant names."""
+
+    def _extract_aadhaar(self, text: str) -> dict:
+        return extract_fields("Aadhaar", text)
+
+    def _extract_pan(self, text: str) -> dict:
+        return extract_fields("PAN Card", text)
+
+    def test_gender_label_not_extracted_as_name(self) -> None:
+        """'Gender' is a form label — must not be returned as applicant_name."""
+        result = self._extract_aadhaar("Name\nGender\nMale\nDate of Birth\n1994-05-18")
+        assert result.get("applicant_name") is None, (
+            f"'Gender' leaked as applicant_name: {result.get('applicant_name')}"
+        )
+
+    def test_date_of_birth_label_not_extracted_as_name(self) -> None:
+        """'Date of Birth' is a form label — must not be returned as applicant_name."""
+        result = self._extract_aadhaar(
+            "Name\nDate of Birth\nS/O: Ram Lal\nAddress: Village, Dist"
+        )
+        assert result.get("applicant_name") != "Date of Birth"
+
+    def test_institution_label_not_extracted_as_name(self) -> None:
+        """'institution' found in CRIF/CIBIL pages must not be returned as applicant_name."""
+        result = self._extract_pan(
+            "Permanent Account Number Card\nName\ninstitution\nFather's Name\nRam Lal"
+        )
+        assert result.get("applicant_name") != "institution"
+
+    def test_timestamp_not_extracted_as_name(self) -> None:
+        """Timestamps like '21 PM GMT +05:30' must be rejected as names."""
+        result = self._extract_pan(
+            "Name\n21 PM GMT +05:30\nPAN: BCXPL9010K"
+        )
+        assert result.get("applicant_name") is None
+
+    def test_xml_namespace_not_extracted_as_name(self) -> None:
+        """XML namespace strings from Aadhaar digital signatures must be rejected."""
+        xml_noise = 'xmlns="http://www.w3.org/2000/09/xmldsig#">'
+        result = self._extract_aadhaar(
+            f"Name\n{xml_noise}\nAadhaar: 1234 5678 9012"
+        )
+        assert result.get("applicant_name") is None, (
+            f"XML namespace leaked as applicant_name: {result.get('applicant_name')}"
+        )
+
+    def test_valid_name_still_extracted(self) -> None:
+        """A genuine name after the Name label must still be extracted correctly."""
+        result = self._extract_aadhaar(
+            "Government of India\n"
+            "Name: Peeru Lal\n"
+            "Date of Birth: 18/05/1994\n"
+            "1234 5678 9012"
+        )
+        assert result.get("applicant_name") == "Peeru Lal"
+
+    def test_xml_signature_stripped_from_aadhaar(self) -> None:
+        """X509Certificate block in digital Aadhaar text must not pollute address."""
+        text = (
+            "Name: Radha Bai\n"
+            "Address: Village Semli, Jhalawar, Rajasthan 326502\n"
+            "EGOVERNANCE DIVISION 4th FLOOR</X509SubjectName>"
+            "<X509Certificate>MIIHoDCCBoigAwIBAgIQQ57Nm==</X509Certificate>"
+        )
+        result = self._extract_aadhaar(text)
+        addr = result.get("address") or ""
+        assert "X509Certificate" not in addr
+        assert "EGOVERNANCE" not in addr or "Village Semli" in addr
+
+
+# ════════════════════════════════════════════
+# FALSE-POSITIVE FIX: Date format verification
+# ════════════════════════════════════════════
+
+class TestDateVerification:
+    """Ensure date format differences do not produce false positive mismatches."""
+
+    def test_dd_monthname_yyyy_vs_yyyy_mm_dd_matches(self) -> None:
+        """18-May-1994 and 1994-05-18 represent the same date — must be a MATCH."""
+        from services.field_verification import verify_date
+        result = verify_date("1994-05-18", "18-May-1994")
+        assert result.match is True, (
+            f"Same date in different formats should match, got: {result.mismatch_reason}"
+        )
+
+    def test_dd_slash_mm_yyyy_vs_db_format_matches(self) -> None:
+        """18/05/1994 and 18-May-1994 must both parse to the same date."""
+        from services.field_verification import verify_date
+        result = verify_date("18/05/1994", "18-May-1994")
+        assert result.match is True
+
+    def test_bad_ocr_date_produces_low_confidence_not_high_severity(self) -> None:
+        """When OCR garbles a date (unparseable), confidence must be low (< 0.5)
+        so the anomaly is NOT escalated to HIGH severity by _verify_document_fields."""
+        from services.field_verification import verify_date
+        result = verify_date("GARBLED123", "18-May-1994")
+        assert result.match is False
+        assert result.confidence < 0.5, (
+            f"Unparseable OCR date should have low confidence, got: {result.confidence}"
+        )

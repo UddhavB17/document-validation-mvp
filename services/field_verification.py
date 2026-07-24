@@ -50,7 +50,17 @@ def verify_date(extracted: str, db_value: str) -> FieldVerificationResult:
     extracted_date = _parse_supported_date(extracted)
     db_date = _parse_supported_date(db_value)
     if extracted_date is None or db_date is None:
-        return _failed("date_of_birth", extracted, db_value, "exact", "Date missing or unsupported format")
+        # One side failed to parse — this is likely an OCR/format issue, not a
+        # genuine mismatch. Return low confidence instead of hard failure.
+        return FieldVerificationResult(
+            field_name="date_of_birth",
+            extracted_value=extracted,
+            db_value=db_value,
+            match=False,
+            confidence=0.25,
+            method="exact",
+            mismatch_reason="Date could not be parsed — OCR quality or unsupported format",
+        )
     return _exact_result("date_of_birth", extracted, db_value, extracted_date == db_date)
 
 
@@ -259,19 +269,23 @@ def _parse_supported_date(value: Any) -> datetime | None:
     text = str(value or "").strip()
     if not text:
         return None
-    from dateutil import parser
-    try:
-        return parser.parse(text)
-    except (ValueError, TypeError, OverflowError):
-        pass
+    # Try explicit formats first (most reliable, avoids locale ambiguity).
+    # DD-MonthName-YYYY and DD/MonthName/YYYY are used by the DB store.
     for fmt in (
-        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %b %Y", "%d %B %Y",
-        "%d-%b-%Y", "%d-%B-%Y", "%b %d, %Y", "%B %d, %Y"
+        "%d-%B-%Y", "%d %B %Y", "%d-%b-%Y", "%d %b %Y",  # DD-MonthName-YYYY
+        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%B/%Y", "%d/%b/%Y",
+        "%b %d, %Y", "%B %d, %Y",
     ):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
             continue
+    # Fall back to dateutil for remaining formats
+    from dateutil import parser
+    try:
+        return parser.parse(text, dayfirst=True)
+    except (ValueError, TypeError, OverflowError):
+        pass
     return None
 
 

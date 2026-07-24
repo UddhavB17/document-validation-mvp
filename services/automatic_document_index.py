@@ -20,11 +20,30 @@ IGNORED_DOCUMENT_TYPES = {
 }
 
 LOAN_LEVEL_DOCUMENT_TYPES = {
+    # Core loan documents
     "loan agreement",
     "sanction letter",
     "stamp duty",
     "insurance consent",
     "nach form",
+    # Credit & legal reports (loan-level; no person-identity fields expected)
+    "cibil report",
+    "crif report",
+    "cersai report",
+    "legal report",
+    "legal clearance report",
+    "technical report",
+    "technical clearance report",
+    "valuation report",
+    # Property & ancillary documents
+    "property document",
+    "property image",
+    "no objection certificate",
+    "noc",
+    # Personal status documents (no identity verification contract)
+    "divorce decree",
+    "death certificate",
+    "affidavit",
 }
 
 FIELD_ALIASES = {
