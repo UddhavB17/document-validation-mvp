@@ -42,7 +42,7 @@ export default function ApplicationReviewPage() {
   const applicationId = Number(params.id);
   const review = useApplicationReview(Number.isFinite(applicationId) ? applicationId : null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("checklist");
-  const [selectedEvidence, setSelectedEvidence] = useState<{ anomaly: Anomaly; pageNumber: number } | null>(null);
+  const [selectedEvidence, setSelectedEvidence] = useState<{ anomaly: Anomaly; pageNumber: number; allPageNumbers?: number[] } | null>(null);
 
   if (!Number.isFinite(applicationId)) {
     return <ErrorMessage message="Invalid application ID." />;
@@ -61,8 +61,8 @@ export default function ApplicationReviewPage() {
   const loanId = asText(review.data.application.loan_id);
   const reviewerCount = review.data.summary.reviewer_count;
 
-  const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number) => {
-    setSelectedEvidence({ anomaly, pageNumber });
+  const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => {
+    setSelectedEvidence({ anomaly, pageNumber, allPageNumbers });
     setTimeout(() => {
       const viewer = document.getElementById("evidence-viewer");
       if (viewer) {
@@ -175,16 +175,16 @@ export default function ApplicationReviewPage() {
             {activeTab === "all_items" ? (
               <Checklist
                 data={review.data}
-                onSelectPage={(row, pageNo) => {
+                onSelectPage={(row, pageNo, allPages) => {
                   const mockAnomaly: Anomaly = {
                     rule_id: row.s_no ? `CHECK_${row.s_no}` : "CHECKLIST_PREVIEW",
                     severity: "INFO",
                     reason: row.description || "Verification List Preview",
                     document_type: row.looked || row.description || "Document Preview",
                     expected_value: "-",
-                    found_value: `Page ${pageNo}`
+                    found_value: allPages ? `Combined pages: ${allPages.join(", ")}` : `Page ${pageNo}`
                   };
-                  handleSelectEvidence(mockAnomaly, pageNo);
+                  handleSelectEvidence(mockAnomaly, pageNo, allPages);
                 }}
               />
             ) : null}
@@ -574,7 +574,7 @@ function Anomalies({
 }: {
   applicationId: number;
   data: ApplicationReview;
-  onSelectEvidence: (anomaly: Anomaly, pageNumber: number) => void;
+  onSelectEvidence: (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => void;
 }) {
   const business = data.summary.business_anomalies;
   const processing = data.summary.processing_warnings;
@@ -619,7 +619,7 @@ function AnomalyGroup({
   description: string;
   anomalies: Anomaly[];
   tone: "business" | "processing";
-  onSelectEvidence: (anomaly: Anomaly, pageNumber: number) => void;
+  onSelectEvidence: (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => void;
 }) {
   return (
     <section className="space-y-3">
@@ -667,13 +667,22 @@ function AnomalyGroup({
                 {pages.length ? (
                   <div>
                     <div className="mb-2 font-semibold uppercase tracking-wider text-slate-500">Open source evidence</div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 items-center">
+                      {pages.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => onSelectEvidence(anomaly, pages[0], pages)}
+                          className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 font-bold text-violet-700 hover:bg-violet-100 transition-colors shadow-sm"
+                        >
+                          👁️ View Combined ({pages.length} pgs)
+                        </button>
+                      ) : null}
                       {pages.slice(0, 12).map((pageNumber) => (
                         <button
                           key={pageNumber}
                           type="button"
                           onClick={() => onSelectEvidence(anomaly, pageNumber)}
-                          className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 font-bold text-blue-700 hover:bg-blue-100"
+                          className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 font-bold text-blue-700 hover:bg-blue-100 transition-colors"
                         >
                           Page {pageNumber}
                         </button>
@@ -700,7 +709,7 @@ function EvidenceViewer({
 }: {
   applicationId: number;
   data: ApplicationReview;
-  selection: { anomaly: Anomaly; pageNumber: number } | null;
+  selection: { anomaly: Anomaly; pageNumber: number; allPageNumbers?: number[] } | null;
 }) {
   if (!selection) {
     return (
@@ -712,30 +721,64 @@ function EvidenceViewer({
       </aside>
     );
   }
-  const page = data.pages.find((item) => Number(item.page_number) === selection.pageNumber);
-  const ocrText = typeof page?.ocr_text === "string" ? page.ocr_text : "";
+
+  const pagesToRender = selection.allPageNumbers && selection.allPageNumbers.length > 0
+    ? selection.allPageNumbers
+    : [selection.pageNumber];
+
+  const firstPage = data.pages.find((item) => Number(item.page_number) === selection.pageNumber);
+
+  // Combine OCR text across all loaded pages
+  const combinedOcrText = pagesToRender
+    .map((pageNo) => {
+      const p = data.pages.find((item) => Number(item.page_number) === pageNo);
+      return typeof p?.ocr_text === "string" && p.ocr_text.trim()
+        ? `--- PAGE ${pageNo} ---\n${p.ocr_text.trim()}`
+        : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
   return (
     <aside id="evidence-viewer" className="sticky top-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Original source evidence</div>
-            <div className="font-bold text-slate-900">Page {selection.pageNumber} · {asText(page?.document_type ?? selection.anomaly.document_type)}</div>
+            <div className="font-bold text-slate-900">
+              {selection.allPageNumbers && selection.allPageNumbers.length > 1
+                ? `Pages ${selection.allPageNumbers.join(", ")} (Combined)`
+                : `Page ${selection.pageNumber}`}
+              {" · "}
+              {asText(firstPage?.document_type ?? selection.anomaly.document_type)}
+            </div>
           </div>
-          <a href={api.sourcePdfUrl(applicationId, selection.pageNumber)} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-700 hover:underline">Open full PDF</a>
+          {selection.allPageNumbers && selection.allPageNumbers.length > 1 ? (
+            <span className="text-xs font-extrabold text-violet-700 uppercase bg-violet-100 px-2 py-0.5 rounded border border-violet-200 shadow-sm animate-pulse tracking-wide select-none">
+              Combined Stack
+            </span>
+          ) : (
+            <a href={api.sourcePdfUrl(applicationId, selection.pageNumber)} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-700 hover:underline">Open full PDF</a>
+          )}
         </div>
       </div>
       <div
-        key={selection.pageNumber}
-        className="flex h-[65vh] items-start justify-center overflow-auto bg-slate-800 p-4"
+        key={selection.pageNumber + "-" + (selection.allPageNumbers?.join(",") ?? "")}
+        className="flex flex-col gap-6 h-[65vh] items-center overflow-auto bg-slate-800 p-4"
       >
-        {/* The evidence image is generated by the local API and needs its natural aspect ratio. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={api.sourcePageImageUrl(applicationId, selection.pageNumber)}
-          alt={`Original source PDF page ${selection.pageNumber}`}
-          className="h-auto max-w-full bg-white shadow-lg"
-        />
+        {pagesToRender.map((pageNo) => (
+          <div key={pageNo} className="relative w-full flex flex-col items-center">
+            <div className="absolute top-2 left-2 rounded bg-black/75 px-2.5 py-1 text-[10px] font-extrabold text-white z-10 shadow border border-slate-700 uppercase tracking-widest select-none">
+              Page {pageNo}
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={api.sourcePageImageUrl(applicationId, pageNo)}
+              alt={`Original source PDF page ${pageNo}`}
+              className="h-auto max-w-full bg-white shadow-lg border border-slate-700 rounded-xs"
+            />
+          </div>
+        ))}
       </div>
       <div className="max-h-[24vh] space-y-3 overflow-auto border-t border-slate-200 p-4 text-xs">
         <div className="grid grid-cols-2 gap-3">
@@ -745,7 +788,7 @@ function EvidenceViewer({
         <div>
           <div className="mb-1 font-semibold uppercase tracking-wider text-slate-500">Extracted page text</div>
           <div className="whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono leading-relaxed text-slate-100">
-            {ocrText ? <HighlightedEvidenceText text={ocrText.slice(0, 3500)} needle={selection.anomaly.found_value ?? ""} /> : "No OCR text was extracted for this page. Review the original image above."}
+            {combinedOcrText ? <HighlightedEvidenceText text={combinedOcrText.slice(0, 5000)} needle={selection.anomaly.found_value ?? ""} /> : "No OCR text was extracted for this page. Review the original image above."}
           </div>
         </div>
       </div>
@@ -875,7 +918,7 @@ function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applic
   );
 }
 
-function Checklist({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (row: any, pageNo: number) => void }) {
+function Checklist({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (row: any, pageNo: number, allPages?: number[]) => void }) {
   return (
     <section className="space-y-4">
       <h2 className="text-base font-bold text-slate-800">MSFC Checklist ({data.checklist.total} items)</h2>
