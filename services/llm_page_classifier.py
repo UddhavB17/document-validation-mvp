@@ -33,7 +33,7 @@ def llm_classifier_min_confidence() -> float:
 
 
 def llm_classifier_max_pages_per_file() -> int:
-    return get_int("LLM_CLASSIFIER_MAX_PAGES_PER_FILE", 100, minimum=0)
+    return get_int("LLM_CLASSIFIER_MAX_PAGES_PER_FILE", 300, minimum=0)
 
 
 def llm_classifier_ocr_threshold() -> float:
@@ -144,7 +144,7 @@ def classify_page_with_llm(text: str) -> dict[str, Any] | None:
     try:
         confidence_value = float(confidence)
     except (TypeError, ValueError):
-        confidence_value = 0.7
+        confidence_value = 0.85
 
     confidence_value = max(0.0, min(1.0, confidence_value))
     return {
@@ -168,7 +168,7 @@ def _build_classifier_prompt(text: str) -> str:
         "and \"Bank Statement\" only for statement/account-statement pages.\n"
         "Respond with TOON (Token-Oriented Object Notation) format only, no markdown, no json:\n"
         "document_type: \"...\"\n"
-        "confidence: 0.0\n"
+        "confidence: 0.9\n"
         "reason: \"short reason\"\n\n"
         "Page text:\n"
         f"{text}"
