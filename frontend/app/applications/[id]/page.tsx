@@ -403,9 +403,14 @@ function AiAuditInsights({
                               <div className="font-bold text-rose-800 flex items-center gap-2">
                                 <span>Anomaly Detected</span>
                                 {correspondingAnomaly ? (
-                                  <span className="rounded bg-rose-100 text-rose-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider">
-                                    {correspondingAnomaly.rule_id}
-                                  </span>
+                                  <>
+                                    <span className="rounded bg-rose-100 text-rose-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider animate-pulse animate-duration-1000">
+                                      {correspondingAnomaly.severity}
+                                    </span>
+                                    <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider">
+                                      {correspondingAnomaly.rule_id}
+                                    </span>
+                                  </>
                                 ) : null}
                               </div>
                               <div className="mt-0.5 text-rose-750 font-medium leading-relaxed">{item.problem_description}</div>
@@ -565,10 +570,11 @@ function AnomalyGroup({
                 </div>
               </summary>
               <div className="space-y-4 border-t border-slate-200 bg-white px-4 py-3 text-xs">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-5">
                   <EvidenceValue label="Expected" value={anomaly.expected_value} />
                   <EvidenceValue label="Found" value={anomaly.found_value} />
                   <EvidenceValue label="Document Type" value={anomaly.document_type ?? "File-level"} />
+                  <EvidenceValue label="Severity" value={anomaly.severity} />
                   <EvidenceValue label="Rule ID" value={anomaly.rule_id} />
                 </div>
                 {pages.length ? (
