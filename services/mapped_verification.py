@@ -43,6 +43,8 @@ ALIASES = {
     "phone": "phone_number",
     "dob": "date_of_birth",
     "name": "applicant_name",
+    "borrower_name": "applicant_name",
+    "account_holder_name": "applicant_name",
     "pincode": "pin_code",
 }
 
@@ -72,6 +74,16 @@ _AGGREGATED_FIELD_DOC_TYPES = frozenset(
         "sanction letter",
         "loan agreement",
         "application form",
+        "aadhaar",
+        "pan",
+        "pan card",
+        "voter id",
+        "driving license",
+        "bank statement",
+        "passbook",
+        "utility bill",
+        "cibil report",
+        "crif report",
         "stamp duty",
         "insurance consent",
         "nach form",
@@ -360,7 +372,10 @@ def compare_processed_pages(
             fields["_mapped_extraction"] = mapped_fields
             comparison_fields = {
                 **{key: value for key, value in fields.items() if not str(key).startswith("_")},
-                **{key: value for key, value in mapped_fields.items() if not str(key).startswith("_")},
+                **{
+                    key: value for key, value in mapped_fields.items()
+                    if not str(key).startswith("_") and value not in (None, "", [], {})
+                },
             }
             if page.get("is_readable") is not False and text.strip():
                 readable_pages.append(page_number)

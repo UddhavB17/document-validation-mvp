@@ -83,6 +83,7 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
         coapplicantName: form.get("coapplicantName") || undefined,
         productType: form.get("productType"),
         branch: form.get("branch"),
+        caseType: form.get("caseType"),
         file: form.get("file"),
       });
       setSubmitting(true);
@@ -105,6 +106,7 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
           <TextField name="loanId" label="Loan ID" required />
           <SelectField name="productType" label="Product Type" options={["LAP", "MSME", "Personal Loan"]} />
         </div>
+        <SelectField name="caseType" label="Case Type" options={["Normal Case", "BT Case"]} />
         <TextField name="applicantName" label="Applicant Name" required />
         <TextField name="coapplicantName" label="Co-applicant Name" />
         <TextField name="branch" label="Branch" required />
@@ -156,6 +158,7 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
     const form = new FormData(formElement);
     const file = form.get("file");
     const rawManifest = String(form.get("manifest") ?? "");
+    const caseType = String(form.get("caseType") ?? "Normal Case") as "Normal Case" | "BT Case";
     try {
       if (!(file instanceof File) || !file.name) {
         throw new Error("Mapped PDF or ZIP package is required");
@@ -166,7 +169,7 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
         throw new Error("Manifest JSON or database dump is required when uploading a PDF directly");
       }
       setSubmitting(true);
-      onUploaded(await api.uploadMapped({ file, manifest }));
+      onUploaded(await api.uploadMapped({ file, manifest, caseType }));
       formElement.reset();
       setSelectedFile(null);
     } catch (err) {
@@ -183,6 +186,7 @@ function MappedUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse)
         <h2 className="text-lg font-bold text-slate-800">Trusted JSON + Page Mapping</h2>
         <p className="text-xs text-slate-500 font-medium">Verify pages in a PDF using deterministic templates and database hashes.</p>
       </div>
+      <SelectField name="caseType" label="Case Type" options={["Normal Case", "BT Case"]} />
       <label className="block">
         <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Select file (PDF or ZIP package)</span>
         <input
@@ -373,6 +377,7 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
   const [isPreparing, setIsPreparing] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [manifestText, setManifestText] = useState("");
+  const [caseType, setCaseType] = useState<"Normal Case" | "BT Case">("Normal Case");
 
   useEffect(() => {
     if (!preparingPackageId) return;
@@ -445,7 +450,7 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
     setIsVerifying(true);
     try {
       const manifest = getSanitizedManifest(manifestText);
-      const res = await api.verifyZipPackage(preparingPackageId, manifest);
+      const res = await api.verifyZipPackage(preparingPackageId, manifest, caseType);
       onUploaded(res);
     } catch (err: any) {
       setError(err.message || "Verification failed");
@@ -586,6 +591,18 @@ function ZipPackageForm({ onUploaded }: { onUploaded: (result: UploadResponse) =
             />
           </div>
 
+          <label className="block max-w-sm text-sm font-medium">
+            <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Case Type</span>
+            <select
+              value={caseType}
+              onChange={(event) => setCaseType(event.target.value as "Normal Case" | "BT Case")}
+              className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 shadow-sm cursor-pointer"
+            >
+              <option>Normal Case</option>
+              <option>BT Case</option>
+            </select>
+          </label>
+
           <button
             type="submit"
             disabled={isVerifying}
@@ -620,8 +637,10 @@ function getSanitizedManifest(text: string): string {
     try {
       JSON.parse(escapeControlCharacters(trimmed));
       return escapeControlCharacters(trimmed);
-    } catch (err: any) {
-      throw new Error(`JSON syntax error: ${err.message}`);
+    } catch {
+      // The backend has a tolerant company-dump adapter for smart quotes,
+      // truncated braces, and other non-standard database output.
+      return trimmed;
     }
   }
   return trimmed;

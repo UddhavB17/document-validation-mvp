@@ -12,7 +12,12 @@ from database.models import (
     ChecklistVerificationResponse,
 )
 from services.checklist_service import get_all_checklist_items
-from services.checklist_engine import condition_applies, system_flag_state
+from services.checklist_engine import (
+    _document_derived_system_data,
+    _document_evidence_count,
+    condition_applies,
+    system_flag_state,
+)
 from services.page_quality import confident_pages_for_types
 
 
@@ -29,13 +34,14 @@ def build_checklist_verification_response(
     """Convert deterministic checklist output into the reviewer/API contract."""
     started_at = time.perf_counter()
     checklist_items = get_all_checklist_items(product_type)
+    system_data = {**_document_derived_system_data(pages), **(system_data or {})}
     anomalies_by_sno = _anomalies_by_sno(anomalies)
     items = [
         _build_item(
             checklist_item=checklist_item,
             pages=pages,
             item_anomalies=anomalies_by_sno.get(int(checklist_item.get("s_no") or 0), []),
-            system_data=system_data or {},
+            system_data=system_data,
             include_narration=include_narration,
         )
         for checklist_item in sorted(checklist_items, key=lambda item: int(item.get("s_no") or 0))
@@ -103,6 +109,7 @@ def _build_item(
         matched_pages=matched_pages,
         item_anomalies=item_anomalies,
         status=status,
+        system_data=system_data,
     )
     extracted_fields = _merge_extracted_fields(matched_pages)
     if checklist_item.get("check_type") == "system_flag":
@@ -159,11 +166,23 @@ def _confidence_for_item(
     matched_pages: list[dict[str, Any]],
     item_anomalies: list[dict[str, Any]],
     status: str,
+    system_data: dict[str, Any],
 ) -> tuple[str, str]:
+    document_types = _document_types(checklist_item)
+    primary_type = document_types[0] if len(document_types) == 1 else ""
+    matched_count, unit = _document_evidence_count(matched_pages, primary_type)
     required_pages = int(checklist_item.get("min_count") or 1)
-    matched_count = len(matched_pages)
+    applicable_minimums = [
+        int(requirement.get("min_count") or 1)
+        for requirement in checklist_item.get("requirements") or []
+        if condition_applies(requirement.get("applies_when"), system_data) is True
+    ]
+    if applicable_minimums:
+        required_pages = max(applicable_minimums)
     if status == "missing":
-        return "low", f"matched {matched_count} of {required_pages} expected page(s)"
+        if item_anomalies:
+            return "low", _anomaly_detail(item_anomalies[0])
+        return "low", f"matched {matched_count} of {required_pages} expected {unit}"
     if status == "not_applicable":
         return "high", str(checklist_item.get("condition_description") or "condition is false; item not applicable")
     if status == "verified" and checklist_item.get("check_type") == "system_flag":
@@ -179,11 +198,11 @@ def _confidence_for_item(
         if page.get("classification_confidence") not in (None, "")
     ]
     if not confidences:
-        return "medium", f"matched {matched_count} of {required_pages} expected page(s)"
+        return "medium", f"matched {matched_count} of {required_pages} expected {unit}"
 
     minimum_confidence = min(confidences)
     detail = (
-        f"matched {matched_count} of {required_pages} expected page(s); "
+        f"matched {matched_count} of {required_pages} expected {unit}; "
         f"lowest classification confidence {minimum_confidence:.0%}"
     )
     if minimum_confidence >= 0.85 and matched_count >= required_pages:

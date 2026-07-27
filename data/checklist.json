@@ -5,14 +5,13 @@
     {
       "s_no": 1,
       "category": "Application Form / KYC",
-      "description": "Application form duly filled with colored photos - Signed by all Borrowers and GTR",
+      "description": "Application form duly filled; applicant/co-applicant names and spellings verified",
       "document_type": "Application Form",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "HIGH",
-      "review_mode": "manual",
-      "manual_review_reason": "Physical application form with photos; reviewer should verify signatures/photos manually."
+      "review_mode": "ai"
     },
     {
       "s_no": 2,
@@ -72,6 +71,7 @@
     },
     {
       "s_no": 5,
+      "enabled": false,
       "category": "Application Form / KYC",
       "description": "Signature proof of Borrower",
       "document_type": [
@@ -124,6 +124,7 @@
     },
     {
       "s_no": 8,
+      "enabled": false,
       "category": "Application Form / KYC",
       "description": "Dual Name / Signature / DOB declaration with applicable stamp duty and authority approval, if required",
       "document_type": [
@@ -146,9 +147,9 @@
     {
       "s_no": 9,
       "category": "Application Form / KYC",
-      "description": "Relationship proof between all borrowers",
-      "document_type": "Relationship Proof",
-      "check_type": "presence",
+      "description": "Relationship consistency between all borrowers using Aadhaar S/O, D/O, W/O and C/O evidence",
+      "document_type": "Aadhaar",
+      "check_type": "consistency_only",
       "applies_when": {
         "field": "borrower_count",
         "operator": ">",
@@ -156,28 +157,20 @@
       },
       "condition_description": "Required when the case has more than one borrower",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "Relationship proof depends on borrower structure and should be verified manually."
+      "review_mode": "ai"
     },
     {
       "s_no": 10,
       "category": "Application Form / KYC",
-      "description": "Vernacular document if applicable",
-      "document_type": "Vernacular Document",
-      "check_type": "presence",
-      "applies_when": {
-        "field": "vernacular_required",
-        "field_aliases": ["vernacular_document_required"],
-        "operator": "truthy"
-      },
-      "condition_description": "Required only when vernacular execution is applicable",
+      "description": "Application form includes a second language other than Hindi",
+      "document_type": "Application Form",
+      "check_type": "consistency_only",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "Vernacular requirement is conditional; verify manually when applicable."
+      "review_mode": "ai"
     },
     {
       "s_no": 11,
@@ -294,6 +287,7 @@
     },
     {
       "s_no": 18,
+      "enabled": false,
       "category": "Internal Documents",
       "description": "Pre-disbursement / sanction conditions document",
       "document_type": "Pre-Disbursement Conditions",
@@ -395,6 +389,7 @@
     },
     {
       "s_no": 24,
+      "enabled": false,
       "category": "Internal Documents",
       "description": "Agreement signing photo and video",
       "document_type": "Agreement Signing Photo",
@@ -426,9 +421,9 @@
       "document_type": "BT Undertaking",
       "check_type": "presence",
       "applies_when": {
-        "field": "bt_undertaking_required",
-        "field_aliases": ["internal_bt_undertaking_required"],
-        "operator": "truthy"
+        "field": "case_type",
+        "operator": "in",
+        "value": ["bt", "bt_case", "bt case", "balance_transfer", "balance transfer"]
       },
       "condition_description": "Required when the credit/operations workflow marks a BT undertaking as applicable",
       "required": true,
@@ -444,17 +439,9 @@
       "document_type": "Consent Letter",
       "check_type": "presence",
       "applies_when": {
-        "coalesce": [
-          {
-            "field": "internal_bt_topup_consent_required",
-            "operator": "truthy"
-          },
-          {
-            "field": "case_type",
-            "operator": "in",
-            "value": ["internal_bt", "internal bt", "top_up", "top-up", "top up"]
-          }
-        ]
+        "field": "case_type",
+        "operator": "in",
+        "value": ["bt", "bt_case", "bt case", "balance_transfer", "balance transfer"]
       },
       "condition_description": "Required for internal balance-transfer or top-up cases",
       "required": true,
@@ -502,6 +489,7 @@
     },
     {
       "s_no": 29,
+      "enabled": false,
       "category": "Internal Documents",
       "description": "Customer App installed proof on customer phone",
       "document_type": "Customer App Proof",
@@ -555,6 +543,7 @@
     },
     {
       "s_no": 32,
+      "enabled": false,
       "category": "Documents required from customer",
       "description": "Bank signature verification if NACH not registered at disbursement",
       "document_type": "Bank Signature Verification",
@@ -573,6 +562,7 @@
     },
     {
       "s_no": 33,
+      "enabled": false,
       "category": "Documents required from customer",
       "description": "Stamp Duty - stamp date equal to or older than disbursement date",
       "document_type": "Stamp Duty",
@@ -640,17 +630,9 @@
       ],
       "check_type": "presence_all",
       "applies_when": {
-        "coalesce": [
-          {
-            "field": "is_bt_case",
-            "operator": "truthy"
-          },
-          {
-            "field": "case_type",
-            "operator": "in",
-            "value": ["bt", "balance_transfer", "balance transfer", "internal_bt", "internal bt"]
-          }
-        ]
+        "field": "case_type",
+        "operator": "in",
+        "value": ["bt", "bt_case", "bt case", "balance_transfer", "balance transfer"]
       },
       "condition_description": "Required for balance-transfer cases",
       "required": true,
@@ -748,19 +730,15 @@
     {
       "s_no": 42,
       "category": "Repayments",
-      "description": "ACH not registered - CBO/CEO approval, BSV, and 3 physical NACH forms",
+      "description": "ACH not registered - CBO/CEO approval and 3 physical NACH forms",
       "document_type": [
         "ACH Approval Document",
-        "Bank Signature Verification",
         "NACH Form"
       ],
       "check_type": "requirements",
       "requirements": [
         {
           "document_type": "ACH Approval Document"
-        },
-        {
-          "document_type": "Bank Signature Verification"
         },
         {
           "document_type": "NACH Form",
@@ -800,18 +778,6 @@
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
       "manual_review_reason": "Co-applicant/GTR PDC count is physical cheque custody; verify manually."
-    },
-    {
-      "s_no": 44,
-      "category": "Other",
-      "description": "Operations checklist acknowledgment with BOPS/CSO and Credit Checker signatures",
-      "document_type": "Operations Checklist",
-      "check_type": "presence",
-      "required": true,
-      "ai_checkable": false,
-      "severity_if_missing": "LOW",
-      "review_mode": "manual",
-      "manual_review_reason": "Operations checklist signatures are final manual acknowledgments."
     }
   ],
   "accuracy_check_items": [
@@ -849,7 +815,15 @@
         "loan_amount",
         "tenure",
         "emi",
-        "roi"
+        "roi",
+        "apr",
+        "first_emi",
+        "final_emi",
+        "processing_fee",
+        "insurance_amount",
+        "net_disbursement",
+        "foir",
+        "ltv"
       ],
       "severity_if_mismatch": "HIGH",
       "ai_checkable": true
@@ -865,6 +839,7 @@
     },
     {
       "s_no": 33,
+      "enabled": false,
       "description": "Stamp date must be equal to or older than disbursement date",
       "document_type": "Stamp Duty",
       "check_type": "date_not_after",
@@ -952,8 +927,8 @@
   ],
   "human_review_items": [],
   "validation_strategy": {
-    "mode": "full_44_item_conditional_availability",
-    "goal": "Check availability of every applicable NDC checklist item, mark false conditions not applicable, and escalate missing applicability inputs for review.",
+    "mode": "43_item_conditional_availability_and_cross_document_consistency",
+    "goal": "Check every currently enabled NDC item, validate trusted JSON/database fields against documents, and enforce applicant, address, relationship, loan, bureau and banking consistency.",
     "primary_ocr_targets": [
       "PAN",
       "Aadhaar",
@@ -983,17 +958,13 @@
       "people": "Person map with role, income_earner, repayment_contributor, and gender; used for per-person KYC/banking/PDC scopes.",
       "kyc_verified_in_graviton": "When true, physical KYC OSV evidence is not applicable.",
       "kyc_details_checked": "System completion flag for checklist row 11.",
-      "identity_mismatch_present": "Controls the dual-name/signature/DOB declaration and approval.",
-      "vernacular_required": "Controls vernacular documentation.",
-      "manual_loan_agreement": "Controls agreement-signing photo/video evidence.",
-      "bt_undertaking_required": "Controls the internal BT undertaking.",
-      "case_type": "Controls internal-BT/top-up consent and foreclosure/LOD requirements.",
+    "case_type": "User-selected Normal Case or BT Case. BT-only rows 25, 26 and 36 run only for BT Case.",
       "business_proof_required": "Controls Udyam/GST/shop-establishment proof.",
       "nach_registered": "Controls BSV, PDC counts, and ACH-not-registered documents.",
       "assessed_income_documents_required": "Controls assessed-income documents.",
       "insurance_consent_required": "Controls the insurance-tenure consent letter; may instead be derived from insurance_tenure and tenure.",
       "fi_report_status": "Negative or referred FI results require an FI approval letter.",
-      "disbursement_date": "Used to validate that stamp duty is dated on or before disbursement."
+    "disbursement_date": "Retained as trusted data, while stamp-duty validation is temporarily disabled."
     },
     "manual_review_policy": "Physical, media, cheque-custody, and workflow items are checked for availability across the packet; their execution quality and signatures still require manual review."
   }

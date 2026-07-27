@@ -3,6 +3,7 @@ from pathlib import Path
 import database.db as db
 from database.db import get_connection, init_db
 from services.mapped_verification import compare_processed_pages, run_mapped_verification
+from services.field_verification import verify_name
 from services.reviewer import build_reviewer_summary, load_reviewer_summary
 from services.verification_manifest import VerificationManifest
 from services.company_data_provider import CompanyReferenceData, LocalJsonCompanyDataProvider
@@ -111,7 +112,7 @@ def test_loan_level_field_checks_run_once_across_fragments() -> None:
             "is_readable": True,
             "ocr_text": "Loan Agreement Borrower RAMESH KUMAR Loan Amount 500000",
             "document_type": "Loan Agreement",
-            "extracted_fields": {"applicant_name": "RAMESH KUMAR", "loan_amount": "500000"},
+            "extracted_fields": {"borrower_name": "RAMESH KUMAR", "loan_amount": "500000"},
         },
         {
             "page_number": 3,
@@ -155,6 +156,47 @@ def test_loan_level_field_checks_run_once_across_fragments() -> None:
     assert result["anomalies"] == []
     assert result["checked_fields"] == 2
     assert result["matched_fields"] == 2
+
+
+def test_aadhaar_front_and_back_are_verified_as_one_document_set() -> None:
+    pages = [
+        {
+            "page_number": 1,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Aadhaar Name: RADHA BAI Date of Birth: 01-01-1962",
+            "document_type": "Aadhaar",
+            "extracted_fields": {"applicant_name": "RADHA BAI", "dob": "1962-01-01"},
+        },
+        {
+            "page_number": 2,
+            "page_type": "scanned",
+            "is_readable": True,
+            "ocr_text": "Address: W/O Ukar Lal Rajasthan 326502",
+            "document_type": "Aadhaar",
+            "extracted_fields": {"address": "W/O Ukar Lal Rajasthan 326502", "pin_code": "326502"},
+        },
+    ]
+    result = compare_processed_pages(
+        pages,
+        {
+            "reference_data": {
+                "coapplicant_2": {
+                    "applicant_name": "Radha Bai",
+                    "date_of_birth": "1962-01-01",
+                    "address": "W/O Ukar Lal Rajasthan 326502",
+                    "pin_code": "326502",
+                }
+            },
+            "documents": [
+                {"source_document_id": "front", "applicant_role": "coapplicant_2", "document_type": "Aadhaar", "pages": [1]},
+                {"source_document_id": "back", "applicant_role": "coapplicant_2", "document_type": "Aadhaar", "pages": [2]},
+            ],
+        },
+    )
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 4
+    assert result["matched_fields"] == 4
 
 
 def _application() -> int:
@@ -521,3 +563,7 @@ def test_mapped_verification_flags_missing_required_document_and_checks_utility_
     assert result["anomalies"][0]["document_type"] == "PAN"
     assert result["people_verification"]["primary"]["documents"]["Utility Bill"]["status"] == "MATCH"
     assert result["people_verification"]["primary"]["documents"]["PAN"]["status"] == "NEEDS_REVIEW"
+
+
+def test_name_match_ignores_missing_ocr_whitespace() -> None:
+    assert verify_name("PEERULAL", "Peeru Lal").match is True

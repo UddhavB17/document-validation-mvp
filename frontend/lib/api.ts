@@ -284,6 +284,7 @@ export const api = {
     coapplicantName?: string;
     productType: string;
     branch: string;
+    caseType: "Normal Case" | "BT Case";
     file: File;
   }) => {
     const formData = new FormData();
@@ -292,15 +293,17 @@ export const api = {
     formData.append("coapplicant_name", payload.coapplicantName ?? "");
     formData.append("product_type", payload.productType);
     formData.append("branch", payload.branch);
+    formData.append("case_type", payload.caseType);
     formData.append("file", payload.file);
     const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", body: formData });
     return parseResponse(response, uploadResponseSchema);
   },
-  uploadMapped: async (payload: { manifest?: string; file: File }) => {
+  uploadMapped: async (payload: { manifest?: string; caseType: "Normal Case" | "BT Case"; file: File }) => {
     const formData = new FormData();
     if (payload.manifest !== undefined) {
       formData.append("manifest", payload.manifest);
     }
+    formData.append("case_type", payload.caseType);
     formData.append("file", payload.file);
     const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", body: formData });
     return parseResponse(response, uploadResponseSchema);
@@ -317,9 +320,10 @@ export const api = {
   },
   getZipPreparationProgress: (packageId: string) =>
     getJson(`/upload/package/${packageId}/preparation`, zipPreparationProgressSchema),
-  verifyZipPackage: async (packageId: string, manifest: string) => {
+  verifyZipPackage: async (packageId: string, manifest: string, caseType: "Normal Case" | "BT Case") => {
     const formData = new FormData();
     formData.append("manifest", manifest);
+    formData.append("case_type", caseType);
     const response = await fetch(`${API_BASE_URL}/upload/package/${packageId}/verify`, {
       method: "POST",
       body: formData,

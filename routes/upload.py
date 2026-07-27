@@ -8,6 +8,7 @@ import logging
 import re
 import shutil
 import time
+from typing import Literal
 from uuid import uuid4
 import zipfile
 
@@ -157,6 +158,7 @@ async def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
 @router.post("/mapped", summary="Verify mapped PDF pages against trusted company JSON")
 async def upload_mapped_file(
     manifest: str | None = Form(None),
+    case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
     file: UploadFile = File(...),
 ) -> dict[str, object]:
     """Queue shared PDF processing plus trusted mapped JSON comparison."""
@@ -178,6 +180,7 @@ async def upload_mapped_file(
 
     try:
         parsed = _parse_manifest(manifest_text)
+        parsed.case_type = case_type
     except HTTPException:
         file_path.unlink(missing_ok=True)
         raise
@@ -313,10 +316,12 @@ def get_zip_package(package_id: str) -> dict[str, object]:
 async def verify_zip_package(
     package_id: str,
     manifest: str = Form(...),
+    case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
 ) -> dict[str, object]:
     """Apply a confirmed manifest to the package's normalized internal PDF."""
     init_db()
     parsed = _parse_manifest(manifest)
+    parsed.case_type = case_type
     row = _get_package_row(package_id)
     if row["status"] in {"verifying", "processing"}:
         raise HTTPException(status_code=409, detail="ZIP package verification is already running")
@@ -548,8 +553,11 @@ def _decode_manifest_payload(manifest_text: str) -> dict[str, object]:
     if stripped.startswith(("{", "[")):
         try:
             payload = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=422, detail=f"Invalid manifest JSON: {exc}") from exc
+        except json.JSONDecodeError:
+            try:
+                payload = convert_company_database_dump(stripped)
+            except CompanyDumpConversionError as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid manifest JSON/database dump: {exc}") from exc
     else:
         # Raw database dump — convert and use the resulting dict
         try:
@@ -857,6 +865,7 @@ async def upload_file(
     coapplicant_name: str | None = Form(None),
     product_type: str = Form(...),
     branch: str = Form(...),
+    case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
     file: UploadFile = File(...),
 ) -> dict[str, object]:
     init_db()
@@ -925,6 +934,14 @@ async def upload_file(
         "coapplicant_name": coapplicant_name,
         "product_type": product_type,
         "branch": branch,
+        "case_type": case_type,
+        "people": {
+            "primary": {"role": "primary", "applicant_name": applicant_name},
+            **(
+                {"coapplicant_1": {"role": "coapplicant", "applicant_name": coapplicant_name}}
+                if coapplicant_name else {}
+            ),
+        },
     }
     with get_connection() as connection:
         connection.execute(
@@ -1022,6 +1039,7 @@ def _run_mapped_pipeline_task(
             "branch": manifest.get("branch"),
             "reference_data": reference_data,
             "people": reference_data,
+            "case_type": manifest.get("case_type") or "Normal Case",
         }
         result = run_pipeline(
             file_path,

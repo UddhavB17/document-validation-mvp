@@ -306,7 +306,7 @@ def run_pipeline(
         pages=pages,
         anomalies=anomalies,
         product_type=product_type,
-        system_data=system_data or ground_truth,
+        system_data={**ground_truth, **(system_data or {})},
         processing_metadata=_checklist_processing_metadata(progress_snapshot),
         include_narration=False,
     )
@@ -423,6 +423,7 @@ def _mapped_ground_truth(
     primary = reference_data.get("primary") if isinstance(reference_data, dict) else {}
     primary = primary if isinstance(primary, dict) else {}
     return {
+        **{key: value for key, value in manifest.items() if key not in {"documents", "reference_data"}},
         **(system_data or {}),
         **primary,
         "loan_id": manifest.get("loan_id") or (system_data or {}).get("loan_id"),
@@ -525,7 +526,7 @@ def run_partner_json_pipeline(
         pages=pages,
         anomalies=anomalies,
         product_type=product_type,
-        system_data=system_data or ground_truth,
+        system_data={**ground_truth, **(system_data or {})},
         processing_metadata={},
         include_narration=False,
     )
@@ -771,6 +772,7 @@ def _build_page_records(
                             if inferred:
                                 document_type = inferred
                                 detection_method = "filename_inference"
+                                classification = {"confidence": 0.85}
                             break
                 classification = {"confidence": 0.0}
                 extracted_fields = {
@@ -816,6 +818,23 @@ def _build_page_records(
                 document_type = assigned["document_type"]
                 classification = {"confidence": assigned["confidence"]}
                 detection_method = assigned["detection_method"]
+                # A photo packet may visibly contain identity cards without
+                # being an Aadhaar document. Strong source filenames are the
+                # authoritative type for these operational image bundles.
+                source_filename_type = None
+                if source_documents:
+                    for doc in source_documents:
+                        start = doc.get("internal_page_start")
+                        end = doc.get("internal_page_end")
+                        if start is not None and end is not None and start <= page_number <= end:
+                            source_filename_type = _infer_document_type_from_filename(
+                                str(doc.get("original_filename") or "")
+                            )
+                            break
+                if source_filename_type in {"House Photo", "Workplace Photo", "Property Image"}:
+                    document_type = source_filename_type
+                    classification = {"confidence": 0.95}
+                    detection_method = "filename_override"
                 if document_type == "Unknown" and source_documents:
                     for doc in source_documents:
                         start = doc.get("internal_page_start")
@@ -1377,7 +1396,11 @@ def _assign_sequential_document_type(
 
 def _looks_like_fresh_page_without_match(text: str) -> bool:
     raw_text = text or ""
-    header = " ".join(raw_text.splitlines()[:6])
+    # Some digitally generated PDFs expose the entire page as one enormous
+    # line.  Treating that whole line as a heading makes a continuation page
+    # look "fresh" merely because words such as letter/report occur later in
+    # boilerplate.  Document-boundary evidence belongs near the top of a page.
+    header = " ".join(raw_text.splitlines()[:6])[:360]
     normalized_header = _normalize_fresh_document_text(header)
     normalized_text = _normalize_fresh_document_text(raw_text)
     if not normalized_text:
@@ -1799,6 +1822,12 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
     if not filename:
         return None
     lower = filename.lower().replace("\\", "/")
+    suffix = Path(lower).suffix
+
+    if suffix in {".jpg", ".jpeg", ".png", ".tif", ".tiff"} and any(
+        folder in lower for folder in ("/collateral/", "/valuation/")
+    ):
+        return "Property Image"
 
     # Check for direct keyword matches in the whole path
     if "pan" in lower:
@@ -1813,6 +1842,30 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         return "Voter ID"
     if "cheque" in lower or "check" in lower:
         return "Cheque"
+    if "spdc" in lower or re.search(r"(?:^|[/_\-\s])pdc(?:[/_\-\s.]|$)", lower):
+        return "PDC"
+    if "property paper" in lower or "proprty paper" in lower:
+        return "Property Document"
+    if "house photo" in lower:
+        return "House Photo"
+    if "working place" in lower or "workplace" in lower:
+        return "Workplace Photo"
+    if "technical report" in lower:
+        return "Technical Report"
+    if "ration card" in lower:
+        return "Ration Card"
+    if "cersai" in lower:
+        return "CERSAI Report"
+    if "insurance consent" in lower:
+        return "Insurance Consent Letter"
+    if "property insurance" in lower:
+        return "Property Insurance Form"
+    if "life insurance" in lower:
+        return "Life Insurance Form"
+    if "insurance" in lower:
+        return "Insurance Form"
+    if "banking" in lower:
+        return "Bank Statement"
     if "statement" in lower or "bank_stmt" in lower or "bank stmt" in lower or "bankstmt" in lower:
         return "Bank Statement"
     if "utility" in lower or "bill" in lower or "electricity" in lower or "water" in lower or "gas_bill" in lower:
@@ -1825,6 +1878,8 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         return "Salary Slip"
     if "kfs" in lower or "key fact" in lower:
         return "KFS (Key Fact Statement)"
+    if re.search(r"(?:^|[/_\-\s])cam(?:[/_\-\s.(]|$)", lower):
+        return "CAM"
 
     # If it's a generic file name like page_1.png, image.jpg, scan.pdf, etc.,
     # we can try to use the parent folder name if it exists.
@@ -1832,7 +1887,11 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
     if len(parts) > 1:
         parent = parts[-2]
         # Ignore generic parent folders
-        if parent not in {"sources", "source", "uploads", "documents", "files", "temp", "tmp", "pages"}:
+        if parent not in {
+            "sources", "source", "uploads", "documents", "files", "temp", "tmp", "pages",
+            "task", "task 1", "task_1", "report", "bank", "kyc", "income",
+            "creditbureau", "creditbureau 1", "creditbureau 2", "creditbureau 3",
+        }:
             cleaned = parent.replace("_", " ").replace("-", " ")
             return " ".join(word.capitalize() for word in cleaned.split())
 
@@ -1843,6 +1902,10 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         "output", "export", "pdf", "unnamed", "untitled", "unknown"
     }
     cleaned_base = base_name.replace("_", " ").replace("-", " ").strip()
+    if re.search(r"\b(?:combine|combined|merged|bundle|packet)\b", cleaned_base, re.IGNORECASE):
+        return None
+    if re.fullmatch(r"credit\s*score(?:\s*\(\d+\))?", cleaned_base, re.IGNORECASE):
+        return None
     words = cleaned_base.split()
 
     is_generic = True

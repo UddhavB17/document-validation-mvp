@@ -3,6 +3,14 @@
   "min_confidence": 0.5,
   "document_types": [
     {
+      "type": "CAM",
+      "priority": 5,
+      "headings": ["Credit Approval Memo", "Credit Appraisal Memo"],
+      "keywords": ["credit approval memo", "credit appraisal memo", "application details", "key indicators"],
+      "required_any": ["credit approval memo", "credit appraisal memo"],
+      "min_confidence": 0.5
+    },
+    {
       "type": "PAN Card",
       "priority": 10,
       "headings": ["Permanent Account Number", "PAN Card", "Income Tax Department"],
@@ -15,6 +23,7 @@
       "priority": 20,
       "headings": ["Aadhaar", "Aadhar", "Unique Identification Authority of India", "UIDAI", "आधार"],
       "keywords": ["aadhaar", "aadhar", "unique identification", "uidai", "आधार", "यूआईडीएआई"],
+      "negative_keywords": ["applicant kyc details", "co-applicant kyc details", "coapplicant kyc details", "guarantor kyc details"],
       "field_patterns": ["\\b\\d{4}\\s\\d{4}\\s\\d{4}\\b"],
       "min_confidence": 0.5
     },
@@ -113,7 +122,7 @@
       "priority": 86,
       "headings": ["CERSAI", "Debtor Based Search Report", "Central Registry of Securitisation Asset Reconstruction and Security Interest of India"],
       "keywords": ["cersai", "debtor based search report", "central registry of securitisation", "security interest of india", "cersai details", "search criteria", "no match found"],
-      "required_any": ["cersai", "central registry of securitisation", "debtor based search report"],
+      "required_any": ["central registry of securitisation", "debtor based search report", "cersai details", "search criteria", "no match found"],
       "field_patterns": ["\\bcersai\\b", "debtor\\s+based\\s+search", "search\\s+reference\\s+number", "transaction\\s+id"],
       "min_confidence": 0.5
     },
@@ -151,7 +160,7 @@
       "priority": 110,
       "headings": ["Bank Statement", "Account Statement", "Statement of Account", "खाता विवरण", "बैंक विवरण"],
       "keywords": ["bank statement", "account statement", "statement of account", "debit", "credit", "balance", "खाता विवरण", "बैंक विवरण"],
-      "negative_keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक", "crif", "cibil", "transunion cibil", "cersai"],
+      "negative_keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक", "crif", "cibil", "transunion cibil", "cersai", "co-applicant details", "coapplicant details", "security & offered property"],
       "field_patterns": ["account\\s*(number|no)", "statement\\s+period", "debit.*credit.*balance"],
       "min_confidence": 0.5
     },
@@ -200,9 +209,9 @@
     {
       "type": "Property Insurance Form",
       "priority": 137,
-      "headings": ["Property Insurance Form", "Property Insurance Proposal", "Property Insurance"],
-      "keywords": ["property insurance", "insured property", "property cover", "building insurance"],
-      "required_any": ["property insurance", "insured property", "property cover"],
+      "headings": ["Property Insurance Form", "Property Insurance Proposal", "Property Insurance", "Kotak Bharat Griha Raksha", "Home Building and Home Contents"],
+      "keywords": ["property insurance", "insured property", "property cover", "building insurance", "home building", "home contents", "griha raksha"],
+      "required_any": ["property insurance", "insured property", "property cover", "home building", "home contents", "griha raksha"],
       "min_confidence": 0.5
     },
     {

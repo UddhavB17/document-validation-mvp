@@ -6,6 +6,7 @@ export const uploadFormSchema = z.object({
   coapplicantName: z.string().trim().optional(),
   productType: z.enum(["LAP", "MSME", "Personal Loan"]),
   branch: z.string().trim().min(1, "Branch is required"),
+  caseType: z.enum(["Normal Case", "BT Case"]),
   file: z.instanceof(File, { message: "PDF file is required" }).refine((file) => file.type === "application/pdf", {
     message: "Only PDF files are accepted",
   }),

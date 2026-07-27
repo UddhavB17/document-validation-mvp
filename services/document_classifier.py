@@ -157,9 +157,15 @@ def _heading_score(text: str, headings: list[str]) -> tuple[float, list[dict[str
         normalized_heading = _normalize_text(heading)
         if not normalized_heading:
             continue
-        if normalized_heading in text:
+        if _contains(text, normalized_heading):
             best = max(best, 0.60)
             matches.append({"kind": "heading", "value": heading, "score": 1.0})
+            continue
+        # Fuzzy matching very short acronyms (for example NACH) against a long,
+        # noisy OCR line produces accidental near-matches.  Acronyms must be
+        # present as complete tokens; longer headings may still use fuzzy OCR
+        # recovery.
+        if len(normalized_heading.replace(" ", "")) <= 5:
             continue
         ratio = _partial_ratio(normalized_heading, text)
         if ratio >= 0.86:
@@ -247,7 +253,11 @@ def _normalize_text(value: str) -> str:
 
 def _contains(text: str, term: str) -> bool:
     normalized_term = _normalize_text(term)
-    return bool(normalized_term and normalized_term in text)
+    if not normalized_term:
+        return False
+    if len(normalized_term.replace(" ", "")) <= 5:
+        return bool(re.search(rf"(?<![a-z0-9]){re.escape(normalized_term)}(?![a-z0-9])", text))
+    return normalized_term in text
 
 
 def _partial_ratio(needle: str, haystack: str) -> float:

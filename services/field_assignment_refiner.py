@@ -29,6 +29,13 @@ _LABEL_VALUES = {
     "borrower name",
     "account holder",
     "account holder name",
+    "a/c number",
+    "a/c numeber",
+    "account number",
+    "account type",
+    "bank name",
+    "bank branch",
+    "खाता प्रकार",
     "address",
     "landmark",
     "locality",
@@ -294,8 +301,14 @@ def _normalize_text(value: str) -> str:
 
 
 def _looks_like_non_name(normalized: str) -> bool:
-    blocked = {"account", "address", "date of birth", "dob", "ifsc", "loan amount", "pin code"}
-    return normalized in blocked
+    blocked = {
+        "account", "address", "date of birth", "dob", "ifsc", "loan amount", "pin code",
+        "source", "financer", "issuing authority", "ration card", "driving", "phone no",
+    }
+    if normalized in blocked:
+        return True
+    compact = re.sub(r"[^a-z]", "", normalized)
+    return compact in {"acnumber", "acnumeber", "accountnumber", "accountno"}
 
 
 def _looks_like_address_placeholder(normalized: str) -> bool:

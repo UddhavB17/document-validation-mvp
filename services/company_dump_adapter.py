@@ -128,6 +128,7 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
         warnings=warnings,
     )
     primary["applicant_name"] = primary_name
+    _copy_known_person_fields(primary, applicant, applicant_kyc, applicant_address)
 
     loan_amount = _valid_amount(
         _value(cam, "sanctionamount")
@@ -160,6 +161,7 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
             warnings=warnings,
         )
         person["applicant_name"] = name
+        _copy_known_person_fields(person, details, kyc_by_name.get(_name_key(name), ""), _best_address(entity_addresses, name, "co-applicant"))
         people[person_id] = person
 
     loan_id = _loan_id(text, applicant, cam)
@@ -172,6 +174,7 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
         "people": people,
         "document_index": [],
     }
+    _copy_known_loan_fields(manifest, cam, dbmaker, applicant)
     if warnings:
         manifest["conversion_warnings"] = sorted(set(warnings))
     return manifest
@@ -201,6 +204,86 @@ def _person(
     _copy_if_present(person, "address", _clean_text(address_value))
     _copy_if_present(person, "pin_code", _valid_digits(_value(address, "pincode") or _value(details, "pincode"), 6))
     return person
+
+
+def _copy_known_person_fields(target: dict[str, Any], *sections: str) -> None:
+    aliases = {
+        "salutation": ("salutation", "title"),
+        "customer_id": ("customerId", "applicantId", "customerCode"),
+        "gender": ("gender",), "marital_status": ("maritalStatus",),
+        "qualification": ("qualification", "education"),
+        "profession": ("profession", "occupation"), "occupation": ("occupation",),
+        "disability_status": ("disabilityStatus", "isDisabled"),
+        "ews_status": ("ewsStatus", "economicallyWeakerSection"),
+        "caste": ("caste",), "religion": ("religion",),
+        "medical_condition": ("medicalCondition",),
+        "father_name": ("fatherName", "fathersName"), "mother_name": ("motherName",),
+        "relationship": ("relationship", "relationWithApplicant", "applicantRelation"),
+        "email": ("email", "emailId"), "current_address": ("currentAddress",),
+        "permanent_address": ("permanentAddress",),
+        "communication_address": ("communicationAddress",),
+        "address_ownership": ("addressOwnership", "residenceOwnership"),
+        "address_subtype": ("addressSubtype", "residenceType"),
+        "landmark": ("landmark",), "locality": ("locality", "village"),
+        "tehsil": ("tehsil",), "district": ("district",), "state": ("state",),
+        "country": ("country",), "occupied_since": ("occupiedSince", "residingSince"),
+        "latitude": ("latitude", "lat"), "longitude": ("longitude", "lng", "long"),
+        "employment_type": ("employmentType", "customerProfile"),
+        "income_source": ("incomeSource",), "work_profile": ("workProfile",),
+        "industry": ("industry",), "job_role": ("jobRole",),
+        "job_description": ("jobDescription",), "monthly_income": ("monthlyIncome", "declaredIncome"),
+        "verified_income": ("verifiedIncome",), "considered_income": ("consideredIncome", "eligibilityIncome"),
+        "turnover": ("turnover",), "margin": ("margin",),
+        "years_current_work": ("yearsInCurrentWork", "workVintage"),
+        "overall_experience": ("overallExperience", "totalExperience"),
+        "income_stability": ("incomeStability",), "verification_method": ("verificationMethod",),
+        "income_proof_basis": ("incomeProofBasis",), "verification_status": ("verificationStatus",),
+        "verifier": ("verifier", "verifiedBy"), "field_remarks": ("fieldRemarks", "pdRemarks"),
+        "account_holder_name": ("accountHolderName",), "account_number": ("accountNumber", "bankAccountNumber"),
+        "bank_name": ("bankName",), "branch": ("bankBranch", "branch"), "ifsc": ("ifsc", "ifscCode"),
+        "account_type": ("accountType",), "bank_verification_status": ("bankVerificationStatus",),
+        "bank_linked_mobile": ("bankLinkedMobile", "mobileLinkedToBank"),
+        "cibil_score": ("cibilScore",), "crif_score": ("crifScore",),
+        "bureau_account_count": ("bureauAccountCount", "numberOfAccounts"),
+        "overdue_account_count": ("overdueAccountCount",), "dpd_status": ("dpdStatus",),
+        "monthly_obligations": ("monthlyObligations", "declaredObligations"),
+        "available_income": ("availableIncome",), "maximum_emi": ("maximumEmi", "maxEmi"),
+        "foir": ("foir",), "property_owner": ("propertyOwner",), "ownership_type": ("ownershipType",),
+    }
+    for target_key, source_keys in aliases.items():
+        value = next((_value(section, key) for section in sections for key in source_keys if _value(section, key)), None)
+        _copy_if_present(target, target_key, _clean_text(value))
+
+
+def _copy_known_loan_fields(target: dict[str, Any], *sections: str) -> None:
+    aliases = {
+        "application_number": ("applicationId", "applicationNumber", "loanAccountNumber"),
+        "loan_purpose": ("loanPurpose", "purpose"), "product_type": ("productType", "product"),
+        "requested_amount": ("requestedAmount",), "recommended_amount": ("recommendedAmount",),
+        "sanction_amount": ("sanctionAmount", "approvedPrincipalAmount"),
+        "loan_amount": ("loanAmount", "sanctionAmount", "principalAmount"),
+        "roi": ("roi", "interestRate"), "apr": ("apr",), "tenure": ("tenure", "noOfRepayment"),
+        "emi": ("emiAmount", "emi"), "first_emi": ("firstEmi",), "final_emi": ("finalEmi",),
+        "repayment_start_date": ("repaymentStartDate",), "maturity_date": ("maturityDate",),
+        "installment_count": ("installmentCount", "noOfRepayment"),
+        "total_interest": ("totalInterest",), "total_repayment": ("totalRepayment",),
+        "processing_fee": ("processingFee",), "insurance_amount": ("insuranceAmount",),
+        "other_charges": ("otherCharges",), "net_disbursement": ("netDisbursement",),
+        "foir": ("foir",), "ltv": ("ltv",), "property_value": ("propertyValue",),
+        "market_value": ("marketValue",), "distress_value": ("distressValue",),
+        "land_value": ("landValue",), "construction_value": ("constructionValue",),
+        "property_area": ("propertyArea", "totalArea"), "property_address": ("propertyAddress",),
+        "site_address": ("siteAddress",), "property_usage": ("propertyUsage",),
+        "occupancy": ("occupancy",), "property_condition": ("propertyCondition",),
+        "construction_status": ("constructionStatus",), "sanction_conditions": ("sanctionConditions",),
+        "approved_deviations": ("approvedDeviations", "deviations"),
+        "pending_conditions": ("pendingConditions",), "tranche_structure": ("trancheStructure",),
+        "workflow_status": ("workflowStatus",), "repayment_status": ("repaymentStatus",),
+        "overdue_status": ("overdueStatus",),
+    }
+    for target_key, source_keys in aliases.items():
+        value = next((_value(section, key) for section in sections for key in source_keys if _value(section, key)), None)
+        _copy_if_present(target, target_key, _clean_text(value))
 
 
 def _loan_id(text: str, applicant: str, cam: str) -> str:

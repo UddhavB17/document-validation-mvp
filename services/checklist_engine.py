@@ -5,6 +5,7 @@ from datetime import datetime
 import re
 
 from services import checklist_service
+from services.consistency_checks import run_consistency_checks
 from services.config import effective_config
 from services.page_quality import confident_pages_for_types, is_confident_document_match
 from services.processing_policy import is_ocr_skipped_page
@@ -130,17 +131,32 @@ def check_date_range(extracted_fields: dict, min_months: int) -> dict:
 
 def check_presence_min_count(pages: list[dict], document_type: str, min_count: int) -> dict:
     found_pages = _find_pages(pages, document_type)
-    if len(found_pages) >= min_count:
+    found_count, unit = _document_evidence_count(found_pages, document_type)
+    if found_count >= min_count:
         return {
             "passed": True,
-            "found_value": f"{len(found_pages)} page(s)",
+            "found_value": f"{found_count} {unit}",
             "expected_value": f"At least {min_count}",
         }
     return {
         "passed": False,
-        "found_value": f"{len(found_pages)} page(s)",
-        "expected_value": f"At least {min_count} page(s) of {document_type}",
+        "found_value": f"{found_count} {unit}",
+        "expected_value": f"At least {min_count} {unit} of {document_type}",
     }
+
+
+def _document_evidence_count(pages: list[dict], document_type: str) -> tuple[int, str]:
+    """Count physical evidence, not PDF pages, when a document exposes items."""
+    if document_type == "PDC":
+        cheque_numbers = {
+            str(number)
+            for page in pages
+            for number in ((page.get("extracted_fields") or {}).get("cheque_numbers") or [])
+            if number not in (None, "")
+        }
+        if cheque_numbers:
+            return len(cheque_numbers), "cheque(s)"
+    return len(pages), "page(s)"
 
 
 def _numeric(value: object) -> float | None:
@@ -397,6 +413,22 @@ def _run_presence_checks(
                     missing_types = [doc_type for doc_type in types if not _find_pages(person_pages, doc_type)]
                     for missing_type in missing_types:
                         anomalies.append(_missing_presence_anomaly(item, document_type=missing_type, person_id=person_id))
+                elif item.get("check_type") == "presence_min_count":
+                    minimum = int(item.get("min_count") or 1)
+                    found_count = sum(
+                        _document_evidence_count(_find_pages(person_pages, doc_type), doc_type)[0]
+                        for doc_type in types
+                    )
+                    if found_count < minimum:
+                        anomalies.append(build_anomaly(
+                            rule_id=f"MISSING_DOC_S{s_no}_{person_id}", s_no=s_no,
+                            severity=severity,
+                            expected_value=f"At least {minimum} document(s) for {person_id}",
+                            found_value=f"{found_count} found", reason=description,
+                            document_type=", ".join(types), person_id=person_id,
+                        ))
+                elif item.get("check_type") == "consistency_only":
+                    continue
                 elif not check_presence_any(person_pages, types)["passed"]:
                     anomalies.append(
                         _missing_presence_anomaly(item, document_type=", ".join(types), person_id=person_id)
@@ -417,6 +449,14 @@ def _run_presence_checks(
                         document_type=document_type,
                     )
                 )
+
+        elif check_type == "consistency_only":
+            if not _matching_pages(pages, document_type):
+                anomalies.append(_missing_presence_anomaly(
+                    item,
+                    document_type=" / ".join(_document_types(document_type)),
+                ))
+            continue
 
         elif check_type == "presence_any":
             result = check_presence_any(pages, document_type)
@@ -478,7 +518,9 @@ def _run_presence_checks(
                 if required_people:
                     for person_id in required_people:
                         person_pages = _pages_for_person(pages, person_id)
-                        found_count = len(_find_pages(person_pages, required_type))
+                        found_count = _document_evidence_count(
+                            _find_pages(person_pages, required_type), required_type
+                        )[0]
                         if found_count < minimum:
                             anomalies.append(
                                 build_anomaly(
@@ -497,7 +539,9 @@ def _run_presence_checks(
                                 )
                             )
                 else:
-                    found_count = len(_find_pages(pages, required_type))
+                    found_count = _document_evidence_count(
+                        _find_pages(pages, required_type), required_type
+                    )[0]
                     if found_count < minimum:
                         anomalies.append(
                             build_anomaly(
@@ -867,7 +911,13 @@ def run_checks(
     system_data: dict | None,
     product_type: str,
 ) -> list[dict]:
-    system_data = system_data or ground_truth or {}
+    system_data = {
+        **(ground_truth or {}),
+        **_document_derived_system_data(pages),
+        **(system_data or {}),
+    }
+    if "people" not in system_data and isinstance(system_data.get("reference_data"), dict):
+        system_data["people"] = system_data["reference_data"]
     checklist_items = checklist_service.get_all_checklist_items(product_type)
     relevance_anomaly = _non_loan_relevance_anomaly(pages, checklist_items)
     if relevance_anomaly is not None:
@@ -878,8 +928,25 @@ def run_checks(
         accuracy_items = checklist_service.get_accuracy_check_items(product_type)
         anomalies.extend(_run_accuracy_checks(pages, ground_truth, system_data, accuracy_items))
 
+        anomalies.extend(run_consistency_checks(pages, system_data))
+
     anomalies.extend(_run_quality_checks(pages, ground_truth))
     return anomalies
+
+
+def _document_derived_system_data(pages: list[dict]) -> dict[str, object]:
+    """Derive conditional checklist inputs from explicit document evidence."""
+    for page in pages:
+        fields = page.get("extracted_fields") or {}
+        status = fields.get("nach_status")
+        if status in (None, ""):
+            continue
+        normalized = _normalized_status(status)
+        if any(term in normalized for term in ("not registered", "not done", "failed", "inactive")):
+            return {"nach_registered": False}
+        if any(term in normalized for term in ("done", "registered", "active", "approved")):
+            return {"nach_registered": True}
+    return {}
 
 
 def _non_loan_relevance_anomaly(

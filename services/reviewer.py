@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import re
 from typing import Any
 
 from database.db import get_connection
@@ -83,9 +84,24 @@ def collapse_for_reviewer(anomalies: list[dict]) -> list[dict]:
     actionable: list[dict] = []
     buckets: dict[str, list[dict]] = {}
 
+    # A trusted-data mismatch already identifies the offending document value.
+    # Do not create a second operations task for the corresponding
+    # cross-document mismatch for the same person and field.
+    trusted_mismatch_keys: set[tuple[str, str]] = set()
     for anomaly in anomalies:
         rule_id = str(anomaly.get("rule_id") or "")
-        bucket_key = _collapse_bucket_key(rule_id)
+        match = re.match(r"^TRUSTED_(.+?)_MISMATCH(?:_SUMMARY)?$", rule_id)
+        if match:
+            trusted_mismatch_keys.add((str(anomaly.get("person_id") or ""), match.group(1)))
+
+    for anomaly in anomalies:
+        rule_id = str(anomaly.get("rule_id") or "")
+        cross_match = re.match(r"^CROSS_DOCUMENT_(.+?)_MISMATCH$", rule_id)
+        if cross_match and (
+            str(anomaly.get("person_id") or ""), cross_match.group(1)
+        ) in trusted_mismatch_keys:
+            continue
+        bucket_key = _collapse_bucket_key(rule_id, anomaly)
         if bucket_key is None:
             actionable.append(anomaly)
             continue
@@ -231,18 +247,22 @@ def build_reviewer_summary(
     }
 
 
-def _collapse_bucket_key(rule_id: str) -> str | None:
+def _collapse_bucket_key(rule_id: str, anomaly: dict[str, Any] | None = None) -> str | None:
+    person_suffix = ""
+    if anomaly and anomaly.get("person_id"):
+        person_suffix = f"::{anomaly['person_id']}"
     if rule_id in _COLLAPSIBLE_RULES:
-        return rule_id
+        return f"{rule_id}{person_suffix}"
     for prefix in _COLLAPSIBLE_PREFIXES:
         if rule_id.startswith(prefix):
-            return rule_id
+            return f"{rule_id}{person_suffix}"
     if rule_id.endswith("_MISMATCH") and rule_id not in IDENTITY_RULES:
-        return rule_id
+        return f"{rule_id}{person_suffix}"
     return None
 
 
-def _build_summary(rule_id: str, items: list[dict]) -> dict:
+def _build_summary(bucket_key: str, items: list[dict]) -> dict:
+    rule_id = bucket_key.split("::", 1)[0]
     pages = sorted(
         {
             int(page)

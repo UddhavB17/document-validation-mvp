@@ -86,6 +86,10 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
 
 def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify applicant names using rapidfuzz token-sort similarity."""
+    extracted_compact = re.sub(r"[^a-z0-9]", "", str(extracted or "").lower())
+    db_compact = re.sub(r"[^a-z0-9]", "", str(db_value or "").lower())
+    if extracted_compact and extracted_compact == db_compact:
+        return _exact_result("applicant_name", extracted, db_value, True)
     return _fuzzy_result(
         field_name="applicant_name",
         extracted=_normalize_name(extracted),
@@ -100,6 +104,16 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
 
 def verify_address(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify addresses using rapidfuzz token-set similarity with abbreviation normalization."""
+    if _relationship_prefix_matches(extracted, db_value):
+        return FieldVerificationResult(
+            field_name="address",
+            extracted_value=extracted,
+            db_value=db_value,
+            match=True,
+            confidence=0.9,
+            method="fuzzy",
+            mismatch_reason=None,
+        )
     return _fuzzy_result(
         field_name="address",
         extracted=_normalize_address(extracted),
@@ -324,3 +338,26 @@ def _normalize_address(value: Any) -> str:
         text = re.sub(pattern, replacement, text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _relationship_prefix_matches(left: Any, right: Any) -> bool:
+    """Match a trusted S/O/W/O prefix despite a one-character OCR error."""
+    def relation(value: Any) -> tuple[str, list[str]] | None:
+        normalized = re.sub(r"\b([swdc])\s*/\s*o\b", r"\1o", str(value).lower())
+        match = re.search(r"\b(so|wo|do|co)\s*[:\-]?\s*([a-z]+(?:\s+[a-z]+)?)", normalized)
+        return (match.group(1), match.group(2).split()) if match else None
+
+    left_relation = relation(left)
+    right_relation = relation(right)
+    if not left_relation or not right_relation or left_relation[0] != right_relation[0]:
+        return False
+    left_tokens = set(_normalize_address(left).split())
+    right_tokens = set(_normalize_address(right).split())
+    if len(left_relation[1]) <= len(right_relation[1]):
+        short_name, long_name = left_relation[1], right_relation[1]
+    else:
+        short_name, long_name = right_relation[1], left_relation[1]
+    compare_words = long_name[:max(1, len(short_name))]
+    name_score = fuzz.ratio(" ".join(short_name), " ".join(compare_words))
+    shared = left_tokens & right_tokens
+    return name_score >= 75 and (min(len(left_tokens), len(right_tokens)) <= 3 or len(shared) >= 3)

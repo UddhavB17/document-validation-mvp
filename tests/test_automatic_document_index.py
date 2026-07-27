@@ -83,6 +83,19 @@ def test_loan_level_docs_skip_owner_noise_and_still_index() -> None:
     assert all(item["applicant_role"] == "primary" for item in result["documents"])
 
 
+def test_non_person_scoped_document_does_not_raise_owner_unresolved() -> None:
+    result = build_automatic_document_index(
+        [_page(1, "NOC", {"status": "issued"})],
+        {
+            "primary": {"applicant_name": "Ramesh Kumar"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar"},
+        },
+    )
+
+    assert result["anomalies"] == []
+    assert result["documents"][0]["document_type"] == "NOC"
+
+
 def test_aggregates_loan_agreement_fragments_within_same_source() -> None:
     pages = [
         _page(1, "Loan Agreement", {}),
@@ -99,3 +112,26 @@ def test_aggregates_loan_agreement_fragments_within_same_source() -> None:
 
     assert len(result["documents"]) == 1
     assert result["documents"][0]["pages"] == [1, 2, 3]
+
+
+def test_explicit_name_outweighs_reused_phone_for_owner_resolution() -> None:
+    result = build_automatic_document_index(
+        [_page(1, "CRIF Report", {"applicant_name": "Radha Bai", "phone_number": "9509341692"})],
+        {
+            "coapplicant_1": {"applicant_name": "Unkar Lal", "phone_number": "9509341692"},
+            "coapplicant_2": {"applicant_name": "Radha Bai", "phone_number": "7339781668"},
+        },
+    )
+    assert result["documents"][0]["applicant_role"] == "coapplicant_2"
+
+
+def test_full_aadhaar_number_matches_trusted_last_four_for_owner_resolution() -> None:
+    result = build_automatic_document_index(
+        [_page(1, "Aadhaar", {"aadhaar_number": "227153851187"})],
+        {
+            "coapplicant_1": {"applicant_name": "Unkar Lal", "aadhaar_last4": "7326"},
+            "coapplicant_2": {"applicant_name": "Radha Bai", "aadhaar_last4": "1187"},
+        },
+    )
+    assert result["anomalies"] == []
+    assert result["documents"][0]["applicant_role"] == "coapplicant_2"

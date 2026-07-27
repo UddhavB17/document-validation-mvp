@@ -56,6 +56,23 @@ def test_legal_title_evidence_satisfies_legal_clearance_presence() -> None:
     assert not any(anomaly["rule_id"] == "MISSING_DOC_S37" for anomaly in anomalies)
 
 
+def test_sanction_boilerplate_is_not_treated_as_legal_clearance() -> None:
+    pages = [
+        {
+            "page_number": 101,
+            "document_type": "Sanction Letter",
+            "page_type": "digital",
+            "classification_confidence": 1.0,
+            "ocr_text": "events of default under the agreement and enforcement of security",
+        }
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert any(anomaly["rule_id"] == "MISSING_DOC_S37" for anomaly in anomalies)
+    assert not any(anomaly["rule_id"] == "STATUS_CHECK_S37" for anomaly in anomalies)
+
+
 def test_presence_any_fails_when_none_found() -> None:
     result = check_presence_any([{"document_type": "Bank Statement"}], ["Aadhaar", "Voter ID"])
     assert result["passed"] is False
@@ -89,13 +106,13 @@ def test_missing_pan() -> None:
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
 
 
-def test_physical_items_remain_manual_review_but_are_checked_for_availability() -> None:
+def test_temporarily_excluded_physical_items_are_not_reviewed() -> None:
     ai_snos = {item["s_no"] for item in get_ai_checkable_items("LAP")}
     manual_snos = {item["s_no"] for item in get_human_review_items("LAP")}
 
-    assert 1 not in ai_snos
-    assert 1 in manual_snos
-    assert 24 in manual_snos
+    assert 1 in ai_snos
+    assert 1 not in manual_snos
+    assert 24 not in manual_snos
     assert 41 in manual_snos
 
     anomalies = run_checks([], {}, {}, "LAP")
@@ -237,7 +254,7 @@ def test_kfs_and_sanction_letter_are_both_required() -> None:
     )
 
 
-def test_stamp_date_must_not_be_after_disbursement() -> None:
+def test_stamp_date_check_is_temporarily_disabled() -> None:
     pages = [
         _confident_page(1, "Stamp Duty", extracted_fields={"stamp_date": "2026-07-20"}),
         _confident_page(2, "Application Form"),
@@ -251,7 +268,7 @@ def test_stamp_date_must_not_be_after_disbursement() -> None:
         "LAP",
     )
 
-    assert any(anomaly["rule_id"] == "DATE_CHECK_S33" for anomaly in anomalies)
+    assert not any(anomaly["rule_id"] == "DATE_CHECK_S33" for anomaly in anomalies)
 
 
 def test_two_positive_technical_reports_must_be_distinct() -> None:
@@ -334,6 +351,26 @@ def test_pdc_count_changes_with_nach_registration() -> None:
         and "10" in str(item.get("expected_value"))
         for item in anomalies
     )
+
+
+def test_pdc_count_uses_explicit_nach_status_from_banking_approval() -> None:
+    pages = [
+        _confident_page(
+            1,
+            "Bank Statement",
+            extracted_fields={"nach_status": "done"},
+        ),
+        _confident_page(
+            2,
+            "PDC",
+            extracted_fields={
+                "cheque_numbers": ["000001", "000002", "000003", "000004", "000005"]
+            },
+        ),
+    ]
+    anomalies = run_checks(pages, {}, {}, "LAP")
+    assert not any(item.get("s_no") == 41 for item in anomalies)
+    assert not any(item.get("s_no") == 42 for item in anomalies)
 
 
 def test_ach_not_registered_requires_approval_bsv_and_three_nach_forms() -> None:

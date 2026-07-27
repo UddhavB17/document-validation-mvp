@@ -34,9 +34,26 @@ def test_aadhaar_classified() -> None:
     assert _classify(text) == "Aadhaar"
 
 
+def test_credit_approval_memo_is_not_split_into_embedded_kyc_types() -> None:
+    text = (
+        "CREDIT APPROVAL MEMO | Confidential\n"
+        "KYC DOCUMENTS\nCustomer Type\nName\nAadhaar\nPAN\n"
+        "Applicant\nPeeru Lal\nXXXXXXXX9108\nBCXPL9010K"
+    )
+    assert _classify(text) == "CAM"
+
+
 def test_bank_statement_classified() -> None:
     text = "Bank Statement Account Statement Debit Credit Balance"
     assert _classify(text) == "Bank Statement"
+
+
+def test_application_bank_table_is_not_a_standalone_bank_statement() -> None:
+    text = (
+        "A/C HOLDER NAME A/C NUMBER BANK NAME IFSC CODE ACCOUNT TYPE\n"
+        "SECURITY & OFFERED PROPERTY\nCO-APPLICANT DETAILS\nUnkar Lal"
+    )
+    assert _classify(text) != "Bank Statement"
 
 
 def test_salary_slip_classified() -> None:
@@ -55,9 +72,25 @@ def test_nach_form_classified() -> None:
     assert _classify(text) == "NACH Form"
 
 
+def test_short_nach_substring_inside_ocr_word_is_not_a_nach_form() -> None:
+    text = (
+        "HOME CONTENTS INSURANCE PROPOSAL\n"
+        "Is valuation certificate anached? Sum insured and replacement cost"
+    )
+    assert _classify(text) != "NACH Form"
+
+
 def test_property_document_classified() -> None:
     text = "Sale Deed Property Document Registered Deed"
     assert _classify(text) == "Property Document"
+
+
+def test_griha_raksha_is_property_insurance_not_generic_insurance() -> None:
+    text = (
+        "Kotak Bharat Griha Raksha Policy Proposal Form\n"
+        "covering Home Building and Home Contents against Fire and Allied Perils"
+    )
+    assert _classify(text) == "Property Insurance Form"
 
 
 def test_application_form_classified() -> None:

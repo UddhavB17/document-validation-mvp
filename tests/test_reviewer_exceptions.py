@@ -6,6 +6,25 @@ from services.reviewer import (
 )
 
 
+def test_trusted_mismatch_suppresses_redundant_cross_document_item() -> None:
+    anomalies = [
+        {
+            "rule_id": "TRUSTED_APPLICANT_NAME_MISMATCH",
+            "severity": "HIGH",
+            "person_id": "coapplicant_1",
+            "page_number": 10,
+        },
+        {
+            "rule_id": "CROSS_DOCUMENT_APPLICANT_NAME_MISMATCH",
+            "severity": "HIGH",
+            "person_id": "coapplicant_1",
+            "page_number": 10,
+        },
+    ]
+    result = collapse_for_reviewer(anomalies)
+    assert [item["rule_id"] for item in result] == ["TRUSTED_APPLICANT_NAME_MISMATCH"]
+
+
 def test_collapses_repeated_unclassified_pages() -> None:
     anomalies = [
         {
@@ -97,3 +116,27 @@ def test_separates_business_exceptions_from_processing_warnings() -> None:
         "LOW_OCR_CONFIDENCE_SUMMARY",
         "PAGE_PROCESSING_ERROR",
     ]
+
+
+def test_reviewer_does_not_merge_mismatches_for_different_people() -> None:
+    anomalies = [
+        {
+            "rule_id": "TRUSTED_PHONE_NUMBER_MISMATCH",
+            "severity": "HIGH",
+            "person_id": "primary",
+            "page_number": 10,
+            "document_type": "Application Form",
+        },
+        {
+            "rule_id": "TRUSTED_PHONE_NUMBER_MISMATCH",
+            "severity": "HIGH",
+            "person_id": "coapplicant_1",
+            "page_number": 11,
+            "document_type": "CRIF Report",
+        },
+    ]
+
+    collapsed = collapse_for_reviewer(anomalies)
+
+    assert len(collapsed) == 2
+    assert {item["person_id"] for item in collapsed} == {"primary", "coapplicant_1"}

@@ -46,11 +46,17 @@ LOAN_LEVEL_DOCUMENT_TYPES = {
     "affidavit",
 }
 
+PERSON_SCOPED_DOCUMENT_TYPES = {
+    "aadhaar", "pan", "pan card", "voter id", "driving license", "passport",
+    "application form", "cibil report", "crif report", "bank statement", "passbook",
+    "cheque", "salary slip", "income tax return",
+}
+
 FIELD_ALIASES = {
     "applicant_name": ("applicant_name", "borrower_name", "account_holder_name", "customer_name"),
     "date_of_birth": ("date_of_birth", "dob"),
     "pan_number": ("pan_number", "pan"),
-    "aadhaar_number": ("aadhaar_number", "aadhaar", "aadhar"),
+    "aadhaar_number": ("aadhaar_number", "aadhaar_last4", "aadhaar", "aadhar"),
     "phone_number": ("phone_number", "phone", "mobile_number"),
     "pin_code": ("pin_code", "pincode"),
     "address": ("address",),
@@ -61,7 +67,9 @@ FIELD_WEIGHTS = {
     "pan_number": 8.0,
     "phone_number": 5.0,
     "date_of_birth": 5.0,
-    "applicant_name": 4.0,
+    # A document's explicitly labelled person name should resolve ownership
+    # ahead of a reused/incorrect phone number. PAN/Aadhaar remain strongest.
+    "applicant_name": 6.0,
     "pin_code": 2.0,
     "address": 1.0,
 }
@@ -85,7 +93,9 @@ def build_automatic_document_index(
     for group in groups:
         document_type = str(group["document_type"])
         person = _infer_person(group["pages_data"], reference_data, document_type)
-        is_loan_level = document_type.strip().lower() in LOAN_LEVEL_DOCUMENT_TYPES
+        type_key = document_type.strip().lower()
+        is_loan_level = type_key in LOAN_LEVEL_DOCUMENT_TYPES
+        requires_person = type_key in PERSON_SCOPED_DOCUMENT_TYPES
 
         if person["person_id"] is None:
             if is_loan_level and reference_data:
@@ -95,7 +105,7 @@ def build_automatic_document_index(
                     "confidence": 0.35,
                     "evidence": ["loan_level_document_default"],
                 }
-            else:
+            elif requires_person:
                 anomalies.append(
                     _mapping_anomaly(
                         "AUTO_OWNER_UNRESOLVED",
@@ -104,10 +114,19 @@ def build_automatic_document_index(
                     )
                 )
                 continue
+            elif reference_data:
+                default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+                person = {
+                    "person_id": default_id,
+                    "confidence": 1.0,
+                    "evidence": ["document_not_person_scoped"],
+                }
 
         # Loan-level docs are intentionally assigned to primary with modest confidence.
         # Do not emit per-fragment LOW_CONFIDENCE noise for that default.
-        loan_level_evidence = {"loan_level_document", "loan_level_document_default"}
+        loan_level_evidence = {
+            "loan_level_document", "loan_level_document_default", "document_not_person_scoped"
+        }
         if (
             person["confidence"] < 0.60
             and len(reference_data) > 1
@@ -298,7 +317,11 @@ def _identity_matches(field: str, found: Any, expected: Any) -> bool:
     if field == "date_of_birth":
         return _date_key(left) == _date_key(right)
     if field in {"aadhaar_number", "phone_number", "pin_code"}:
-        return _digits(left) == _digits(right) and bool(_digits(left))
+        left_digits = _digits(left)
+        right_digits = _digits(right)
+        if field == "aadhaar_number" and len(left_digits) >= 4 and len(right_digits) >= 4:
+            return left_digits[-4:] == right_digits[-4:]
+        return left_digits == right_digits and bool(left_digits)
     if field == "pan_number":
         return re.sub(r"\s+", "", left).upper() == re.sub(r"\s+", "", right).upper()
     return _words(left) == _words(right)
@@ -344,7 +367,10 @@ def _mapping_anomaly(
     return {
         "rule_id": rule_id,
         "s_no": None,
-        "severity": "MEDIUM",
+        # Ownership uncertainty is processing-quality information. It should
+        # not compete with borrower/document discrepancies in the operations
+        # queue; unresolved fragments remain visible as a collapsed LOW item.
+        "severity": "LOW",
         "document_type": group["document_type"],
         "person_id": person_id,
         "matched_person_id": None,
