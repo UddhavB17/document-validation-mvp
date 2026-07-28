@@ -50,7 +50,17 @@ def verify_date(extracted: str, db_value: str) -> FieldVerificationResult:
     extracted_date = _parse_supported_date(extracted)
     db_date = _parse_supported_date(db_value)
     if extracted_date is None or db_date is None:
-        return _failed("date_of_birth", extracted, db_value, "exact", "Date missing or unsupported format")
+        # One side failed to parse — this is likely an OCR/format issue, not a
+        # genuine mismatch. Return low confidence instead of hard failure.
+        return FieldVerificationResult(
+            field_name="date_of_birth",
+            extracted_value=extracted,
+            db_value=db_value,
+            match=False,
+            confidence=0.25,
+            method="exact",
+            mismatch_reason="Date could not be parsed — OCR quality or unsupported format",
+        )
     return _exact_result("date_of_birth", extracted, db_value, extracted_date == db_date)
 
 
@@ -76,18 +86,34 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
 
 def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify applicant names using rapidfuzz token-sort similarity."""
+    extracted_compact = re.sub(r"[^a-z0-9]", "", str(extracted or "").lower())
+    db_compact = re.sub(r"[^a-z0-9]", "", str(db_value or "").lower())
+    if extracted_compact and extracted_compact == db_compact:
+        return _exact_result("applicant_name", extracted, db_value, True)
     return _fuzzy_result(
         field_name="applicant_name",
-        extracted=extracted,
-        db_value=db_value,
+        extracted=_normalize_name(extracted),
+        db_value=_normalize_name(db_value),
         scorer=fuzz.token_sort_ratio,
         threshold=85,
         reason="Name similarity below threshold",
+        original_extracted=extracted,
+        original_db_value=db_value,
     )
 
 
 def verify_address(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify addresses using rapidfuzz token-set similarity with abbreviation normalization."""
+    if _relationship_prefix_matches(extracted, db_value):
+        return FieldVerificationResult(
+            field_name="address",
+            extracted_value=extracted,
+            db_value=db_value,
+            match=True,
+            confidence=0.9,
+            method="fuzzy",
+            mismatch_reason=None,
+        )
     return _fuzzy_result(
         field_name="address",
         extracted=_normalize_address(extracted),
@@ -233,6 +259,13 @@ def _normalize_pan(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "")).upper()
 
 
+def _normalize_name(value: Any) -> str:
+    """Normalize case, punctuation, and repeated whitespace before fuzzy matching."""
+    text = str(value or "").casefold()
+    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
+    return " ".join(text.split())
+
+
 def _valid_pan(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", value))
 
@@ -250,11 +283,23 @@ def _parse_supported_date(value: Any) -> datetime | None:
     text = str(value or "").strip()
     if not text:
         return None
-    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %b %Y", "%d %B %Y"):
+    # Try explicit formats first (most reliable, avoids locale ambiguity).
+    # DD-MonthName-YYYY and DD/MonthName/YYYY are used by the DB store.
+    for fmt in (
+        "%d-%B-%Y", "%d %B %Y", "%d-%b-%Y", "%d %b %Y",  # DD-MonthName-YYYY
+        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%B/%Y", "%d/%b/%Y",
+        "%b %d, %Y", "%B %d, %Y",
+    ):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
             continue
+    # Fall back to dateutil for remaining formats
+    from dateutil import parser
+    try:
+        return parser.parse(text, dayfirst=True)
+    except (ValueError, TypeError, OverflowError):
+        pass
     return None
 
 
@@ -293,3 +338,26 @@ def _normalize_address(value: Any) -> str:
         text = re.sub(pattern, replacement, text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _relationship_prefix_matches(left: Any, right: Any) -> bool:
+    """Match a trusted S/O/W/O prefix despite a one-character OCR error."""
+    def relation(value: Any) -> tuple[str, list[str]] | None:
+        normalized = re.sub(r"\b([swdc])\s*/\s*o\b", r"\1o", str(value).lower())
+        match = re.search(r"\b(so|wo|do|co)\s*[:\-]?\s*([a-z]+(?:\s+[a-z]+)?)", normalized)
+        return (match.group(1), match.group(2).split()) if match else None
+
+    left_relation = relation(left)
+    right_relation = relation(right)
+    if not left_relation or not right_relation or left_relation[0] != right_relation[0]:
+        return False
+    left_tokens = set(_normalize_address(left).split())
+    right_tokens = set(_normalize_address(right).split())
+    if len(left_relation[1]) <= len(right_relation[1]):
+        short_name, long_name = left_relation[1], right_relation[1]
+    else:
+        short_name, long_name = right_relation[1], left_relation[1]
+    compare_words = long_name[:max(1, len(short_name))]
+    name_score = fuzz.ratio(" ".join(short_name), " ".join(compare_words))
+    shared = left_tokens & right_tokens
+    return name_score >= 75 and (min(len(left_tokens), len(right_tokens)) <= 3 or len(shared) >= 3)

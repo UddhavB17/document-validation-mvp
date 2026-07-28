@@ -4,6 +4,7 @@
   "product_type": "LAP",
   "branch": "Delhi",
   "source": "manual_json",
+  "pdf_file": "loan-file.pdf",
   "people": {
     "primary": {
       "role": "primary",

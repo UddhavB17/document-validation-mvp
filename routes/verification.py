@@ -11,7 +11,7 @@ from database.db import get_connection, init_db
 from database.models import ChecklistVerificationResponse
 from services.checklist_output import build_checklist_verification_response
 from services.verification_report_store import load_verification_report
-from services.reviewer_summary_store import load_reviewer_summary
+from services.reviewer import load_reviewer_summary
 
 router = APIRouter(prefix="/verification", tags=["verification"])
 
@@ -44,6 +44,7 @@ def get_checklist_verification(
         pages=stored["pages"],
         anomalies=stored["anomalies"],
         product_type=stored["product_type"],
+        system_data=stored["system_data"],
         include_narration=include_narration,
     )
 
@@ -77,12 +78,22 @@ def _load_application_checklist_inputs(application_id: int) -> dict[str, Any] | 
             "SELECT * FROM validation_results WHERE application_id = ?",
             (application_id,),
         ).fetchall()
+        ground_truth = connection.execute(
+            "SELECT raw_json FROM ground_truth WHERE application_id = ? ORDER BY id DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+
+    try:
+        system_data = json.loads(ground_truth["raw_json"] or "{}") if ground_truth else {}
+    except (TypeError, json.JSONDecodeError):
+        system_data = {}
 
     return {
         "loan_file_id": str(application["loan_id"] or application_id),
         "product_type": str(application["product_type"] or "LAP"),
         "pages": [_coerce_page(row) for row in pages],
         "anomalies": [dict(row) for row in anomalies],
+        "system_data": system_data if isinstance(system_data, dict) else {},
     }
 
 

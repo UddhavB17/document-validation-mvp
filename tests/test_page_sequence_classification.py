@@ -1,4 +1,4 @@
-from services.pipeline import _assign_sequential_document_type
+from services.pipeline import _assign_sequential_document_type, _infer_document_type_from_filename
 
 
 def _apply_sequence(raw_results: list[dict], texts: list[str] | None = None) -> list[dict]:
@@ -129,3 +129,32 @@ def test_blank_continuation_still_inherits() -> None:
 
     assert assigned[1]["document_type"] == "Bank Statement"
     assert assigned[1]["detection_method"] == "inherited"
+
+
+def test_body_word_does_not_create_boundary_on_single_line_digital_page() -> None:
+    body = "Continuation terms and repayment details " + ("x" * 500) + " report statement letter"
+    assigned = _apply_sequence(
+        [
+            {"document_type": "KFS", "confidence": 1.0},
+            {"document_type": "None", "confidence": 0.0},
+        ],
+        texts=["Key Fact Statement", body],
+    )
+    assert assigned[1]["document_type"] == "KFS"
+    assert assigned[1]["detection_method"] == "inherited"
+
+
+def test_generic_zip_folders_are_not_invented_as_document_types() -> None:
+    assert _infer_document_type_from_filename("Loan/TASK/5.pdf") is None
+    assert _infer_document_type_from_filename("LOAN/REPORT/combined.pdf") is None
+    assert _infer_document_type_from_filename("Applicant/KYC/1781168594259.pdf") is None
+
+
+def test_evidentiary_filenames_have_safe_specific_fallbacks() -> None:
+    assert _infer_document_type_from_filename("Loan/TASK/peeru spdc.pdf") == "PDC"
+    assert _infer_document_type_from_filename("Loan/TASK/insurance Calu.pdf") == "Insurance Form"
+    assert _infer_document_type_from_filename("Loan/TASK/Radha bai 6 month banking.pdf") == "Bank Statement"
+    assert _infer_document_type_from_filename("LOAN/COLLATERAL/IMG-1.jpg") == "Property Image"
+    assert _infer_document_type_from_filename("LOAN/COLLATERAL/peeru lal proprty paper.pdf") == "Property Document"
+    assert _infer_document_type_from_filename("Loan/TASK/House Photo.pdf") == "House Photo"
+    assert _infer_document_type_from_filename("Loan/TASK/Working Place Visit.pdf") == "Workplace Photo"

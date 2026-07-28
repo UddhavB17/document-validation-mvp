@@ -1,14 +1,10 @@
-"""Local Ollama narration for deterministic checklist results."""
+"""LLM narration for deterministic checklist results."""
 
 from __future__ import annotations
 
 import json
-import os
-
-import requests
-
 from database.models import ChecklistItem
-from services.llm_client import extract_response_text
+from services.llm_client import call_llm_messages
 
 
 CHECKLIST_NARRATION_SYSTEM_PROMPT = (
@@ -53,23 +49,19 @@ def build_narration_messages(item: ChecklistItem) -> list[dict[str, str]]:
 
 
 def narrate_checklist_item(item: ChecklistItem, *, timeout: int = 60) -> str | None:
-    """Generate narration through local Ollama without changing deterministic status."""
+    """Generate narration through the configured LLM without changing status."""
     if item.status == "verified":
         return None
 
-    url = _ollama_chat_url()
-    model = _narration_model()
     try:
-        response = requests.post(
-            url,
-            json={"model": model, "messages": build_narration_messages(item), "stream": False},
+        text = call_llm_messages(
+            build_narration_messages(item),
+            max_tokens=140,
             timeout=timeout,
         )
-        response.raise_for_status()
-    except requests.RequestException:
+    except Exception:
         return None
 
-    text = extract_response_text(response.json())
     return _guard_narration(text, item.status)
 
 
@@ -84,25 +76,3 @@ def _guard_narration(text: str | None, status: str) -> str | None:
     return cleaned
 
 
-def _ollama_chat_url() -> str:
-    configured = (
-        os.getenv("CHECKLIST_NARRATION_OLLAMA_URL")
-        or os.getenv("LOCAL_LLM_API_URL")
-        or os.getenv("LLM_API_URL")
-        or "http://localhost:11434/api/generate"
-    )
-    configured = configured.rstrip("/")
-    if configured.endswith("/api/generate"):
-        return configured[: -len("/api/generate")] + "/api/chat"
-    if configured.endswith("/api/chat"):
-        return configured
-    return configured + "/api/chat"
-
-
-def _narration_model() -> str:
-    return (
-        os.getenv("CHECKLIST_NARRATION_MODEL")
-        or os.getenv("LOCAL_LLM_MODEL")
-        or os.getenv("LLM_MODEL")
-        or "qwen3:14b"
-    )

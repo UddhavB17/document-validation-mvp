@@ -29,7 +29,7 @@ class IndexedDocument(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     document_type: str = Field(min_length=1)
-    pages: list[int] = Field(min_length=1)
+    pages: list[int] = Field(default_factory=list)
     person_id: str = "primary"
     expected_fields: dict[str, Any] | None = None
     required: bool = True
@@ -46,14 +46,17 @@ class IndexedDocument(BaseModel):
 class VerificationManifest(BaseModel):
     """Stable internal contract independent of the future API provider."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
 
     schema_version: str = "1.0"
     loan_id: str = Field(min_length=1)
     product_type: str = "LAP"
     branch: str | None = None
+    case_type: str = "Normal Case"
     people: dict[str, PersonReference]
-    document_index: list[IndexedDocument] = Field(min_length=1)
+    # Empty means the shared OCR/classification pipeline must build the page
+    # index automatically. Explicit entries remain supported as overrides.
+    document_index: list[IndexedDocument] = Field(default_factory=list)
     source: str = "manual_json"
 
     @model_validator(mode="before")
@@ -120,10 +123,12 @@ class VerificationManifest(BaseModel):
 
     def pipeline_payload(self) -> dict[str, Any]:
         return {
+            **(self.__pydantic_extra__ or {}),
             "schema_version": self.schema_version,
             "loan_id": self.loan_id,
             "product_type": self.product_type,
             "branch": self.branch,
+            "case_type": self.case_type,
             "source": self.source,
             "reference_data": self.trusted_people(),
             "documents": [
@@ -138,4 +143,3 @@ class VerificationManifest(BaseModel):
                 for item in self.document_index
             ],
         }
-

@@ -27,17 +27,17 @@ def load_checklist(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH)
 
 def get_ai_checkable_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
     checklist = load_checklist(product_type, path)
-    return [item for item in checklist.get("checklist_items", []) if item.get("ai_checkable")]
+    return [item for item in checklist.get("checklist_items", []) if item.get("ai_checkable") and item.get("enabled", True)]
 
 
 def get_accuracy_check_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
     checklist = load_checklist(product_type, path)
-    return [item for item in checklist.get("accuracy_check_items", []) if item.get("ai_checkable")]
+    return [item for item in checklist.get("accuracy_check_items", []) if item.get("ai_checkable") and item.get("enabled", True)]
 
 
 def get_all_checklist_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
     checklist = load_checklist(product_type, path)
-    return list(checklist.get("checklist_items", []))
+    return [item for item in checklist.get("checklist_items", []) if item.get("enabled", True)]
 
 
 def get_human_review_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
@@ -54,7 +54,7 @@ def get_human_review_items(product_type: str = "LAP", path: str | Path = CHECKLI
             or "Physical-only, conditional, or system-status item; verify manually.",
         }
         for item in checklist.get("checklist_items", [])
-        if not item.get("ai_checkable")
+        if not item.get("ai_checkable") and item.get("enabled", True)
     ]
     seen: set[int | str | None] = set()
     merged: list[dict] = []

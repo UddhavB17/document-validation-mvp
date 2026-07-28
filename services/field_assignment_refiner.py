@@ -1,4 +1,4 @@
-"""Refine OCR field assignments with deterministic guards and optional Ollama."""
+"""Refine OCR field assignments with deterministic guards and optional LLM."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 from requests import RequestException
 
 from services.config import get_bool
+from services.llm_client import llm_provider
 from services.structured_llm_classifier import (
     DEFAULT_MODEL,
     _call_ollama_generate,
@@ -28,6 +29,13 @@ _LABEL_VALUES = {
     "borrower name",
     "account holder",
     "account holder name",
+    "a/c number",
+    "a/c numeber",
+    "account number",
+    "account type",
+    "bank name",
+    "bank branch",
+    "खाता प्रकार",
     "address",
     "landmark",
     "locality",
@@ -82,7 +90,7 @@ def refine_field_assignments(
     ocr_text: str,
     extracted_fields: dict[str, Any],
 ) -> dict[str, Any]:
-    """Clean impossible field values and ask Ollama only when assignment is weak."""
+    """Clean impossible field values and ask the LLM only when assignment is weak."""
     cleaned_fields, deterministic_changes = _remove_suspicious_values(extracted_fields)
     if not _should_call_llm(document_type, cleaned_fields, deterministic_changes):
         return _with_assignment_metadata(cleaned_fields, deterministic_changes, llm_metadata=None)
@@ -151,9 +159,10 @@ def _assign_with_llm(
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     base_url = _classifier_base_url()
     timeout = _classifier_timeout_seconds()
-    metadata = {"source": "ollama", "model": _model(), "endpoint": base_url}
-    if not _is_ollama_available(base_url, timeout):
-        return None, {**metadata, "error": "Ollama unavailable"}
+    provider = llm_provider()
+    metadata = {"source": provider, "model": _model(), "endpoint": base_url}
+    if provider == "ollama" and not _is_ollama_available(base_url, timeout):
+        return None, {**metadata, "error": "LLM unavailable"}
 
     try:
         response_text = _call_ollama_generate(
@@ -292,8 +301,14 @@ def _normalize_text(value: str) -> str:
 
 
 def _looks_like_non_name(normalized: str) -> bool:
-    blocked = {"account", "address", "date of birth", "dob", "ifsc", "loan amount", "pin code"}
-    return normalized in blocked
+    blocked = {
+        "account", "address", "date of birth", "dob", "ifsc", "loan amount", "pin code",
+        "source", "financer", "issuing authority", "ration card", "driving", "phone no",
+    }
+    if normalized in blocked:
+        return True
+    compact = re.sub(r"[^a-z]", "", normalized)
+    return compact in {"acnumber", "acnumeber", "accountnumber", "accountno"}
 
 
 def _looks_like_address_placeholder(normalized: str) -> bool:

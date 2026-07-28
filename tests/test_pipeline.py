@@ -5,7 +5,7 @@ import pytest
 import database.db as db
 from database.db import get_connection, init_db
 from services.pipeline import run_pipeline
-from services.pipeline import _build_page_records
+from services.pipeline import _build_page_records, _build_unsupported_page_records
 
 
 def _create_application_pdf(path: Path) -> None:
@@ -412,3 +412,93 @@ def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest
 
     assert pages[0]["document_type"] == "Unknown"
     assert pages[0]["extracted_fields"]["review_flag"] == "low_confidence_needs_review"
+
+
+def test_build_page_records_marks_only_starting_json_as_db_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "services.pipeline.classify_with_structured_llm",
+        lambda **_kwargs: None,
+    )
+
+    pages = _build_page_records(
+        [{"page_number": 1, "page_type": "digital", "image_path": None}],
+        {1: '{"application_id": 31, "applicant_name": "Radha Bai"}'},
+        application_id=None,
+    )
+
+    assert pages[0]["document_type"] == "DB Data"
+    assert pages[0]["extracted_fields"]["db_data_json"]["application_id"] == 31
+
+
+def test_build_page_records_does_not_mark_normal_digital_document_as_db_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.pipeline.classify_page_text",
+        lambda *_args, **_kwargs: (
+            {"document_type": "Application Form", "confidence": 0.95},
+            {"source": "test_classifier"},
+        ),
+    )
+    monkeypatch.setattr(
+        "services.pipeline.extract_fields",
+        lambda document_type, _text: {"applicant_name": "Ramesh Kumar"} if document_type == "Application Form" else {},
+    )
+    monkeypatch.setattr(
+        "services.pipeline.classify_with_structured_llm",
+        lambda **_kwargs: None,
+    )
+
+    pages = _build_page_records(
+        [{"page_number": 1, "page_type": "digital", "image_path": None}],
+        {
+            1: (
+                "Loan Application Form\n"
+                "Applicant Name: Ramesh Kumar\n"
+                "Loan Amount: Rs. 500000\n"
+                "This is selectable text from a normal document, not JSON."
+            )
+        },
+        application_id=None,
+    )
+
+    assert pages[0]["document_type"] == "Application Form"
+    assert pages[0]["detection_method"] == "detected"
+    assert pages[0]["extracted_fields"]["applicant_name"] == "Ramesh Kumar"
+    assert "db_data_json" not in pages[0]["extracted_fields"]
+
+
+def test_build_page_records_does_not_mark_later_json_page_as_db_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.pipeline.classify_page_text",
+        lambda *_args, **_kwargs: (
+            {"document_type": "Unknown", "confidence": 0.0},
+            {"source": "test_classifier"},
+        ),
+    )
+    monkeypatch.setattr("services.pipeline.extract_fields", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        "services.pipeline.classify_with_structured_llm",
+        lambda **_kwargs: None,
+    )
+
+    pages = _build_page_records(
+        [{"page_number": 4, "page_type": "digital", "image_path": None}],
+        {4: '{"application_id": 31, "applicant_name": "Late JSON"}'},
+        application_id=None,
+    )
+
+    assert pages[0]["document_type"] == "Unknown"
+    assert pages[0]["detection_method"] != "db_data"
+
+
+def test_unsupported_page_records_do_not_mark_normal_digital_text_as_db_data() -> None:
+    pages = _build_unsupported_page_records(
+        [{"page_number": 1, "page_type": "digital", "image_path": None}],
+        {1: "Normal selectable digital document text without a JSON object."},
+    )
+
+    assert pages[0]["document_type"] == "Unknown"
+    assert pages[0]["detection_method"] == "unknown"

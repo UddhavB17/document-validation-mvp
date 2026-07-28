@@ -17,10 +17,10 @@ _PROFILE_DEFAULTS = {
         "max_unknown_ratio_for_unsupported_file": 0.75,
         "page_failure_threshold": 3,
         "ocr_soft_timeout_seconds": 20,
-        "ocr_hard_timeout_seconds": 60,
+        "ocr_hard_timeout_seconds": 100,
     },
     "balanced": {
-        "min_classification_confidence": 0.60,
+        "min_classification_confidence": 0.70,
         "min_scanned_ocr_confidence": 0.70,
         "min_checklist_matches_for_loan_file": 2,
         "max_unknown_ratio_for_unsupported_file": 0.60,
@@ -42,18 +42,33 @@ _PROFILE_DEFAULTS = {
 
 def get_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    db_key = name.lower().replace("_", ".")
+    db_val = get_setting(db_key)
+    if db_val is not None:
+        return bool(db_val)
+    return default
 
 
 def get_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
     raw = os.getenv(name)
-    try:
-        value = int(raw) if raw is not None else default
-    except (TypeError, ValueError):
-        logger.warning("Invalid integer for %s=%r; using %s", name, raw, default)
-        value = default
+    if raw is not None:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = default
+    else:
+        db_key = name.lower().replace("_", ".")
+        db_val = get_setting(db_key)
+        if db_val is not None:
+            try:
+                value = int(db_val)
+            except (TypeError, ValueError):
+                value = default
+        else:
+            value = default
+
     if minimum is not None:
         value = max(minimum, value)
     if maximum is not None:
@@ -63,11 +78,22 @@ def get_int(name: str, default: int, *, minimum: int | None = None, maximum: int
 
 def get_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
     raw = os.getenv(name)
-    try:
-        value = float(raw) if raw is not None else default
-    except (TypeError, ValueError):
-        logger.warning("Invalid float for %s=%r; using %s", name, raw, default)
-        value = default
+    if raw is not None:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = default
+    else:
+        db_key = name.lower().replace("_", ".")
+        db_val = get_setting(db_key)
+        if db_val is not None:
+            try:
+                value = float(db_val)
+            except (TypeError, ValueError):
+                value = default
+        else:
+            value = default
+
     if minimum is not None:
         value = max(minimum, value)
     if maximum is not None:
@@ -76,7 +102,15 @@ def get_float(name: str, default: float, *, minimum: float | None = None, maximu
 
 
 def get_profile() -> str:
-    profile = os.getenv("DMEF_CONFIG_PROFILE", "balanced").strip().lower()
+    raw = os.getenv("DMEF_CONFIG_PROFILE")
+    if raw is not None:
+        profile = raw.strip().lower()
+    else:
+        db_val = get_setting("classification_profile")
+        if db_val is not None:
+            profile = str(db_val).strip().lower()
+        else:
+            profile = "balanced"
     if profile not in _PROFILE_DEFAULTS:
         logger.warning("Unknown DMEF_CONFIG_PROFILE=%r; using balanced", profile)
         return "balanced"
@@ -146,3 +180,52 @@ def effective_config() -> EffectiveConfig:
 def log_effective_config() -> None:
     config = effective_config()
     logger.info("DMEF effective config: %s", config)
+
+
+def get_setting(key: str, default: Any = None) -> Any:
+    """Read a setting from environment first (for overrides/tests), then system_settings DB table, with fallback to default."""
+    import json
+    
+    env_key = key.upper().replace(".", "_")
+    env_val = os.getenv(env_key)
+    if env_val is not None:
+        val_lower = env_val.strip().lower()
+        if val_lower in {"true", "yes", "on", "1"}:
+            return True
+        if val_lower in {"false", "no", "off", "0"}:
+            return False
+        if val_lower.startswith("[") or val_lower.startswith("{"):
+            try:
+                return json.loads(env_val)
+            except Exception:
+                pass
+        try:
+            if "." in env_val:
+                return float(env_val)
+            return int(env_val)
+        except ValueError:
+            return env_val
+
+    from database.db import get_connection
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT config_value, value_type FROM system_settings WHERE config_key = ?",
+                (key,)
+            ).fetchone()
+            if row:
+                val = row["config_value"]
+                val_type = row["value_type"]
+                if val_type == "bool":
+                    return val.strip().lower() in ("1", "true", "yes", "on")
+                elif val_type == "int":
+                    return int(val)
+                elif val_type == "float":
+                    return float(val)
+                elif val_type == "json":
+                    return json.loads(val)
+                return val
+    except Exception as exc:
+        logger.warning("Failed to load setting %r from database: %s; using default %r", key, exc, default)
+    
+    return default

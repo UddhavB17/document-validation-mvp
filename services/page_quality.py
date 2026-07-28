@@ -46,9 +46,14 @@ def _is_legal_clearance_evidence(page: dict[str, Any], expected_type: str) -> bo
         return False
 
     text = str(page.get("ocr_text") or "").lower()
-    has_legal_signal = any(term in text for term in ("legal", "title", "unencumbered", "marketable"))
-    has_property_security_signal = any(term in text for term in ("property", "mortgaged", "security", "clear"))
-    if not (has_legal_signal and has_property_security_signal):
+    # Agreement/sanction boilerplate often contains isolated words such as
+    # "legal", "security" and "clear".  Only accept it as alternate legal
+    # clearance evidence when it actually states a positive title conclusion.
+    has_title_signal = "title" in text
+    has_positive_title_signal = any(
+        term in text for term in ("marketable", "unencumbered", "clear title", "title is clear")
+    )
+    if not (has_title_signal and has_positive_title_signal):
         return False
 
     return _meets_confidence_threshold(page)

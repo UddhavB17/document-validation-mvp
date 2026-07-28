@@ -106,7 +106,7 @@ class DocumentVerificationReport(BaseModel):
         return round((self.matched_fields / self.total_fields_checked) * 100.0, 2)
 
 
-ChecklistStatus = Literal["verified", "needs_review", "missing", "unknown"]
+ChecklistStatus = Literal["verified", "needs_review", "missing", "unknown", "not_applicable"]
 ChecklistConfidence = Literal["high", "medium", "low"]
 ChecklistExtractionSource = Literal["deterministic", "llm_fallback"]
 
@@ -135,6 +135,7 @@ class ChecklistSummary(BaseModel):
     needs_review: int = 0
     missing: int = 0
     unknown: int = 0
+    not_applicable: int = 0
 
 
 class ChecklistProcessingMetadata(BaseModel):
@@ -179,6 +180,34 @@ SCHEMA_STATEMENTS = [
         digital_pages INTEGER,
         scanned_pages INTEGER,
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intake_packages (
+        package_id TEXT PRIMARY KEY,
+        application_id INTEGER REFERENCES applications(id),
+        source_filename TEXT NOT NULL,
+        source_zip_path TEXT NOT NULL,
+        normalized_pdf_path TEXT NOT NULL,
+        total_files INTEGER NOT NULL,
+        total_pages INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'prepared',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        verified_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intake_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        package_id TEXT NOT NULL REFERENCES intake_packages(package_id),
+        source_document_id TEXT NOT NULL,
+        original_filename TEXT NOT NULL,
+        file_type TEXT NOT NULL,
+        source_size_bytes INTEGER NOT NULL,
+        page_count INTEGER NOT NULL,
+        internal_page_start INTEGER NOT NULL,
+        internal_page_end INTEGER NOT NULL,
+        UNIQUE(package_id, source_document_id)
     )
     """,
     """
@@ -339,6 +368,17 @@ SCHEMA_STATEMENTS = [
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS system_settings (
+        config_key TEXT PRIMARY KEY,
+        config_value TEXT NOT NULL,
+        value_type TEXT NOT NULL DEFAULT 'str',
+        category TEXT NOT NULL DEFAULT 'general',
+        label TEXT,
+        description TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
 
 MIGRATION_STATEMENTS = [
@@ -349,6 +389,8 @@ MIGRATION_STATEMENTS = [
 
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_uploaded_files_application_id ON uploaded_files(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_intake_packages_application_id ON intake_packages(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_intake_documents_package_id ON intake_documents(package_id)",
     "CREATE INDEX IF NOT EXISTS idx_ground_truth_application_id ON ground_truth(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pages_application_id ON pages(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_validation_results_application_id ON validation_results(application_id)",

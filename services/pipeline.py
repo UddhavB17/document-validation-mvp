@@ -53,6 +53,7 @@ from services.progress_tracker import (
     update_stage,
 )
 from services.report_generator import build_report, save_report_json
+from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.structured_llm_classifier import classify_with_structured_llm
 from services.text_extractor import extract_digital_text, extract_ground_truth
 from services.verification_pdf_parser import VerificationPdfParseError, parse_verification_pdf
@@ -131,6 +132,8 @@ def run_pipeline(
     system_data: dict[str, Any] | None = None,
     product_type: str = "LAP",
     generate_llm_summary: bool | None = None,
+    mapped_manifest: dict[str, Any] | None = None,
+    source_documents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
     pdf_path = Path(pdf_path)
@@ -149,11 +152,18 @@ def run_pipeline(
     update_stage(application_id, "extracting_digital_text", "Extracting digital text")
     digital_text_by_page = _extract_digital_text_by_page(pdf_path)
     ground_truth = dict(extract_ground_truth(pdf_path))
-    if system_data:
+    if mapped_manifest is not None:
+        ground_truth = _mapped_ground_truth(mapped_manifest, system_data)
+        if system_data is not None:
+            if "reference_data" not in system_data:
+                system_data["reference_data"] = ground_truth.get("reference_data")
+            if "people" not in system_data:
+                system_data["people"] = ground_truth.get("reference_data")
+    elif system_data:
         ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
 
     input_classification = classify_input_text(digital_text_by_page)
-    if input_classification["input_type"] == "unsupported":
+    if input_classification["input_type"] == "unsupported" and mapped_manifest is None:
         update_stage(application_id, "unsupported_input", str(input_classification["reason"]))
         pages = _build_unsupported_page_records(structure["pages"], digital_text_by_page)
         result = _finalize_pipeline_result(
@@ -179,11 +189,83 @@ def run_pipeline(
         _update_uploaded_file_counts(application_id, structure)
         log_action(application_id, "input_classified_unsupported", input_classification)
         return result
+    if input_classification["input_type"] == "unsupported" and mapped_manifest is not None:
+        log_action(
+            application_id,
+            "mapped_input_classifier_warning",
+            input_classification,
+        )
 
     update_stage(application_id, "processing_pages", "Classifying and extracting page fields")
-    pages = _build_page_records(structure["pages"], digital_text_by_page, application_id=application_id)
-    update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
-    verification_report, document_page_numbers = _run_document_verification(pdf_path, application_id, pages, ground_truth)
+    source_page_starts = {
+        int(item.get("internal_page_start") or 0)
+        for item in source_documents or []
+        if item.get("internal_page_start") is not None
+    }
+    if mapped_manifest is not None:
+        source_mapping_pages: dict[str, list[int]] = {}
+        for item in mapped_manifest.get("documents") or []:
+            source_id = str(item.get("source_document_id") or "unassigned")
+            source_mapping_pages.setdefault(source_id, []).extend(
+                int(number) for number in item.get("pages") or []
+            )
+        source_page_starts.update(
+            min(numbers) for numbers in source_mapping_pages.values() if numbers
+        )
+    pages = _build_page_records(
+        structure["pages"],
+        digital_text_by_page,
+        application_id=application_id,
+        source_page_starts=source_page_starts,
+        source_documents=source_documents,
+    )
+    mapped_result: dict[str, Any] | None = None
+    if mapped_manifest is not None:
+        automatic_index: dict[str, Any] | None = None
+        if not (mapped_manifest.get("documents") or []):
+            from services.automatic_document_index import build_automatic_document_index
+
+            automatic_index = build_automatic_document_index(
+                pages,
+                mapped_manifest.get("reference_data") or {},
+                source_documents=source_documents,
+            )
+            mapped_manifest = {
+                **mapped_manifest,
+                "documents": automatic_index["documents"],
+            }
+        update_stage(
+            application_id,
+            "verifying_mapped_documents",
+            "Comparing automatically identified documents with trusted JSON",
+        )
+        from services.mapped_verification import compare_processed_pages
+
+        mapped_result = compare_processed_pages(
+            pages,
+            mapped_manifest,
+            source_documents=source_documents,
+        )
+        if automatic_index is not None:
+            mapped_result["anomalies"] = [
+                *automatic_index["anomalies"],
+                *mapped_result["anomalies"],
+            ]
+            mapped_result["automatic_document_index"] = automatic_index["documents"]
+            mapped_result["unclassified_pages"] = automatic_index["unclassified_pages"]
+        verification_report = None
+        document_page_numbers = sorted(
+            {
+                int(number)
+                for item in mapped_manifest.get("documents") or []
+                for number in item.get("pages") or []
+            }
+        )
+    else:
+        update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
+        verification_report, document_page_numbers = _run_document_verification(
+            pdf_path, application_id, pages, ground_truth
+        )
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
@@ -201,6 +283,8 @@ def run_pipeline(
 
     update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
+    if mapped_result is not None:
+        anomalies.extend(mapped_result["anomalies"])
     partial_scan_anomaly = _ocr_budget_anomaly(pages)
     if partial_scan_anomaly is not None:
         anomalies.append(partial_scan_anomaly)
@@ -220,8 +304,9 @@ def run_pipeline(
     checklist_verification = build_checklist_verification_response(
         loan_file_id=str(ground_truth.get("loan_id") or application_id),
         pages=pages,
-        anomalies=result["anomalies"],
+        anomalies=anomalies,
         product_type=product_type,
+        system_data={**ground_truth, **(system_data or {})},
         processing_metadata=_checklist_processing_metadata(progress_snapshot),
         include_narration=False,
     )
@@ -233,12 +318,45 @@ def run_pipeline(
     if summary:
         _save_llm_summary(application_id, summary)
 
+    if mapped_result is not None:
+        reviewer_summary = build_reviewer_summary(
+            total_pages=len(pages),
+            anomalies=result["anomalies"],
+            checked_fields=int(mapped_result["checked_fields"]),
+            matched_fields=int(mapped_result["matched_fields"]),
+        )
+        reviewer_summary["people_verification"] = mapped_result["people_verification"]
+        reviewer_summary["source_classifications"] = mapped_result["source_classifications"]
+        reviewer_summary["automatic_document_index"] = mapped_result.get(
+            "automatic_document_index", []
+        )
+        reviewer_summary["unclassified_pages"] = mapped_result.get("unclassified_pages", [])
+        save_reviewer_summary(application_id, reviewer_summary)
+
     report_path = save_report_json(
         build_report(
             application_id=application_id,
             loan_id=str(ground_truth.get("loan_id") or ""),
             exceptions=result["anomalies"],
             llm_summary=summary or "",
+            metadata=(
+                {
+                    "verification_mode": (
+                        "automatic_json_comparison"
+                        if "automatic_document_index" in mapped_result
+                        else "mapped_zip_json_comparison"
+                    ),
+                    "checked_fields": mapped_result["checked_fields"],
+                    "matched_fields": mapped_result["matched_fields"],
+                    "people_verification": mapped_result["people_verification"],
+                    "source_classifications": mapped_result["source_classifications"],
+                    "automatic_document_index": mapped_result.get("automatic_document_index", []),
+                    "unclassified_pages": mapped_result.get("unclassified_pages", []),
+                    "checklist_verification": checklist_verification.model_dump(mode="json"),
+                }
+                if mapped_result is not None
+                else None
+            ),
         )
     )
 
@@ -258,20 +376,60 @@ def run_pipeline(
             "checklist_verification": checklist_verification.model_dump(mode="json"),
         }
     )
+    if mapped_result is not None:
+        result.update(
+            {
+                "verification_mode": (
+                    "automatic_json_comparison"
+                    if "automatic_document_index" in mapped_result
+                    else "mapped_zip_json_comparison"
+                ),
+                "checked_fields": mapped_result["checked_fields"],
+                "matched_fields": mapped_result["matched_fields"],
+                "observations": mapped_result["observations"],
+                "people_verification": mapped_result["people_verification"],
+                "source_classifications": mapped_result["source_classifications"],
+                "automatic_document_index": mapped_result.get("automatic_document_index", []),
+                "unclassified_pages": mapped_result.get("unclassified_pages", []),
+            }
+        )
     mark_completed(application_id, result["final_status"], pipeline_status)
+    from services.reviewer import collapse_for_reviewer
+
+    actionable_count = len(collapse_for_reviewer(result["anomalies"]))
     log_action(
         application_id,
         "pipeline_completed",
         {
             "total_pages": result["total_pages"],
-            "anomaly_count": len(result["anomalies"]),
+            "anomaly_count": actionable_count,
+            "raw_anomaly_count": len(result["anomalies"]),
             "final_status": result["final_status"],
             "pipeline_status": pipeline_status,
             "partial_failure_count": len(processing_error_anomalies),
             "report_path": str(report_path),
         },
     )
+    result["actionable_anomaly_count"] = actionable_count
     return result
+
+
+def _mapped_ground_truth(
+    manifest: dict[str, Any],
+    system_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Flatten primary trusted data for checklist/report compatibility."""
+    reference_data = manifest.get("reference_data") or {}
+    primary = reference_data.get("primary") if isinstance(reference_data, dict) else {}
+    primary = primary if isinstance(primary, dict) else {}
+    return {
+        **{key: value for key, value in manifest.items() if key not in {"documents", "reference_data"}},
+        **(system_data or {}),
+        **primary,
+        "loan_id": manifest.get("loan_id") or (system_data or {}).get("loan_id"),
+        "product_type": manifest.get("product_type") or (system_data or {}).get("product_type") or "LAP",
+        "reference_data": reference_data,
+    }
 
 
 def _finalize_pipeline_result(
@@ -366,8 +524,9 @@ def run_partner_json_pipeline(
     checklist_verification = build_checklist_verification_response(
         loan_file_id=str(ground_truth.get("loan_id") or application_id),
         pages=pages,
-        anomalies=result["anomalies"],
+        anomalies=anomalies,
         product_type=product_type,
+        system_data={**ground_truth, **(system_data or {})},
         processing_metadata={},
         include_narration=False,
     )
@@ -438,6 +597,8 @@ def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
     application_id: int | None = None,
+    source_page_starts: set[int] | None = None,
+    source_documents: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     llm_budget = create_llm_classifier_budget()
@@ -458,6 +619,10 @@ def _build_page_records(
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
         image_path = page_info.get("image_path")
+        if source_page_starts and page_number in source_page_starts:
+            current_type = "Unknown"
+            current_confidence = 0.0
+            current_detected_page = None
         needs_ocr = page_type == "scanned" and page_number in selected_scanned_pages
         if application_id is not None:
             mark_page_started(
@@ -476,41 +641,43 @@ def _build_page_records(
                 is_readable = bool(text)
                 ocr_confidence = None
                 ocr_metadata = {}
-                document_type = "DB Data"
-                classification = {"confidence": 1.0}
-                extracted_fields = _build_db_data_fields(page_number=page_number, text=text)
-                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
-                db_data_page = {
-                    "page_number": page_number,
-                    "page_type": page_type,
-                    "image_path": image_path,
-                    "is_readable": is_readable,
-                    "ocr_text": text,
-                    "ocr_confidence": ocr_confidence,
-                    "document_type": document_type,
-                    "classification_confidence": classification.get("confidence", 0.0),
-                    "detection_method": "db_data",
-                    "detected_page_number": page_number,
-                    "extracted_fields": extracted_fields,
-                }
-                pages.append(db_data_page)
-                page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
-                _record_completed_page_event(
-                    application_id,
-                    page=db_data_page,
-                    total_pages=total_pages,
-                    elapsed_seconds=page_elapsed,
-                    status=page_status,
-                )
-                if application_id is not None:
-                    update_page_progress(
+                if _is_starting_json_db_page(page_number=page_number, text=text):
+                    document_type = "DB Data"
+                    classification = {"confidence": 1.0}
+                    extracted_fields = _build_db_data_fields(page_number=page_number, text=text)
+                    _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                    db_data_page = {
+                        "page_number": page_number,
+                        "page_type": page_type,
+                        "image_path": image_path,
+                        "is_readable": is_readable,
+                        "ocr_text": text,
+                        "ocr_confidence": ocr_confidence,
+                        "document_type": document_type,
+                        "classification_confidence": classification.get("confidence", 0.0),
+                        "detection_method": "db_data",
+                        "detected_page_number": page_number,
+                        "extracted_fields": extracted_fields,
+                    }
+                    pages.append(db_data_page)
+                    page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
+                    _record_completed_page_event(
                         application_id,
-                        processed_pages=len(pages),
+                        page=db_data_page,
                         total_pages=total_pages,
-                        current_page=page_number,
-                        message=f"Processed {len(pages)}/{total_pages} pages (DB data)",
+                        elapsed_seconds=page_elapsed,
+                        status=page_status,
                     )
-                continue
+                    if application_id is not None:
+                        update_page_progress(
+                            application_id,
+                            processed_pages=len(pages),
+                            total_pages=total_pages,
+                            current_page=page_number,
+                            message=f"Processed {len(pages)}/{total_pages} pages (DB data)",
+                        )
+                    continue
+                _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
             elif page_number not in selected_scanned_pages:
                 text = ""
                 is_readable = None
@@ -595,6 +762,18 @@ def _build_page_records(
                 }
             elif triage["category"] == "handwritten" and (ocr_confidence is None or float(ocr_confidence) < 0.70):
                 document_type = "Unknown"
+                detection_method = "triage_low_confidence"
+                if source_documents:
+                    for doc in source_documents:
+                        start = doc.get("internal_page_start")
+                        end = doc.get("internal_page_end")
+                        if start is not None and end is not None and start <= page_number <= end:
+                            inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                            if inferred:
+                                document_type = inferred
+                                detection_method = "filename_inference"
+                                classification = {"confidence": 0.85}
+                            break
                 classification = {"confidence": 0.0}
                 extracted_fields = {
                     **extracted_fields,
@@ -603,7 +782,7 @@ def _build_page_records(
                     "_classification": {
                         "source": "triage",
                         "assigned_type": document_type,
-                        "detection_method": "triage_low_confidence",
+                        "detection_method": detection_method,
                         "raw_document_type": document_type,
                         "raw_confidence": 0.0,
                         "detected_page_number": None,
@@ -638,7 +817,35 @@ def _build_page_records(
                 )
                 document_type = assigned["document_type"]
                 classification = {"confidence": assigned["confidence"]}
-                if assigned["detection_method"] == "detected":
+                detection_method = assigned["detection_method"]
+                # A photo packet may visibly contain identity cards without
+                # being an Aadhaar document. Strong source filenames are the
+                # authoritative type for these operational image bundles.
+                source_filename_type = None
+                if source_documents:
+                    for doc in source_documents:
+                        start = doc.get("internal_page_start")
+                        end = doc.get("internal_page_end")
+                        if start is not None and end is not None and start <= page_number <= end:
+                            source_filename_type = _infer_document_type_from_filename(
+                                str(doc.get("original_filename") or "")
+                            )
+                            break
+                if source_filename_type in {"House Photo", "Workplace Photo", "Property Image"}:
+                    document_type = source_filename_type
+                    classification = {"confidence": 0.95}
+                    detection_method = "filename_override"
+                if document_type == "Unknown" and source_documents:
+                    for doc in source_documents:
+                        start = doc.get("internal_page_start")
+                        end = doc.get("internal_page_end")
+                        if start is not None and end is not None and start <= page_number <= end:
+                            inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                            if inferred:
+                                document_type = inferred
+                                detection_method = "filename_inference"
+                            break
+                if detection_method == "detected":
                     current_type = document_type
                     current_confidence = float(assigned["confidence"] or 0.0)
                     current_detected_page = page_number
@@ -655,7 +862,7 @@ def _build_page_records(
                 classification_meta = {
                     **classification_meta,
                     "assigned_type": document_type,
-                    "detection_method": assigned["detection_method"],
+                    "detection_method": detection_method,
                     "raw_document_type": assigned["raw_document_type"],
                     "raw_confidence": assigned["raw_confidence"],
                     "detected_page_number": assigned["detected_page_number"],
@@ -718,13 +925,24 @@ def _build_page_records(
             is_readable = False
             ocr_confidence = 0.0
             document_type = "Unknown"
+            detection_method = "unknown"
+            if source_documents:
+                for doc in source_documents:
+                    start = doc.get("internal_page_start")
+                    end = doc.get("internal_page_end")
+                    if start is not None and end is not None and start <= page_number <= end:
+                        inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                        if inferred:
+                            document_type = inferred
+                            detection_method = "filename_inference"
+                        break
             classification = {"confidence": 0.0}
             extracted_fields = {
                 "_processing_error": str(exc),
                 "_classification": {
-                    "assigned_type": "Unknown",
-                    "detection_method": "unknown",
-                    "raw_document_type": "Unknown",
+                    "assigned_type": document_type,
+                    "detection_method": detection_method,
+                    "raw_document_type": document_type,
                     "raw_confidence": 0.0,
                     "detected_page_number": None,
                 },
@@ -782,7 +1000,75 @@ def _build_page_records(
             current_page=pages[-1]["page_number"],
             message=f"Processed {len(pages)}/{total_pages} pages",
         )
+    pages = _smooth_page_classifications(pages, application_id, total_pages)
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+
+
+def _smooth_page_classifications(
+    pages: list[dict[str, Any]],
+    application_id: int | None,
+    total_pages: int,
+) -> list[dict[str, Any]]:
+    if len(pages) < 3:
+        return pages
+
+    sorted_pages = sorted(pages, key=lambda item: int(item.get("page_number") or 0))
+    for i in range(1, len(sorted_pages) - 1):
+        prev_page = sorted_pages[i - 1]
+        curr_page = sorted_pages[i]
+        next_page = sorted_pages[i + 1]
+
+        if curr_page.get("document_type") == "Unknown":
+            prev_type = prev_page.get("document_type")
+            next_type = next_page.get("document_type")
+            if prev_type != "Unknown" and prev_type == next_type:
+                curr_page["document_type"] = prev_type
+                curr_page["classification_confidence"] = round(
+                    (prev_page.get("classification_confidence", 0.70) + next_page.get("classification_confidence", 0.70)) / 2.0,
+                    3,
+                )
+                curr_page["detection_method"] = "sandwich_smoothed"
+
+                text = curr_page.get("ocr_text", "")
+                from services.field_extractor import extract_fields
+                from services.field_assignment_refiner import refine_field_assignments
+
+                extracted_fields = extract_fields(prev_type, text)
+                extracted_fields = refine_field_assignments(
+                    document_type=prev_type,
+                    ocr_text=text,
+                    extracted_fields=extracted_fields,
+                )
+
+                orig_cls = curr_page.get("extracted_fields", {}).get("_classification", {})
+                if isinstance(orig_cls, dict):
+                    orig_cls["assigned_type"] = prev_type
+                    orig_cls["detection_method"] = "sandwich_smoothed"
+                else:
+                    orig_cls = {
+                        "assigned_type": prev_type,
+                        "detection_method": "sandwich_smoothed",
+                        "raw_document_type": "Unknown",
+                        "raw_confidence": 0.0,
+                        "detected_page_number": curr_page.get("page_number"),
+                        "triage": {},
+                    }
+                extracted_fields["_classification"] = orig_cls
+                curr_page["extracted_fields"] = extracted_fields
+
+                if application_id is not None:
+                    record_page_completed(
+                        application_id,
+                        page_number=int(curr_page.get("page_number") or 0),
+                        total_pages=total_pages,
+                        page_type=curr_page.get("page_type"),
+                        document_type=prev_type,
+                        elapsed_seconds=0.0,
+                        extracted_fields=extracted_fields,
+                        status="completed",
+                        error=None,
+                    )
+    return sorted_pages
 
 
 def _record_completed_page_event(
@@ -829,6 +1115,13 @@ def _build_db_data_fields(*, page_number: int, text: str) -> dict[str, Any]:
         fields["db_data_json"] = payload
         fields["db_data_json_keys"] = sorted(str(key) for key in payload.keys())
     return fields
+
+
+def _is_starting_json_db_page(*, page_number: int, text: str) -> bool:
+    """Return True only for opening digital pages that contain parseable JSON."""
+    if page_number > 3:
+        return False
+    return bool(_extract_json_payload(text))
 
 
 def _extract_json_payload(text: str) -> dict[str, Any]:
@@ -937,24 +1230,12 @@ def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str,
     if not normalized_text:
         return {}
 
-    lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
-    words = re.findall(r"\S+", normalized_text)
-    details: dict[str, Any] = {
-        "generic_document_type": document_type or "Unknown",
-        "generic_text_excerpt": normalized_text[:700],
-        "generic_char_count": len(normalized_text),
-        "generic_word_count": len(words),
-        "generic_line_count": len(lines),
-    }
-
+    details: dict[str, Any] = {}
     detected = _generic_detected_values(normalized_text)
     for key, value in detected.items():
         if value:
             details[key] = value
 
-    keywords = _generic_keywords(normalized_text)
-    if keywords:
-        details["generic_keywords"] = keywords
     return details
 
 
@@ -1115,7 +1396,11 @@ def _assign_sequential_document_type(
 
 def _looks_like_fresh_page_without_match(text: str) -> bool:
     raw_text = text or ""
-    header = " ".join(raw_text.splitlines()[:6])
+    # Some digitally generated PDFs expose the entire page as one enormous
+    # line.  Treating that whole line as a heading makes a continuation page
+    # look "fresh" merely because words such as letter/report occur later in
+    # boilerplate.  Document-boundary evidence belongs near the top of a page.
+    header = " ".join(raw_text.splitlines()[:6])[:360]
     normalized_header = _normalize_fresh_document_text(header)
     normalized_text = _normalize_fresh_document_text(raw_text)
     if not normalized_text:
@@ -1222,6 +1507,7 @@ def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
                 "extracted_fields": extracted_fields,
             }
         )
+    pages = _smooth_page_classifications(pages, None, len(pages))
     return pages
 
 
@@ -1234,7 +1520,8 @@ def _build_unsupported_page_records(
         page_number = int(page_info["page_number"])
         page_type = page_info["page_type"]
         text = digital_text_by_page.get(page_number, "")
-        document_type = "DB Data" if page_type == "digital" else "Unknown"
+        is_db_data = page_type == "digital" and _is_starting_json_db_page(page_number=page_number, text=text)
+        document_type = "DB Data" if is_db_data else "Unknown"
         pages.append(
             {
                 "page_number": page_number,
@@ -1244,10 +1531,10 @@ def _build_unsupported_page_records(
                 "ocr_text": text,
                 "ocr_confidence": None,
                 "document_type": document_type,
-                "classification_confidence": 1.0 if document_type == "DB Data" else 0.0,
-                "detection_method": "db_data" if document_type == "DB Data" else "unknown",
-                "detected_page_number": page_number if document_type == "DB Data" else None,
-                "extracted_fields": _build_db_data_fields(page_number=page_number, text=text) if document_type == "DB Data" else {},
+                "classification_confidence": 1.0 if is_db_data else 0.0,
+                "detection_method": "db_data" if is_db_data else "unknown",
+                "detected_page_number": page_number if is_db_data else None,
+                "extracted_fields": _build_db_data_fields(page_number=page_number, text=text) if is_db_data else {},
             }
         )
     return pages
@@ -1529,3 +1816,106 @@ def _save_llm_summary(application_id: int, summary: str) -> None:
             "UPDATE applications SET llm_summary = ? WHERE id = ?",
             (summary, application_id),
         )
+
+
+def _infer_document_type_from_filename(filename: str) -> str | None:
+    if not filename:
+        return None
+    lower = filename.lower().replace("\\", "/")
+    suffix = Path(lower).suffix
+
+    if suffix in {".jpg", ".jpeg", ".png", ".tif", ".tiff"} and any(
+        folder in lower for folder in ("/collateral/", "/valuation/")
+    ):
+        return "Property Image"
+
+    # Check for direct keyword matches in the whole path
+    if "pan" in lower:
+        return "PAN Card"
+    if "aadhar" in lower or "aadhaar" in lower or "uidai" in lower:
+        return "Aadhaar Card"
+    if "passport" in lower:
+        return "Passport"
+    if "driving" in lower or "dl " in lower or "licence" in lower or "license" in lower:
+        return "Driving License"
+    if "voter" in lower or "epic" in lower:
+        return "Voter ID"
+    if "cheque" in lower or "check" in lower:
+        return "Cheque"
+    if "spdc" in lower or re.search(r"(?:^|[/_\-\s])pdc(?:[/_\-\s.]|$)", lower):
+        return "PDC"
+    if "property paper" in lower or "proprty paper" in lower:
+        return "Property Document"
+    if "house photo" in lower:
+        return "House Photo"
+    if "working place" in lower or "workplace" in lower:
+        return "Workplace Photo"
+    if "technical report" in lower:
+        return "Technical Report"
+    if "ration card" in lower:
+        return "Ration Card"
+    if "cersai" in lower:
+        return "CERSAI Report"
+    if "insurance consent" in lower:
+        return "Insurance Consent Letter"
+    if "property insurance" in lower:
+        return "Property Insurance Form"
+    if "life insurance" in lower:
+        return "Life Insurance Form"
+    if "insurance" in lower:
+        return "Insurance Form"
+    if "banking" in lower:
+        return "Bank Statement"
+    if "statement" in lower or "bank_stmt" in lower or "bank stmt" in lower or "bankstmt" in lower:
+        return "Bank Statement"
+    if "utility" in lower or "bill" in lower or "electricity" in lower or "water" in lower or "gas_bill" in lower:
+        return "Utility Bill"
+    if "sanction" in lower or "loan_sanction" in lower:
+        return "Sanction Letter"
+    if "agreement" in lower or "contract" in lower or "loan_agreement" in lower:
+        return "Loan Agreement"
+    if "salary" in lower or "pay slip" in lower or "payslip" in lower or "salary_slip" in lower:
+        return "Salary Slip"
+    if "kfs" in lower or "key fact" in lower:
+        return "KFS (Key Fact Statement)"
+    if re.search(r"(?:^|[/_\-\s])cam(?:[/_\-\s.(]|$)", lower):
+        return "CAM"
+
+    # If it's a generic file name like page_1.png, image.jpg, scan.pdf, etc.,
+    # we can try to use the parent folder name if it exists.
+    parts = [p for p in lower.split("/") if p]
+    if len(parts) > 1:
+        parent = parts[-2]
+        # Ignore generic parent folders
+        if parent not in {
+            "sources", "source", "uploads", "documents", "files", "temp", "tmp", "pages",
+            "task", "task 1", "task_1", "report", "bank", "kyc", "income",
+            "creditbureau", "creditbureau 1", "creditbureau 2", "creditbureau 3",
+        }:
+            cleaned = parent.replace("_", " ").replace("-", " ")
+            return " ".join(word.capitalize() for word in cleaned.split())
+
+    # Fallback to the file base name if it is not generic
+    base_name = Path(parts[-1]).stem
+    generic_patterns = {
+        "image", "img", "scan", "page", "document", "doc", "file", "photo", "pic",
+        "output", "export", "pdf", "unnamed", "untitled", "unknown"
+    }
+    cleaned_base = base_name.replace("_", " ").replace("-", " ").strip()
+    if re.search(r"\b(?:combine|combined|merged|bundle|packet)\b", cleaned_base, re.IGNORECASE):
+        return None
+    if re.fullmatch(r"credit\s*score(?:\s*\(\d+\))?", cleaned_base, re.IGNORECASE):
+        return None
+    words = cleaned_base.split()
+
+    is_generic = True
+    for word in words:
+        word_clean = "".join(c for c in word.lower() if c.isalpha())
+        if word_clean and word_clean not in generic_patterns:
+            is_generic = False
+            break
+
+    if not is_generic and cleaned_base:
+        return " ".join(word.capitalize() for word in words)
+
+    return None
