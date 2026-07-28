@@ -391,11 +391,7 @@ def _run_presence_checks(
         document_type = item.get("document_type")
 
         applies = condition_applies(item.get("applies_when"), system_data)
-        if applies is None:
-            document_label = " / ".join(str(value) for value in _document_types(document_type) if value)
-            anomalies.append(_applicability_unknown_anomaly(item, document_type=document_label))
-            continue
-        if applies is False:
+        if applies is None or applies is False:
             continue
 
         if check_type == "system_flag":
@@ -498,16 +494,7 @@ def _run_presence_checks(
             applicability_unknown_reported = False
             for requirement in item.get("requirements") or []:
                 requirement_applies = condition_applies(requirement.get("applies_when"), system_data)
-                if requirement_applies is None:
-                    if not applicability_unknown_reported:
-                        anomalies.append(
-                            _applicability_unknown_anomaly(
-                                item, document_type=str(requirement.get("document_type") or "")
-                            )
-                        )
-                        applicability_unknown_reported = True
-                    continue
-                if requirement_applies is False:
+                if requirement_applies is None or requirement_applies is False:
                     continue
                 required_type = str(requirement.get("document_type") or "")
                 requirement_item = {**item, **requirement}

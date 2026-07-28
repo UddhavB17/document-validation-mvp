@@ -174,6 +174,15 @@ def _chat_completions_url() -> str:
 
 
 def _api_key() -> str:
+    from services.config import get_setting
+    enabled = get_setting("llm_api_key_enabled", True)
+    if not enabled:
+        return ""
+    db_val = get_setting("llm_api_key")
+    if db_val:
+        val_str = str(db_val).strip()
+        if val_str:
+            return val_str
     return (
         _clean_env_value(os.getenv("LLM_API_KEY"))
         or _clean_env_value(os.getenv("OPENAI_API_KEY"))

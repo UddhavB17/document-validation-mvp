@@ -188,7 +188,7 @@ def get_setting(key: str, default: Any = None) -> Any:
     
     env_key = key.upper().replace(".", "_")
     env_val = os.getenv(env_key)
-    if env_val is not None:
+    if env_val is not None and env_val.strip() != "":
         val_lower = env_val.strip().lower()
         if val_lower in {"true", "yes", "on", "1"}:
             return True

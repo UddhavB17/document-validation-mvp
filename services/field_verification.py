@@ -47,21 +47,24 @@ def verify_phone(extracted: str, db_value: str) -> FieldVerificationResult:
 
 def verify_date(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify dates by parsing supported formats and comparing date values."""
-    extracted_date = _parse_supported_date(extracted)
-    db_date = _parse_supported_date(db_value)
-    if extracted_date is None or db_date is None:
-        # One side failed to parse — this is likely an OCR/format issue, not a
-        # genuine mismatch. Return low confidence instead of hard failure.
+    from services.normalization import normalize_date
+
+    extracted_iso, ext_status = normalize_date(extracted)
+    db_iso, db_status = normalize_date(db_value)
+
+    if ext_status == "failed" or db_status == "failed" or not extracted_iso or not db_iso:
+        # Route into Unknown/LLM-fallback path by returning low confidence (< 0.85)
+        # which will trigger LLM fallback review
         return FieldVerificationResult(
             field_name="date_of_birth",
             extracted_value=extracted,
             db_value=db_value,
             match=False,
-            confidence=0.25,
+            confidence=0.0,
             method="exact",
-            mismatch_reason="Date could not be parsed — OCR quality or unsupported format",
+            mismatch_reason="Date could not be normalized",
         )
-    return _exact_result("date_of_birth", extracted, db_value, extracted_date == db_date)
+    return _exact_result("date_of_birth", extracted, db_value, extracted_iso == db_iso)
 
 
 def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:

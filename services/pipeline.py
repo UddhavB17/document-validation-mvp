@@ -858,6 +858,8 @@ def _build_page_records(
                     ocr_text=text,
                     extracted_fields=extracted_fields,
                 )
+                from services.normalization import normalize_extracted_fields
+                extracted_fields = normalize_extracted_fields(extracted_fields)
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 classification_meta = {
                     **classification_meta,
@@ -1039,6 +1041,8 @@ def _smooth_page_classifications(
                     ocr_text=text,
                     extracted_fields=extracted_fields,
                 )
+                from services.normalization import normalize_extracted_fields
+                extracted_fields = normalize_extracted_fields(extracted_fields)
 
                 orig_cls = curr_page.get("extracted_fields", {}).get("_classification", {})
                 if isinstance(orig_cls, dict):
@@ -1177,6 +1181,8 @@ def _apply_llm_extraction_fallback(
         ocr_text=text,
         extracted_fields=fallback_fields,
     )
+    from services.normalization import normalize_extracted_fields
+    fallback_fields = normalize_extracted_fields(fallback_fields)
     fallback_fields["_llm_field_extraction"] = {
         "source": "structured_llm_classification",
         "document_type": llm_document_type,
@@ -1491,6 +1497,8 @@ def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
 
         if not extracted_fields:
             extracted_fields = extract_fields(document_type, text)
+        from services.normalization import normalize_extracted_fields
+        extracted_fields = normalize_extracted_fields(extracted_fields)
 
         pages.append(
             {

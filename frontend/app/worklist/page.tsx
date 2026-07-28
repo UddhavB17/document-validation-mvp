@@ -134,7 +134,7 @@ function matchesFilter(item: WorklistItem, filter: Filter): boolean {
     return true;
   }
   if (filter === "Pending") {
-    return ["queued", "processing"].includes(item.pipeline_status);
+    return ["queued", "processing", "not_started"].includes(item.pipeline_status);
   }
   if (filter === "Recovery") {
     return item.pipeline_retryable;

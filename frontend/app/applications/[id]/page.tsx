@@ -991,9 +991,19 @@ function summarizeFields(fields: Record<string, unknown> | undefined): string {
   if (!fields || Object.keys(fields).length === 0) {
     return "-";
   }
-  const publicFields = Object.fromEntries(Object.entries(fields).filter(([key, value]) => !key.startsWith("_") && value));
-  const text = JSON.stringify(Object.keys(publicFields).length ? publicFields : fields);
-  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+  const publicFields = Object.fromEntries(
+    Object.entries(fields).filter(([key, value]) => !key.startsWith("_") && value !== null && value !== ""),
+  );
+  if (Object.keys(publicFields).length === 0) {
+    return "-";
+  }
+  const formatted = Object.entries(publicFields)
+    .map(([key, value]) => {
+      const cleanKey = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      return `${cleanKey}: ${value}`;
+    })
+    .join(", ");
+  return formatted.length > 160 ? `${formatted.slice(0, 157)}...` : formatted;
 }
 
 function formatLlmDocument(fields: Record<string, unknown> | undefined): string {
