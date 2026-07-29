@@ -1,7 +1,9 @@
-"""OCR engine for scanned loan-document pages.
+"""Structured OCR engine for scanned loan-document pages.
 
-Uses PaddleOCR with Hindi + English coverage for Indian loan files.
-Models are initialised once at import time and reused across pages.
+Uses PP-StructureV3 with Hindi + English coverage for Indian loan files.
+Models are initialised lazily and reused across pages. In addition to the
+backwards-compatible flattened OCR text, each result includes reading-order
+layout blocks and the JSON-safe PP-StructureV3 response.
 
 Public API
 ----------
@@ -19,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from typing import Any, TypedDict
 
-from services.config import get_float, get_int
+from services.config import get_bool, get_float, get_int
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ _configure_paddle_runtime()
 
 
 def _dual_lang_enabled() -> bool:
-    return os.getenv("PADDLE_OCR_DUAL_LANG", "true").lower() in {"1", "true", "yes", "on"}
+    return os.getenv("PADDLE_OCR_DUAL_LANG", "false").lower() in {"1", "true", "yes", "on"}
 
 
 def _configured_ocr_langs() -> list[str]:
@@ -48,9 +50,9 @@ def _configured_ocr_langs() -> list[str]:
     return [primary]
 
 
-def _create_paddle_ocr(lang: str) -> Any:
-    """Create a PaddleOCR instance with CPU-safe, mobile-sized defaults."""
-    from paddleocr import PaddleOCR as _PaddleOCR
+def _create_paddle_structure(lang: str) -> Any:
+    """Create a PP-StructureV3 instance with CPU-safe OCR defaults."""
+    from paddleocr import PPStructureV3
 
     det_limit = get_int("PADDLE_OCR_DET_LIMIT_SIDE_LEN", 1280, minimum=640, maximum=2400)
     det_model = os.getenv("PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det").strip() or "PP-OCRv5_mobile_det"
@@ -67,39 +69,44 @@ def _create_paddle_ocr(lang: str) -> Any:
         "text_detection_model_name": det_model,
         "text_recognition_model_name": rec_model,
         "text_det_limit_side_len": det_limit,
+        "use_table_recognition": get_bool("PADDLE_STRUCTURE_USE_TABLE_RECOGNITION", True),
+        "use_seal_recognition": get_bool("PADDLE_STRUCTURE_USE_SEAL_RECOGNITION", False),
+        "use_formula_recognition": get_bool("PADDLE_STRUCTURE_USE_FORMULA_RECOGNITION", False),
+        "use_chart_recognition": get_bool("PADDLE_STRUCTURE_USE_CHART_RECOGNITION", False),
+        "use_region_detection": get_bool("PADDLE_STRUCTURE_USE_REGION_DETECTION", False),
     }
     try:
-        return _PaddleOCR(**base_kwargs, enable_mkldnn=False)
+        return PPStructureV3(**base_kwargs, enable_mkldnn=False)
     except TypeError:
-        return _PaddleOCR(**base_kwargs)
+        return PPStructureV3(**base_kwargs)
 
 
-def _load_ocr_models() -> dict[str, Any | None]:
+def _load_structure_models() -> dict[str, Any | None]:
     models: dict[str, Any | None] = {}
     for lang in _configured_ocr_langs():
         try:
-            models[lang] = _create_paddle_ocr(lang)
-            logger.info("Loaded PaddleOCR model for lang=%s", lang)
+            models[lang] = _create_paddle_structure(lang)
+            logger.info("Loaded PP-StructureV3 model for lang=%s", lang)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("PaddleOCR could not load lang=%s (%s)", lang, exc)
+            logger.warning("PP-StructureV3 could not load lang=%s (%s)", lang, exc)
             models[lang] = None
     return models
 
 
-ocr_models: dict[str, Any | None] | None = None
-ocr_model: Any | None = None
+structure_models: dict[str, Any | None] | None = None
+structure_model: Any | None = None
 
 
-def get_ocr_models() -> dict[str, Any | None]:
-    """Load PaddleOCR models on first use instead of at module import time."""
-    global ocr_models, ocr_model
-    if ocr_models is None:
-        ocr_models = _load_ocr_models()
-        ocr_model = ocr_models.get("hi") or ocr_models.get("en") or next(
-            (model for model in ocr_models.values() if model is not None),
+def get_structure_models() -> dict[str, Any | None]:
+    """Load PP-StructureV3 models on first use instead of at import time."""
+    global structure_models, structure_model
+    if structure_models is None:
+        structure_models = _load_structure_models()
+        structure_model = structure_models.get("hi") or structure_models.get("en") or next(
+            (model for model in structure_models.values() if model is not None),
             None,
         )
-    return ocr_models
+    return structure_models
 
 
 class _OcrResult(TypedDict, total=False):
@@ -115,6 +122,13 @@ class _OcrResult(TypedDict, total=False):
     image_width: int
     image_height: int
     text_density: float
+    ocr_pipeline: str
+    header_text: str
+    layout_blocks: list[dict[str, Any]]
+    tables: list[dict[str, Any]]
+    seals: list[dict[str, Any]]
+    formulas: list[dict[str, Any]]
+    structure_json: list[dict[str, Any]]
     error: str
 
 
@@ -122,8 +136,9 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     """Run OCR on a scanned page image.
 
     Blur is measured for quality warnings but never blocks OCR.
-    When dual-language mode is enabled, Hindi and English models both run
-    and their outputs are merged for downstream classification.
+    When dual-language mode is enabled, Hindi and English structure models run
+    until a sufficiently confident result is found. Their outputs are merged
+    for downstream classification.
     """
     from services.image_limits import prepare_image_path_for_ocr
     from services.preprocessing import check_readability
@@ -134,7 +149,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     is_blurry = not readability["is_readable"]
     blur_score = readability["blur_score"]
 
-    active_models = [(lang, model) for lang, model in get_ocr_models().items() if model is not None]
+    active_models = [(lang, model) for lang, model in get_structure_models().items() if model is not None]
     if not active_models:
         return {
             "is_readable": False,
@@ -149,8 +164,9 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
             "image_width": image_width,
             "image_height": image_height,
             "text_density": 0.0,
+            **_empty_structure_metadata(),
             "error": (
-                "PaddleOCR models are not loaded. "
+                "PP-StructureV3 models are not loaded. "
                 "Install paddlepaddle and paddleocr to enable OCR."
             ),
         }
@@ -159,13 +175,14 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     merged_scores: list[float] = []
     languages_used: list[str] = []
     errors: list[str] = []
+    structure_results: list[dict[str, Any]] = []
     early_exit_confidence = _early_exit_confidence()
     early_exit_min_chars = _early_exit_min_chars()
 
     for lang, model in active_models:
         try:
             started_at = time.monotonic()
-            result = _run_paddle_ocr_with_timeout(model, image_path)
+            result = _run_paddle_structure_with_timeout(model, image_path)
             elapsed = time.monotonic() - started_at
             soft_timeout = _soft_timeout_seconds()
             if elapsed > soft_timeout:
@@ -177,6 +194,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
                     soft_timeout,
                 )
             text, confidence = _extract_ocr_text_and_confidence(result)
+            structure_results.append(_normalize_structure_result(result))
             languages_used.append(lang)
             if text.strip():
                 merged_texts.append(text.strip())
@@ -192,6 +210,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     ocr_text = _merge_ocr_texts(merged_texts)
     confidence = max(merged_scores) if merged_scores else 0.0
     text_stats = _ocr_text_stats(ocr_text, image_width, image_height)
+    structure_metadata = _merge_structure_metadata(structure_results)
 
     if not ocr_text and errors:
         return {
@@ -202,6 +221,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
             "blur_score": blur_score,
             "ocr_languages": languages_used,
             **text_stats,
+            **structure_metadata,
             "error": "; ".join(errors),
         }
 
@@ -213,6 +233,7 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
         "blur_score": blur_score,
         "ocr_languages": languages_used,
         **text_stats,
+        **structure_metadata,
     }
 
 
@@ -229,49 +250,35 @@ def _merge_ocr_texts(texts: list[str]) -> str:
     return "\n".join(merged)
 
 
-def _run_paddle_ocr(model: Any, image_path: str | Path) -> Any:
-    """Run PaddleOCR 3.x ``predict`` or fall back to legacy ``ocr``."""
-    from services.preprocessing import preprocess_image
-
-    path = str(image_path)
+def _run_paddle_structure(model: Any, image_path: str | Path) -> list[Any]:
+    """Run PP-StructureV3 and materialize its result generator."""
     inference_kwargs = {
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,
         "use_textline_orientation": False,
+        "use_table_recognition": get_bool("PADDLE_STRUCTURE_USE_TABLE_RECOGNITION", True),
+        "use_seal_recognition": get_bool("PADDLE_STRUCTURE_USE_SEAL_RECOGNITION", False),
+        "use_formula_recognition": get_bool("PADDLE_STRUCTURE_USE_FORMULA_RECOGNITION", False),
+        "use_chart_recognition": get_bool("PADDLE_STRUCTURE_USE_CHART_RECOGNITION", False),
+        "use_region_detection": get_bool("PADDLE_STRUCTURE_USE_REGION_DETECTION", False),
     }
-
-    if hasattr(model, "predict"):
-        try:
-            return model.predict(path, **inference_kwargs)
-        except TypeError:
-            return model.predict(path)
-
-    preprocessed = _prepare_for_paddle(preprocess_image(image_path))
     try:
-        return model.ocr(preprocessed, **inference_kwargs)
+        return list(model.predict(str(image_path), **inference_kwargs))
     except TypeError:
-        return model.ocr(preprocessed)
+        return list(model.predict(str(image_path)))
 
 
-def _run_paddle_ocr_with_timeout(model: Any, image_path: str | Path) -> Any:
+def _run_paddle_structure_with_timeout(model: Any, image_path: str | Path) -> Any:
     hard_timeout = _hard_timeout_seconds()
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dmef-ocr-page")
-    future = executor.submit(_run_paddle_ocr, model, image_path)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dmef-structure-page")
+    future = executor.submit(_run_paddle_structure, model, image_path)
     try:
         return future.result(timeout=hard_timeout)
     except TimeoutError as exc:
         future.cancel()
-        raise TimeoutError(f"OCR exceeded hard timeout of {hard_timeout}s") from exc
+        raise TimeoutError(f"PP-StructureV3 exceeded hard timeout of {hard_timeout}s") from exc
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
-
-
-def _prepare_for_paddle(image: Any) -> Any:
-    import cv2
-
-    if image.ndim == 2:
-        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    return image
 
 
 def _image_dimensions(image_path: str | Path) -> tuple[int, int]:
@@ -339,17 +346,13 @@ def _extract_legacy_lines(result: list[Any]) -> tuple[list[str], list[float]]:
 
 
 def _extract_mapping_result(result: Any) -> tuple[list[str], list[float]]:
-    if not isinstance(result, dict) and hasattr(result, "json"):
-        try:
-            result = result.json
-        except Exception:  # noqa: BLE001
-            pass
-
-    if not isinstance(result, dict):
+    result = _result_mapping(result)
+    if not result:
         return [], []
 
-    if "res" in result and isinstance(result["res"], dict):
-        result = result["res"]
+    overall_ocr = result.get("overall_ocr_res")
+    if isinstance(overall_ocr, dict):
+        result = overall_ocr
 
     rec_texts = result.get("rec_texts") or []
     rec_scores = result.get("rec_scores") or []
@@ -357,6 +360,217 @@ def _extract_mapping_result(result: Any) -> tuple[list[str], list[float]]:
     lines = [str(text) for text in rec_texts if text]
     scores = [float(score) for score in rec_scores if score is not None]
     return lines, scores
+
+
+def _result_mapping(result: Any) -> dict[str, Any]:
+    """Return the unwrapped mapping from a Paddle result object."""
+    if not isinstance(result, dict) and hasattr(result, "json"):
+        try:
+            result = result.json
+            if callable(result):
+                result = result()
+        except Exception:  # noqa: BLE001
+            return {}
+    if not isinstance(result, dict):
+        return {}
+    if "res" in result and isinstance(result["res"], dict):
+        return result["res"]
+    return result
+
+
+def _empty_structure_metadata() -> dict[str, Any]:
+    return {
+        "ocr_pipeline": "PP-StructureV3",
+        "header_text": "",
+        "layout_blocks": [],
+        "tables": [],
+        "seals": [],
+        "formulas": [],
+        "structure_json": [],
+    }
+
+
+def _normalize_structure_result(result: Any) -> dict[str, Any]:
+    """Normalize PP-StructureV3 output without retaining image tensors."""
+    pages = result if isinstance(result, list) else [result]
+    metadata = _empty_structure_metadata()
+    header_candidates: list[str] = []
+
+    for page_result in pages:
+        page = _result_mapping(page_result)
+        if not page:
+            continue
+        safe_page = _compact_native_page(page)
+        if isinstance(safe_page, dict):
+            metadata["structure_json"].append(safe_page)
+
+        raw_blocks = page.get("parsing_res_list") or []
+        for position, raw_block in enumerate(raw_blocks):
+            if not isinstance(raw_block, dict):
+                continue
+            block_type = str(raw_block.get("block_label") or "text")
+            text = str(raw_block.get("block_content") or "").strip()
+            raw_bbox = raw_block.get("block_bbox")
+            raw_order = raw_block.get("index")
+            block = {
+                "type": block_type,
+                "text": text,
+                "bbox": _json_safe(raw_bbox if raw_bbox is not None else []),
+                "order": int(raw_order if raw_order is not None else position),
+                "sub_label": str(raw_block.get("sub_label") or ""),
+                "paragraph_start": bool(raw_block.get("seg_start_flag", False)),
+                "paragraph_end": bool(raw_block.get("seg_end_flag", False)),
+            }
+            metadata["layout_blocks"].append(block)
+            label = f"{block_type} {block['sub_label']}".lower()
+            if text and any(token in label for token in ("title", "header")):
+                header_candidates.append(text)
+
+        metadata["tables"].extend(_safe_mapping_list(page.get("table_res_list")))
+        metadata["seals"].extend(_safe_mapping_list(page.get("seal_res_list")))
+        metadata["formulas"].extend(_safe_mapping_list(page.get("formula_res_list")))
+
+    metadata["layout_blocks"].sort(key=lambda block: int(block.get("order", 0)))
+    if not header_candidates:
+        header_candidates = [
+            str(block.get("text") or "")
+            for block in metadata["layout_blocks"][:8]
+            if block.get("text") and block.get("type") != "table"
+        ]
+    metadata["header_text"] = "\n".join(_deduplicate_strings(header_candidates))
+    return metadata
+
+
+def _merge_structure_metadata(results: list[dict[str, Any]]) -> dict[str, Any]:
+    if not results:
+        return _empty_structure_metadata()
+
+    merged = _empty_structure_metadata()
+    header_texts: list[str] = []
+    for result in results:
+        header_texts.extend(str(result.get("header_text") or "").splitlines())
+        merged["layout_blocks"].extend(result.get("layout_blocks") or [])
+        merged["tables"].extend(result.get("tables") or [])
+        merged["seals"].extend(result.get("seals") or [])
+        merged["formulas"].extend(result.get("formulas") or [])
+        merged["structure_json"].extend(result.get("structure_json") or [])
+
+    merged["header_text"] = "\n".join(_deduplicate_strings(header_texts))
+    merged["layout_blocks"] = _deduplicate_mappings(merged["layout_blocks"], ("type", "text", "bbox"))
+    merged["tables"] = _deduplicate_mappings(merged["tables"])
+    merged["seals"] = _deduplicate_mappings(merged["seals"])
+    merged["formulas"] = _deduplicate_mappings(merged["formulas"])
+    return merged
+
+
+def _safe_mapping_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    safe_items: list[dict[str, Any]] = []
+    for item in value:
+        safe_item = _json_safe(item)
+        if isinstance(safe_item, dict):
+            safe_items.append(safe_item)
+    return safe_items
+
+
+_NATIVE_PAGE_KEYS = (
+    "input_path",
+    "page_index",
+    "page_count",
+    "width",
+    "height",
+    "overall_ocr_res",
+    "parsing_res_list",
+    "table_res_list",
+    "seal_res_list",
+    "formula_res_list",
+)
+
+_BINARY_RESULT_KEYS = {
+    "image",
+    "img",
+    "input_image",
+    "input_img",
+    "output_image",
+    "output_img",
+    "visualization",
+    "visualization_image",
+    "vis_img",
+    "heatmap",
+    "feature_map",
+    "mask",
+}
+
+
+def _compact_native_page(page: dict[str, Any]) -> dict[str, Any]:
+    """Keep useful native OCR fields while excluding large model artifacts.
+
+    PP-StructureV3 includes full image arrays under ``doc_preprocessor_res``
+    and related result objects. Converting those arrays to JSON can add tens of
+    megabytes per page and keeps that memory alive for the entire document.
+    Normalized layout/table fields are persisted separately, so the compact
+    native representation only needs the small, review-relevant fields below.
+    """
+    return {
+        key: _json_safe(page[key])
+        for key in _NATIVE_PAGE_KEYS
+        if key in page
+    }
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe(item)
+            for key, item in value.items()
+            if not _is_binary_result_key(str(key))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "tolist"):
+        try:
+            return _json_safe(value.tolist())
+        except Exception:  # noqa: BLE001
+            pass
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _is_binary_result_key(key: str) -> bool:
+    normalized = key.strip().lower()
+    return (
+        normalized in _BINARY_RESULT_KEYS
+        or normalized.endswith("_image")
+        or normalized.endswith("_img")
+    )
+
+
+def _deduplicate_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduplicated: list[str] = []
+    for value in values:
+        normalized = str(value or "").strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            deduplicated.append(normalized)
+    return deduplicated
+
+
+def _deduplicate_mappings(
+    values: list[dict[str, Any]],
+    fields: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    deduplicated: list[dict[str, Any]] = []
+    for value in values:
+        identity_value: Any = value if fields is None else [value.get(field) for field in fields]
+        identity = repr(identity_value)
+        if identity not in seen:
+            seen.add(identity)
+            deduplicated.append(value)
+    return deduplicated
 
 
 def _mean_score(scores: list[float]) -> float:

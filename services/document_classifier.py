@@ -14,7 +14,9 @@ import re
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 try:  # pragma: no cover - exercised when rapidfuzz is installed
     from rapidfuzz import fuzz
@@ -27,6 +29,19 @@ DEFAULT_REGISTRY_PATH = PROJECT_ROOT / "data" / "document_type_registry.json"
 UNKNOWN_TYPE = "None"
 DEFAULT_MIN_CONFIDENCE = 0.50
 HIGH_CONFIDENCE = 0.75
+
+OCRRoute = Literal["fast", "structured"]
+
+
+class DocumentTypeConfig(BaseModel):
+    """Validated registry schema for fields shared outside classification."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    ocr_route: OCRRoute = "structured"
+    has_tabular_data: bool = False
+    multi_column: bool = False
 
 
 def classify_page(text: str) -> dict[str, Any]:
@@ -77,6 +92,9 @@ def load_document_type_registry(path: str | Path | None = None) -> dict[str, Any
     for index, rule in enumerate(document_types):
         if not rule.get("type"):
             raise ValueError(f"Document type registry rule at index {index} has no type")
+        normalized_rule = DocumentTypeConfig.model_validate(rule).model_dump()
+        rule.clear()
+        rule.update(normalized_rule)
         rule.setdefault("priority", index)
         rule.setdefault("min_confidence", registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
         rule.setdefault("headings", [])
@@ -87,6 +105,16 @@ def load_document_type_registry(path: str | Path | None = None) -> dict[str, Any
         rule.setdefault("negative_keywords", [])
 
     return registry
+
+
+def document_type_config(document_type: str) -> DocumentTypeConfig:
+    """Return OCR/layout metadata for a type, using structured as the safe default."""
+    normalized = str(document_type or "").strip().casefold()
+    normalized = {"pan": "pan card", "aadhar": "aadhaar"}.get(normalized, normalized)
+    for rule in load_document_type_registry()["document_types"]:
+        if str(rule.get("type") or "").strip().casefold() == normalized:
+            return DocumentTypeConfig.model_validate(rule)
+    return DocumentTypeConfig(type=str(document_type or UNKNOWN_TYPE))
 
 
 def registry_document_types(include_unknown: bool = True) -> list[str]:

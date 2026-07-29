@@ -18,11 +18,17 @@ from services.field_verification import (
     verify_phone,
     verify_pincode,
 )
-from services.ocr_engine import run_ocr_on_page
+from services.ocr_engine import run_ocr_on_page as run_structured_ocr_on_page
+from services.ocr_router import OCRRouter, run_fast_ocr_on_page
 from services.pdf_processor import convert_page_to_image, open_pdf
 from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
 from services.text_extractor import extract_digital_text
+
+
+# Backward-compatible seam used by existing mapped-verification integrations.
+run_ocr_on_page = run_fast_ocr_on_page
+_DEFAULT_FAST_OCR_PROCESSOR = run_fast_ocr_on_page
 
 
 VERIFY: dict[str, Callable[[str, str], Any]] = {
@@ -99,6 +105,19 @@ _AGGREGATED_FIELD_DOC_TYPES = frozenset(
 # Below this OCR confidence on a scanned page we cannot trust field extraction.
 _LOW_OCR_CONFIDENCE_THRESHOLD = 0.55
 
+
+def _mapped_ocr_router() -> OCRRouter:
+    """Build a router while retaining the historical monkeypatch seam."""
+    structured_processor = (
+        run_structured_ocr_on_page
+        if run_ocr_on_page is _DEFAULT_FAST_OCR_PROCESSOR
+        else run_ocr_on_page
+    )
+    return OCRRouter(
+        fast_processor=run_ocr_on_page,
+        structured_processor=structured_processor,
+    )
+
 def run_mapped_verification(
     pdf_path: str | Path,
     application_id: int,
@@ -123,6 +142,7 @@ def run_mapped_verification(
     processed_page_numbers: set[int] = set()
     digital_page_numbers: set[int] = set()
     ocr_page_numbers: set[int] = set()
+    ocr_router = _mapped_ocr_router()
 
     try:
         update_stage(
@@ -144,6 +164,7 @@ def run_mapped_verification(
 
             document_observations: dict[str, list[dict[str, Any]]] = {}
             readable_pages: list[int] = []
+            inherited_ocr_route = None
             for page_number in mapped_pages:
                 if page_number < 1 or page_number > total_pages:
                     anomalies.append(_anomaly("PAGE_OUT_OF_RANGE", "HIGH", page_number, document_type, None,
@@ -165,11 +186,22 @@ def run_mapped_verification(
                         pdf_page,
                         target / f"page_{page_number}.png",
                     )
-                    ocr = run_ocr_on_page(str(image_path or ""))
-                    text = str(ocr.get("ocr_text") or "")
-                    confidence = float(ocr.get("confidence") or 0.0)
-                    is_readable = bool(text) and bool(ocr.get("is_readable", True))
-                    text_source = "paddle_ocr"
+                    routed_ocr = ocr_router.process_page(
+                        str(image_path or ""),
+                        document_type,
+                        page_number,
+                        doc_id=(
+                            mapping.get("source_document_id")
+                            or f"{application_id}:{document_type}:{mapped_pages[0]}"
+                        ),
+                        inherited_route=inherited_ocr_route,
+                    )
+                    inherited_ocr_route = routed_ocr.requested_route or routed_ocr.route_used
+                    ocr = routed_ocr.to_legacy_dict()
+                    text = routed_ocr.text
+                    confidence = routed_ocr.confidence
+                    is_readable = bool(text)
+                    text_source = f"paddle_ocr_{routed_ocr.route_used}"
                     ocr_page_numbers.add(page_number)
                 extracted = extract_fields(document_type, text)
                 for key, value in extracted.items():
@@ -196,6 +228,15 @@ def run_mapped_verification(
                     "is_readable": is_readable,
                     "ocr_text": text,
                     "ocr_confidence": confidence,
+                    "ocr_structure": ocr if page_type == "scanned" else {},
+                    "structured_content": (
+                        routed_ocr.structured_content if page_type == "scanned" else None
+                    ),
+                    "ocr_route": routed_ocr.route_used if page_type == "scanned" else None,
+                    "ocr_escalated": routed_ocr.escalated if page_type == "scanned" else False,
+                    "ocr_processing_time_ms": (
+                        routed_ocr.processing_time_ms if page_type == "scanned" else 0
+                    ),
                     "document_type": document_type,
                     "person_id": person_id,
                     "classification_confidence": 1.0,

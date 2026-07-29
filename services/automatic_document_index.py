@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
-from datetime import datetime
 from typing import Any
 
-from rapidfuzz import fuzz
+from services.person_ownership import (
+    LOAN_LEVEL_DOCUMENT_TYPES,
+    PERSON_SCOPED_DOCUMENT_TYPES,
+    resolve_person_owner,
+)
 
 
 IGNORED_DOCUMENT_TYPES = {
@@ -17,61 +19,6 @@ IGNORED_DOCUMENT_TYPES = {
     "ocr skipped",
     "db data",
     "property image",
-}
-
-LOAN_LEVEL_DOCUMENT_TYPES = {
-    # Core loan documents
-    "loan agreement",
-    "sanction letter",
-    "stamp duty",
-    "insurance consent",
-    "nach form",
-    # Credit & legal reports (loan-level; no person-identity fields expected)
-    "cibil report",
-    "crif report",
-    "cersai report",
-    "legal report",
-    "legal clearance report",
-    "technical report",
-    "technical clearance report",
-    "valuation report",
-    # Property & ancillary documents
-    "property document",
-    "property image",
-    "no objection certificate",
-    "noc",
-    # Personal status documents (no identity verification contract)
-    "divorce decree",
-    "death certificate",
-    "affidavit",
-}
-
-PERSON_SCOPED_DOCUMENT_TYPES = {
-    "aadhaar", "pan", "pan card", "voter id", "driving license", "passport",
-    "application form", "cibil report", "crif report", "bank statement", "passbook",
-    "cheque", "salary slip", "income tax return",
-}
-
-FIELD_ALIASES = {
-    "applicant_name": ("applicant_name", "borrower_name", "account_holder_name", "customer_name"),
-    "date_of_birth": ("date_of_birth", "dob"),
-    "pan_number": ("pan_number", "pan"),
-    "aadhaar_number": ("aadhaar_number", "aadhaar_last4", "aadhaar", "aadhar"),
-    "phone_number": ("phone_number", "phone", "mobile_number"),
-    "pin_code": ("pin_code", "pincode"),
-    "address": ("address",),
-}
-
-FIELD_WEIGHTS = {
-    "aadhaar_number": 8.0,
-    "pan_number": 8.0,
-    "phone_number": 5.0,
-    "date_of_birth": 5.0,
-    # A document's explicitly labelled person name should resolve ownership
-    # ahead of a reused/incorrect phone number. PAN/Aadhaar remain strongest.
-    "applicant_name": 6.0,
-    "pin_code": 2.0,
-    "address": 1.0,
 }
 
 
@@ -92,20 +39,14 @@ def build_automatic_document_index(
 
     for group in groups:
         document_type = str(group["document_type"])
-        person = _infer_person(group["pages_data"], reference_data, document_type)
+        person = resolve_person_owner(group["pages_data"], reference_data, document_type)
         type_key = document_type.strip().lower()
         is_loan_level = type_key in LOAN_LEVEL_DOCUMENT_TYPES
         requires_person = type_key in PERSON_SCOPED_DOCUMENT_TYPES
 
         if person["person_id"] is None:
-            if is_loan_level and reference_data:
-                default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
-                person = {
-                    "person_id": default_id,
-                    "confidence": 0.35,
-                    "evidence": ["loan_level_document_default"],
-                }
-            elif requires_person:
+            # Person-scoped docs (PAN/Aadhaar/CIBIL/…) must not fall back to primary.
+            if requires_person:
                 anomalies.append(
                     _mapping_anomaly(
                         "AUTO_OWNER_UNRESOLVED",
@@ -114,6 +55,13 @@ def build_automatic_document_index(
                     )
                 )
                 continue
+            if is_loan_level and reference_data:
+                default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+                person = {
+                    "person_id": default_id,
+                    "confidence": 0.35,
+                    "evidence": ["loan_level_document_default"],
+                }
             elif reference_data:
                 default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
                 person = {
@@ -237,120 +185,6 @@ def _effective_document_type(page: dict[str, Any]) -> str:
             if llm_type.lower() not in {"", "none", "unknown"}:
                 return llm_type
     return str(page.get("document_type") or "Unknown").strip()
-
-
-def _infer_person(
-    pages: list[dict[str, Any]], reference_data: dict[str, Any], document_type: str
-) -> dict[str, Any]:
-    people = {str(key): value for key, value in reference_data.items() if isinstance(value, dict)}
-    if not people:
-        return {"person_id": None, "confidence": 0.0, "evidence": []}
-
-    observations = _identity_observations(pages)
-    scores: Counter[str] = Counter()
-    evidence: dict[str, list[str]] = {person_id: [] for person_id in people}
-    for person_id, trusted in people.items():
-        for field, found_values in observations.items():
-            expected = _first_value(trusted, FIELD_ALIASES[field])
-            if expected in (None, ""):
-                continue
-            if any(_identity_matches(field, found, expected) for found in found_values):
-                scores[person_id] += FIELD_WEIGHTS[field]
-                evidence[person_id].append(field)
-
-    ranked = scores.most_common()
-    if ranked:
-        best_id, best_score = ranked[0]
-        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
-        if best_score > second_score:
-            confidence = min(1.0, 0.45 + (best_score / 12.0))
-            return {
-                "person_id": best_id,
-                "confidence": round(confidence, 3),
-                "evidence": sorted(set(evidence[best_id])),
-            }
-
-    if len(people) == 1:
-        only_id = next(iter(people))
-        return {"person_id": only_id, "confidence": 0.5, "evidence": ["single_person_manifest"]}
-    if document_type.strip().lower() in LOAN_LEVEL_DOCUMENT_TYPES and "primary" in people:
-        return {"person_id": "primary", "confidence": 0.4, "evidence": ["loan_level_document"]}
-    return {"person_id": None, "confidence": 0.0, "evidence": []}
-
-
-def _identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
-    observations: dict[str, list[Any]] = {field: [] for field in FIELD_ALIASES}
-    for page in pages:
-        fields = page.get("extracted_fields")
-        if not isinstance(fields, dict):
-            continue
-        candidates = [fields]
-        mapped = fields.get("_mapped_extraction")
-        if isinstance(mapped, dict):
-            candidates.append(mapped)
-        for candidate in candidates:
-            for canonical, aliases in FIELD_ALIASES.items():
-                for alias in aliases:
-                    value = candidate.get(alias)
-                    if value not in (None, "", [], {}):
-                        observations[canonical].append(value)
-    return observations
-
-
-def _first_value(values: dict[str, Any], aliases: tuple[str, ...]) -> Any:
-    for alias in aliases:
-        value = values.get(alias)
-        if value not in (None, ""):
-            return value
-    return None
-
-
-def _identity_matches(field: str, found: Any, expected: Any) -> bool:
-    left = str(found or "").strip()
-    right = str(expected or "").strip()
-    if not left or not right:
-        return False
-    if field == "applicant_name":
-        return fuzz.token_sort_ratio(_words(left), _words(right)) >= 85
-    if field == "address":
-        return fuzz.token_set_ratio(_words(left), _words(right)) >= 75
-    if field == "date_of_birth":
-        return _date_key(left) == _date_key(right)
-    if field in {"aadhaar_number", "phone_number", "pin_code"}:
-        left_digits = _digits(left)
-        right_digits = _digits(right)
-        if field == "aadhaar_number" and len(left_digits) >= 4 and len(right_digits) >= 4:
-            return left_digits[-4:] == right_digits[-4:]
-        return left_digits == right_digits and bool(left_digits)
-    if field == "pan_number":
-        return re.sub(r"\s+", "", left).upper() == re.sub(r"\s+", "", right).upper()
-    return _words(left) == _words(right)
-
-
-def _words(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
-
-
-def _digits(value: str) -> str:
-    return "".join(character for character in value if character.isdigit())
-
-
-def _date_key(value: str) -> str:
-    normalized = str(value or "").strip()
-    for format_string in (
-        "%d-%B-%Y",
-        "%d-%b-%Y",
-        "%d/%m/%Y",
-        "%d-%m-%Y",
-        "%Y-%m-%d",
-        "%d %B %Y",
-        "%d %b %Y",
-    ):
-        try:
-            return datetime.strptime(normalized, format_string).date().isoformat()
-        except ValueError:
-            continue
-    return _words(normalized).replace(" ", "")
 
 
 def _slug(value: str) -> str:

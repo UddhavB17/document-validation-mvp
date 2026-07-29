@@ -21,8 +21,8 @@ python-dateutil>=2.9.0
 
 # OCR and image processing
 opencv-python>=4.9.0
-paddlepaddle>=2.6.0
-paddleocr>=2.7.0
+paddlepaddle>=3.0.0
+paddleocr[doc-parser]>=3.0.0
 
 # Reporting
 openpyxl>=3.1.0

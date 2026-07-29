@@ -103,6 +103,29 @@ def update_stage(application_id: int, stage: str, message: str | None = None) ->
     _audit(application_id, "pipeline_stage_changed", {"stage": stage, "message": message})
 
 
+def touch_progress(application_id: int, message: str | None = None) -> None:
+    """Refresh updated_at so long-running stages are not marked stale."""
+    with get_connection() as connection:
+        if message is None:
+            connection.execute(
+                """
+                UPDATE pipeline_progress
+                SET updated_at = ?
+                WHERE application_id = ?
+                """,
+                (_utc_now_iso(), application_id),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE pipeline_progress
+                SET message = ?, updated_at = ?
+                WHERE application_id = ?
+                """,
+                (message, _utc_now_iso(), application_id),
+            )
+
+
 def update_page_progress(
     application_id: int,
     *,

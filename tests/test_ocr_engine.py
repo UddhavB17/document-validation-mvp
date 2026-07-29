@@ -3,7 +3,7 @@
 Strategy
 --------
 - preprocessing tests use real OpenCV images (synthesised via numpy).
-- OCR tests mock ``services.ocr_engine.ocr_model`` so the suite runs even
+- OCR tests mock ``services.ocr_engine.structure_model`` so the suite runs even
   when PaddleOCR / PaddlePaddle are not installed in this environment.
 - The ``test_ocr_model_loaded_once`` test verifies the module-level singleton
   pattern by asserting the same object identity is returned on repeated access.
@@ -139,9 +139,7 @@ class TestRunOcrOnPage:
         fake_ocr_output = [[ [None, ["Blurry Passbook Page", 0.42]] ]]
         mock_model = MagicMock()
         mock_model.predict.return_value = fake_ocr_output
-        mock_model.ocr.return_value = fake_ocr_output
-
-        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
+        with patch.object(ocr_engine, "structure_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_blurry"] is True
@@ -171,9 +169,7 @@ class TestRunOcrOnPage:
         ]
         mock_model = MagicMock()
         mock_model.predict.return_value = fake_ocr_output
-        mock_model.ocr.return_value = fake_ocr_output
-
-        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
+        with patch.object(ocr_engine, "structure_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is True
@@ -198,9 +194,7 @@ class TestRunOcrOnPage:
         ]
         mock_model = MagicMock()
         mock_model.predict.return_value = v3_result
-        mock_model.ocr.return_value = v3_result
-
-        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
+        with patch.object(ocr_engine, "structure_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is True
@@ -227,15 +221,67 @@ class TestRunOcrOnPage:
         wrapped_result = [mock_result]
         mock_model = MagicMock()
         mock_model.predict.return_value = wrapped_result
-        mock_model.ocr.return_value = wrapped_result
-
-        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
+        with patch.object(ocr_engine, "structure_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is True
         assert "Ramesh Kumar" in result["ocr_text"]
         assert "ABCDE1234F" in result["ocr_text"]
         assert result["confidence"] == pytest.approx(0.965)
+
+    def test_pp_structure_v3_returns_layout_and_compact_json(self, tmp_path: Path) -> None:
+        """Useful structure data remains available without native image arrays."""
+        pytest.importorskip("cv2")
+        from services import ocr_engine
+        from services.ocr_engine import run_ocr_on_page
+
+        img_path = tmp_path / "sharp.png"
+        _make_sharp_png(img_path)
+        structure_result = [
+            {
+                "parsing_res_list": [
+                    {
+                        "block_label": "title",
+                        "block_content": "HOME LOAN APPLICATION",
+                        "block_bbox": [10, 20, 180, 45],
+                        "index": 0,
+                        "sub_label": "doc_title",
+                    },
+                    {
+                        "block_label": "text",
+                        "block_content": "Applicant Name: Ramesh Kumar",
+                        "block_bbox": [10, 60, 180, 90],
+                        "index": 1,
+                    },
+                ],
+                "overall_ocr_res": {
+                    "rec_texts": ["HOME LOAN APPLICATION", "Applicant Name: Ramesh Kumar"],
+                    "rec_scores": [0.99, 0.97],
+                    "vis_img": np.zeros((100, 100, 3), dtype=np.uint8),
+                },
+                "doc_preprocessor_res": {
+                    "output_img": np.zeros((1600, 1600, 3), dtype=np.uint8),
+                    "angle": 0,
+                },
+                "table_res_list": [{"pred_html": "<table><tr><td>Name</td></tr></table>"}],
+                "seal_res_list": [{"rec_texts": ["STATE BANK OF INDIA"]}],
+            }
+        ]
+        mock_model = MagicMock()
+        mock_model.predict.return_value = structure_result
+
+        with patch.object(ocr_engine, "structure_models", {"hi": mock_model}):
+            result = run_ocr_on_page(img_path)
+
+        assert result["ocr_pipeline"] == "PP-StructureV3"
+        assert result["header_text"] == "HOME LOAN APPLICATION"
+        assert result["layout_blocks"][0]["type"] == "title"
+        assert result["tables"][0]["pred_html"].startswith("<table>")
+        assert result["seals"][0]["rec_texts"] == ["STATE BANK OF INDIA"]
+        assert result["structure_json"][0]["overall_ocr_res"]["rec_scores"] == [0.99, 0.97]
+        assert "doc_preprocessor_res" not in result["structure_json"][0]
+        assert "vis_img" not in result["structure_json"][0]["overall_ocr_res"]
+        assert result["confidence"] == pytest.approx(0.98)
 
     def test_ocr_exception_returns_error_dict(self, tmp_path: Path) -> None:
         """If the OCR call raises, the result must include an 'error' key."""
@@ -248,9 +294,7 @@ class TestRunOcrOnPage:
 
         mock_model = MagicMock()
         mock_model.predict.side_effect = RuntimeError("model crash")
-        mock_model.ocr.side_effect = RuntimeError("model crash")
-
-        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model, "en": mock_model}):
+        with patch.object(ocr_engine, "structure_models", {"hi": mock_model, "en": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is False
@@ -267,7 +311,7 @@ class TestRunOcrOnPage:
         img_path = tmp_path / "sharp.png"
         _make_sharp_png(img_path)
 
-        with patch.object(ocr_engine, "ocr_models", {"hi": None, "en": None}):
+        with patch.object(ocr_engine, "structure_models", {"hi": None, "en": None}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is False
@@ -292,8 +336,8 @@ class TestRunOcrOnPage:
         def slow_timeout(*_args, **_kwargs):
             raise TimeoutError("OCR exceeded hard timeout of 1s")
 
-        monkeypatch.setattr(ocr_engine, "_run_paddle_ocr_with_timeout", slow_timeout)
-        with patch.object(ocr_engine, "ocr_models", {"hi": mock_model}):
+        monkeypatch.setattr(ocr_engine, "_run_paddle_structure_with_timeout", slow_timeout)
+        with patch.object(ocr_engine, "structure_models", {"hi": mock_model}):
             result = run_ocr_on_page(img_path)
 
         assert result["is_readable"] is False
@@ -302,7 +346,7 @@ class TestRunOcrOnPage:
     # ── test_ocr_model_loaded_once ───────────────────────────────────────────
 
     def test_ocr_model_loaded_once(self) -> None:
-        """The module-level ocr_model must be the same object on every import."""
+        """The module-level structure model is stable across repeated imports."""
         import importlib
 
         import services.ocr_engine as engine_a
@@ -314,4 +358,4 @@ class TestRunOcrOnPage:
         assert engine_a is engine_b
 
         # And therefore the same singleton model object.
-        assert engine_a.ocr_model is engine_b.ocr_model
+        assert engine_a.structure_model is engine_b.structure_model

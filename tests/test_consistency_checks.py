@@ -104,6 +104,49 @@ def test_pdc_count_is_enforced_for_each_qualifying_person() -> None:
     assert any(item.get("s_no") == 43 and item.get("person_id") == "coapplicant_1" for item in anomalies)
 
 
+def test_garbage_name_and_masked_dob_do_not_create_trusted_mismatches() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "Peeru Lal",
+                "date_of_birth": "18-May-1994",
+                "address": "S/O: Unkar Lal",
+            },
+            "coapplicant_2": {
+                "applicant_name": "Radha Bai",
+                "date_of_birth": "01-January-1962",
+            },
+        }
+    }
+    anomalies = run_consistency_checks(
+        [
+            page(1, "Aadhaar", "primary", applicant_name="c/o , s/o", address="Landmark Locality City / District Pin Code"),
+            page(2, "Voter ID", "coapplicant_2", date_of_birth="XX/XX/1963"),
+            page(3, "CIBIL Report", "primary", applicant_name="RADHA BAI"),
+        ],
+        trusted,
+    )
+    rules = {item["rule_id"] for item in anomalies}
+    assert "TRUSTED_APPLICANT_NAME_MISMATCH" not in rules
+    assert "TRUSTED_DATE_OF_BIRTH_MISMATCH" not in rules
+    assert "TRUSTED_ADDRESS_MISMATCH" not in rules
+
+
+def test_bilingual_application_form_skips_second_language_anomaly() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 1,
+                "document_type": "Application Form",
+                "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
+                "extracted_fields": {"applicant_name": "Peeru Lal"},
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["rule_id"] == "APPLICATION_SECOND_LANGUAGE_MISSING" for item in anomalies)
+
+
 def test_name_address_and_bureau_score_consistency() -> None:
     trusted = {
         "people": {
@@ -219,6 +262,60 @@ def test_application_names_are_verified_from_visible_form_text() -> None:
     form["ocr_text"] = "Applicant: Peeru Lal\nCo-applicants: Unkar Lal, Radha Bai"
     anomalies = run_consistency_checks([form], trusted)
     assert not any(item["rule_id"] == "APPLICATION_NAME_MISMATCH" for item in anomalies)
+
+
+def test_unkar_onkar_name_variant_is_not_a_trusted_mismatch() -> None:
+    trusted = {
+        "people": {
+            "coapplicant_1": {"applicant_name": "Unkar Lal", "address": "S/O: Kanha"},
+        }
+    }
+    anomalies = run_consistency_checks(
+        [page(1, "Utility Bill", "coapplicant_1", applicant_name="ONKAR LAL")],
+        trusted,
+    )
+    assert not any("NAME_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
+def test_glued_ukarlal_address_prefix_matches() -> None:
+    result = verify_address(
+        "Wo: UkarLal, semali bakhta, Semlibakta, Jhalawar, Sulia, Rajasthan, 326502",
+        "W/O : Ukar Lal",
+    )
+    assert result.match is True
+
+
+def test_bureau_phone_is_not_compared_to_trusted_phone() -> None:
+    trusted = {
+        "people": {
+            "coapplicant_2": {
+                "applicant_name": "Radha Bai",
+                "phone_number": "7339781668",
+            }
+        }
+    }
+    anomalies = run_consistency_checks(
+        [page(1, "CRIF Report", "coapplicant_2", applicant_name="RADHA BAI", phone_number="9509341692")],
+        trusted,
+    )
+    assert not any("PHONE" in item["rule_id"] for item in anomalies)
+
+
+def test_cersai_dob_noise_is_not_a_trusted_mismatch() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "Peeru Lal",
+                "date_of_birth": "18-May-1994",
+                "pan_number": "BCXPL9010K",
+            }
+        }
+    }
+    anomalies = run_consistency_checks(
+        [page(1, "CERSAI Report", "primary", applicant_name="PEERU LAL", pan_number="BCXPL9010K", date_of_birth="1994-12-05")],
+        trusted,
+    )
+    assert not any("DATE_OF_BIRTH" in item["rule_id"] for item in anomalies)
 
 
 def test_bureau_apr_month_and_branch_id_are_not_compared_to_loan_data() -> None:

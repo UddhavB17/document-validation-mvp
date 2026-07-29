@@ -606,6 +606,19 @@ def _is_positive_status(page: dict, accepted: list[str], rejected: list[str], fi
     return any(term.lower() in status for term in accepted)
 
 
+def _has_explicit_status_field(page: dict, fields: list[str]) -> bool:
+    extracted = page.get("extracted_fields") or {}
+    return any(extracted.get(name) not in (None, "") for name in fields)
+
+
+def _status_looks_like_full_page_fallback(page: dict, fields: list[str]) -> bool:
+    """True when status was inferred from whole-page OCR rather than a status field."""
+    if _has_explicit_status_field(page, fields):
+        return False
+    status = _page_status(page, fields)
+    return len(status) > 80
+
+
 def _distinct_document_key(page: dict) -> str:
     return str(
         page.get("source_document_id")
@@ -637,12 +650,16 @@ def _run_accuracy_checks(
             doc_pages = _matching_pages(pages, document_type)
             if doc_pages:
                 emitted_fields: set[str] = set()
+                people = _people(system_data)
+                multi_person = len(people) > 1
                 for page in doc_pages:
-                    expected_data = system_data
                     person_id = str(page.get("person_id") or page.get("applicant_role") or "")
-                    people = _people(system_data)
-                    if person_id and person_id in people:
-                        expected_data = people[person_id]
+                    if person_id in {"", "unassigned", "unknown"}:
+                        # Ownership unresolved — do not compare against primary dump.
+                        continue
+                    if multi_person and person_id not in people:
+                        continue
+                    expected_data = people[person_id] if person_id in people else system_data
                     mismatches = check_field_match(
                         page.get("extracted_fields", {}), expected_data, [item["match_field"]]
                     )
@@ -831,13 +848,20 @@ def _run_accuracy_checks(
                     first = failing_pages[0]
                     # Check if the failing page relied on full OCR text (no dedicated
                     # status field found) AND has low OCR confidence.
-                    first_has_status_field = any(
-                        (page.get("extracted_fields") or {}).get(sf) not in (None, "")
-                        for page in failing_pages[:1]
-                        for sf in status_fields
-                    )
+                    first_has_status_field = _has_explicit_status_field(first, status_fields)
                     first_ocr_conf = float(first.get("ocr_confidence") or 1.0)
                     low_conf_fallback = not first_has_status_field and first_ocr_conf < 0.60
+                    # Valuation/report cover pages rarely embed "cleared/approved" wording.
+                    # Do not HIGH-fail just because whole-page OCR lacks those tokens.
+                    unverifiable_fallback = (
+                        not first_has_status_field
+                        and all(_status_looks_like_full_page_fallback(page, status_fields) for page in failing_pages)
+                        and not any(
+                            term.lower() in _page_status(page, status_fields)
+                            for page in failing_pages
+                            for term in rejected
+                        )
+                    )
 
                     page_preview = ", ".join(
                         str(page.get("page_number")) for page in failing_pages[:6] if page.get("page_number") is not None
@@ -845,18 +869,22 @@ def _run_accuracy_checks(
                     if len(failing_pages) > 6:
                         page_preview += f", … (+{len(failing_pages) - 6} more)"
 
-                    if low_conf_fallback:
+                    if low_conf_fallback or unverifiable_fallback:
                         # Cannot verify status reliably — emit a softer warning instead
                         anomalies.append(
                             build_anomaly(
-                                rule_id=f"STATUS_UNVERIFIABLE_LOW_OCR_S{s_no}", s_no=s_no,
-                                severity="MEDIUM",
+                                rule_id=f"STATUS_UNVERIFIABLE_S{s_no}", s_no=s_no,
+                                severity="LOW",
                                 expected_value=" / ".join(accepted),
                                 found_value=(
-                                    f"OCR confidence {first_ocr_conf:.0%} — status field not extractable"
+                                    (
+                                        f"OCR confidence {first_ocr_conf:.0%} — status field not extractable"
+                                        if low_conf_fallback
+                                        else "No explicit clearance status field on valuation/report pages"
+                                    )
                                     + (f" across {len(failing_pages)} page(s): {page_preview}" if len(failing_pages) > 1 else "")
                                 ),
-                                reason=f"{description} (low OCR confidence; manual review required)",
+                                reason=f"{description} (status not explicitly extractable; manual review)",
                                 page_number=first.get("page_number"),
                                 document_type=str(first.get("document_type") or document_type),
                             )
@@ -911,6 +939,8 @@ def run_checks(
     system_data: dict | None,
     product_type: str,
 ) -> list[dict]:
+    from services.person_ownership import assign_page_owners, ownership_anomalies_for_unassigned
+
     system_data = {
         **(ground_truth or {}),
         **_document_derived_system_data(pages),
@@ -918,6 +948,9 @@ def run_checks(
     }
     if "people" not in system_data and isinstance(system_data.get("reference_data"), dict):
         system_data["people"] = system_data["reference_data"]
+    # Resolve page owners before presence/accuracy/consistency so TRUSTED_*
+    # never compares co-applicant OCR against primary by accident.
+    assign_page_owners(pages, system_data)
     checklist_items = checklist_service.get_all_checklist_items(product_type)
     relevance_anomaly = _non_loan_relevance_anomaly(pages, checklist_items)
     if relevance_anomaly is not None:
@@ -931,6 +964,7 @@ def run_checks(
         anomalies.extend(run_consistency_checks(pages, system_data))
 
     anomalies.extend(_run_quality_checks(pages, ground_truth))
+    anomalies.extend(ownership_anomalies_for_unassigned(pages))
     return anomalies
 
 
@@ -1059,6 +1093,10 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
             )
 
         if document_type in (None, "Unknown"):
+            ocr_text = str(page.get("ocr_text") or "").strip()
+            # Blank / nearly blank trailing pages are not actionable unclassified docs.
+            if len(re.sub(r"\s+", "", ocr_text)) < 40:
+                continue
             anomalies.append(
                 build_anomaly(
                     "UNCLASSIFIED_PAGE",

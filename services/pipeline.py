@@ -35,7 +35,7 @@ from services.input_classifier import classify_input_text
 from services.llm_service import generate_explanation, summarize_exceptions
 from services.ocr_json_export import merge_public_extracted_fields, save_ocr_document_json
 from services.page_classification import classify_page_text, create_llm_classifier_budget
-from services.ocr_engine import run_ocr_on_page
+from services.ocr_router import OCRResult, OCRRouter, get_ocr_router, run_fast_ocr_on_page
 from services.pdf_processor import process_pdf_structure
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
@@ -44,11 +44,11 @@ from services.processing_policy import (
     selected_scanned_page_numbers,
 )
 from services.progress_tracker import (
-    get_progress,
     mark_completed,
     mark_page_started,
     record_page_completed,
     start_tracking,
+    touch_progress,
     update_page_progress,
     update_stage,
 )
@@ -72,6 +72,19 @@ DOCUMENT_TYPE_ALIASES = {
 
 logger = logging.getLogger("dmef.pipeline")
 _LOGGING_CONFIGURED = False
+
+# Kept as a module-level seam for existing tests and local integrations.
+run_ocr_on_page = run_fast_ocr_on_page
+_DEFAULT_FAST_OCR_PROCESSOR = run_fast_ocr_on_page
+
+
+def _pipeline_ocr_router() -> OCRRouter:
+    if run_ocr_on_page is _DEFAULT_FAST_OCR_PROCESSOR:
+        return get_ocr_router()
+    return OCRRouter(
+        fast_processor=run_ocr_on_page,
+        structured_processor=run_ocr_on_page,
+    )
 
 
 def _ensure_pipeline_logging() -> None:
@@ -220,6 +233,9 @@ def run_pipeline(
         source_documents=source_documents,
     )
     mapped_result: dict[str, Any] | None = None
+    from services.person_ownership import assign_page_owners
+
+    assign_page_owners(pages, {**(ground_truth or {}), **(system_data or {}), **(mapped_manifest or {})})
     if mapped_manifest is not None:
         automatic_index: dict[str, Any] | None = None
         if not (mapped_manifest.get("documents") or []):
@@ -234,6 +250,7 @@ def run_pipeline(
                 **mapped_manifest,
                 "documents": automatic_index["documents"],
             }
+            _stamp_pages_from_document_index(pages, automatic_index["documents"])
         update_stage(
             application_id,
             "verifying_mapped_documents",
@@ -268,15 +285,34 @@ def run_pipeline(
         )
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
+    touch_progress(application_id, "Saved ground truth")
     _save_pages(application_id, pages)
-    progress_snapshot = get_progress(application_id) or {}
+    touch_progress(application_id, f"Saved {len(pages)} page records")
+    # Avoid loading every page-event payload (can be huge with LLM metadata) just
+    # to export OCR JSON — that was hanging/staling jobs at persisting_outputs.
+    progress_snapshot = {
+        "completed_pages": [
+            {
+                "page_number": page.get("page_number"),
+                "total_pages": len(pages),
+                "page_type": page.get("page_type"),
+                "document_type": page.get("document_type"),
+                "status": page.get("status") or "completed",
+                "elapsed_seconds": page.get("elapsed_seconds"),
+                "error": page.get("error"),
+            }
+            for page in pages
+        ]
+    }
+    touch_progress(application_id, "Building OCR document JSON export")
     ocr_json_path = save_ocr_document_json(
         application_id,
         pages,
         output_dir=output_dir,
         document_page_numbers=document_page_numbers,
-        page_events=progress_snapshot.get("completed_pages") or [],
+        page_events=progress_snapshot["completed_pages"],
     )
+    touch_progress(application_id, "OCR document JSON export complete")
     if verification_report is not None:
         save_verification_report(application_id, verification_report)
     _update_uploaded_file_counts(application_id, structure)
@@ -299,6 +335,7 @@ def run_pipeline(
             },
         )
     anomalies.extend(processing_error_anomalies)
+    touch_progress(application_id, f"Aggregating {len(anomalies)} checklist findings")
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
     pipeline_status = _pipeline_outcome(result["anomalies"], processing_error_anomalies)
     checklist_verification = build_checklist_verification_response(
@@ -313,8 +350,10 @@ def run_pipeline(
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
+        touch_progress(application_id, "Generating LLM reviewer summary")
         llm_summary = generate_explanation(result["anomalies"], ground_truth, application_id)
         summary = llm_summary or summary
+        touch_progress(application_id, "LLM reviewer summary complete")
     if summary:
         _save_llm_summary(application_id, summary)
 
@@ -609,6 +648,7 @@ def _build_page_records(
     current_type = "Unknown"
     current_confidence = 0.0
     current_detected_page: int | None = None
+    current_ocr_route: str | None = None
 
     for page_info in processing_order:
         page_started_at = time.perf_counter()
@@ -623,7 +663,9 @@ def _build_page_records(
             current_type = "Unknown"
             current_confidence = 0.0
             current_detected_page = None
+            current_ocr_route = None
         needs_ocr = page_type == "scanned" and page_number in selected_scanned_pages
+        ocr_metadata: dict[str, Any] = {}
         if application_id is not None:
             mark_page_started(
                 application_id,
@@ -722,9 +764,10 @@ def _build_page_records(
                 continue
             else:
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
-                phase_name = "OCR (PaddleOCR)"
+                phase_name = "OCR classification pass"
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
-                ocr_result = run_ocr_on_page(image_path or "")
+                preliminary_ocr = run_ocr_on_page(image_path or "")
+                ocr_result = _ocr_result_dict(preliminary_ocr)
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 text = ocr_result.get("ocr_text", "")
                 is_readable = ocr_result.get("is_readable", False)
@@ -845,10 +888,50 @@ def _build_page_records(
                                 document_type = inferred
                                 detection_method = "filename_inference"
                             break
+                routed_ocr = None
+                if needs_ocr:
+                    phase_name = "OCR routing"
+                    phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
+                    inherited_route = (
+                        current_ocr_route
+                        if assigned.get("detection_method") == "inherited"
+                        and current_ocr_route in {"fast", "structured"}
+                        else None
+                    )
+                    routing_document_type = _deterministic_routing_document_type(
+                        document_type=document_type,
+                        detection_method=detection_method,
+                        classification_metadata=classification_meta,
+                    )
+                    routed_ocr = _pipeline_ocr_router().process_page(
+                        image_path or "",
+                        routing_document_type,
+                        page_number,
+                        doc_id=(
+                            f"{application_id}:{assigned.get('detected_page_number') or page_number}"
+                            if application_id is not None
+                            else None
+                        ),
+                        inherited_route=inherited_route,
+                        preliminary_fast_result=preliminary_ocr,
+                    )
+                    _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
+                    text = routed_ocr.text
+                    ocr_confidence = routed_ocr.confidence
+                    is_readable = bool(text.strip())
+                    ocr_metadata = routed_ocr.to_legacy_dict()
+                    if routed_ocr.error:
+                        extracted_fields["_processing_error"] = routed_ocr.error
+                    if page_number % 5 == 0:
+                        import gc
+
+                        gc.collect()
                 if detection_method == "detected":
                     current_type = document_type
                     current_confidence = float(assigned["confidence"] or 0.0)
                     current_detected_page = page_number
+                    if routed_ocr is not None:
+                        current_ocr_route = routed_ocr.requested_route or routed_ocr.route_used
                 phase_name = "field extraction"
                 _mark_page_phase(application_id, page_number, total_pages, "extracting fields")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
@@ -960,6 +1043,11 @@ def _build_page_records(
             "is_readable": is_readable,
             "ocr_text": text,
             "ocr_confidence": ocr_confidence,
+            "ocr_structure": _public_ocr_structure(ocr_metadata),
+            "structured_content": ocr_metadata.get("structured_content"),
+            "ocr_route": ocr_metadata.get("ocr_route"),
+            "ocr_escalated": bool(ocr_metadata.get("ocr_escalated", False)),
+            "ocr_processing_time_ms": int(ocr_metadata.get("ocr_processing_time_ms") or 0),
             "document_type": document_type,
             "classification_confidence": classification.get("confidence", 0.0),
             "detection_method": (
@@ -1004,6 +1092,117 @@ def _build_page_records(
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
 
+def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Select structured OCR fields that should be persisted and exported."""
+    keys = (
+        "ocr_pipeline",
+        "header_text",
+        "layout_blocks",
+        "tables",
+        "seals",
+        "formulas",
+        "structure_json",
+        "ocr_route",
+        "ocr_escalated",
+        "ocr_routing_rationale",
+        "ocr_original_confidence",
+        "ocr_processing_time_ms",
+        "bounding_boxes",
+        "structured_content",
+    )
+    return {key: metadata[key] for key in keys if key in metadata}
+
+
+def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
+    return result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
+
+
+def _deterministic_routing_document_type(
+    *,
+    document_type: str,
+    detection_method: str,
+    classification_metadata: dict[str, Any],
+) -> str:
+    """Prevent an optional LLM classification from selecting an OCR route."""
+    if detection_method in {"inherited", "filename_inference", "filename_override"}:
+        return document_type
+    if classification_metadata.get("source") != "llm":
+        return document_type
+    rule_type = _normalize_document_type(classification_metadata.get("rule_document_type"))
+    rule_confidence = float(classification_metadata.get("rule_confidence") or 0.0)
+    return rule_type if rule_type != "Unknown" and rule_confidence >= HIGH_CONFIDENCE else "Unknown"
+
+
+def _apply_smoothed_document_type(
+    page: dict[str, Any],
+    document_type: str,
+    *,
+    confidence: float,
+    method: str,
+    application_id: int | None,
+    total_pages: int,
+) -> None:
+    page["document_type"] = document_type
+    page["classification_confidence"] = confidence
+    page["detection_method"] = method
+
+    text = page.get("ocr_text", "")
+    from services.field_extractor import extract_fields
+    from services.field_assignment_refiner import refine_field_assignments
+
+    extracted_fields = extract_fields(document_type, text)
+    extracted_fields = refine_field_assignments(
+        document_type=document_type,
+        ocr_text=text,
+        extracted_fields=extracted_fields,
+    )
+
+    orig_cls = page.get("extracted_fields", {}).get("_classification", {})
+    if isinstance(orig_cls, dict):
+        orig_cls["assigned_type"] = document_type
+        orig_cls["detection_method"] = method
+    else:
+        orig_cls = {
+            "assigned_type": document_type,
+            "detection_method": method,
+            "raw_document_type": "Unknown",
+            "raw_confidence": 0.0,
+            "detected_page_number": page.get("page_number"),
+            "triage": {},
+        }
+    extracted_fields["_classification"] = orig_cls
+    page["extracted_fields"] = extracted_fields
+
+    if application_id is not None:
+        record_page_completed(
+            application_id,
+            page_number=int(page.get("page_number") or 0),
+            total_pages=total_pages,
+            page_type=page.get("page_type"),
+            document_type=document_type,
+            elapsed_seconds=0.0,
+            extracted_fields=extracted_fields,
+            status="completed",
+            error=None,
+        )
+
+
+def _looks_like_loan_agreement_continuation(text: str) -> bool:
+    lowered = str(text or "").lower()
+    markers = (
+        "borrower", "lender", "repayment", "facility", "event of default",
+        "उधारकर्ता", "उ ारक", "अनुच्छेद", "अनुJेद", "ऋणदा", "ऋण अनुबंध",
+        "sanction letter", "joint liability", "herein", "hereof", "article ",
+    )
+    hits = sum(1 for marker in markers if marker in lowered)
+    if hits >= 2:
+        return True
+    # Dense legal/agreement body pages often only keep a couple of English fragments.
+    if hits >= 1 and len(str(text or "")) >= 600:
+        return True
+    return False
+
+
 def _smooth_page_classifications(
     pages: list[dict[str, Any]],
     application_id: int | None,
@@ -1022,52 +1221,90 @@ def _smooth_page_classifications(
             prev_type = prev_page.get("document_type")
             next_type = next_page.get("document_type")
             if prev_type != "Unknown" and prev_type == next_type:
-                curr_page["document_type"] = prev_type
-                curr_page["classification_confidence"] = round(
-                    (prev_page.get("classification_confidence", 0.70) + next_page.get("classification_confidence", 0.70)) / 2.0,
-                    3,
-                )
-                curr_page["detection_method"] = "sandwich_smoothed"
-
-                text = curr_page.get("ocr_text", "")
-                from services.field_extractor import extract_fields
-                from services.field_assignment_refiner import refine_field_assignments
-
-                extracted_fields = extract_fields(prev_type, text)
-                extracted_fields = refine_field_assignments(
-                    document_type=prev_type,
-                    ocr_text=text,
-                    extracted_fields=extracted_fields,
+                _apply_smoothed_document_type(
+                    curr_page,
+                    prev_type,
+                    confidence=round(
+                        (
+                            float(prev_page.get("classification_confidence") or 0.70)
+                            + float(next_page.get("classification_confidence") or 0.70)
+                        )
+                        / 2.0,
+                        3,
+                    ),
+                    method="sandwich_smoothed",
+                    application_id=application_id,
+                    total_pages=total_pages,
                 )
 
-                orig_cls = curr_page.get("extracted_fields", {}).get("_classification", {})
-                if isinstance(orig_cls, dict):
-                    orig_cls["assigned_type"] = prev_type
-                    orig_cls["detection_method"] = "sandwich_smoothed"
-                else:
-                    orig_cls = {
-                        "assigned_type": prev_type,
-                        "detection_method": "sandwich_smoothed",
-                        "raw_document_type": "Unknown",
-                        "raw_confidence": 0.0,
-                        "detected_page_number": curr_page.get("page_number"),
-                        "triage": {},
-                    }
-                extracted_fields["_classification"] = orig_cls
-                curr_page["extracted_fields"] = extracted_fields
+    # Forward-fill long Unknown runs inside Loan Agreement / Application Form blocks.
+    agreement_types = {"Loan Agreement", "Facility Agreement"}
+    for i, curr_page in enumerate(sorted_pages):
+        curr_type = str(curr_page.get("document_type") or "Unknown")
+        text = str(curr_page.get("ocr_text") or "")
+        if i == 0:
+            continue
+        prev_type = str(sorted_pages[i - 1].get("document_type") or "Unknown")
+        next_type = (
+            str(sorted_pages[i + 1].get("document_type") or "Unknown")
+            if i + 1 < len(sorted_pages)
+            else "Unknown"
+        )
 
-                if application_id is not None:
-                    record_page_completed(
-                        application_id,
-                        page_number=int(curr_page.get("page_number") or 0),
-                        total_pages=total_pages,
-                        page_type=curr_page.get("page_type"),
-                        document_type=prev_type,
-                        elapsed_seconds=0.0,
-                        extracted_fields=extracted_fields,
-                        status="completed",
-                        error=None,
-                    )
+        # Reclaim agreement-body pages that a short keyword (KFS / insurance clause)
+        # stole from the surrounding Facility/Loan Agreement run.
+        if (
+            curr_type
+            in {
+                "KFS",
+                "Insurance Form",
+                "Insurance Consent Letter",
+                "Charges Deduction Document",
+                "Sanction Letter",
+                "Guarantee Deed",
+                "Income Tax Return",
+                "Unknown",
+            }
+            and _looks_like_loan_agreement_continuation(text)
+            and (prev_type in agreement_types or next_type in agreement_types)
+        ):
+            target = prev_type if prev_type in agreement_types else next_type
+            if target in agreement_types:
+                _apply_smoothed_document_type(
+                    curr_page,
+                    target,
+                    confidence=0.74,
+                    method="agreement_context_smoothed",
+                    application_id=application_id,
+                    total_pages=total_pages,
+                )
+                continue
+
+        if curr_type != "Unknown":
+            continue
+        if prev_type not in {"Loan Agreement", "Facility Agreement", "Application Form"}:
+            continue
+        if prev_type in {"Loan Agreement", "Facility Agreement"} and not _looks_like_loan_agreement_continuation(text):
+            continue
+        if prev_type == "Application Form":
+            lowered = text.lower()
+            if not any(
+                marker in lowered
+                for marker in (
+                    "applicant", "co-applicant", "kyc", "mobile", "address",
+                    "आवेदक", "सह-आवेदक", "पिनकोड", "pincode",
+                )
+            ):
+                continue
+        _apply_smoothed_document_type(
+            curr_page,
+            prev_type,
+            confidence=0.72,
+            method="run_forward_smoothed",
+            application_id=application_id,
+            total_pages=total_pages,
+        )
+
     return sorted_pages
 
 
@@ -1665,6 +1902,40 @@ def _run_checklist_with_fallback(
         return anomalies
 
 
+def _stamp_pages_from_document_index(
+    pages: list[dict[str, Any]],
+    documents: list[dict[str, Any]],
+) -> None:
+    """Copy automatic/ZIP document ownership onto the matching page records."""
+    by_number = {
+        int(page.get("page_number") or 0): page
+        for page in pages
+        if page.get("page_number") is not None
+    }
+    for document in documents:
+        person_id = str(document.get("applicant_role") or document.get("person_id") or "").strip()
+        if not person_id or person_id in {"unassigned", "unknown"}:
+            continue
+        for page_number in document.get("pages") or []:
+            page = by_number.get(int(page_number))
+            if page is None:
+                continue
+            page["person_id"] = person_id
+            page["applicant_role"] = person_id
+            fields = page.get("extracted_fields")
+            if isinstance(fields, dict):
+                fields = dict(fields)
+                ownership = dict(fields.get("_ownership") or {})
+                ownership.update(
+                    {
+                        "person_id": person_id,
+                        "evidence": list(ownership.get("evidence") or []) + ["document_index"],
+                    }
+                )
+                fields["_ownership"] = ownership
+                page["extracted_fields"] = fields
+
+
 def _run_document_verification(
     pdf_path: Path,
     application_id: int,
@@ -1762,13 +2033,17 @@ def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
                     is_readable,
                     ocr_text,
                     ocr_confidence,
+                    ocr_route,
+                    ocr_escalated,
+                    ocr_processing_time_ms,
+                    structured_content,
                     document_type,
                     classification_confidence,
                     detection_method,
                     detected_page_number,
                     extracted_fields
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     application_id,
@@ -1778,6 +2053,12 @@ def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
                     page.get("is_readable") if page.get("is_readable") is not None else None,
                     page.get("ocr_text"),
                     page.get("ocr_confidence"),
+                    page.get("ocr_route"),
+                    bool(page.get("ocr_escalated", False)),
+                    int(page.get("ocr_processing_time_ms") or 0),
+                    json.dumps(page.get("structured_content"), ensure_ascii=False)
+                    if page.get("structured_content") is not None
+                    else None,
                     page.get("document_type"),
                     page.get("classification_confidence"),
                     page.get("detection_method"),

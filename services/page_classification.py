@@ -73,12 +73,16 @@ def classify_page_text(
         metadata["llm_skipped"] = "budget_exhausted"
         return rule_result, metadata
 
-    llm_result = classify_page_with_llm(text)
+    enriched_text = _layout_enriched_text(text, layout_metadata)
+    llm_result = classify_page_with_llm(enriched_text)
     if not llm_result:
         metadata["llm_skipped"] = "call_failed"
         return rule_result, metadata
 
     llm_document_type = str(llm_result.get("document_type") or "None")
+    rule_document_type = str(rule_result.get("document_type") or "None")
+    rule_confidence = float(rule_result.get("confidence") or 0.0)
+
     if llm_document_type == "None":
         metadata.update(
             {
@@ -86,6 +90,24 @@ def classify_page_text(
                 "llm_document_type": "None",
                 "llm_confidence": llm_result.get("confidence", 0.0),
                 "llm_reason": llm_result.get("reason"),
+                "rejected_document_type": llm_result.get("rejected_document_type"),
+            }
+        )
+        return rule_result, metadata
+
+    # Keep a confident rule hit when the LLM invents a conflicting label.
+    if (
+        rule_document_type not in {"", "None"}
+        and rule_confidence >= 0.70
+        and llm_document_type != rule_document_type
+    ):
+        metadata.update(
+            {
+                "source": "rules",
+                "llm_document_type": llm_document_type,
+                "llm_confidence": llm_result.get("confidence", 0.0),
+                "llm_reason": llm_result.get("reason"),
+                "llm_skipped": "rule_preferred",
             }
         )
         return rule_result, metadata
@@ -102,3 +124,26 @@ def classify_page_text(
         "document_type": llm_document_type,
         "confidence": llm_result.get("confidence", 0.0),
     }, metadata
+
+
+def _layout_enriched_text(text: str, layout_metadata: dict[str, Any] | None) -> str:
+    """Add compact PP-StructureV3 labels to the LLM classification input."""
+    if not layout_metadata:
+        return text
+    blocks = layout_metadata.get("layout_blocks")
+    if not isinstance(blocks, list):
+        return text
+
+    structured_lines: list[str] = []
+    for block in blocks[:40]:
+        if not isinstance(block, dict):
+            continue
+        content = str(block.get("text") or "").strip()
+        if not content:
+            continue
+        block_type = str(block.get("type") or "text").upper()
+        structured_lines.append(f"[{block_type}] {content}")
+
+    if not structured_lines:
+        return text
+    return "STRUCTURED PAGE CONTENT:\n" + "\n".join(structured_lines) + "\n\nFULL OCR TEXT:\n" + text

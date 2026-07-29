@@ -356,6 +356,7 @@ def _raw_ocr_pages(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "llm_document_type": document.get("llm_document_type"),
             "ocr_confidence": document.get("ocr_confidence"),
             "ocr_text": document.get("ocr_text") or "",
+            "ocr_structure": document.get("ocr_structure") or {},
             "extracted_fields": document.get("extracted_fields") or {},
         }
         for document in documents

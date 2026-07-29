@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -13,6 +12,70 @@ from services.llm_client import call_llm_api
 VALID_DOCUMENT_TYPES = tuple(registry_document_types(include_unknown=True))
 
 _MAX_TEXT_CHARS = 3500
+
+# Hard evidence phrases that must appear in OCR before the LLM label is trusted.
+# Form 97 / Form 60 is ONLY a non-PAN declaration — never a catch-all loan page.
+_EVIDENCE_REQUIRED: dict[str, tuple[str, ...]] = {
+    "Form 97": (
+        "form 97",
+        "form no 97",
+        "form no. 97",
+        "form60",
+        "form 60",
+        "form no 60",
+        "form no. 60",
+        "declaration in lieu of pan",
+        "declaration in lieu of permanent account",
+    ),
+    "PAN Card": (
+        "permanent account number",
+        "income tax department",
+        "pan card",
+        "आयकर विभाग",
+    ),
+    "Aadhaar": (
+        "aadhaar",
+        "aadhar",
+        "uidai",
+        "unique identification",
+        "आधार",
+        "यूआईडीएआई",
+    ),
+    "Voter ID": (
+        "election commission",
+        "voter id",
+        "electors photo identity",
+        "epic",
+        "मतदाता",
+    ),
+    "CIBIL Report": ("cibil", "transunion"),
+    "CRIF Report": ("crif", "high mark"),
+    "CERSAI Report": ("cersai", "central registry of securitisation", "debtor based search"),
+    "Stamp Duty": (
+        "stamp duty",
+        "non judicial",
+        "non-judicial",
+        "e-stamp",
+        "stamp paper",
+        "india non judicial",
+        "गैर न्यायिक",
+    ),
+    "Utility Bill": (
+        "electricity bill",
+        "water bill",
+        "gas bill",
+        "utility bill",
+        "vidyut",
+        "jvvnl",
+        "consumer no",
+        "due date",
+        "बिजली",
+        "विद्युत",
+        "bill month",
+        "bill month",
+        "bill number",
+    ),
+}
 
 
 def is_llm_page_classifier_enabled() -> bool:
@@ -57,6 +120,18 @@ def needs_llm_classification(
     return False
 
 
+def llm_prediction_has_evidence(document_type: str, text: str) -> bool:
+    """Reject LLM labels that are not corroborated by OCR phrases."""
+    normalized_type = normalize_llm_document_type(document_type)
+    if normalized_type in {"", "None"}:
+        return True
+    required = _EVIDENCE_REQUIRED.get(normalized_type)
+    if not required:
+        return True
+    haystack = _normalize_evidence_text(text)
+    return any(_contains_evidence(haystack, phrase) for phrase in required)
+
+
 def normalize_llm_document_type(doc_type: str) -> str:
     """Normalize and map loose LLM document type names to exact registry values."""
     cleaned = str(doc_type or "").strip().lower()
@@ -68,10 +143,12 @@ def normalize_llm_document_type(doc_type: str) -> str:
         if valid_type.strip().lower() == cleaned:
             return valid_type
 
-    # Common aliases & substring matches
+    # Prefer specific aliases before broad substring matches.
+    if "form 97" in cleaned or "form97" in cleaned or "form 60" in cleaned or "form60" in cleaned:
+        return "Form 97"
     if "aadhaar" in cleaned or "aadhar" in cleaned:
         return "Aadhaar"
-    if "pan" in cleaned:
+    if cleaned in {"pan", "pan card"} or "pan card" in cleaned or cleaned.endswith(" pan"):
         return "PAN Card"
     if "passport" in cleaned:
         return "Passport"
@@ -79,19 +156,19 @@ def normalize_llm_document_type(doc_type: str) -> str:
         return "Driving License"
     if "voter" in cleaned:
         return "Voter ID"
-    if "mnrega" in cleaned:
+    if "mnrega" in cleaned or "nrega" in cleaned:
         return "MNREGA Job Card"
     if "npr" in cleaned:
         return "NPR Letter"
-    if "utility" in cleaned or "electricity" in cleaned or "bill" in cleaned:
+    if "electricity" in cleaned or "utility bill" in cleaned or "water bill" in cleaned or "gas bill" in cleaned:
         return "Utility Bill"
-    if "bank statement" in cleaned or "statement" in cleaned:
+    if "bank statement" in cleaned or "account statement" in cleaned:
         return "Bank Statement"
     if "passbook" in cleaned or "pass book" in cleaned:
         return "Passbook"
     if "cheque" in cleaned:
         return "Cheque"
-    if "pdc" in cleaned:
+    if cleaned == "pdc" or "post dated" in cleaned or "post-dated" in cleaned:
         return "PDC"
     if "cibil" in cleaned:
         return "CIBIL Report"
@@ -99,11 +176,13 @@ def normalize_llm_document_type(doc_type: str) -> str:
         return "CRIF Report"
     if "cersai" in cleaned:
         return "CERSAI Report"
-    if "loan agreement" in cleaned or "agreement" in cleaned:
+    if "facility agreement" in cleaned:
+        return "Facility Agreement"
+    if "loan agreement" in cleaned:
         return "Loan Agreement"
     if "sanction" in cleaned:
         return "Sanction Letter"
-    if "stamp" in cleaned:
+    if "stamp" in cleaned or "non judicial" in cleaned or "non-judicial" in cleaned:
         return "Stamp Duty"
     if "technical" in cleaned:
         return "Technical Report"
@@ -111,6 +190,10 @@ def normalize_llm_document_type(doc_type: str) -> str:
         return "Valuation Report"
     if "nach" in cleaned:
         return "NACH Form"
+    if "application form" in cleaned or "loan application" in cleaned:
+        return "Application Form"
+    if cleaned == "cam" or "credit approval memo" in cleaned or "credit appraisal memo" in cleaned:
+        return "CAM"
 
     return "None"
 
@@ -136,9 +219,17 @@ def classify_page_with_llm(text: str) -> dict[str, Any] | None:
 
     raw_document_type = str(parsed.get("document_type") or "None")
     document_type = normalize_llm_document_type(raw_document_type)
-    
+
     if document_type not in VALID_DOCUMENT_TYPES:
         return None
+
+    if not llm_prediction_has_evidence(document_type, cleaned):
+        return {
+            "document_type": "None",
+            "confidence": 0.0,
+            "reason": f"Rejected {document_type}: OCR lacks required evidence phrases",
+            "rejected_document_type": document_type,
+        }
 
     confidence = parsed.get("confidence")
     try:
@@ -159,7 +250,13 @@ def _build_classifier_prompt(text: str) -> str:
     return (
         "You classify one page from an Indian NBFC loan file.\n"
         f"Choose exactly one document_type from this list: {types_list}.\n"
-        "Use \"None\" only when the page is blank, unreadable, or not a loan document.\n"
+        "Use \"None\" when the page is blank, unreadable, or you are unsure.\n"
+        "CRITICAL: \"Form 97\" (and old \"Form 60\") is ONLY a declaration in lieu of PAN. "
+        "Choose Form 97 only when the page title/body literally says Form 97 / Form No. 97 / "
+        "Form 60 / declaration in lieu of PAN. Never use Form 97 for loan agreements, "
+        "sanction letters, stamp papers, electricity bills, application forms, or bureau reports.\n"
+        "If a PAN card image/text is present, choose \"PAN Card\", not Form 97.\n"
+        "Electricity/water/gas invoices are \"Utility Bill\". Non-judicial stamp papers are \"Stamp Duty\".\n"
         "Do not merge credit bureaus: choose \"CIBIL Report\" only for TransUnion CIBIL/CIBIL pages, "
         "and choose \"CRIF Report\" only for CRIF High Mark/CRIF pages.\n"
         "Choose \"CERSAI Report\" for CERSAI, debtor-based search, or Central Registry of Securitisation pages.\n"
@@ -173,6 +270,20 @@ def _build_classifier_prompt(text: str) -> str:
         "Page text:\n"
         f"{text}"
     )
+
+
+def _normalize_evidence_text(value: str) -> str:
+    lowered = str(value or "").lower()
+    lowered = lowered.replace("\u2013", "-").replace("\u2014", "-")
+    lowered = re.sub(r"[^0-9a-z\u0900-\u097f.]+", " ", lowered)
+    return re.sub(r"\s+", " ", lowered).strip()
+
+
+def _contains_evidence(haystack: str, phrase: str) -> bool:
+    needle = _normalize_evidence_text(phrase)
+    if not needle:
+        return False
+    return needle in haystack
 
 
 def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:

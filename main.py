@@ -17,8 +17,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from database.models import initialize_schema
 from routes import decisions, review, upload, verification, settings
 from services.config import log_effective_config
+from services.low_memory import apply_low_memory_defaults
 
 load_dotenv()
+apply_low_memory_defaults()
 
 app = FastAPI(
     title="Document Matching Early Finder",

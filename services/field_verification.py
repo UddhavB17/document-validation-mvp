@@ -47,6 +47,18 @@ def verify_phone(extracted: str, db_value: str) -> FieldVerificationResult:
 
 def verify_date(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify dates by parsing supported formats and comparing date values."""
+    extracted_text = str(extracted or "").strip()
+    # Masked EPIC/Aadhaar style dates are not comparable — not a real mismatch.
+    if re.search(r"\bxx\b", extracted_text, re.I) or "xxxx" in extracted_text.lower():
+        return FieldVerificationResult(
+            field_name="date_of_birth",
+            extracted_value=extracted,
+            db_value=db_value,
+            match=True,
+            confidence=0.5,
+            method="exact",
+            mismatch_reason=None,
+        )
     extracted_date = _parse_supported_date(extracted)
     db_date = _parse_supported_date(db_value)
     if extracted_date is None or db_date is None:
@@ -90,6 +102,22 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
     db_compact = re.sub(r"[^a-z0-9]", "", str(db_value or "").lower())
     if extracted_compact and extracted_compact == db_compact:
         return _exact_result("applicant_name", extracted, db_value, True)
+    # Transliteration variants (Unkar/Onkar/Ukar) that humans treat as the same.
+    try:
+        from services.consistency_checks import _names_equivalent
+
+        if _names_equivalent(extracted, db_value):
+            return FieldVerificationResult(
+                field_name="applicant_name",
+                extracted_value=extracted,
+                db_value=db_value,
+                match=True,
+                confidence=0.95,
+                method="fuzzy",
+                mismatch_reason=None,
+            )
+    except Exception:
+        pass
     return _fuzzy_result(
         field_name="applicant_name",
         extracted=_normalize_name(extracted),
@@ -336,6 +364,8 @@ def _normalize_address(value: Any) -> str:
     }
     for pattern, replacement in replacements.items():
         text = re.sub(pattern, replacement, text)
+    # OCR often glues names like "UkarLal".
+    text = re.sub(r"([a-z])(lal|bai|devi|singh|kumar)\b", r"\1 \2", text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 

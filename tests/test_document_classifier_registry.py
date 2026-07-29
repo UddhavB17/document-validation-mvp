@@ -1,6 +1,6 @@
 import pytest
 
-from services.document_classifier import classify_page
+from services.document_classifier import classify_page, document_type_config
 
 
 def test_fuzzy_ocr_noisy_heading_classified() -> None:
@@ -42,8 +42,40 @@ def test_new_printed_checklist_document_types_are_classified(text: str, expected
     assert classify_page(text)["document_type"] == expected
 
 
+def test_form_97_not_inferred_from_unrelated_loan_pages() -> None:
+    from services.document_classifier import load_document_type_registry
+
+    load_document_type_registry.cache_clear()
+    samples = [
+        "Account Type: TWO-WHEELER LOAN Credit Grantor: XXXX Account #: xxxx Lender Type: PRB",
+        "भारत INDIA NON JUDICIAL FIVE HUNDRED RUPEES RAJASTHAN stamp paper AG 841430",
+        "Jaipur Vidyut Vitran Nigam Limited bill month due date consumer no 2106320",
+        "The loan will be disbursed subject to Facility Agreement Borrower Lender repayment",
+    ]
+    for text in samples:
+        result = classify_page(text)
+        assert result["document_type"] != "Form 97", text
+
+
+def test_stamp_and_utility_pages_classify_correctly() -> None:
+    from services.document_classifier import load_document_type_registry
+
+    load_document_type_registry.cache_clear()
+    stamp = classify_page("INDIA NON JUDICIAL FIVE HUNDRED RUPEES stamp paper RAJASTHAN")
+    assert stamp["document_type"] == "Stamp Duty"
+    utility = classify_page("Jaipur Vidyut Vitran Nigam Limited विद्युत bill month due date consumer no")
+    assert utility["document_type"] == "Utility Bill"
+
+
 def test_unmatched_page_still_unknown() -> None:
     text = "Random narrative page about lunch plans and weather with no loan-file signals."
     result = classify_page(text)
     assert result["document_type"] == "None"
     assert result["confidence"] == 0.0
+
+
+def test_registry_ocr_routes_are_validated_and_default_safe() -> None:
+    assert document_type_config("PAN").ocr_route == "fast"
+    assert document_type_config("Bank Statement").has_tabular_data is True
+    assert document_type_config("Utility Bill").ocr_route == "structured"
+    assert document_type_config("Future Unconfigured Type").ocr_route == "structured"

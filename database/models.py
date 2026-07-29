@@ -234,6 +234,10 @@ SCHEMA_STATEMENTS = [
         is_readable BOOLEAN,
         ocr_text TEXT,
         ocr_confidence REAL,
+        ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured')),
+        ocr_escalated BOOLEAN NOT NULL DEFAULT 0,
+        ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0,
+        structured_content TEXT,
         document_type TEXT,
         classification_confidence REAL,
         detection_method TEXT DEFAULT 'detected',
@@ -351,6 +355,21 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS ocr_route_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id TEXT NOT NULL,
+        document_type TEXT,
+        page_number INTEGER NOT NULL,
+        event_type TEXT NOT NULL CHECK(event_type IN ('processing', 'escalation')),
+        requested_route TEXT NOT NULL CHECK(requested_route IN ('fast', 'structured')),
+        route_used TEXT NOT NULL CHECK(route_used IN ('fast', 'structured')),
+        reason TEXT,
+        original_confidence REAL,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS document_verification_reports (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         application_id INTEGER NOT NULL UNIQUE REFERENCES applications(id),
@@ -385,6 +404,10 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE validation_results ADD COLUMN s_no INTEGER",
     "ALTER TABLE pages ADD COLUMN detection_method TEXT DEFAULT 'detected'",
     "ALTER TABLE pages ADD COLUMN detected_page_number INTEGER",
+    "ALTER TABLE pages ADD COLUMN ocr_route TEXT",
+    "ALTER TABLE pages ADD COLUMN ocr_escalated BOOLEAN NOT NULL DEFAULT 0",
+    "ALTER TABLE pages ADD COLUMN ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE pages ADD COLUMN structured_content TEXT",
 ]
 
 INDEX_STATEMENTS = [
@@ -403,6 +426,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_id ON pipeline_page_events(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_page ON pipeline_page_events(application_id, page_number)",
     "CREATE INDEX IF NOT EXISTS idx_classification_review_log_application_id ON classification_review_log(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ocr_route_events_document_id ON ocr_route_events(document_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ocr_route_events_route_used ON ocr_route_events(route_used)",
     "CREATE INDEX IF NOT EXISTS idx_document_verification_reports_application_id ON document_verification_reports(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_reviewer_summaries_application_id ON reviewer_summaries(application_id)",
 ]

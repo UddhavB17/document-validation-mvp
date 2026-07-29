@@ -304,11 +304,15 @@ def _looks_like_non_name(normalized: str) -> bool:
     blocked = {
         "account", "address", "date of birth", "dob", "ifsc", "loan amount", "pin code",
         "source", "financer", "issuing authority", "ration card", "driving", "phone no",
+        "c/o", "s/o", "w/o", "d/o", "c/o , s/o", "s/o , c/o", "relationship", "relations",
+        "master policy holder", "name of grantor",
     }
     if normalized in blocked:
         return True
+    if re.fullmatch(r"(?:c/?o|s/?o|w/?o|d/?o)(?:\s*[,/]\s*(?:c/?o|s/?o|w/?o|d/?o))*", normalized):
+        return True
     compact = re.sub(r"[^a-z]", "", normalized)
-    return compact in {"acnumber", "acnumeber", "accountnumber", "accountno"}
+    return compact in {"acnumber", "acnumeber", "accountnumber", "accountno", "coso", "soco", "null", "none"}
 
 
 def _looks_like_address_placeholder(normalized: str) -> bool:

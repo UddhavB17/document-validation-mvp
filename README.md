@@ -74,6 +74,10 @@ copy .env.example .env
 
 ## Run Locally
 
+Default config (`.env.example`) is **full power**: hybrid OCR with PP-StructureV3
+escalation and optional LLM helpers enabled. On ~8GB machines only, set
+`DMEF_LOW_MEMORY=true` or use `scripts/start_mvp.sh` to force the light path.
+
 Terminal 1, backend:
 
 ```powershell
@@ -113,6 +117,42 @@ using extracted identity evidence. Match/mismatch decisions remain
 deterministic. Low-confidence or ambiguous ownership is surfaced for manual
 review instead of being silently guessed. Explicit one-based `pages` mappings
 remain supported as an override when a trusted index is available.
+
+## Structured OCR
+
+Scanned pages use deterministic hybrid OCR routing. A lightweight PaddleOCR
+text-detection/recognition pass supplies the existing classifier. Its resolved
+document type is then looked up in `data/document_type_registry.json`:
+
+- `ocr_route: "fast"` retains plain text, confidence, and bounding boxes.
+- `ocr_route: "structured"` runs PP-StructureV3 and retains reading-order
+  layout regions plus table HTML/Markdown in `structured_content`.
+- Missing `ocr_route` values default to `structured`. `has_tabular_data: true`
+  or `multi_column: true` always forces the structured route.
+- Fast results below `OCR_FAST_PATH_MIN_CONFIDENCE` (default `0.85`) escalate
+  to PP-StructureV3. Escalations and per-page route timing are recorded in
+  `ocr_route_events`; `get_ocr_route_metrics(document_id)` aggregates time by
+  route.
+
+To add another fast-path type, edit its registry entry without changing code:
+
+```json
+{
+  "type": "Example Declaration",
+  "ocr_route": "fast",
+  "has_tabular_data": false,
+  "multi_column": false
+}
+```
+
+The OCR models are lazy-loaded and make no external inference calls. Model
+weights must be cached locally for a zero-egress deployment. On an RTX 3050
+with 6 GB VRAM, keeping the lightweight OCR and full PP-StructureV3 pipelines
+resident together can exhaust memory, especially with table/seal modules.
+Prefer route-homogeneous batches or separate workers with one model family per
+GPU; otherwise unload between batches. Per-page load/unload is usually too
+expensive. Table and seal modules can be controlled through the
+`PADDLE_STRUCTURE_*` settings in `.env`.
 
 ## Trusted JSON + Mapped-Page Verification
 

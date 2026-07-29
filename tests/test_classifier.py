@@ -202,7 +202,7 @@ def test_guarantee_deed_classified() -> None:
 
 
 def test_guarantee_deed_via_guarantor_and_deed() -> None:
-    text = "This deed is executed by the guarantor in favour of the lender"
+    text = "DEED OF GUARANTEE This Guarantee Deed is executed by the guarantor in favour of the lender"
     assert _classify(text) == "Guarantee Deed"
 
 
