@@ -35,13 +35,13 @@ export const checklistMock: ChecklistVerificationResponse = {
       document_name: "PAN",
       status: "needs_review",
       confidence: "medium",
-      confidence_detail: "PAN number differs from digital application form; expected BCXPL9010K, found BCXPL9010X",
+      confidence_detail: "PAN number differs from digital application form; expected TSTAA0001T, found TSTAA0009T",
       extracted_fields: {
         applicant_name: "Amit Sharma",
-        pan_number: "BCXPL9010X",
+        pan_number: "TSTAA0009T",
       },
       extraction_source: "deterministic",
-      narration: "needs_review was assigned because the extracted PAN number BCXPL9010X does not match the digital application value BCXPL9010K.",
+      narration: "needs_review was assigned because the extracted PAN number TSTAA0009T does not match the digital application value TSTAA0001T.",
       flagged_reason: "pan_number_mismatch",
     },
     {

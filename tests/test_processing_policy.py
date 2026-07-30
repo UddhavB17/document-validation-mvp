@@ -70,6 +70,7 @@ def test_zero_ocr_budget_means_full_scan(monkeypatch) -> None:
 
 
 def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> None:
+    monkeypatch.setenv("OCR_PROVIDER", "local")
     monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "2")
     ocr_calls: list[str] = []

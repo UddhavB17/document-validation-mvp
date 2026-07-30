@@ -21,9 +21,11 @@ from services.field_verification import (
 from services.ocr_engine import run_ocr_on_page as run_structured_ocr_on_page
 from services.ocr_router import OCRRouter, run_fast_ocr_on_page
 from services.pdf_processor import convert_page_to_image, open_pdf
+from services.person_names import is_person_name_candidate
 from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
 from services.text_extractor import extract_digital_text
+from services.validation_gates import attach_field_provenance, canonical_field, field_reliable_for_validation
 
 
 # Backward-compatible seam used by existing mapped-verification integrations.
@@ -163,6 +165,7 @@ def run_mapped_verification(
                 continue
 
             document_observations: dict[str, list[dict[str, Any]]] = {}
+            unreliable_fields: dict[str, list[dict[str, Any]]] = {}
             readable_pages: list[int] = []
             inherited_ocr_route = None
             for page_number in mapped_pages:
@@ -204,9 +207,34 @@ def run_mapped_verification(
                     text_source = f"paddle_ocr_{routed_ocr.route_used}"
                     ocr_page_numbers.add(page_number)
                 extracted = extract_fields(document_type, text)
+                page_record = {
+                    "page_number": page_number,
+                    "page_type": page_type,
+                    "image_path": image_path,
+                    "is_readable": is_readable,
+                    "ocr_text": text,
+                    "ocr_confidence": confidence,
+                    "document_type": document_type,
+                    "person_id": person_id,
+                    "classification_confidence": 1.0,
+                    "detection_method": f"provided_mapping_{text_source}",
+                    "detected_page_number": page_number,
+                    "extracted_fields": extracted,
+                }
                 for key, value in extracted.items():
                     if not str(key).startswith("_") and value not in (None, ""):
                         field = _canonical(key)
+                        if not field_reliable_for_validation(
+                            page_record,
+                            field,
+                            value,
+                            expected_document_type=document_type,
+                        ):
+                            if field != "applicant_name":
+                                unreliable_fields.setdefault(field, []).append(
+                                    {"page_number": page_number, "value": value}
+                                )
+                            continue
                         observation = {
                             "person_id": person_id,
                             "document_type": document_type,
@@ -221,29 +249,24 @@ def run_mapped_verification(
                         document_observations.setdefault(field, []).append(observation)
                 if is_readable:
                     readable_pages.append(page_number)
-                pages.append({
-                    "page_number": page_number,
-                    "page_type": page_type,
-                    "image_path": image_path,
-                    "is_readable": is_readable,
-                    "ocr_text": text,
-                    "ocr_confidence": confidence,
-                    "ocr_structure": ocr if page_type == "scanned" else {},
-                    "structured_content": (
-                        routed_ocr.structured_content if page_type == "scanned" else None
-                    ),
-                    "ocr_route": routed_ocr.route_used if page_type == "scanned" else None,
-                    "ocr_escalated": routed_ocr.escalated if page_type == "scanned" else False,
-                    "ocr_processing_time_ms": (
-                        routed_ocr.processing_time_ms if page_type == "scanned" else 0
-                    ),
-                    "document_type": document_type,
-                    "person_id": person_id,
-                    "classification_confidence": 1.0,
-                    "detection_method": f"provided_mapping_{text_source}",
-                    "detected_page_number": page_number,
-                    "extracted_fields": extracted,
-                })
+                if page_type == "scanned":
+                    page_record.update({
+                        "ocr_structure": ocr,
+                        "structured_content": routed_ocr.structured_content,
+                        "ocr_route": routed_ocr.route_used,
+                        "ocr_escalated": routed_ocr.escalated,
+                        "ocr_processing_time_ms": routed_ocr.processing_time_ms,
+                    })
+                else:
+                    page_record.update({
+                        "ocr_structure": {},
+                        "structured_content": None,
+                        "ocr_route": None,
+                        "ocr_escalated": False,
+                        "ocr_processing_time_ms": 0,
+                    })
+                attach_field_provenance(page_record)
+                pages.append(page_record)
                 processed_page_numbers.add(page_number)
                 update_page_progress(
                     application_id,
@@ -270,6 +293,17 @@ def run_mapped_verification(
                 field_observations = document_observations.get(field) or []
                 page_number = readable_pages[0]
                 if not field_observations:
+                    if field == "applicant_name" and unreliable_fields.get(field):
+                        continue
+                    if unreliable_fields.get(field):
+                        anomalies.append(_anomaly(
+                            f"{field.upper()}_EXTRACTION_UNRELIABLE", "LOW",
+                            unreliable_fields[field][0].get("page_number") or page_number,
+                            document_type, expected_value, None,
+                            "Extracted evidence for this field was not reliable enough for trusted JSON comparison.",
+                            field, "MANUAL_REVIEW_REQUIRED", person_id,
+                        ))
+                        continue
                     checked_fields += 1
                     anomalies.append(_anomaly(
                         f"{field.upper()}_NOT_FOUND", "MEDIUM", page_number, document_type,
@@ -351,6 +385,7 @@ def compare_processed_pages(
     """
     reference_data = manifest.get("reference_data") or {}
     documents = manifest.get("documents") or []
+    source_lookup = _source_lookup(source_documents or [])
     pages_by_number = {
         int(page.get("page_number") or 0): page
         for page in pages
@@ -370,6 +405,7 @@ def compare_processed_pages(
         mapped_numbers = [int(number) for number in mapping.get("pages") or []]
         expected = _expected_fields(reference_data, mapping, provided_type)
         document_observations: dict[str, list[dict[str, Any]]] = {}
+        document_unreliable_fields: dict[str, list[dict[str, Any]]] = {}
         readable_pages: list[int] = []
         aggregate_key = (person_id, provided_type.strip().lower())
         should_aggregate = provided_type.strip().lower() in _AGGREGATED_FIELD_DOC_TYPES
@@ -397,6 +433,7 @@ def compare_processed_pages(
             if not isinstance(fields, dict):
                 fields = {}
                 page["extracted_fields"] = fields
+            _suppress_invalid_name_fields(fields)
             mapping_metadata = {
                 "person_id": person_id,
                 "provided_document_type": provided_type,
@@ -425,16 +462,31 @@ def compare_processed_pages(
                 if value in (None, "", [], {}) or str(key).startswith("_"):
                     continue
                 field = _canonical(key)
+                if not field_reliable_for_validation(
+                    page,
+                    field,
+                    value,
+                    expected_document_type=provided_type,
+                ):
+                    if field != "applicant_name":
+                        document_unreliable_fields.setdefault(field, []).append(
+                            {"page_number": page_number, "value": value}
+                        )
+                    continue
                 observation = {
                     "person_id": person_id,
                     "document_type": provided_type,
                     "classified_document_type": page.get("document_type"),
                     "source_document_id": source_document_id,
+                    "source_filename": source_lookup.get(str(source_document_id), {}).get("original_filename"),
+                    "source_segment": _source_segment(source_lookup.get(str(source_document_id), {})),
                     "page_number": page_number,
                     "field_name": field,
                     "value": value,
+                    "document_confidence": mapping.get("auto_mapping", {}).get("document_confidence"),
                     "ocr_confidence": page.get("ocr_confidence"),
                     "text_source": "embedded_text" if page.get("page_type") == "digital" else "paddle_ocr",
+                    "field_confidence": _observation_field_confidence(page, key),
                 }
                 observations.append(observation)
                 document_observations.setdefault(field, []).append(observation)
@@ -456,6 +508,7 @@ def compare_processed_pages(
                     "document_type": provided_type,
                     "expected": expected,
                     "observations": {},
+                    "unreliable_fields": {},
                     "readable_pages": [],
                 },
             )
@@ -463,6 +516,8 @@ def compare_processed_pages(
             bucket["readable_pages"].extend(readable_pages)
             for field, field_observations in document_observations.items():
                 bucket["observations"].setdefault(field, []).extend(field_observations)
+            for field, unreliable in document_unreliable_fields.items():
+                bucket["unreliable_fields"].setdefault(field, []).extend(unreliable)
             continue
 
         field_stats = _verify_document_fields(
@@ -473,6 +528,7 @@ def compare_processed_pages(
             person_id=person_id,
             reference_data=reference_data,
             anomalies=anomalies,
+            unreliable_fields=document_unreliable_fields,
         )
         checked_fields += field_stats["checked"]
         matched_fields += field_stats["matched"]
@@ -487,6 +543,7 @@ def compare_processed_pages(
             reference_data=reference_data,
             anomalies=anomalies,
             prefer_any_match=True,
+            unreliable_fields=bucket.get("unreliable_fields") or {},
         )
         checked_fields += field_stats["checked"]
         matched_fields += field_stats["matched"]
@@ -497,6 +554,7 @@ def compare_processed_pages(
         reference_data,
         source_documents or [],
     )
+    _attach_source_provenance(anomalies, source_documents or [])
     people_verification = _build_people_verification(
         reference_data, documents, observations, anomalies
     )
@@ -520,6 +578,7 @@ def _verify_document_fields(
     reference_data: dict[str, Any],
     anomalies: list[dict[str, Any]],
     prefer_any_match: bool = False,
+    unreliable_fields: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, int]:
     """Compare extracted observations against expected values for one document unit."""
     checked = 0
@@ -533,8 +592,21 @@ def _verify_document_fields(
         field = _canonical(raw_field)
         if field not in VERIFY or expected_value in (None, ""):
             continue
+        if field == "applicant_name" and not is_person_name_candidate(expected_value):
+            continue
         field_observations = document_observations.get(field) or []
         if not field_observations:
+            if field == "applicant_name" and (unreliable_fields or {}).get(field):
+                continue
+            if (unreliable_fields or {}).get(field):
+                page_number = ((unreliable_fields or {}).get(field) or [{}])[0].get("page_number")
+                anomalies.append(_anomaly(
+                    f"{field.upper()}_EXTRACTION_UNRELIABLE", "LOW", page_number,
+                    provided_type, expected_value, None,
+                    "Extracted evidence for this field was not reliable enough for trusted JSON comparison.",
+                    field, "MANUAL_REVIEW_REQUIRED", person_id,
+                ))
+                continue
             page_number = readable_pages[0] if readable_pages else None
             # If the first readable page has low OCR confidence, suppress the
             # NOT_FOUND anomaly and emit a LOW_CONFIDENCE_PAGE once per page.
@@ -671,13 +743,18 @@ def _classify_source_documents(
                 if isinstance(mapped_fields, dict):
                     candidate_names.append(mapped_fields.get("applicant_name"))
                 for candidate in candidate_names:
+                    if not is_person_name_candidate(candidate):
+                        continue
                     candidate_key = _comparison_key("applicant_name", candidate)
                     if not candidate_key:
                         continue
                     for person_id, trusted in reference_data.items():
                         if not isinstance(trusted, dict):
                             continue
-                        if candidate_key == _comparison_key("applicant_name", trusted.get("applicant_name")):
+                        trusted_name = trusted.get("applicant_name")
+                        if not is_person_name_candidate(trusted_name):
+                            continue
+                        if candidate_key == _comparison_key("applicant_name", trusted_name):
                             owner_votes[str(person_id)] += 1
 
         provided_owners = sorted({
@@ -706,6 +783,43 @@ def _classify_source_documents(
             if isinstance(fields, dict):
                 fields["_zip_source_classification"] = classification
     return results
+
+
+def _source_lookup(source_documents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(item.get("source_document_id") or ""): item for item in source_documents}
+
+
+def _source_segment(source: dict[str, Any]) -> str | None:
+    if not source:
+        return None
+    start = source.get("internal_page_start")
+    end = source.get("internal_page_end")
+    if start in (None, "") or end in (None, ""):
+        return None
+    return f"{start}-{end}" if start != end else str(start)
+
+
+def _attach_source_provenance(
+    anomalies: list[dict[str, Any]], source_documents: list[dict[str, Any]]
+) -> None:
+    by_source = _source_lookup(source_documents)
+    by_page: dict[int, dict[str, Any]] = {}
+    for source in source_documents:
+        start = int(source.get("internal_page_start") or 0)
+        end = int(source.get("internal_page_end") or 0)
+        for page_number in range(start, end + 1):
+            by_page[page_number] = source
+    for anomaly in anomalies:
+        source = by_source.get(str(anomaly.get("source_document_id") or ""))
+        if not source:
+            page_number = anomaly.get("page_number")
+            if page_number is not None:
+                source = by_page.get(int(page_number))
+        if not source:
+            continue
+        anomaly["source_document_id"] = source.get("source_document_id")
+        anomaly["source_filename"] = source.get("original_filename")
+        anomaly["source_segment"] = _source_segment(source)
 
 
 def _safe_digital_text(page: Any) -> str:
@@ -755,7 +869,33 @@ def _expected_fields(
 
 def _canonical(field: Any) -> str:
     value = str(field or "").strip().lower()
-    return ALIASES.get(value, value)
+    return canonical_field(ALIASES.get(value, value))
+
+
+def _observation_field_confidence(page: dict[str, Any], field: Any) -> float | None:
+    fields = page.get("extracted_fields") or {}
+    if not isinstance(fields, dict):
+        return None
+    provenance = fields.get("_field_provenance")
+    if not isinstance(provenance, dict):
+        return None
+    item = provenance.get(str(field))
+    if not isinstance(item, dict):
+        field_key = _canonical(field)
+        item = next(
+            (
+                candidate
+                for key, candidate in provenance.items()
+                if _canonical(key) == field_key and isinstance(candidate, dict)
+            ),
+            None,
+        )
+    if not isinstance(item, dict):
+        return None
+    try:
+        return float(item.get("field_confidence"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _page_ocr_confidence(
@@ -821,6 +961,8 @@ def _find_other_owner(
     reference_data: dict[str, Any], person_id: str, field: str, found_value: Any
 ) -> str | None:
     found = _comparison_key(field, found_value)
+    if field == "applicant_name" and not is_person_name_candidate(found_value):
+        return None
     for other_id, data in reference_data.items():
         if other_id == person_id or not isinstance(data, dict):
             continue
@@ -830,6 +972,8 @@ def _find_other_owner(
                 expected = v
                 break
         if expected not in (None, ""):
+            if field == "applicant_name" and not is_person_name_candidate(expected):
+                continue
             if _comparison_key(field, expected) == found:
                 return str(other_id)
             validator = VERIFY.get(field)
@@ -840,6 +984,31 @@ def _find_other_owner(
                 except Exception:
                     pass
     return None
+
+
+def _name_observation_is_reliable(page: dict[str, Any], value: Any) -> bool:
+    fields = page.get("extracted_fields") or {}
+    if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False:
+        return False
+    return is_person_name_candidate(value)
+
+
+def _suppress_invalid_name_fields(fields: dict[str, Any]) -> None:
+    for key, value in list(fields.items()):
+        if str(key).startswith("_"):
+            continue
+        if key == "person_records" and isinstance(value, list):
+            for record in value:
+                if isinstance(record, dict):
+                    _suppress_invalid_name_fields(record)
+            continue
+        if _canonical(key) != "applicant_name":
+            continue
+        if isinstance(value, list):
+            names = [item for item in value if is_person_name_candidate(item)]
+            fields[key] = names
+        elif value not in (None, "") and not is_person_name_candidate(value):
+            fields[key] = None
 
 
 def _build_people_verification(

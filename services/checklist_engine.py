@@ -8,6 +8,7 @@ from services import checklist_service
 from services.consistency_checks import run_consistency_checks
 from services.config import effective_config
 from services.page_quality import confident_pages_for_types, is_confident_document_match
+from services.person_names import is_person_name_candidate
 from services.processing_policy import is_ocr_skipped_page
 
 try:
@@ -81,6 +82,10 @@ def check_field_match(extracted_fields: dict, system_data: dict, field_names: li
         system_val = system_data.get(field)
         extracted_val = extracted_fields.get(field)
         if system_val in (None, "") or extracted_val in (None, ""):
+            continue
+        if field in {"applicant_name", "borrower_name", "account_holder_name", "name"} and (
+            not is_person_name_candidate(system_val) or not is_person_name_candidate(extracted_val)
+        ):
             continue
 
         if field in ["loan_amount", "emi", "tenure", "roi", "interest_rate"]:
@@ -308,7 +313,7 @@ def _scoped_people(scope: str | None, system_data: dict) -> dict[str, dict]:
 
 def _applicability_unknown_anomaly(item: dict, *, document_type: str | None = None) -> dict:
     s_no = item.get("s_no")
-    return build_anomaly(
+    anomaly = build_anomaly(
         rule_id=f"APPLICABILITY_UNKNOWN_S{s_no}",
         s_no=s_no,
         severity="LOW",
@@ -317,6 +322,10 @@ def _applicability_unknown_anomaly(item: dict, *, document_type: str | None = No
         reason=f"Could not determine whether checklist item {s_no} applies.",
         document_type=document_type,
     )
+    anomaly["status"] = "INTAKE_REQUIREMENT"
+    anomaly["source"] = "trusted_json_or_system_input"
+    anomaly["is_pdf_error"] = False
+    return anomaly
 
 
 def system_flag_state(item: dict, system_data: dict) -> bool | None:
@@ -334,7 +343,7 @@ def _system_flag_anomaly(item: dict, system_data: dict) -> dict | None:
     state = system_flag_state(item, system_data)
     field = str(item.get("system_field") or "")
     if state is None:
-        return build_anomaly(
+        anomaly = build_anomaly(
             rule_id=f"SYSTEM_VALUE_UNKNOWN_S{item.get('s_no')}",
             s_no=item.get("s_no"),
             severity="LOW",
@@ -343,6 +352,10 @@ def _system_flag_anomaly(item: dict, system_data: dict) -> dict | None:
             reason=item.get("description", ""),
             document_type=item.get("document_type"),
         )
+        anomaly["status"] = "INTAKE_REQUIREMENT"
+        anomaly["source"] = "trusted_json_or_system_input"
+        anomaly["is_pdf_error"] = False
+        return anomaly
     if state:
         return None
     return _missing_presence_anomaly(item, document_type=str(item.get("document_type") or item.get("description") or "System check"))
@@ -1051,6 +1064,10 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
         "photo",
         "screenshot",
         "ocr skipped",
+        "house photo",
+        "workplace photo",
+        "kyc card photo",
+        "ration card photo",
     }
 
     for page in pages:

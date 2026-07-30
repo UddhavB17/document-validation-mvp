@@ -21,6 +21,7 @@ python-dateutil>=2.9.0
 
 # OCR and image processing
 opencv-python>=4.9.0
+google-cloud-vision>=3.7.0
 paddlepaddle>=3.0.0
 paddleocr[doc-parser]>=3.0.0
 

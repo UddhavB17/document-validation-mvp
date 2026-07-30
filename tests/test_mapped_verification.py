@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import database.db as db
+from services.automatic_document_index import build_automatic_document_index
 from database.db import get_connection, init_db
 from services.mapped_verification import compare_processed_pages, run_mapped_verification
 from services.field_verification import verify_name
@@ -8,6 +9,10 @@ from services.reviewer import build_reviewer_summary, load_reviewer_summary
 from services.verification_manifest import VerificationManifest
 from services.company_data_provider import CompanyReferenceData, LocalJsonCompanyDataProvider
 from services.document_index_provider import ManualDocumentIndexProvider, compose_verification_manifest
+
+
+def _anomaly_text(anomalies: list[dict]) -> str:
+    return repr(anomalies)
 
 
 class _FakeDocument:
@@ -94,6 +99,148 @@ def test_shared_pipeline_comparison_matches_case_insensitive_name_and_classifies
         "predicted_document_type": "PAN",
         "document_type_votes": {"PAN": 1},
     }]
+
+
+def test_mapped_verification_rejects_address_like_applicant_name_candidate() -> None:
+    pages = [{
+        "page_number": 1,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": "Application Form\nApplicant Name\nSemali Bakhata",
+        "document_type": "Application Form",
+        "classification_confidence": 0.98,
+        "extracted_fields": {"applicant_name": "Semali Bakhata"},
+    }]
+    manifest = {
+        "reference_data": {"primary": {"applicant_name": "Peeru Lal"}},
+        "documents": [{
+            "source_document_id": "file-0001",
+            "applicant_role": "primary",
+            "document_type": "Application Form",
+            "pages": [1],
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert pages[0]["extracted_fields"]["applicant_name"] is None
+    assert not any(item["rule_id"] == "APPLICANT_NAME_MISMATCH" for item in result["anomalies"])
+    assert not any("NAME_EXTRACTION" in item["rule_id"] for item in result["anomalies"])
+    assert "Semali Bakhata" not in _anomaly_text(result["anomalies"])
+
+
+def test_pan_mapped_to_property_deed_suppresses_third_party_name_evidence() -> None:
+    pages = [{
+        "page_number": 1,
+        "page_type": "scanned",
+        "is_readable": True,
+        "ocr_text": (
+            "Endorsement of Execution\n"
+            "Name: MOHAN LAL Age: 40\n"
+            "The lease deed or allotment order issued by the Gram Panchayat"
+        ),
+        "ocr_confidence": 0.84,
+        "document_type": "PAN",
+        "classification_confidence": 0.65,
+        "detection_method": "inherited",
+        "extracted_fields": {"applicant_name": "MOHAN LAL", "dob": "40"},
+    }]
+    manifest = {
+        "reference_data": {
+            "coapplicant_1": {
+                "applicant_name": "Unkar Lal",
+                "date_of_birth": "05-June-1961",
+            }
+        },
+        "documents": [{
+            "source_document_id": "auto-0001-pan",
+            "applicant_role": "coapplicant_1",
+            "document_type": "PAN",
+            "pages": [1],
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    text = _anomaly_text(result["anomalies"])
+    assert "MOHAN LAL" not in text
+    assert not any("APPLICANT_NAME_MISMATCH" in item["rule_id"] for item in result["anomalies"])
+    assert not any("DATE_OF_BIRTH_MISMATCH" in item["rule_id"] for item in result["anomalies"])
+
+
+def test_zip_source_application_form_is_verified_as_one_merged_document() -> None:
+    pages = [
+        {
+            "page_number": 1,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Application Form\nApplicant Name\nSemali Bakhata",
+            "document_type": "Unknown",
+            "classification_confidence": 0.0,
+            "extracted_fields": {"applicant_name": "Semali Bakhata"},
+        },
+        {
+            "page_number": 2,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Application Form\nMobile Number\n9000000001",
+            "document_type": "Application Form",
+            "classification_confidence": 0.91,
+            "extracted_fields": {"phone_number": "9000000001"},
+        },
+        {
+            "page_number": 3,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "CO-APPLICANT KYC DETAILS\nPAN\nTSTAA0001T",
+            "document_type": "Unknown",
+            "classification_confidence": 0.0,
+            "extracted_fields": {"pan_number": "TSTAA0001T"},
+        },
+    ]
+    reference_data = {
+        "primary": {
+            "applicant_name": "Peeru Lal",
+            "phone_number": "9000000001",
+            "pan_number": "TSTAA0001T",
+        }
+    }
+    source_documents = [{
+        "source_document_id": "file-0001",
+        "original_filename": "Applicant/application-form.pdf",
+        "file_type": "pdf",
+        "page_count": 3,
+        "internal_page_start": 1,
+        "internal_page_end": 3,
+    }]
+    automatic_index = build_automatic_document_index(
+        pages,
+        reference_data,
+        source_documents=source_documents,
+    )
+
+    assert automatic_index["documents"][0]["document_type"] == "Application Form"
+    assert automatic_index["documents"][0]["pages"] == [1, 2, 3]
+    assert automatic_index["documents"][0]["auto_mapping"]["detection_method"] == "zip_source_document_classification"
+
+    result = compare_processed_pages(
+        pages,
+        {"reference_data": reference_data, "documents": automatic_index["documents"]},
+        source_documents=source_documents,
+    )
+
+    assert result["checked_fields"] >= 3
+    assert result["matched_fields"] >= 2
+    assert not any(
+        item["severity"] == "HIGH" and "APPLICANT_NAME" in item["rule_id"]
+        for item in result["anomalies"]
+    )
+    assert pages[0]["extracted_fields"]["applicant_name"] is None
+    assert not any("NAME_EXTRACTION" in item["rule_id"] for item in result["anomalies"])
+    assert "Semali Bakhata" not in _anomaly_text(result["anomalies"])
+    name_not_found = next(item for item in result["anomalies"] if item["rule_id"] == "APPLICANT_NAME_NOT_FOUND")
+    assert name_not_found["source_filename"] == "Applicant/application-form.pdf"
+    assert name_not_found["source_segment"] == "1-3"
 
 
 def test_loan_level_field_checks_run_once_across_fragments() -> None:

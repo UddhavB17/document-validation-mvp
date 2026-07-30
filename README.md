@@ -50,7 +50,7 @@ From PowerShell in the project root:
 
 ## Manual Setup
 
-Create and activate the Python environment:
+Create and activate the Python environment on Windows PowerShell:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -72,11 +72,22 @@ Create environment config:
 copy .env.example .env
 ```
 
+On macOS Terminal:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cd frontend && npm install && cd ..
+cp .env.example .env
+```
+
 ## Run Locally
 
-Default config (`.env.example`) is **full power**: hybrid OCR with PP-StructureV3
-escalation and optional LLM helpers enabled. On ~8GB machines only, set
-`DMEF_LOW_MEMORY=true` or use `scripts/start_mvp.sh` to force the light path.
+The default `.env.example` uses local OCR. Set `OCR_PROVIDER=google_vision` to
+use only Google Vision for scanned pages, or `OCR_PROVIDER=auto` to use Google
+when credentials exist and local OCR otherwise. On ~8GB machines using local
+OCR, set `DMEF_LOW_MEMORY=true` or use `scripts/start_mvp.sh`.
 
 Terminal 1, backend:
 
@@ -118,7 +129,117 @@ deterministic. Low-confidence or ambiguous ownership is surfaced for manual
 review instead of being silently guessed. Explicit one-based `pages` mappings
 remain supported as an override when a trusted index is available.
 
-## Structured OCR
+Both normalized ZIP packages and merged PDFs use a second evidence-resolution
+pass. It can promote an Unknown page only when intrinsic document anchors are
+strong, group continuation/front-back pages, match exact identity evidence to
+the correct trusted person, and rerun the appropriate extractor over the whole
+document group. Application forms and CAMs are treated as multi-person
+containers. Observed OCR values, resolved document/person metadata, and trusted
+JSON remain separate; trusted JSON is never copied over an observed value.
+
+## OCR API Setup (macOS and Windows)
+
+Google Vision is the API OCR provider currently implemented. When
+`OCR_PROVIDER=google_vision`, each scanned page is sent to Google once and the
+same response is reused for classification and field extraction. Local
+PaddleOCR is not called for those pages. Digital pages continue to use their
+embedded PDF text and do not incur OCR API usage.
+
+Before setup, enable the Vision API and billing in your Google Cloud project.
+Never paste a real API key or service-account JSON into source code, README
+examples, screenshots, issues, or commits. Keep `.env` and credential files
+outside Git; only `.env.example` should be committed.
+
+### Option A: Google Vision API key
+
+Create `.env` from `.env.example` and use placeholder values like these:
+
+```dotenv
+OCR_PROVIDER=google_vision
+GOOGLE_VISION_AUTH=api_key
+GOOGLE_VISION_API_KEY=replace_with_your_secret_key
+GOOGLE_VISION_FEATURE=DOCUMENT_TEXT_DETECTION
+GOOGLE_VISION_TIMEOUT_SECONDS=60
+GOOGLE_VISION_MAX_ATTEMPTS=3
+```
+
+Restart the backend after changing `.env`.
+
+### Option B: Google service account / Application Default Credentials
+
+Service-account or workload credentials are preferred for production. Put the
+credential JSON outside the repository and configure an absolute path.
+
+macOS `.env` example:
+
+```dotenv
+OCR_PROVIDER=google_vision
+GOOGLE_VISION_AUTH=adc
+GOOGLE_APPLICATION_CREDENTIALS=/Users/your-user/.config/dmef/google-vision.json
+```
+
+Windows `.env` example:
+
+```dotenv
+OCR_PROVIDER=google_vision
+GOOGLE_VISION_AUTH=adc
+GOOGLE_APPLICATION_CREDENTIALS=C:\Users\your-user\.config\dmef\google-vision.json
+```
+
+For local development with the Google Cloud CLI, run the same command from
+macOS Terminal or Windows PowerShell:
+
+```text
+gcloud auth application-default login
+```
+
+Then leave `GOOGLE_APPLICATION_CREDENTIALS` blank and use
+`GOOGLE_VISION_AUTH=adc`.
+
+### Verify the selected OCR provider
+
+Start the backend and open **Settings → OCR Provider**. Select **Google Vision
+API only**, choose the authentication mode, save, and process a test document
+containing approved dummy data. Backend page metadata should show:
+
+```json
+{
+  "ocr_provider": "google_vision",
+  "ocr_route": "google_vision"
+}
+```
+
+If `OCR_PROVIDER=auto`, the application uses Google only when an API key or ADC
+credential path is configured. Explicit `google_vision` mode never silently
+falls back to local OCR; API failures are recorded as page-processing errors.
+
+### Adding Amazon Textract, Azure AI Vision, or another OCR API
+
+The extraction pipeline expects every provider adapter to return the same
+internal result contract:
+
+```python
+{
+    "ocr_text": "observed document text",
+    "confidence": 0.0,
+    "is_readable": True,
+    "ocr_provider": "provider_name",
+    "bounding_boxes": [],
+    "layout_blocks": [],
+    "tables": [],
+}
+```
+
+To add another API, create a provider module beside
+`services/google_vision_ocr.py`, translate the provider response into this
+contract, register the provider in `services/ocr_router.py`, add non-secret
+settings to `.env.example`, and add mocked tests that make no external calls.
+Provider SDK credentials must come from environment variables, the cloud
+provider's standard credential chain, or a secret manager—not from committed
+configuration. Until an adapter is registered, setting an arbitrary provider
+name will not activate that API.
+
+## Local Structured OCR
 
 Scanned pages use deterministic hybrid OCR routing. A lightweight PaddleOCR
 text-detection/recognition pass supplies the existing classifier. Its resolved
@@ -145,7 +266,7 @@ To add another fast-path type, edit its registry entry without changing code:
 }
 ```
 
-The OCR models are lazy-loaded and make no external inference calls. Model
+Local OCR models are lazy-loaded and make no external inference calls. Model
 weights must be cached locally for a zero-egress deployment. On an RTX 3050
 with 6 GB VRAM, keeping the lightweight OCR and full PP-StructureV3 pipelines
 resident together can exhaust memory, especially with table/seal modules.
@@ -186,4 +307,7 @@ npm.cmd run build
 
 ## Data Safety
 
-Use only dummy or approved sample documents. Uploaded files, extracted pages, generated reports, local databases, and `.env` files are ignored by Git.
+Use only dummy or approved sample documents. Uploaded files, extracted pages,
+generated reports, local databases, `.env` files, API keys, and service-account
+credentials must remain untracked. Before committing, inspect staged changes
+for identifiers and secrets.

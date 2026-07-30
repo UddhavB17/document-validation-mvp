@@ -11,6 +11,8 @@ interface Setting {
   category: string;
   label: string;
   description: string;
+  is_secret?: boolean;
+  has_value?: boolean;
 }
 
 // Map of all possible fields for each document type to render in the Matrix
@@ -95,6 +97,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchSettings();
@@ -115,18 +118,20 @@ export default function SettingsPage() {
     }
   };
 
-  const updateSingleSetting = async (key: string, newValue: string) => {
+  const updateSingleSetting = async (key: string, newValue: string, options?: { clearSecret?: boolean }) => {
     try {
       setSavingKey(key);
       const res = await fetch(`${API_BASE_URL}/settings/${key}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config_value: newValue }),
+        body: JSON.stringify({ config_value: newValue, clear_secret: options?.clearSecret ?? false }),
       });
       if (res.ok) {
+        const updated = await res.json();
         setSettings((prev) =>
-          prev.map((s) => (s.config_key === key ? { ...s, config_value: newValue } : s))
+          prev.map((s) => (s.config_key === key ? { ...s, ...updated } : s))
         );
+        setDraftValues((prev) => ({ ...prev, [key]: "" }));
         showToast("Setting updated successfully!");
       }
     } catch (e) {
@@ -142,13 +147,21 @@ export default function SettingsPage() {
   };
 
   // Helper getters/setters for specific settings keys
-  const getVal = (key: string) => settings.find((s) => s.config_key === key)?.config_value ?? "";
+  const getSetting = (key: string) => settings.find((s) => s.config_key === key);
+  const getVal = (key: string) => getSetting(key)?.config_value ?? "";
 
   const renderGeneralSettings = () => {
     const isLlmEnabled = getVal("llm_enabled") === "true";
     const provider = getVal("llm_provider");
     const model = getVal("llm_model");
     const minConfidence = parseFloat(getVal("min_confidence") || "0.70");
+    const ocrProvider = getVal("ocr.provider") || "local";
+    const googleAuth = getVal("google.vision.auth") || "auto";
+    const googleFeature = getVal("google.vision.feature") || "DOCUMENT_TEXT_DETECTION";
+    const googleTimeout = getVal("google.vision.timeout.seconds") || "60";
+    const googleApiKey = getSetting("google.vision.api_key");
+    const googleApiKeyDraft = draftValues["google.vision.api_key"] ?? "";
+    const googleControlsVisible = ocrProvider === "google_vision" || ocrProvider === "auto";
 
     return (
       <div className="space-y-8">
@@ -178,6 +191,109 @@ export default function SettingsPage() {
                 <span className="text-sm font-semibold text-slate-800">{minConfidence}</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* OCR Settings */}
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="mb-4 text-lg font-semibold text-slate-900 flex items-center gap-2">
+            OCR Settings
+          </h2>
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">OCR Provider</label>
+                <select
+                  value={ocrProvider}
+                  onChange={(e) => updateSingleSetting("ocr.provider", e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="local">Local OCR</option>
+                  <option value="google_vision">Google Vision API only</option>
+                  <option value="auto">Auto: Google when configured</option>
+                </select>
+                <p className="mt-1 text-xs text-slate-500">
+                  Google Vision mode sends scanned-page OCR to the API. Digital PDF text still uses embedded text.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Google Vision Feature</label>
+                <select
+                  value={googleFeature}
+                  onChange={(e) => updateSingleSetting("google.vision.feature", e.target.value)}
+                  disabled={!googleControlsVisible}
+                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                >
+                  <option value="DOCUMENT_TEXT_DETECTION">Document text detection</option>
+                  <option value="TEXT_DETECTION">Text detection</option>
+                </select>
+              </div>
+            </div>
+
+            {googleControlsVisible && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-slate-100 pt-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Google Vision Auth Mode</label>
+                  <select
+                    value={googleAuth}
+                    onChange={(e) => updateSingleSetting("google.vision.auth", e.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="api_key">API key</option>
+                    <option value="adc">Application Default Credentials</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Google Vision Timeout</label>
+                  <input
+                    type="number"
+                    min="5"
+                    max="300"
+                    value={googleTimeout}
+                    onChange={(e) => updateSingleSetting("google.vision.timeout.seconds", e.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700">Google Vision API Key</label>
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="password"
+                      value={googleApiKeyDraft}
+                      onChange={(e) =>
+                        setDraftValues((prev) => ({ ...prev, "google.vision.api_key": e.target.value }))
+                      }
+                      placeholder={
+                        googleApiKey?.has_value
+                          ? "Saved key configured. Paste a new key to replace it."
+                          : "Paste Google Vision API key"
+                      }
+                      className="block min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updateSingleSetting("google.vision.api_key", googleApiKeyDraft)}
+                      disabled={!googleApiKeyDraft.trim() || savingKey === "google.vision.api_key"}
+                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      Save key
+                    </button>
+                    {googleApiKey?.has_value && (
+                      <button
+                        type="button"
+                        onClick={() => updateSingleSetting("google.vision.api_key", "", { clearSecret: true })}
+                        disabled={savingKey === "google.vision.api_key"}
+                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-100"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">The saved key is hidden after saving and is used only for OCR requests.</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

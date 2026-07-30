@@ -7,6 +7,15 @@ from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Any
 
+from services.person_names import (
+    canonicalize_person_name,
+    comparable_name,
+    is_person_name_candidate,
+    name_similarity,
+    names_match,
+)
+from services.validation_gates import field_reliable_for_validation
+
 
 EXACT_FIELDS = {
     "loan_id", "application_number", "account_number", "pan_number",
@@ -105,16 +114,21 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
             for record in person_records:
                 if not isinstance(record, dict):
                     continue
-                record_person_id = _infer_person(
-                    record, people, str(page.get("document_type") or "")
+                provided_record_id = str(record.get("_resolved_person_id") or "").strip()
+                record_person_id = (
+                    provided_record_id
+                    if provided_record_id in people
+                    else _infer_person(record, people, str(page.get("document_type") or ""))
                 ) or "unassigned"
                 for field, value in record.items():
-                    if value in (None, "", [], {}):
+                    if str(field).startswith("_") or value in (None, "", [], {}):
                         continue
                     canonical_field = _canonical(str(field))
                     if not _usable_observation_value(
                         str(page.get("document_type") or "Unknown"), canonical_field, value
                     ):
+                        continue
+                    if not _observation_is_reliable(page, canonical_field, value):
                         continue
                     result.append({
                         "person_id": record_person_id,
@@ -131,6 +145,8 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
             if not _usable_observation_value(
                 str(page.get("document_type") or "Unknown"), canonical_field, value
             ):
+                continue
+            if not _observation_is_reliable(page, canonical_field, value):
                 continue
             result.append({
                 "person_id": person_id or "unassigned",
@@ -239,7 +255,7 @@ def _infer_person(fields: dict, people: dict[str, dict], document_type: str = ""
     except Exception:
         pass
     observed = fields.get("applicant_name") or fields.get("borrower_name") or fields.get("account_holder_name")
-    if observed:
+    if observed and is_person_name_candidate(observed):
         ranked = [(_similarity(observed, person.get("applicant_name")), person_id) for person_id, person in people.items()]
         if ranked and max(ranked)[0] >= 0.82:
             return max(ranked)[1]
@@ -289,13 +305,15 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
         if field in PERSON_FIELDS:
             expected = _lookup(person, field)
             # Never fall back to flat/primary trusted dump for person fields when
-            # multiple people exist — that is the cross-person bug.
+            # multiple people exist; that is the cross-person mismatch bug.
             if expected in (None, "") and not multi_person:
                 expected = _lookup(trusted, field)
         else:
             expected = _lookup(trusted, field)
             if expected in (None, "") and field in LOAN_FIELDS:
                 expected = _lookup(next(iter(people.values()), {}), field)
+        if field in NAME_FIELDS and not is_person_name_candidate(expected):
+            continue
         if expected in (None, "") or _matches(field, expected, obs["value"]):
             continue
         # Multi-KYC collage pages often extract the wrong card's address. If the
@@ -449,10 +467,15 @@ def _application_name_checks(pages: list[dict], people: dict[str, dict]) -> list
             search_pages.append(page)
     for page in app_pages:
         fields = page.get("extracted_fields") or {}
+        if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False:
+            continue
         values = fields.get("applicant_names") or [fields.get("applicant_name")]
         for value in values:
-            if value:
-                found.append((str(value), page))
+            if not value:
+                continue
+            candidate = canonicalize_person_name(value)
+            if candidate.valid and candidate.value:
+                found.append((candidate.value, page))
     anomalies: list[dict] = []
     for person_id, person in people.items():
         expected = person.get("applicant_name")
@@ -461,9 +484,13 @@ def _application_name_checks(pages: list[dict], people: dict[str, dict]) -> list
             or _names_equivalent(expected, page.get("ocr_text"))
             for page in search_pages
         ) if expected else False
-        if not expected or name_visible_in_text or any(_matches("applicant_name", expected, value) for value, _ in found):
+        if not expected or not is_person_name_candidate(expected) or name_visible_in_text or any(
+            _matches("applicant_name", expected, value) for value, _ in found
+        ):
             continue
-        page = found[0][1] if found else app_pages[0]
+        if not found:
+            continue
+        page = found[0][1]
         anomalies.append({
             "rule_id": "APPLICATION_NAME_MISMATCH", "s_no": 1, "severity": "HIGH",
             "document_type": "Application Form", "expected_value": expected,
@@ -474,18 +501,85 @@ def _application_name_checks(pages: list[dict], people: dict[str, dict]) -> list
     return anomalies
 
 
+def _name_observation_is_reliable(page: dict, field: str, value: Any) -> bool:
+    if field not in NAME_FIELDS:
+        return True
+    fields = page.get("extracted_fields") or {}
+    if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False:
+        return False
+    return is_person_name_candidate(value)
+
+
+def _observation_is_reliable(page: dict, field: str, value: Any) -> bool:
+    if not _name_observation_is_reliable(page, field, value):
+        return False
+    return field_reliable_for_validation(
+        page,
+        field,
+        value,
+        expected_document_type=str(page.get("document_type") or "Unknown"),
+    )
+
+
 def _bureau_checks(pages: list[dict], observations: list[dict]) -> list[dict]:
     anomalies: list[dict] = []
-    for obs in observations:
-        if obs["document_type"] not in {"CRIF Report", "CIBIL Report"} or obs["field"] not in {"credit_score", "cibil_score", "crif_score"}:
+    bureau_pages = [
+        page for page in pages
+        if page.get("document_type") in {"CRIF Report", "CIBIL Report"}
+    ]
+    grouped: dict[tuple[Any, str, Any], list[dict]] = defaultdict(list)
+    for page in bureau_pages:
+        fields = page.get("extracted_fields") or {}
+        key = (
+            page.get("source_document_id")
+            or fields.get("credit_report_id")
+            or page.get("detected_page_number")
+            or page.get("page_number"),
+            str(page.get("document_type") or ""),
+            page.get("person_id"),
+        )
+        grouped[key].append(page)
+
+    for (_segment, document_type, person_id), group_pages in grouped.items():
+        score_values: list[tuple[Any, dict]] = []
+        for page in group_pages:
+            fields = page.get("extracted_fields") or {}
+            for field in ("credit_score", "cibil_score", "crif_score"):
+                value = fields.get(field)
+                if value not in (None, "", [], {}):
+                    score_values.append((value, page))
+        valid_scores = [
+            value for value, _page in score_values
+            if (score := _number(value)) is not None and 300 <= score <= 900
+        ]
+        if valid_scores:
             continue
-        score = _number(obs["value"])
-        if score is None or not 300 <= score <= 900:
-            anomalies.append(_anomaly(
-                "BUREAU_SCORE_INVALID", "HIGH", "Valid bureau score from 300 to 900", obs["value"], obs,
-                "CRIF/CIBIL score is outside the valid numeric range.",
-            ))
+        score_page = next((_page for _value, _page in score_values), None)
+        if score_page is None:
+            score_page = next((page for page in group_pages if _has_bureau_score_table(page)), None)
+        if score_page is None:
+            continue
+        found = next((value for value, _page in score_values if value not in (None, "")), None)
+        obs = {
+            "document_type": document_type,
+            "page_number": score_page.get("page_number"),
+            "person_id": person_id or "unassigned",
+        }
+        anomalies.append(_anomaly(
+            "BUREAU_SCORE_MISSING", "HIGH", "Valid bureau score from 300 to 900",
+            found or "Blank score table", obs,
+            "Credit bureau report does not expose a valid score on its score page.",
+        ))
     return anomalies
+
+
+def _has_bureau_score_table(page: dict) -> bool:
+    text = str(page.get("ocr_text") or "").lower()
+    return bool(
+        re.search(r"\b(?:crif|cibil|credit\s+information|credit\s+report)\b", text)
+        and re.search(r"\bscore(?:\(s\))?\b", text)
+        and ("score name" in text or "range" in text or "crif hm score" in text)
+    )
 
 
 def _application_language_checks(pages: list[dict]) -> list[dict]:
@@ -633,9 +727,7 @@ def _matches(field: str, left: Any, right: Any) -> bool:
         overlap = len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
         return overlap >= 0.70 or _similarity(left, right) >= 0.82
     if field in NAME_FIELDS:
-        return _names_equivalent(left, right) or (
-            _similarity(_without_honorific(left), _without_honorific(right)) >= 0.85
-        )
+        return names_match(_without_honorific(left), _without_honorific(right), threshold=0.85)
     return _similarity(left, right) >= 0.88
 
 
@@ -698,10 +790,12 @@ def _names_equivalent(left: Any, right: Any) -> bool:
 
 
 def _compact(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value).lower())
+    return comparable_name(value)
 
 
 def _similarity(left: Any, right: Any) -> float:
+    if is_person_name_candidate(left) and is_person_name_candidate(right):
+        return name_similarity(left, right)
     a, b = _compact(left), _compact(right)
     if not a or not b:
         return 0.0

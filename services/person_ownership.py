@@ -12,6 +12,9 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+from services.person_names import is_person_name_candidate, name_similarity
+from services.validation_gates import field_reliable_for_validation
+
 try:  # pragma: no cover - rapidfuzz is the preferred scorer
     from rapidfuzz import fuzz
 except Exception:  # pragma: no cover
@@ -78,6 +81,11 @@ PERSON_SCOPED_DOCUMENT_TYPES = frozenset(
     }
 )
 
+# These documents are containers for several people.  Their internal person
+# rows must be resolved independently instead of assigning the whole document
+# to whichever name happens to appear most often.
+MULTI_PERSON_DOCUMENT_TYPES = frozenset({"application form", "cam"})
+
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "applicant_name": ("applicant_name", "borrower_name", "account_holder_name", "customer_name"),
     "date_of_birth": ("date_of_birth", "dob"),
@@ -97,6 +105,8 @@ FIELD_WEIGHTS = {
     "pin_code": 2.0,
     "address": 1.0,
 }
+
+RELATIONSHIP_OWNER_WEIGHT = 4.0
 
 STRONG_ID_FIELDS = frozenset({"pan_number", "aadhaar_number", "phone_number"})
 
@@ -297,6 +307,24 @@ def _score_people(
                 scores[person_id] += FIELD_WEIGHTS[field]
                 evidence[person_id].append(field)
 
+    # Relationship prefixes identify the holder only through an explicit
+    # inverse relationship in trusted data.  For example, W/O <known person>
+    # may resolve the unique person whose trusted address/husband metadata says
+    # the same thing.  The referenced spouse is never treated as the holder.
+    for qualifier, related_text in relationship_observations(pages):
+        candidates = _relationship_owner_candidates(
+            qualifier,
+            related_text,
+            people,
+        )
+        if len(candidates) != 1:
+            continue
+        owner_id, referenced_id = candidates[0]
+        scores[owner_id] += RELATIONSHIP_OWNER_WEIGHT
+        evidence[owner_id].append(
+            f"relationship:{qualifier.lower()}:{referenced_id or 'trusted_relation'}"
+        )
+
     ranked = scores.most_common()
     if ranked:
         best_id, best_score = ranked[0]
@@ -324,6 +352,111 @@ def _score_people(
         "scores": dict(scores),
         "evidence_by_person": evidence,
     }
+
+
+def relationship_observations(
+    pages: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    """Extract W/O, S/O, D/O and C/O relation text without naming the owner."""
+    observations: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for page in pages:
+        fields = page.get("extracted_fields") if isinstance(page, dict) else None
+        fields = fields if isinstance(fields, dict) else {}
+        qualifier = str(fields.get("relationship_qualifier") or "").upper().replace(" ", "")
+        related = str(fields.get("related_person_name") or "").strip()
+        if qualifier in {"W/O", "S/O", "D/O", "C/O"} and related:
+            key = (qualifier, related.casefold())
+            if key not in seen:
+                seen.add(key)
+                observations.append((qualifier, related))
+
+        sources = [
+            fields.get("address"),
+            fields.get("current_address"),
+            fields.get("permanent_address"),
+            fields.get("communication_address"),
+            page.get("ocr_text") if isinstance(page, dict) else None,
+        ]
+        for source in sources:
+            for match in re.finditer(
+                r"\b([WSDC])\s*/\s*O\b\s*[:\-]?\s*([^\n\r,;]{3,90})",
+                str(source or ""),
+                re.IGNORECASE,
+            ):
+                item = (f"{match.group(1).upper()}/O", match.group(2).strip())
+                key = (item[0], item[1].casefold())
+                if key in seen:
+                    continue
+                seen.add(key)
+                observations.append(item)
+    return observations
+
+
+def _relationship_owner_candidates(
+    qualifier: str,
+    related_text: str,
+    people: dict[str, dict[str, Any]],
+) -> list[tuple[str, str | None]]:
+    referenced_id = next(
+        (
+            person_id
+            for person_id, person in people.items()
+            if _relation_name_matches(related_text, person.get("applicant_name"))
+        ),
+        None,
+    )
+    candidates: list[tuple[str, str | None]] = []
+    relation_fields = {
+        "W/O": ("husband_name", "spouse_name", "related_person_name"),
+        "S/O": ("father_name", "parent_name", "related_person_name"),
+        "D/O": ("father_name", "parent_name", "related_person_name"),
+        "C/O": ("related_person_name", "father_name", "husband_name", "spouse_name"),
+    }.get(qualifier, ("related_person_name",))
+
+    for person_id, person in people.items():
+        trusted_qualifier = str(person.get("relationship_qualifier") or "").upper().replace(" ", "")
+        if trusted_qualifier and trusted_qualifier != qualifier:
+            continue
+        relation_values = [person.get(field) for field in relation_fields]
+        relation_values.extend(
+            _relationship_tails(
+                (
+                    person.get(field)
+                    for field in ("address", "current_address", "permanent_address", "communication_address")
+                ),
+                qualifier,
+            )
+        )
+        if any(_relation_name_matches(related_text, value) for value in relation_values if value):
+            candidates.append((person_id, referenced_id))
+    return candidates
+
+
+def _relationship_tails(values: Any, qualifier: str) -> list[str]:
+    tails: list[str] = []
+    letter = qualifier[0]
+    for value in values:
+        match = re.search(
+            rf"\b{re.escape(letter)}\s*/\s*O\b\s*[:\-]?\s*([^\n\r,;]{{3,90}})",
+            str(value or ""),
+            re.IGNORECASE,
+        )
+        if match:
+            tails.append(match.group(1).strip())
+    return tails
+
+
+def _relation_name_matches(observed: Any, expected: Any) -> bool:
+    observed_tokens = re.findall(r"[a-z]+", str(observed or "").casefold())
+    expected_tokens = re.findall(r"[a-z]+", str(expected or "").casefold())
+    if not observed_tokens or not expected_tokens:
+        return False
+    width = len(expected_tokens)
+    return any(
+        name_similarity(" ".join(observed_tokens[index:index + width]), " ".join(expected_tokens)) >= 0.85
+        for index in range(0, max(1, len(observed_tokens) - width + 1))
+    )
 
 
 def _strong_id_contradicts(
@@ -361,17 +494,69 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             for canonical, aliases in FIELD_ALIASES.items():
                 for alias in aliases:
                     value = candidate.get(alias)
-                    if value not in (None, "", [], {}):
-                        observations[canonical].append(value)
-        # Fall back to OCR text for names/PANs when extractors miss passbook/statement labels.
+                    if value in (None, "", [], {}):
+                        continue
+                    if canonical == "applicant_name" and not is_person_name_candidate(value):
+                        continue
+                    if not field_reliable_for_validation(
+                        page,
+                        canonical,
+                        value,
+                        expected_document_type=str(page.get("document_type") or "Unknown"),
+                    ):
+                        continue
+                    observations[canonical].append(value)
+        generic = fields.get("_generic_evidence")
+        if isinstance(generic, dict):
+            for value in generic.get("pan_numbers") or []:
+                observations["pan_number"].append(value)
+            for value in generic.get("aadhaar_numbers") or []:
+                observations["aadhaar_number"].append(value)
+            for value in generic.get("phone_numbers") or []:
+                observations["phone_number"].append(value)
+
+        # Fall back to raw OCR for exact identifiers.  For names, whole-page
+        # haystack matching is restricted to banking documents; on Aadhaar and
+        # other KYC backs, a W/O or S/O name is a relation, not the cardholder.
         ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
         if ocr_text:
-            observations["applicant_name"].append(ocr_text)
+            observations["applicant_name"].extend(
+                _explicit_name_observations(
+                    ocr_text,
+                    str(page.get("document_type") or ""),
+                )
+            )
             for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper()):
                 observations["pan_number"].append(match.group(0))
+            for match in re.finditer(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", ocr_text):
+                observations["aadhaar_number"].append(match.group(1))
             for match in re.finditer(r"\b[6-9]\d{9}\b", ocr_text):
                 observations["phone_number"].append(match.group(0))
     return observations
+
+
+def _explicit_name_observations(text: str, document_type: str) -> list[str]:
+    """Return subject-name evidence while excluding relationship-only names."""
+    type_key = str(document_type or "").strip().casefold()
+    if type_key in {"bank statement", "passbook"}:
+        # These pages often omit a clean label but retain a unique account-holder
+        # name in a short header.  Existing haystack matching remains useful.
+        return [text]
+
+    candidates: list[str] = []
+    patterns = (
+        r"(?:^|\n)\s*(?:applicant|consumer|customer|card\s+holder|account\s+holder)\s+name\s*[:\-–]?\s*(?:\n\s*)?([^\n\r]{3,70})",
+        r"(?:^|\n)\s*name\s*:\s*([^\n\r]{3,70})",
+    )
+    if type_key in {"cibil report", "crif report"}:
+        patterns += (r"(?:^|\n)\s*for\s+([^\n\r]{3,70})",)
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            candidate = match.group(1).strip(" :\t")
+            if re.match(r"^(?:[wsdcf]\s*/?\s*o|wife\s+of|son\s+of|daughter\s+of|care\s+of)\b", candidate, re.I):
+                continue
+            candidates.append(candidate)
+    return candidates
 
 
 def first_value(values: dict[str, Any], aliases: tuple[str, ...]) -> Any:
@@ -388,12 +573,14 @@ def identity_matches(field: str, found: Any, expected: Any) -> bool:
     if not left or not right:
         return False
     if field == "applicant_name":
-        score = fuzz.token_sort_ratio(_words(left), _words(right))
-        if score >= 85:
-            return True
-        # OCR haystack (passbook/statement pages) — look for the trusted name inside.
         left_tokens = re.findall(r"[a-z0-9]+", left.lower())
         right_tokens = re.findall(r"[a-z0-9]+", right.lower())
+        is_haystack = len(left_tokens) >= max(4, len(right_tokens) + 2)
+        if not is_haystack and (not is_person_name_candidate(left) or not is_person_name_candidate(right)):
+            return False
+        if not is_haystack and name_similarity(left, right) >= 0.85:
+            return True
+        # OCR haystack (passbook/statement pages) — look for the trusted name inside.
         if len(left_tokens) >= max(4, len(right_tokens) + 2) and right_tokens:
             compact_right = "".join(right_tokens)
             compact_left = "".join(left_tokens)

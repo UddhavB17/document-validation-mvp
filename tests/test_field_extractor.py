@@ -28,7 +28,7 @@ Peeru Lal
 Tenure
 60
 Mobile Number
-8107058694
+9000000001
 Purpose of Loan
 Extension / Renovation Of House
 Branch Name
@@ -41,7 +41,7 @@ Requested IRR
     result = extract_fields("CAM", text)
     assert result["application_number"] == "RJ000028546"
     assert result["applicant_name"] == "Peeru Lal"
-    assert result["phone_number"] == "8107058694"
+    assert result["phone_number"] == "9000000001"
     assert result["tenure"] == 60
     assert result["requested_amount"] == "275000"
     assert result["roi"] == pytest.approx(26.0)
@@ -53,26 +53,26 @@ APPLICATION DETAILS
 PERSONAL DETAILS
 Applicant
 Peeru Lal
-8107058694
+9000000001
 18-May-1994
 32
 Coapplicant
 Unkar  Lal
-9509341692
+9000000002
 05-June-1961
 65
 Coapplicant
 Radha  Bai
-9509341692
+9000000002
 01-January-
 1962
 64
 """
     records = extract_fields("CAM", text)["person_records"]
     assert records == [
-        {"applicant_name": "Peeru Lal", "phone_number": "8107058694", "date_of_birth": "1994-05-18"},
-        {"applicant_name": "Unkar Lal", "phone_number": "9509341692", "date_of_birth": "1961-06-05"},
-        {"applicant_name": "Radha Bai", "phone_number": "9509341692", "date_of_birth": "1962-01-01"},
+        {"applicant_name": "Peeru Lal", "phone_number": "9000000001", "date_of_birth": "1994-05-18"},
+        {"applicant_name": "Unkar Lal", "phone_number": "9000000002", "date_of_birth": "1961-06-05"},
+        {"applicant_name": "Radha Bai", "phone_number": "9000000002", "date_of_birth": "1962-01-01"},
     ]
 
 
@@ -81,12 +81,12 @@ def test_cam_extracts_person_scoped_kyc_address_and_scores() -> None:
 KYC DOCUMENTS
 Applicant
 Peeru Lal
-XXXXXXXX9108
-BCXPL9010K
+XXXXXXXX0001
+TSTAA0001T
 CoApplicant
 Radha  Bai
-********1187
-JGZPB3257C
+********0003
+TSTCC0003T
 ADDRESSES
 Applicant
 Peeru Lal
@@ -113,7 +113,7 @@ CRIF
 NA
 """
     records = extract_fields("CAM", text)["person_records"]
-    assert {"applicant_name": "Peeru Lal", "aadhaar_last4": "9108", "pan_number": "BCXPL9010K"} in records
+    assert {"applicant_name": "Peeru Lal", "aadhaar_last4": "0001", "pan_number": "TSTAA0001T"} in records
     assert any(record.get("permanent_address", "").startswith("W/O: Ukar Lal") for record in records)
     assert {"applicant_name": "Peeru Lal", "crif_score": "786"} in records
     assert {"applicant_name": "Radha Bai", "cibil_score": "714"} in records
@@ -126,19 +126,19 @@ APPLICANT NAME
 AADHAAR
 PAN
 Unkar  Lal
-XXXXXXXX7326
-BBEPL4329P
+XXXXXXXX0002
+TSTBB0002T
 Not Provided
 Radha  Bai
-********1187
-JGZPB3257C
+********0003
+TSTCC0003T
 Not Provided
 """
     result = extract_fields("Application Form", text)
     assert result["pan_number"] is None
     assert result["person_records"] == [
-        {"applicant_name": "Unkar Lal", "aadhaar_last4": "7326", "pan_number": "BBEPL4329P"},
-        {"applicant_name": "Radha Bai", "aadhaar_last4": "1187", "pan_number": "JGZPB3257C"},
+        {"applicant_name": "Unkar Lal", "aadhaar_last4": "0002", "pan_number": "TSTBB0002T"},
+        {"applicant_name": "Radha Bai", "aadhaar_last4": "0003", "pan_number": "TSTCC0003T"},
     ]
 
 
@@ -182,8 +182,169 @@ Closing Balance
 
 
 def test_pan_extracts_name_when_ocr_prefixes_name_label() -> None:
-    text = "Permanent Account Number JGZPB3257C HName Radha Bai a9 Date 01/01/1962 of Birth"
+    text = "Permanent Account Number TSTCC0003T HName Radha Bai a9 Date 01/01/1962 of Birth"
     assert extract_fields("PAN", text)["applicant_name"] == "Radha Bai"
+
+
+def test_pan_extractor_requires_pan_anchor_before_accepting_property_names() -> None:
+    text = """Endorsement of Execution
+Name: MOHAN LAL Age: 40
+The lease deed or allotment order issued by the Gram Panchayat
+"""
+    assert extract_fields("PAN", text) == {}
+
+
+def test_aadhaar_xml_keeps_relationship_out_of_physical_address() -> None:
+    text = '''<UidData uid="XXXXXXXX0001"><Poi name="Peeru Lal" dob="18-05-1994" gender="M"/><Poa co="S/O: Unkar Lal" lm="mehar basti" loc="semli bakhta" vtc="Semlibakta" dist="Jhalawar" state="Rajasthan" country="India" pc="326502"/></UidData>'''
+    result = extract_fields("Aadhaar", text)
+    assert result["applicant_name"] == "Peeru Lal"
+    assert result["relationship_qualifier"] == "S/O"
+    assert result["related_person_name"] == "Unkar Lal"
+    assert result["address"] == "mehar basti, semli bakhta, Semlibakta, Jhalawar, Rajasthan, India, 326502"
+
+
+def test_crif_address_variation_row_is_not_applicant_name() -> None:
+    text = """Address Variations
+MEHAR BASTI SEMALI BAKHATA ..... 326502 RJ
+Employment details
+Account Information
+"""
+    result = extract_fields("CRIF Report", text)
+    assert result.get("applicant_name") is None
+
+
+def test_crif_extracts_subject_name_from_report_header() -> None:
+    text = """CRIF HIGH MARK
+Credit Information Report
+For PEERU LAL
+Inquiry Input Information
+Name: PEERU LAL DOB/Age: 18-05-1994 Gender: MALE
+CRIF HM Score(S):
+SCORE NAME RANGE SCORE
+PERFORM CONSUMER 2.2 300-900 786
+"""
+    result = extract_fields("CRIF Report", text)
+    assert result["applicant_name"] == "PEERU LAL"
+    assert result["credit_score"] == "786"
+
+
+def test_bank_statement_extractor_blocks_amortization_schedule() -> None:
+    text = """Repayment Schedule under Equated Periodic Instalment
+S No. Opening Balance EMI (In Rs.) Principal Interest Closing Balance
+15 241248 8234.00 3007.00 5227.00 238241
+"""
+    result = extract_fields("Bank Statement", text)
+    assert result == {"_validation_blocked_reason": "amortization_schedule_not_bank_statement"}
+
+
+def test_passbook_extracts_shri_account_holder_name() -> None:
+    text = """PUNJAB NATIONAL BANK
+Account Particulars
+A/C No.: 0071000100264386
+SHRI PEERU LAL
+IFSC Code: PUNB0007100
+"""
+    result = extract_fields("Passbook", text)
+    assert result["account_holder_name"] == "PEERU LAL"
+    assert result["account_number"] == "0071000100264386"
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    ["Semali Bakhata", "C/O", "S/O", "F/O", "Applicant Name"],
+)
+def test_name_extraction_rejects_non_person_candidates(candidate: str) -> None:
+    text = f"APPLICATION DETAILS\nApplicant Name\n{candidate}\nMobile Number\n9000000001"
+    result = extract_fields("Application Form", text)
+    assert result.get("applicant_name") is None
+
+
+def test_aadhaar_extracts_devanagari_name_after_hindi_label() -> None:
+    text = "भारत सरकार\nनाम\nराम लाल\nजन्म तिथि 01/01/1990\n"
+    assert extract_fields("Aadhaar", text)["applicant_name"] == "राम लाल"
+
+
+def test_voter_id_skips_bilingual_labels_and_extracts_cardholder() -> None:
+    text = """भारत निर्वाचन आयोग
+ELECTION COMMISSION OF INDIA
+निर्वाचक का नाम
+ELECTOR'S NAME
+पति का नाम
+HUSBAND'S NAME
+लिंग / Sex
+जन्म की तारीख
+DATE OF BIRTH
+राधा बाई
+RADHA BAI
+उकार लाल
+UNKAR LAL
+FEMALE
+"""
+
+    assert extract_fields("Voter ID", text)["applicant_name"] == "RADHA BAI"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "APPLICANT KYC DETAILS\nAPPLICANT NAME\nAADHAAR\n1234 5678 9012",
+        "GUARANTOR KYC DETAILS\nAPPLICANT NAME\nAADHAAR\nNot Provided",
+    ],
+)
+def test_aadhaar_extractor_rejects_application_form_kyc_tables(text: str) -> None:
+    assert extract_fields("Aadhaar", text) == {}
+
+
+def test_digilocker_aadhaar_label_first_layout_uses_value_block() -> None:
+    text = """DigiLocker verified e-Aadhaar
+This document is generated from verified Aadhaar XML
+Masked Aadhaar number
+Name
+Date of Birth
+Gender
+c/o , s/o
+Address
+Landmark
+Locality
+City / District
+Pin Code
+State
+xxxxxxxx0001
+semli bakhta
+2026-06-11T14:31:29.346+05:30
+2026-06-11T14:31:29.346+05:30
+Peeru Lal
+18-05-1994
+Male
+S/O: Unkar Lal
+326502
+Rajasthan
+S/O: Unkar Lal,mehar basti,semli
+bakhta,Semlibakta,Pachpahar,Sulia,Jhalawar,R
+ajasthan,326502
+Jhalawar
+Pachpahar
+"""
+
+    result = extract_fields("Aadhaar", text)
+
+    assert result["applicant_name"] == "Peeru Lal"
+    assert result["aadhaar_last4"] == "0001"
+    assert result["dob"] == "1994-05-18"
+    assert result["related_person_name"] == "Unkar Lal"
+    assert result["relationship_qualifier"] == "S/O"
+    assert result["pin_code"] == "326502"
+    assert result["address"].startswith("mehar basti")
+
+
+def test_aadhaar_number_does_not_join_unrelated_numbers_across_lines() -> None:
+    text = """Unique Identification Authority of India
+1947
+1800 300 1947
+9999 8888 0003
+"""
+
+    assert extract_fields("Aadhaar", text)["aadhaar_number"] == "999988880003"
 
 
 def test_bank_approval_does_not_assign_employee_signature_mobile_to_customer() -> None:
@@ -213,20 +374,20 @@ Unkar  Lal
 05-June-
 1961
 Kanha
-9509341692
+9000000002
 FATHER
 No
 Radha  Bai
 01-January-
 1962
 Ukar Lal
-7339781668
+9000000003
 MOTHER
 No
 """
     records = extract_fields("Application Form", text)["person_records"]
     assert [record["applicant_name"] for record in records] == ["Unkar Lal", "Radha Bai"]
-    assert [record["phone_number"] for record in records] == ["9509341692", "7339781668"]
+    assert [record["phone_number"] for record in records] == ["9000000002", "9000000003"]
 
 
 def test_cersai_uses_debtor_pan_not_cersai_corporate_pan() -> None:
@@ -240,7 +401,7 @@ Search Criteria Entered
 Name of the Debtor
 PEERU LAL
 PAN
-BCXPL9010K
+TSTAA0001T
 Date Of Birth
 1994-12-05
 Search Output Details
@@ -248,7 +409,7 @@ No Match Found
 """
     result = extract_fields("CERSAI Report", text)
     assert result["applicant_name"] == "PEERU LAL"
-    assert result["pan_number"] == "BCXPL9010K"
+    assert result["pan_number"] == "TSTAA0001T"
     assert result["date_of_birth"] == "1994-12-05"
 
 
@@ -468,7 +629,7 @@ def test_utility_bill_does_not_treat_billing_month_as_pin_code() -> None:
 def test_aadhaar_address_stops_at_first_pin_code() -> None:
     result = extract_fields(
         "Aadhaar",
-        "Unique Identification Authority of India Address: W/O: Ukar Lal, Semlibakta, Jhalawar, Rajasthan 326502 2271 5385 1187 help@uidai.gov.in",
+        "Unique Identification Authority of India Address: W/O: Ukar Lal, Semlibakta, Jhalawar, Rajasthan 326502 9999 8888 0003 help@uidai.gov.in",
     )
     assert result["address"] == "W/O: Ukar Lal, Semlibakta, Jhalawar, Rajasthan 326502"
 
@@ -501,7 +662,7 @@ class TestPAN:
 
     def test_inline_bilingual_pan_card_extracts_name_and_dob(self) -> None:
         result = self._extract(
-            "Permanent JGZPB3257C Account Number नामWName Radha Bai "
+            "Permanent TSTCC0003T Account Number नामWName Radha Bai "
             "जम fafuDate 01701/1962 ofBnu"
         )
         assert result["applicant_name"] == "Radha Bai"
@@ -529,15 +690,16 @@ class TestAadhaar:
 
     def test_digitally_signed_xml_uses_holder_poa_not_certificate_address(self) -> None:
         text = (
-            '<UidData uid="xxxxxxxx9108"><Poi dob="18-05-1994" gender="M" name="Peeru Lal"/>'
+            '<UidData uid="xxxxxxxx0001"><Poi dob="18-05-1994" gender="M" name="Peeru Lal"/>'
             '<Poa co="S/O: Unkar Lal" country="India" dist="Jhalawar" pc="326502" '
             'state="Rajasthan" street="mehar basti" vtc="Semlibakta"/>'
             '<X509SubjectName>postalCode=110003,O=DIGITAL INDIA CORPORATION</X509SubjectName>'
         )
         result = self._extract(text)
         assert result["applicant_name"] == "Peeru Lal"
-        assert result["aadhaar_last4"] == "9108"
-        assert result["address"].startswith("S/O: Unkar Lal")
+        assert result["aadhaar_last4"] == "0001"
+        assert result["relationship_qualifier"] == "S/O"
+        assert result["address"].startswith("mehar basti")
         assert "DIGITAL INDIA" not in result["address"]
         assert result["related_person_name"] == "Unkar Lal"
 
@@ -731,11 +893,11 @@ class TestBankStatement:
             "Statement From : 19 Jun 2025\nStatement To : 19 Jun 2026\n"
             "Bank\n: Punjab National Bank\nAccount Number\n: XXXXXXXXXXXX4386\n"
             "Name\nDoB\nMobile\nPAN\nCKYC\nPEERU LAL\n1994-05-18\n"
-            "8107058694\nBCXPL9010K\nIFSC PUNB0007100"
+            "9000000001\nTSTAA0001T\nIFSC PUNB0007100"
         )
         assert result["account_holder_name"] == "Peeru Lal"
         assert result["bank_name"] == "Punjab National Bank"
-        assert result["pan_number"] == "BCXPL9010K"
+        assert result["pan_number"] == "TSTAA0001T"
         assert result["statement_period_start"] == "2025-06-19"
         assert result["statement_period_end"] == "2026-06-19"
 
@@ -799,7 +961,7 @@ class TestNameLabelRejection:
     def test_timestamp_not_extracted_as_name(self) -> None:
         """Timestamps like '21 PM GMT +05:30' must be rejected as names."""
         result = self._extract_pan(
-            "Name\n21 PM GMT +05:30\nPAN: BCXPL9010K"
+            "Name\n21 PM GMT +05:30\nPAN: TSTAA0001T"
         )
         assert result.get("applicant_name") is None
 

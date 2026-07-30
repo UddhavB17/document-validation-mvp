@@ -32,12 +32,14 @@ Loan Application: RJ000028546
 },
 {
 "entityName": "Radha Bai",
-"dob": "01-January-1962"
+"dob": "01-January-1962",
+"husbandName": "Unkar Lal",
+"relationshipQualifier": "W/O"
 }
 ],
 "coapplicantkyc": [
-{"entityName": "Unkar Lal", "aadhaarNumber": "XXXXXXXX7326"},
-{"entityName": "Radha Bai", "aadhaarNumber": "********1187"}
+{"entityName": "Unkar Lal", "aadhaarNumber": "XXXXXXXX0002"},
+{"entityName": "Radha Bai", "aadhaarNumber": "********0003"}
 ]
 }
 --- END RAW DATABASE JSON DUMP ---
@@ -62,8 +64,10 @@ def test_converts_malformed_company_dump_to_automatic_manifest() -> None:
         "tenure": 60,
         "emi": "8234",
     }
-    assert manifest["people"]["coapplicant_1"]["aadhaar_last4"] == "7326"
-    assert manifest["people"]["coapplicant_2"]["aadhaar_last4"] == "1187"
+    assert manifest["people"]["coapplicant_1"]["aadhaar_last4"] == "0002"
+    assert manifest["people"]["coapplicant_2"]["aadhaar_last4"] == "0003"
+    assert manifest["people"]["coapplicant_2"]["husband_name"] == "Unkar Lal"
+    assert manifest["people"]["coapplicant_2"]["relationship_qualifier"] == "W/O"
     assert manifest["conversion_warnings"]
 
 

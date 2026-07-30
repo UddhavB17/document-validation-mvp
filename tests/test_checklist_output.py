@@ -39,7 +39,7 @@ def test_build_checklist_verification_response_counts_statuses() -> None:
             "document_type": "PAN",
             "page_type": "digital",
             "classification_confidence": 0.96,
-            "extracted_fields": {"pan_number": "BCXPL9010K"},
+            "extracted_fields": {"pan_number": "TSTAA0001T"},
         }
     ]
     anomalies = [{"rule_id": "MISSING_DOC_S19", "s_no": 19, "reason": "Bank statement missing"}]
@@ -58,7 +58,7 @@ def test_build_checklist_verification_response_counts_statuses() -> None:
     pan_item = next(item for item in result.items if item.item_number == 7)
     assert pan_item.status == "verified"
     assert pan_item.confidence == "high"
-    assert pan_item.extracted_fields["pan_number"] == "BCXPL9010K"
+    assert pan_item.extracted_fields["pan_number"] == "TSTAA0001T"
 
     bank_item = next(item for item in result.items if item.item_number == 19)
     assert bank_item.status == "missing"
@@ -73,7 +73,7 @@ def test_llm_fallback_source_is_tagged_from_page_fields() -> None:
             "page_type": "digital",
             "classification_confidence": 0.90,
             "extracted_fields": {
-                "pan_number": "BCXPL9010K",
+                "pan_number": "TSTAA0001T",
                 "_llm_field_extraction": {"status": "fields_extracted"},
             },
         }

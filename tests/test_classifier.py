@@ -38,7 +38,7 @@ def test_credit_approval_memo_is_not_split_into_embedded_kyc_types() -> None:
     text = (
         "CREDIT APPROVAL MEMO | Confidential\n"
         "KYC DOCUMENTS\nCustomer Type\nName\nAadhaar\nPAN\n"
-        "Applicant\nPeeru Lal\nXXXXXXXX9108\nBCXPL9010K"
+        "Applicant\nPeeru Lal\nXXXXXXXX0001\nTSTAA0001T"
     )
     assert _classify(text) == "CAM"
 

@@ -7,12 +7,13 @@ answer never replaces the deterministic document type.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
 import time
 from typing import Any
+
+from toon import decode, encode
 
 from services.config import get_bool, get_float
 from services.document_classifier import registry_document_types
@@ -47,7 +48,7 @@ def classify_with_structured_llm(
     structured_fields: dict[str, Any],
     ocr_text: str,
 ) -> dict[str, Any] | None:
-    """Ask the configured LLM to classify from extracted JSON.
+    """Ask the configured LLM to classify from extracted TOON.
 
     Returns None whenever the feature is disabled or the LLM is unavailable.
     Any error is swallowed so normal classification continues unchanged.
@@ -109,21 +110,21 @@ def build_structured_classifier_prompt(
     ocr_text: str,
 ) -> str:
     types_list = ", ".join(f'"{item}"' for item in registry_document_types(include_unknown=True))
-    fields_json = json.dumps(_public_structured_fields(structured_fields), ensure_ascii=False, sort_keys=True)
+    fields_toon = encode(_public_structured_fields(structured_fields))
     return (
         "You are reviewing structured OCR extraction output from a Loan Against Property document packet.\n"
-        "Identify the most likely document type from the provided JSON and OCR text.\n\n"
+        "Identify the most likely document type from the provided TOON fields and OCR text.\n\n"
         "Use CERSAI Report for CERSAI, debtor-based search, or Central Registry of Securitisation pages. "
         "Do not call those pages CIBIL or CRIF unless the text explicitly says CIBIL or CRIF.\n\n"
         "Keep bank document types separate: Passbook is for passbook/pass book pages, "
         "Cheque is for cheque or cancelled cheque pages, PDC is only for post-dated/security cheques, "
         "and Bank Statement is only for statement/account-statement pages.\n\n"
-        "Return only JSON:\n"
-        '{"document_type": "...", "confidence": 0.0, "reason": "short reason"}\n\n'
+        "Return only TOON:\n"
+        "document_type: ...\nconfidence: 0.0\nreason: short reason\n\n"
         f"Known document types:\n{types_list}\n\n"
         f"Deterministic classifier result:\n{deterministic_document_type}\n\n"
-        "Structured extracted fields JSON:\n"
-        f"{fields_json}\n\n"
+        "Structured extracted fields (TOON):\n"
+        f"{fields_toon}\n\n"
         "OCR text excerpt:\n"
         f"{(ocr_text or '').strip()[:_MAX_TEXT_CHARS]}"
     )
@@ -197,22 +198,13 @@ def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
     if not stripped:
         return None
 
-    candidates = [stripped]
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, re.DOTALL | re.IGNORECASE)
-    if fence_match:
-        candidates.insert(0, fence_match.group(1))
-    brace_match = re.search(r"\{.*\}", stripped, re.DOTALL)
-    if brace_match:
-        candidates.append(brace_match.group(0))
-
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict) and parsed.get("document_type"):
-            return parsed
-    return None
+    fence_match = re.search(r"```(?:toon)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    candidate = fence_match.group(1).strip() if fence_match else stripped
+    try:
+        parsed = decode(candidate)
+    except Exception:  # noqa: BLE001
+        return None
+    return parsed if isinstance(parsed, dict) and parsed.get("document_type") else None
 
 
 def _public_structured_fields(fields: dict[str, Any]) -> dict[str, Any]:
@@ -229,4 +221,3 @@ def _log_unavailable(error: object | None = None) -> None:
         logger.warning("%s: %s", message, error)
     else:
         logger.warning(message)
-    print(message)

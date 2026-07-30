@@ -5,6 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from services.config import effective_config
+from services.validation_gates import (
+    has_bank_statement_anchor,
+    has_bureau_anchor,
+    has_cheque_anchor,
+    has_pan_anchor,
+    has_passbook_anchor,
+)
 
 
 _DOCUMENT_TYPE_ALIASES: dict[str, set[str]] = {
@@ -20,6 +27,20 @@ def is_confident_document_match(page: dict[str, Any], document_type: str) -> boo
             return False
 
     if not _meets_confidence_threshold(page):
+        return False
+
+    fields = page.get("extracted_fields") or {}
+    text = str(page.get("ocr_text") or "")
+    expected_key = str(document_type or "").strip().lower()
+    if expected_key in {"pan", "pan card"} and not has_pan_anchor(text, fields):
+        return False
+    if expected_key == "bank statement" and not has_bank_statement_anchor(text, fields):
+        return False
+    if expected_key == "passbook" and not has_passbook_anchor(text, fields):
+        return False
+    if expected_key == "cheque" and not has_cheque_anchor(text, fields):
+        return False
+    if expected_key in {"crif report", "cibil report"} and not has_bureau_anchor(text, fields, "applicant_name"):
         return False
 
     return True

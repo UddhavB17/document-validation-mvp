@@ -13,14 +13,14 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.config import get_float, get_int
+from services.config import get_float, get_int, get_setting
 from services.document_classifier import document_type_config
 from services.low_memory import ocr_force_fast_path
 from services.ocr_engine import run_ocr_on_page
 
 logger = logging.getLogger(__name__)
 
-OCRRoute = Literal["fast", "structured"]
+OCRRoute = Literal["fast", "structured", "google_vision"]
 OCRProcessor = Callable[[str | Path], Any]
 
 
@@ -68,7 +68,11 @@ class OCRResult(BaseModel):
             "image_height": self.image_height,
             "text_density": self.text_density,
             "error": self.error,
-            "ocr_pipeline": "PP-StructureV3" if self.route_used == "structured" else "PaddleOCR",
+            "ocr_pipeline": (
+                "Google Vision API"
+                if self.route_used == "google_vision"
+                else "PP-StructureV3" if self.route_used == "structured" else "PaddleOCR"
+            ),
             "header_text": structure.get("header_text", ""),
             "layout_blocks": structure.get("layout_regions", []),
             "tables": structure.get("tables", []),
@@ -91,11 +95,13 @@ class OCRRouter:
         *,
         fast_processor: OCRProcessor | None = None,
         structured_processor: OCRProcessor | None = None,
+        google_vision_processor: OCRProcessor | None = None,
         confidence_threshold: float | None = None,
         event_recorder: Callable[..., None] | None = None,
     ) -> None:
         self._fast_processor = fast_processor or run_fast_ocr_on_page
         self._structured_processor = structured_processor or run_ocr_on_page
+        self._google_vision_processor = google_vision_processor or _run_google_vision_ocr_on_page
         self._confidence_threshold = (
             confidence_threshold
             if confidence_threshold is not None
@@ -110,6 +116,12 @@ class OCRRouter:
         inherited_route: OCRRoute | None = None,
     ) -> OCRRoutingDecision:
         """Return a deterministic config-based route and its rationale."""
+        provider = ocr_provider()
+        if provider == "google_vision":
+            return OCRRoutingDecision(
+                route="google_vision",
+                rationale="OCR_PROVIDER=google_vision: all OCR is offloaded to Google Vision API",
+            )
         if ocr_force_fast_path():
             return OCRRoutingDecision(
                 route="fast",
@@ -163,7 +175,18 @@ class OCRRouter:
         decision = self.decide_route(doc_type, inherited_route=inherited_route)
         document_type = _document_type_name(doc_type)
 
-        if decision.route == "structured":
+        if decision.route == "google_vision":
+            if _result_route(preliminary_fast_result) == "google_vision":
+                result = _coerce_google_vision_result(preliminary_fast_result)
+            else:
+                result = _coerce_google_vision_result(self._google_vision_processor(page_image))
+            result.requested_route = "google_vision"
+            result.routing_rationale = (
+                f"{decision.rationale}; reused classification OCR result"
+                if _result_route(preliminary_fast_result) == "google_vision"
+                else decision.rationale
+            )
+        elif decision.route == "structured":
             result = _coerce_structured_result(self._structured_processor(page_image))
             result.requested_route = "structured"
             result.routing_rationale = decision.rationale
@@ -209,7 +232,8 @@ class OCRRouter:
                         f"{fast_result.confidence:.3f} (structured escalation disabled)"
                     )
 
-        result.processing_time_ms = int((time.perf_counter() - started_at) * 1000)
+        routed_duration_ms = int((time.perf_counter() - started_at) * 1000)
+        result.processing_time_ms = max(result.processing_time_ms, routed_duration_ms)
         self._record_event(
             event_type="processing",
             doc_id=doc_id,
@@ -224,8 +248,17 @@ class OCRRouter:
         return result
 
     def process_fast_for_classification(self, page_image: str | Path) -> OCRResult:
-        """Produce the lightweight text used by the existing classification stage."""
-        return _coerce_fast_result(self._fast_processor(page_image))
+        """Produce classification text through the explicitly configured provider."""
+        started_at = time.perf_counter()
+        if ocr_provider() == "google_vision":
+            result = _coerce_google_vision_result(self._google_vision_processor(page_image))
+            result.requested_route = "google_vision"
+            result.routing_rationale = "OCR_PROVIDER=google_vision: classification OCR offloaded"
+            result.processing_time_ms = int((time.perf_counter() - started_at) * 1000)
+            return result
+        result = _coerce_fast_result(self._fast_processor(page_image))
+        result.processing_time_ms = int((time.perf_counter() - started_at) * 1000)
+        return result
 
     def _record_event(self, **event: Any) -> None:
         try:
@@ -244,6 +277,32 @@ def get_ocr_router() -> OCRRouter:
     if _default_router is None:
         _default_router = OCRRouter()
     return _default_router
+
+
+def ocr_provider() -> str:
+    """Return the active OCR provider: local, google_vision, or auto fallback."""
+    raw = str(get_setting("ocr.provider", os.getenv("OCR_PROVIDER") or "local") or "local").strip().lower()
+    normalized = raw.replace("-", "_")
+    if normalized in {"google", "google_cloud", "google_vision", "vision"}:
+        return "google_vision"
+    if normalized == "auto":
+        return "google_vision" if _google_vision_configured() else "local"
+    return "local"
+
+
+def _google_vision_configured() -> bool:
+    try:
+        from services.google_vision_ocr import google_vision_configured
+
+        return google_vision_configured()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _run_google_vision_ocr_on_page(page_image: str | Path) -> dict[str, Any]:
+    from services.google_vision_ocr import run_google_vision_ocr_on_page
+
+    return run_google_vision_ocr_on_page(page_image)
 
 
 def _get_fast_model() -> Any:
@@ -378,6 +437,34 @@ def _coerce_fast_result(value: OCRResult | dict[str, Any]) -> OCRResult:
     )
 
 
+def _coerce_google_vision_result(value: OCRResult | dict[str, Any]) -> OCRResult:
+    if isinstance(value, OCRResult):
+        value.route_used = "google_vision"
+        return value
+    structured_content = {
+        "header_text": value.get("header_text") or "",
+        "layout_regions": list(value.get("layout_blocks") or []),
+        "tables": list(value.get("tables") or []),
+        "seals": list(value.get("seals") or []),
+        "formulas": list(value.get("formulas") or []),
+        "native": list(value.get("structure_json") or []),
+    }
+    return OCRResult(
+        text=str(value.get("text") or value.get("ocr_text") or ""),
+        structured_content=structured_content,
+        confidence=float(value.get("confidence") or 0.0),
+        route_used="google_vision",
+        bounding_boxes=list(value.get("bounding_boxes") or []),
+        char_count=int(value.get("char_count") or len(str(value.get("text") or value.get("ocr_text") or "").strip())),
+        word_count=int(value.get("word_count") or 0),
+        line_count=int(value.get("line_count") or 0),
+        image_width=int(value.get("image_width") or 0),
+        image_height=int(value.get("image_height") or 0),
+        text_density=float(value.get("text_density") or 0.0),
+        error=str(value.get("error")) if value.get("error") else None,
+    )
+
+
 def _coerce_structured_result(value: OCRResult | dict[str, Any]) -> OCRResult:
     if isinstance(value, OCRResult):
         value.route_used = "structured"
@@ -433,6 +520,19 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _result_route(value: OCRResult | dict[str, Any] | None) -> str | None:
+    if isinstance(value, OCRResult):
+        return value.route_used
+    if not isinstance(value, dict):
+        return None
+    return str(
+        value.get("route_used")
+        or value.get("ocr_route")
+        or value.get("ocr_provider")
+        or ""
+    ).strip() or None
 
 
 def _record_ocr_route_event(**event: Any) -> None:

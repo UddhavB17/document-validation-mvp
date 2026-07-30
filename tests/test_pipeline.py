@@ -6,6 +6,12 @@ import database.db as db
 from database.db import get_connection, init_db
 from services.pipeline import run_pipeline
 from services.pipeline import _build_page_records, _build_unsupported_page_records
+from services.ocr_router import OCRRouter
+
+
+@pytest.fixture(autouse=True)
+def _default_to_local_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OCR_PROVIDER", "local")
 
 
 def _create_application_pdf(path: Path) -> None:
@@ -32,6 +38,63 @@ def _create_blank_scanned_pdf(path: Path, pages: int) -> None:
         doc.new_page()
     doc.save(path)
     doc.close()
+
+
+@pytest.mark.parametrize(
+    "source_documents",
+    [
+        None,
+        [{
+            "source_document_id": "zip-doc-1",
+            "original_filename": "Applicant/KYC/page.png",
+            "internal_page_start": 1,
+            "internal_page_end": 1,
+        }],
+    ],
+    ids=["pdf", "normalized-zip"],
+)
+def test_google_provider_uses_one_api_ocr_and_no_local_ocr(
+    monkeypatch: pytest.MonkeyPatch,
+    source_documents,
+) -> None:
+    monkeypatch.setenv("OCR_PROVIDER", "google_vision")
+    google_calls: list[str] = []
+    local_calls: list[str] = []
+    router = OCRRouter(
+        fast_processor=lambda path: local_calls.append(str(path)) or {},
+        structured_processor=lambda path: local_calls.append(str(path)) or {},
+        google_vision_processor=lambda path: google_calls.append(str(path)) or {
+            "ocr_text": "Loan Application Form\nApplicant Name: Ramesh Kumar\nLoan Amount: 500000",
+            "confidence": 0.94,
+            "char_count": 79,
+            "word_count": 10,
+            "line_count": 3,
+            "image_width": 1000,
+            "image_height": 1400,
+            "text_density": 56.4,
+        },
+        event_recorder=lambda **_event: None,
+    )
+    monkeypatch.setattr("services.pipeline.get_ocr_router", lambda: router)
+    monkeypatch.setattr(
+        "services.pipeline.classify_page_text",
+        lambda *_args, **_kwargs: (
+            {"document_type": "Application Form", "confidence": 0.95},
+            {"source": "rules", "rule_document_type": "Application Form", "rule_confidence": 0.95},
+        ),
+    )
+    monkeypatch.setattr("services.pipeline.classify_with_structured_llm", lambda **_kwargs: None)
+
+    pages = _build_page_records(
+        [{"page_number": 1, "page_type": "scanned", "image_path": "page.png"}],
+        {},
+        application_id=None,
+        source_documents=source_documents,
+    )
+
+    assert google_calls == ["page.png"]
+    assert local_calls == []
+    assert pages[0]["ocr_route"] == "google_vision"
 
 
 def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

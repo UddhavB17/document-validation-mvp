@@ -1,4 +1,8 @@
-from services.pipeline import _assign_sequential_document_type, _infer_document_type_from_filename
+from services.pipeline import (
+    _assign_sequential_document_type,
+    _infer_document_type_from_filename,
+    _smooth_page_classifications,
+)
 
 
 def _apply_sequence(raw_results: list[dict], texts: list[str] | None = None) -> list[dict]:
@@ -61,6 +65,36 @@ def test_high_confidence_type_change_starts_new_document_boundary() -> None:
     ]
     assert assigned[2]["detection_method"] == "detected"
     assert assigned[3]["detected_page_number"] == 3
+
+
+def test_pan_never_inherits_into_unclassified_following_pages() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "PAN", "confidence": 0.95},
+            {"document_type": "None", "confidence": 0.0},
+            {"document_type": "None", "confidence": 0.0},
+        ],
+        texts=[
+            "INCOME TAX DEPARTMENT Permanent Account Number ABCDE1234F",
+            "Presentation Endorsement property boundary details",
+            "Endorsement of Execution land registration details",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == ["PAN", "Unknown", "Unknown"]
+    assert assigned[1]["abstain_reason"] == "single-page-identity-document-does-not-inherit"
+
+
+def test_smoothing_does_not_turn_unknown_page_into_identity_document() -> None:
+    pages = [
+        {"page_number": 1, "document_type": "PAN", "classification_confidence": 0.95, "extracted_fields": {}},
+        {"page_number": 2, "document_type": "Unknown", "classification_confidence": 0.0, "ocr_text": "property deed", "extracted_fields": {}},
+        {"page_number": 3, "document_type": "PAN", "classification_confidence": 0.95, "extracted_fields": {}},
+    ]
+
+    smoothed = _smooth_page_classifications(pages, application_id=None, total_pages=3)
+
+    assert smoothed[1]["document_type"] == "Unknown"
 
 
 def test_sequence_starting_unknown_does_not_inherit_until_first_detection() -> None:
@@ -148,6 +182,27 @@ def test_generic_zip_folders_are_not_invented_as_document_types() -> None:
     assert _infer_document_type_from_filename("Loan/TASK/5.pdf") is None
     assert _infer_document_type_from_filename("LOAN/REPORT/combined.pdf") is None
     assert _infer_document_type_from_filename("Applicant/KYC/1781168594259.pdf") is None
+
+
+def test_smoothed_unknown_page_marks_unanchored_identity_unreliable() -> None:
+    pages = [
+        {"page_number": 1, "document_type": "Application Form", "classification_confidence": 0.95, "extracted_fields": {}},
+        {
+            "page_number": 2,
+            "document_type": "Unknown",
+            "classification_confidence": 0.0,
+            "ocr_text": "APPLICATION DETAILS\nApplicant Name\nRamesh Kumar\n",
+            "extracted_fields": {"_classification": {"raw_document_type": "Unknown"}},
+        },
+        {"page_number": 3, "document_type": "Application Form", "classification_confidence": 0.95, "extracted_fields": {}},
+    ]
+
+    smoothed = _smooth_page_classifications(pages, application_id=None, total_pages=3)
+
+    fields = smoothed[1]["extracted_fields"]
+    assert smoothed[1]["document_type"] == "Application Form"
+    assert fields["applicant_name"] == "Ramesh Kumar"
+    assert fields["_identity_extraction_reliable"] is False
 
 
 def test_evidentiary_filenames_have_safe_specific_fallbacks() -> None:

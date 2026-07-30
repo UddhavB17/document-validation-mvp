@@ -1,6 +1,11 @@
 from services.checklist_engine import run_checks
 from services.consistency_checks import run_consistency_checks
 from services.field_verification import verify_address
+from services.page_quality import is_confident_document_match
+
+
+def _anomaly_text(anomalies: list[dict]) -> str:
+    return repr(anomalies)
 
 
 def test_name_consistency_ignores_honorifics() -> None:
@@ -167,15 +172,67 @@ def test_name_address_and_bureau_score_consistency() -> None:
     rules = {item["rule_id"] for item in anomalies}
     assert "TRUSTED_APPLICANT_NAME_MISMATCH" in rules
     assert "AADHAAR_ADDRESS_MISMATCH" in rules
-    assert "BUREAU_SCORE_INVALID" in rules
+    assert "BUREAU_SCORE_MISSING" in rules
+
+
+def test_bureau_valid_first_page_suppresses_continuation_score_flags() -> None:
+    trusted = {"people": {"primary": {"applicant_name": "Peeru Lal"}}}
+    anomalies = run_consistency_checks(
+        [
+            {
+                **page(1, "CRIF Report", "primary", applicant_name="Peeru Lal", credit_score="786"),
+                "ocr_text": "CRIF Credit Information Report For PEERU LAL CRIF HM Score(S): SCORE NAME RANGE SCORE 786",
+                "detected_page_number": 1,
+            },
+            {
+                **page(2, "CRIF Report", "primary", credit_score="unknown"),
+                "ocr_text": "Account Information continuation",
+                "detected_page_number": 1,
+            },
+        ],
+        trusted,
+    )
+    assert not any(item["rule_id"].startswith("BUREAU_SCORE") for item in anomalies)
+
+
+def test_blank_bureau_score_table_emits_one_document_level_flag() -> None:
+    trusted = {"people": {"primary": {"applicant_name": "Radha Bai"}}}
+    anomalies = run_consistency_checks(
+        [
+            {
+                **page(1, "CRIF Report", "primary", applicant_name="Radha Bai"),
+                "ocr_text": "CRIF Credit Information Report For RADHA BAI CRIF HM Score(S): SCORE NAME RANGE SCORE",
+                "detected_page_number": 1,
+            },
+            {
+                **page(2, "CRIF Report", "primary"),
+                "ocr_text": "Appendix Section Code Description",
+                "detected_page_number": 1,
+            },
+        ],
+        trusted,
+    )
+    score_flags = [item for item in anomalies if item["rule_id"] == "BUREAU_SCORE_MISSING"]
+    assert len(score_flags) == 1
+    assert score_flags[0]["page_number"] == 1
+
+
+def test_repayment_schedule_does_not_satisfy_bank_statement_rules() -> None:
+    schedule = page(63, "Bank Statement", "primary")
+    schedule["ocr_text"] = "Repayment Schedule under Equated Periodic Instalment EMI (In Rs.)"
+    schedule["extracted_fields"] = {
+        "statement_period_start": "3007.00",
+        "statement_period_end": "238241",
+    }
+    assert is_confident_document_match(schedule, "Bank Statement") is False
 
 
 def test_multi_person_cam_rows_are_compared_to_the_correct_people() -> None:
     trusted = {
         "people": {
-            "primary": {"applicant_name": "Peeru Lal", "phone_number": "8107058694"},
-            "coapplicant_1": {"applicant_name": "Unkar Lal", "phone_number": "9509341692"},
-            "coapplicant_2": {"applicant_name": "Radha Bai", "phone_number": "7339781668"},
+            "primary": {"applicant_name": "Peeru Lal", "phone_number": "9000000001"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal", "phone_number": "9000000002"},
+            "coapplicant_2": {"applicant_name": "Radha Bai", "phone_number": "9000000003"},
         }
     }
     anomalies = run_consistency_checks(
@@ -185,9 +242,9 @@ def test_multi_person_cam_rows_are_compared_to_the_correct_people() -> None:
                 "CAM",
                 "primary",
                 person_records=[
-                    {"applicant_name": "Peeru Lal", "phone_number": "8107058694"},
-                    {"applicant_name": "Unkar Lal", "phone_number": "9509341692"},
-                    {"applicant_name": "Radha Bai", "phone_number": "9509341692"},
+                    {"applicant_name": "Peeru Lal", "phone_number": "9000000001"},
+                    {"applicant_name": "Unkar Lal", "phone_number": "9000000002"},
+                    {"applicant_name": "Radha Bai", "phone_number": "9000000002"},
                 ],
             )
         ],
@@ -290,12 +347,12 @@ def test_bureau_phone_is_not_compared_to_trusted_phone() -> None:
         "people": {
             "coapplicant_2": {
                 "applicant_name": "Radha Bai",
-                "phone_number": "7339781668",
+                "phone_number": "9000000003",
             }
         }
     }
     anomalies = run_consistency_checks(
-        [page(1, "CRIF Report", "coapplicant_2", applicant_name="RADHA BAI", phone_number="9509341692")],
+        [page(1, "CRIF Report", "coapplicant_2", applicant_name="RADHA BAI", phone_number="9000000002")],
         trusted,
     )
     assert not any("PHONE" in item["rule_id"] for item in anomalies)
@@ -307,12 +364,12 @@ def test_cersai_dob_noise_is_not_a_trusted_mismatch() -> None:
             "primary": {
                 "applicant_name": "Peeru Lal",
                 "date_of_birth": "18-May-1994",
-                "pan_number": "BCXPL9010K",
+                "pan_number": "TSTAA0001T",
             }
         }
     }
     anomalies = run_consistency_checks(
-        [page(1, "CERSAI Report", "primary", applicant_name="PEERU LAL", pan_number="BCXPL9010K", date_of_birth="1994-12-05")],
+        [page(1, "CERSAI Report", "primary", applicant_name="PEERU LAL", pan_number="TSTAA0001T", date_of_birth="1994-12-05")],
         trusted,
     )
     assert not any("DATE_OF_BIRTH" in item["rule_id"] for item in anomalies)
@@ -329,3 +386,56 @@ def test_bureau_apr_month_and_branch_id_are_not_compared_to_loan_data() -> None:
         trusted,
     )
     assert not any("APR" in item["rule_id"] or "BRANCH" in item["rule_id"] for item in anomalies)
+
+
+def test_address_like_name_candidate_does_not_create_high_name_mismatch() -> None:
+    trusted = {"people": {"primary": {"applicant_name": "Peeru Lal"}}}
+    anomalies = run_consistency_checks(
+        [page(1, "Application Form", "primary", applicant_name="Semali Bakhata")],
+        trusted,
+    )
+    assert not [
+        item for item in anomalies
+        if item["severity"] == "HIGH" and "NAME" in item["rule_id"]
+    ]
+    assert "Semali Bakhata" not in _anomaly_text(anomalies)
+    assert not any("NAME_EXTRACTION" in item["rule_id"] for item in anomalies)
+
+
+def test_relationship_label_name_candidate_does_not_create_cross_document_mismatch() -> None:
+    trusted = {"people": {"primary": {"applicant_name": "Peeru Lal"}}}
+    anomalies = run_consistency_checks(
+        [
+            page(1, "Aadhaar", "primary", applicant_name="Peeru Lal"),
+            page(2, "Application Form", "primary", applicant_name="C/O"),
+            page(3, "Bank Statement", "primary", account_holder_name="S/O"),
+            page(4, "PAN", "primary", applicant_name="F/O"),
+        ],
+        trusted,
+    )
+    assert not any(item["rule_id"] == "CROSS_DOCUMENT_APPLICANT_NAME_MISMATCH" for item in anomalies)
+    assert not any(item["rule_id"] == "TRUSTED_APPLICANT_NAME_MISMATCH" for item in anomalies)
+    assert "C/O" not in _anomaly_text(anomalies)
+    assert "S/O" not in _anomaly_text(anomalies)
+    assert "F/O" not in _anomaly_text(anomalies)
+
+
+def test_inherited_unknown_page_name_without_anchor_is_manual_review_not_high_mismatch() -> None:
+    trusted = {"people": {"primary": {"applicant_name": "Sita Kumar"}}}
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 2,
+                "document_type": "Application Form",
+                "person_id": "primary",
+                "extracted_fields": {
+                    "applicant_name": "Ramesh Kumar",
+                    "_identity_extraction_reliable": False,
+                },
+            }
+        ],
+        trusted,
+    )
+    assert not any(item["severity"] == "HIGH" and "NAME" in item["rule_id"] for item in anomalies)
+    assert "Ramesh Kumar" not in _anomaly_text(anomalies)
+    assert not any("NAME_EXTRACTION" in item["rule_id"] for item in anomalies)

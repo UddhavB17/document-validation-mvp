@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Any
 
 from services.person_ownership import (
     LOAN_LEVEL_DOCUMENT_TYPES,
+    MULTI_PERSON_DOCUMENT_TYPES,
     PERSON_SCOPED_DOCUMENT_TYPES,
     resolve_person_owner,
 )
+
+from services.person_names import is_person_name_candidate, name_similarity
+from services.validation_gates import field_reliable_for_validation
 
 
 IGNORED_DOCUMENT_TYPES = {
@@ -19,7 +24,13 @@ IGNORED_DOCUMENT_TYPES = {
     "ocr skipped",
     "db data",
     "property image",
+    "house photo",
+    "workplace photo",
+    "photo evidence",
+    "kyc card photo",
+    "ration card photo",
 }
+
 
 
 def build_automatic_document_index(
@@ -39,10 +50,28 @@ def build_automatic_document_index(
 
     for group in groups:
         document_type = str(group["document_type"])
-        person = resolve_person_owner(group["pages_data"], reference_data, document_type)
+        if float(group.get("confidence") or 0.0) < 0.50:
+            anomalies.append(
+                _mapping_anomaly(
+                    "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
+                    group,
+                    "Document type confidence was too low for trusted JSON field comparison.",
+                )
+            )
+            continue
         type_key = document_type.strip().lower()
         is_loan_level = type_key in LOAN_LEVEL_DOCUMENT_TYPES
         requires_person = type_key in PERSON_SCOPED_DOCUMENT_TYPES
+        is_multi_person = type_key in MULTI_PERSON_DOCUMENT_TYPES
+        if is_multi_person and reference_data:
+            default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+            person = {
+                "person_id": default_id,
+                "confidence": 1.0,
+                "evidence": ["multi_person_document_container"],
+            }
+        else:
+            person = resolve_person_owner(group["pages_data"], reference_data, document_type)
 
         if person["person_id"] is None:
             # Person-scoped docs (PAN/Aadhaar/CIBIL/…) must not fall back to primary.
@@ -101,7 +130,13 @@ def build_automatic_document_index(
                     "document_confidence": group["confidence"],
                     "owner_confidence": person["confidence"],
                     "owner_evidence": person["evidence"],
-                    "detection_method": "automatic_page_classification",
+                    "multi_person_document": is_multi_person,
+                    "detection_method": (
+                        "zip_source_document_classification"
+                        if group.get("zip_source_id") else "automatic_page_classification"
+                    ),
+                    "source_document_id": group.get("zip_source_id"),
+                    "source_filename": group.get("original_filename"),
                 },
             }
         )
@@ -123,6 +158,9 @@ def build_automatic_document_index(
 def _group_pages(
     pages: list[dict[str, Any]], source_documents: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
+    if source_documents:
+        return _group_zip_sources_as_documents(pages, source_documents)
+
     source_by_page: dict[int, str] = {}
     for source in source_documents:
         source_id = str(source.get("source_document_id") or "")
@@ -176,6 +214,87 @@ def _group_pages(
     return groups
 
 
+def _group_zip_sources_as_documents(
+    pages: list[dict[str, Any]], source_documents: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Treat every ZIP member as one complete document candidate."""
+    pages_by_number = {
+        int(page.get("page_number") or 0): page
+        for page in pages
+        if page.get("page_number") is not None
+    }
+    groups: list[dict[str, Any]] = []
+    for source in source_documents:
+        source_id = str(source.get("source_document_id") or "")
+        start = int(source.get("internal_page_start") or 0)
+        end = int(source.get("internal_page_end") or 0)
+        source_pages = [
+            pages_by_number[number]
+            for number in range(start, end + 1)
+            if number in pages_by_number
+        ]
+        if not source_pages:
+            continue
+        document_type, confidence = _select_source_document_type(source_pages, source)
+        if document_type.strip().lower() in IGNORED_DOCUMENT_TYPES:
+            continue
+        groups.append(
+            {
+                "source_document_id": source_id or f"auto-{start:04d}-{_slug(document_type)}",
+                "zip_source_id": source_id,
+                "original_filename": source.get("original_filename"),
+                "file_type": source.get("file_type"),
+                "document_type": document_type,
+                "pages": [
+                    int(page.get("page_number") or 0)
+                    for page in source_pages
+                    if int(page.get("page_number") or 0)
+                ],
+                "pages_data": source_pages,
+                "confidence": confidence,
+            }
+        )
+    return groups
+
+
+def _select_source_document_type(
+    pages: list[dict[str, Any]], source: dict[str, Any]
+) -> tuple[str, float]:
+    weighted_votes: Counter[str] = Counter()
+    confidences_by_type: dict[str, list[float]] = {}
+    for page in pages:
+        document_type = _effective_document_type(page)
+        type_key = document_type.strip().lower()
+        if type_key in IGNORED_DOCUMENT_TYPES:
+            continue
+        confidence = float(page.get("classification_confidence") or 0.0)
+        weighted_votes[document_type] += max(confidence, 0.01)
+        confidences_by_type.setdefault(document_type, []).append(confidence)
+    if not weighted_votes:
+        fallback = _source_type_from_filename(str(source.get("original_filename") or ""))
+        return (fallback, 0.55) if fallback else ("Unknown", 0.0)
+    document_type = weighted_votes.most_common(1)[0][0]
+    confidences = confidences_by_type.get(document_type) or [0.0]
+    return document_type, round(sum(confidences) / len(confidences), 3)
+
+
+def _source_type_from_filename(filename: str) -> str | None:
+    text = filename.lower()
+    if "application" in text or "app form" in text or "loan form" in text:
+        return "Application Form"
+    if "aadhaar" in text or "aadhar" in text:
+        return "Aadhaar"
+    if re.search(r"\bpan\b", text):
+        return "PAN"
+    if "bank" in text or "statement" in text:
+        return "Bank Statement"
+    if "agreement" in text:
+        return "Loan Agreement"
+    if "sanction" in text:
+        return "Sanction Letter"
+    return None
+
+
 def _effective_document_type(page: dict[str, Any]) -> str:
     fields = page.get("extracted_fields")
     if isinstance(fields, dict):
@@ -185,6 +304,7 @@ def _effective_document_type(page: dict[str, Any]) -> str:
             if llm_type.lower() not in {"", "none", "unknown"}:
                 return llm_type
     return str(page.get("document_type") or "Unknown").strip()
+
 
 
 def _slug(value: str) -> str:

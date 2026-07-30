@@ -26,6 +26,9 @@ import re
 from datetime import date, datetime
 from typing import Any
 
+from services.person_names import canonicalize_person_name, is_name_field
+from services.validation_gates import is_amortization_schedule
+
 # python-dateutil – graceful import with informative error
 try:
     from dateutil import parser as _dateutil_parser
@@ -87,7 +90,7 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
     extractor = _EXTRACTORS.get(document_type)
     if extractor is None:
         return {}
-    fields = extractor(text)
+    fields = _sanitize_name_fields(extractor(text))
     for field_name in ("address", "current_address", "permanent_address", "communication_address"):
         if field_name in fields:
             fields[field_name] = _sanitize_address_value(fields[field_name])
@@ -505,7 +508,7 @@ def _line_after_label(text: str, *labels: str) -> str | None:
                     return candidate
             # Else next non-empty line (bounded to 8 lines max)
             for j in range(i + 1, min(len(lines), i + 9)):
-                if not re.search(r"[A-Za-z]", lines[j]):
+                if not any(character.isalpha() for character in lines[j]):
                     continue
                 candidate = _clean_name_like_value(lines[j])
                 if candidate:
@@ -514,85 +517,34 @@ def _line_after_label(text: str, *labels: str) -> str | None:
 
 
 def _clean_name_like_value(value: str) -> str | None:
-    candidate = value.strip(" :\t\r\n")
-    if not candidate:
-        return None
+    candidate = canonicalize_person_name(value)
+    return candidate.value if candidate.valid else None
 
-    # A candidate name must not contain digits (dates, times, stamp IDs, years)
-    if re.search(r"\d", candidate):
-        return None
 
-    candidate_lower = candidate.lower()
-
-    # Common labels and form noise
-    labels = {
-        "applicant name",
-        "borrower name",
-        "name of applicant",
-        "consumer name",
-        "card holder name",
-        "father's name",
-        "fathers name",
-        "name",
-        "s/o",
-        "d/o",
-        "w/o",
-        "c/o",
-        "आवेदक का नाम",
-        "नाम",
-        "husband name",
-        "husband's name",
-        "wife's name",
-        "wife name",
-    }
-    if candidate_lower in labels:
-        return None
-
-    # Filter out common headings, system text, OCR form labels, and metadata
-    rejected_keywords = {
-        # Document/system headings
-        "endorsement", "execution", "presentation", "registration", "registrar",
-        "government", "ministry", "department", "commission", "tax", "income",
-        "permanent account", "unique identification", "uidai", "aadhaar", "passport",
-        "licence", "license", "voter id", "cheque", "check", "sanction letter",
-        "loan agreement", "facility agreement", "checklist", "form no", "form 60", "pan",
-        "form 97", "signature", "thumb", "impression", "photo", "office use",
-        "campaign", "abhijan", "prashasan", "camp", "sl no", "s.no", "serial",
-        "page", "date", "time", "place", "status", "type", "data", "unknown",
-        "particulars", "description", "details", "applicant", "co-applicant",
-        "coapplicant", "borrower", "guarantor", "witness", "officer", "manager",
-        # Common OCR form labels that bleed into name extraction
-        "gender", "birth", "address", "city", "district", "state", "country",
-        "pin", "mobile", "phone", "email", "institution", "bank", "branch",
-        "account", "number", "no.", "ref", "reference", "issue", "issued",
-        "expiry", "valid", "validity", "nationality", "religion", "caste",
-        "male", "female", "transgender", "dob", "yob", "age", "profile",
-        "purpose", "declaration", "consent", "note", "information", "report",
-    }
-
-    for kw in rejected_keywords:
-        if kw in candidate_lower:
-            return None
-
-    # Reject XML namespace strings, URLs, and base64 content
-    if any(pat in candidate for pat in ("xmlns", "http://", "https://", "<", ">", "=", "/>")):
-        return None
-
-    # Reject values that are a single word with ≤ 3 characters
-    words = [w for w in candidate.split() if w]
-    if len(words) == 1 and len(words[0]) <= 3:
-        return None
-
-    # Check if it has a realistic name length and character composition
-    # Names are usually between 3 and 70 characters
-    if len(candidate) < 3 or len(candidate) > 70:
-        return None
-
-    # Check that it contains at least some letters (not just punctuation/special chars)
-    if not any(c.isalpha() for c in candidate):
-        return None
-
-    return candidate
+def _sanitize_name_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(fields)
+    for field_name, value in list(cleaned.items()):
+        if str(field_name).startswith("_"):
+            continue
+        if field_name == "person_records" and isinstance(value, list):
+            cleaned[field_name] = [
+                _sanitize_name_fields(record) if isinstance(record, dict) else record
+                for record in value
+            ]
+            continue
+        if isinstance(value, list):
+            if is_name_field(field_name):
+                names = [
+                    candidate.value
+                    for item in value
+                    if (candidate := canonicalize_person_name(item)).valid
+                ]
+                cleaned[field_name] = names
+            continue
+        if is_name_field(field_name) and value not in (None, ""):
+            candidate = canonicalize_person_name(value)
+            cleaned[field_name] = candidate.value if candidate.valid else None
+    return cleaned
 
 
 def _lines_after_label(text: str, label: str, max_lines: int = 3) -> str | None:
@@ -982,6 +934,12 @@ def _extract_pan(text: str) -> dict[str, Any]:
     """Extract fields from a PAN card."""
     text = _xml_cleaner(text)
     pan_match = re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
+    if not pan_match and not re.search(
+        r"\b(?:permanent\s+account\s+number|income\s+tax|govt\.?\s+of\s+india|pan\s+card)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return {}
     inline_name = None
     if pan_match:
         after_pan = text[pan_match.end():pan_match.end() + 160]
@@ -1021,8 +979,22 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
     """Extract fields from an Aadhaar card."""
     xml_fields = _extract_aadhaar_xml(text)
     text = _xml_cleaner(text)
-    aadhaar_match = re.search(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", text)
-    aadhaar_number = aadhaar_match.group(1).replace(" ", "") if aadhaar_match else None
+    digilocker_fields = _extract_digilocker_aadhaar_summary(text)
+    aadhaar_match = re.search(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", text)
+    authority_evidence = bool(re.search(
+        r"unique\s+identification\s+authority|\buidai\b|e-?aadhaar|"
+        r"भारतीय\s+विशिष्ट\s+पहचान|मेरा\s+आधार",
+        text,
+        re.IGNORECASE,
+    ))
+    form_kyc_section = bool(re.search(
+        r"(?:applicant|co[\s-]*applicant|guarantor)\s+kyc\s+details",
+        text,
+        re.IGNORECASE,
+    ))
+    if form_kyc_section and not authority_evidence:
+        return {}
+    aadhaar_number = _digits_only(aadhaar_match.group(1)) if aadhaar_match else None
     relation_match = re.search(
         r"\b(S\s*/\s*O|D\s*/\s*O|W\s*/\s*O|C\s*/\s*O|son\s+of|daughter\s+of|wife\s+of|care\s+of)\b\s*[:\-]?\s*([^\n\r,]{3,70})",
         text,
@@ -1031,19 +1003,97 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
     qualifier = re.sub(r"\s+", "", relation_match.group(1)).upper() if relation_match else None
     qualifier = {"SONOF": "S/O", "DAUGHTEROF": "D/O", "WIFEOF": "W/O", "CAREOF": "C/O"}.get(qualifier or "", qualifier)
     result = {
-        "applicant_name": xml_fields.get("applicant_name") or _line_after_label(text, "name"),
+        "applicant_name": (
+            xml_fields.get("applicant_name")
+            or digilocker_fields.get("applicant_name")
+            or _line_after_label(text, "name", "नाम")
+        ),
         "aadhaar_number": aadhaar_number,
-        "aadhaar_last4": xml_fields.get("aadhaar_last4"),
-        "dob": xml_fields.get("dob") or _extract_date_near(text.lower(), "date of birth", "dob", "year of birth", "yob"),
-        "address": xml_fields.get("address") or _extract_aadhaar_address(text),
-        "pin_code": xml_fields.get("pin_code"),
-        "gender": xml_fields.get("gender"),
-        "relationship_qualifier": xml_fields.get("relationship_qualifier") or qualifier,
-        "related_person_name": xml_fields.get("related_person_name") or (
+        "aadhaar_last4": xml_fields.get("aadhaar_last4") or digilocker_fields.get("aadhaar_last4"),
+        "dob": (
+            xml_fields.get("dob")
+            or digilocker_fields.get("dob")
+            or _extract_date_near(text.lower(), "date of birth", "dob", "year of birth", "yob")
+        ),
+        "address": (
+            xml_fields.get("address")
+            or digilocker_fields.get("address")
+            or _extract_aadhaar_address(text)
+        ),
+        "pin_code": xml_fields.get("pin_code") or digilocker_fields.get("pin_code"),
+        "gender": xml_fields.get("gender") or digilocker_fields.get("gender"),
+        "relationship_qualifier": (
+            xml_fields.get("relationship_qualifier")
+            or digilocker_fields.get("relationship_qualifier")
+            or qualifier
+        ),
+        "related_person_name": (
+            xml_fields.get("related_person_name")
+            or digilocker_fields.get("related_person_name")
+        ) or (
             _clean_name_like_value(relation_match.group(2)) if relation_match else None
         ),
     }
     return result
+
+
+def _extract_digilocker_aadhaar_summary(text: str) -> dict[str, Any]:
+    """Parse DigiLocker label-first/value-second Aadhaar summary pages."""
+    if not re.search(r"DigiLocker\s+verified\s+e-?Aadhaar", text or "", re.IGNORECASE):
+        return {}
+
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    fields: dict[str, Any] = {}
+    masked = re.search(r"(?i)\b[x*]{4,}(\d{4})\b", text or "")
+    if masked:
+        fields["aadhaar_last4"] = masked.group(1)
+
+    for index, line in enumerate(lines):
+        if not re.fullmatch(r"\d{2}[-/.]\d{2}[-/.]\d{4}", line):
+            continue
+        if index == 0 or index + 1 >= len(lines):
+            continue
+        gender = lines[index + 1].upper()
+        if gender not in {"MALE", "FEMALE", "TRANSGENDER"}:
+            continue
+        name = _clean_name_like_value(lines[index - 1])
+        if name:
+            fields["applicant_name"] = name
+            fields["dob"] = _parse_date(line)
+            fields["gender"] = gender
+            break
+
+    relationship_pattern = re.compile(r"^(S/O|D/O|W/O|C/O)\s*:\s*([^,\n]{2,70})", re.IGNORECASE)
+    for index, line in enumerate(lines):
+        relationship = relationship_pattern.match(line)
+        if not relationship:
+            continue
+        related_name = _clean_name_like_value(relationship.group(2))
+        if related_name:
+            fields["relationship_qualifier"] = relationship.group(1).upper()
+            fields["related_person_name"] = related_name
+        if "," not in line:
+            continue
+        address_parts = [line]
+        for following in lines[index + 1 : index + 4]:
+            address_parts.append(following)
+            if re.search(r"\b[1-8]\d{5}\b", following):
+                break
+        address = re.sub(r"\s+", " ", " ".join(address_parts))
+        address = relationship_pattern.sub("", address, count=1).lstrip(" ,")
+        if related_name and address.casefold().startswith(related_name.casefold()):
+            address = address[len(related_name) :].lstrip(" ,")
+        pin = re.search(r"\b([1-8]\d{5})\b", address)
+        if pin:
+            fields["pin_code"] = pin.group(1)
+            fields["address"] = address
+            break
+
+    if not fields.get("pin_code"):
+        pin = re.search(r"(?m)^\s*([1-8]\d{5})\s*$", text or "")
+        if pin:
+            fields["pin_code"] = pin.group(1)
+    return fields
 
 
 def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
@@ -1074,7 +1124,7 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
         co_value = poa.get("co", "").strip()
         relation_match = re.match(r"\s*(S/O|D/O|W/O|C/O)\s*:\s*(.+)", co_value, re.IGNORECASE)
         address_parts = [
-            co_value, poa.get("house"), poa.get("street"), poa.get("lm"), poa.get("loc"),
+            poa.get("house"), poa.get("street"), poa.get("lm"), poa.get("loc"),
             poa.get("vtc"), poa.get("po"), poa.get("subdist"), poa.get("dist"),
             poa.get("state"), poa.get("country"), poa.get("pc"),
         ]
@@ -1087,7 +1137,8 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
             "address": address or None,
             "pin_code": poa.get("pc") or None,
             "relationship_qualifier": relation_match.group(1).upper() if relation_match else None,
-            "related_person_name": relation_match.group(2).strip() if relation_match else None,
+            "related_person_name": _clean_name_like_value(relation_match.group(2)) if relation_match else None,
+            "_aadhaar_xml_demographic_fields": sorted(set(poi) | set(poa)),
         }
     except (AttributeError, ValueError):
         return {}
@@ -1111,7 +1162,7 @@ def _extract_application_form(text: str) -> dict[str, Any]:
     pan_match = None if is_coapplicant_kyc_table else re.search(
         r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper()
     )
-    aadhaar_match = re.search(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", text)
+    aadhaar_match = re.search(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", text)
     # Do not attribute co-applicant or corporate-header phones to the primary.
     phone_match = None
     if "CO-APPLICANT DETAILS" not in text.upper():
@@ -1146,7 +1197,7 @@ def _extract_application_form(text: str) -> dict[str, Any]:
             text, "applicant name", "borrower name", "name of applicant"
         )),
         "pan_number": pan_match.group(1) if pan_match else None,
-        "aadhaar_number": aadhaar_match.group(1).replace(" ", "") if aadhaar_match else None,
+        "aadhaar_number": _digits_only(aadhaar_match.group(1)) if aadhaar_match else None,
         "date_of_birth": _extract_date_near(text.lower(), "date of birth", "dob"),
         "loan_amount": _normalize_amount(_numeric_line_after_label(text, "loan amount")),
         "phone_number": phone_match.group(1) if phone_match else None,
@@ -1261,11 +1312,36 @@ def _extract_voter_id(text: str) -> dict[str, Any]:
     dob_raw = _extract_date_near(t, "dob", "date of birth")
 
     return {
-        "applicant_name": _line_after_label(text, "name", "elector's name", "electors name"),
+        "applicant_name": _voter_cardholder_name(text),
         "voter_id_number": vid_match.group(1) if vid_match else None,
         "address": _lines_after_label(text, "address", max_lines=3),
         "dob": dob_raw,
     }
+
+
+def _voter_cardholder_name(text: str) -> str | None:
+    """Prefer the Latin cardholder value in bilingual EPIC label/value blocks."""
+    lines = text.splitlines()
+    label_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.search(r"elector'?s\s+name|निर्वाचक\s+का\s+नाम", line, re.IGNORECASE)
+        ),
+        None,
+    )
+    if label_index is None:
+        return _line_after_label(text, "name")
+
+    valid_candidates: list[str] = []
+    for line in lines[label_index + 1 : label_index + 14]:
+        candidate = _clean_name_like_value(line)
+        if not candidate:
+            continue
+        valid_candidates.append(candidate)
+        if re.search(r"[A-Za-z]", candidate):
+            return candidate
+    return valid_candidates[0] if valid_candidates else None
 
 
 def _extract_driving_license(text: str) -> dict[str, Any]:
@@ -1358,6 +1434,10 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
     if score_match:
         score = score_match.group(1)
     else:
+        table_score = re.search(r"\b300\s*[-–]\s*900\s+([3-9]\d{2})\b", t)
+        if table_score:
+            score = table_score.group(1)
+    if score is None:
         # Broader fallback: any 3-digit number 300-900 near "score" in a 60-char window
         idx = t.find("score")
         if idx != -1:
@@ -1370,9 +1450,7 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
     report_date = _extract_date_near(t, "report generated", "as on", "date of report")
 
     # Applicant name: first substantive non-header line
-    applicant_name: str | None = _line_after_label(
-        text, "applicant name", "name of applicant", "consumer name", "name"
-    )
+    applicant_name: str | None = _extract_bureau_applicant_name(text)
 
     account_count = re.search(r"(?:total|number\s+of)\s+accounts?\s*[:\-–]?\s*(\d+)", t)
     overdue_count = re.search(r"(?:overdue|past\s+due)\s+accounts?\s*[:\-–]?\s*(\d+)", t)
@@ -1389,8 +1467,30 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
     }
 
 
+def _extract_bureau_applicant_name(text: str) -> str | None:
+    """Extract only the report subject, never variation/address-section rows."""
+    header_window = text[:2500]
+    for pattern in (
+        r"(?:^|\n)\s*Consumer\s+Name\s*:?\s*(?:\n\s*)?"
+        r"([A-Za-z][A-Za-z .'-]{2,60}?)(?=\s*(?:\n|Date\b|DOB\b))",
+        r"(?:^|\n)\s*Applicant\s+Name\s*[:\-–]?\s*(?:\n\s*)?"
+        r"([A-Za-z][A-Za-z .'-]{2,60}?)(?=\s*(?:\n|DOB\b|Gender\b))",
+        r"(?:^|\n)\s*Name\s*:\s*([A-Za-z][A-Za-z .'-]{2,60}?)"
+        r"(?=\s+(?:DOB|Gender|Father|Phone|ID|Current Address|$))",
+        r"(?:^|\n)\s*For\s+([A-Za-z][A-Za-z .'-]{2,60}?)\s*(?=\n|$)",
+    ):
+        match = re.search(pattern, header_window, re.IGNORECASE | re.MULTILINE)
+        if match:
+            return _clean_name_like_value(match.group(1))
+    return None
+
+
 def _extract_bank_statement(text: str) -> dict[str, Any]:
     """Extract fields from a bank statement."""
+    if is_amortization_schedule(text):
+        return {
+            "_validation_blocked_reason": "amortization_schedule_not_bank_statement",
+        }
     t = text.lower()
     account_match = re.search(
         r"(?:account\s*(?:number|no\.?|#)|a/c\s*(?:no\.?|number)?)\s*[:\-–]?\s*([0-9Xx* ]{6,24})",
@@ -1452,8 +1552,15 @@ def _extract_passbook(text: str) -> dict[str, Any]:
     branch_match = re.search(r"\bbranch\s*[:\-–]?\s*([^\n\r]{2,70})", text, re.IGNORECASE)
     bank_match = re.search(r"\b(?:bank\s+name|name\s+of\s+bank)\s*[:\-–]?\s*([^\n\r]{2,70})", text, re.IGNORECASE)
     type_match = re.search(r"\baccount\s+type\s*[:\-–]?\s*([^\n\r]{2,30})", text, re.IGNORECASE)
+    passbook_name = re.search(
+        r"\b(?:SHRI|SMT|SRI|MR|MRS)\.?\s+([A-Z][A-Z ]{2,60})\b",
+        text,
+        re.IGNORECASE,
+    )
     return {
-        "account_holder_name": _line_after_label(text, "account holder", "customer name", "name", "नाम"),
+        "account_holder_name": (
+            _clean_name_like_value(passbook_name.group(1)) if passbook_name else None
+        ) or _line_after_label(text, "account holder", "customer name", "name", "नाम"),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
         "bank_name": bank_match.group(1).strip() if bank_match else None,
@@ -1560,12 +1667,27 @@ def _extract_insurance_consent(text: str) -> dict[str, Any]:
 
 def _extract_clearance_report(text: str) -> dict[str, Any]:
     lower = text.lower()
+    status_window = _clearance_status_window(text)
+    status_lower = status_window.lower()
     rejected = next(
-        (status for status in ("not cleared", "not clear", "negative", "rejected", "pending") if status in lower),
+        (status for status in ("not cleared", "not clear", "negative", "rejected", "pending") if status in status_lower),
         None,
     )
     accepted = next(
-        (status for status in ("cleared", "clear", "positive", "approved") if status in lower),
+        (
+            status
+            for status in (
+                "technically cleared",
+                "title clear",
+                "cleared",
+                "clear",
+                "positive",
+                "approved",
+                "recommended",
+                "satisfactory",
+            )
+            if status in status_lower
+        ),
         None,
     )
     return {
@@ -1573,6 +1695,14 @@ def _extract_clearance_report(text: str) -> dict[str, Any]:
         "report_status": rejected or accepted,
         "report_date": _extract_date_near(lower, "report date", "date of report", "as on"),
     }
+
+
+def _clearance_status_window(text: str) -> str:
+    for label in ("clearance status", "technical status", "report status", "recommendation", "remarks"):
+        value = _lines_after_label(text, label, max_lines=3)
+        if value:
+            return value
+    return " ".join(str(text or "").splitlines()[:20])
 
 
 def _extract_nach_form(text: str) -> dict[str, Any]:

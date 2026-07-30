@@ -1,10 +1,15 @@
 """LLM explanation service using local/open-source HTTP APIs with TOON format."""
 
 import json
+import logging
 import re
+
+from toon import encode
 
 from database.db import get_connection
 from services.llm_client import call_llm_api, extract_response_text as _extract_response_text
+
+logger = logging.getLogger(__name__)
 
 
 def generate_explanation(
@@ -30,7 +35,7 @@ def generate_explanation(
         if raw_text:
             parsed = parse_llm_summary(raw_text)
     except Exception as exc:
-        print(f"Error calling LLM or decoding TOON: {exc}")
+        logger.warning("LLM summary unavailable; using deterministic summary: %s", exc)
 
     if parsed is None:
         parsed = build_default_summary(anomalies, ground_truth)
@@ -78,7 +83,7 @@ def parse_llm_summary(text: str) -> dict | None:
                             page_sum["summary_points"] = [str(points)]
             return parsed
     except Exception as exc:
-        print(f"TOON decode error: {exc}")
+        logger.debug("Could not decode LLM summary as TOON: %s", exc)
     return None
 
 
@@ -153,10 +158,9 @@ def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
         "page_summaries[1]{page_number,document_type,summary_points,problem_description}:\n"
         "  3,Bank Statement,[\"Statement is for State Bank of India account\",\"Covers April to June 2026\"],Applicant name does not match the application.\n\n"
         f"Loan file {loan_id} for {applicant_name}.\n"
-        "Ground truth from application form:\n"
-        f"{json.dumps(ground_truth, indent=2)}\n"
-        "Anomalies detected:\n"
-        f"{json.dumps(anomalies, indent=2)}\n"
+        "Ground truth from application form (TOON):\n"
+        f"{encode(ground_truth)}\n"
+        "Anomalies detected (TOON):\n"
+        f"{encode(anomalies)}\n"
     )
-
 

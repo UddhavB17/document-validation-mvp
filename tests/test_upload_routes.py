@@ -76,6 +76,7 @@ def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> No
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(upload_route, "run_pipeline", lambda *_args, **_kwargs: {"pipeline_status": "completed"})
+    monkeypatch.setattr(upload_route, "submit_job", lambda fn, *args, **kwargs: fn(*args, **kwargs))
 
     pdf_path = tmp_path / "upload.pdf"
     _create_pdf(pdf_path)

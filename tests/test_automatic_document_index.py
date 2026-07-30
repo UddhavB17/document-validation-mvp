@@ -116,10 +116,10 @@ def test_aggregates_loan_agreement_fragments_within_same_source() -> None:
 
 def test_explicit_name_outweighs_reused_phone_for_owner_resolution() -> None:
     result = build_automatic_document_index(
-        [_page(1, "CRIF Report", {"applicant_name": "Radha Bai", "phone_number": "9509341692"})],
+        [_page(1, "CRIF Report", {"applicant_name": "Radha Bai", "phone_number": "9000000002"})],
         {
-            "coapplicant_1": {"applicant_name": "Unkar Lal", "phone_number": "9509341692"},
-            "coapplicant_2": {"applicant_name": "Radha Bai", "phone_number": "7339781668"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal", "phone_number": "9000000002"},
+            "coapplicant_2": {"applicant_name": "Radha Bai", "phone_number": "9000000003"},
         },
     )
     assert result["documents"][0]["applicant_role"] == "coapplicant_2"
@@ -127,11 +127,59 @@ def test_explicit_name_outweighs_reused_phone_for_owner_resolution() -> None:
 
 def test_full_aadhaar_number_matches_trusted_last_four_for_owner_resolution() -> None:
     result = build_automatic_document_index(
-        [_page(1, "Aadhaar", {"aadhaar_number": "227153851187"})],
+        [_page(1, "Aadhaar", {"aadhaar_number": "999988880003"})],
         {
-            "coapplicant_1": {"applicant_name": "Unkar Lal", "aadhaar_last4": "7326"},
-            "coapplicant_2": {"applicant_name": "Radha Bai", "aadhaar_last4": "1187"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal", "aadhaar_last4": "0002"},
+            "coapplicant_2": {"applicant_name": "Radha Bai", "aadhaar_last4": "0003"},
         },
     )
     assert result["anomalies"] == []
     assert result["documents"][0]["applicant_role"] == "coapplicant_2"
+
+
+def test_weak_smoothed_unknown_name_does_not_resolve_owner() -> None:
+    weak = _page(
+        31,
+        "CRIF Report",
+        {
+            "applicant_name": "MEHAR BASTI SEMALI BAKHATA",
+            "_identity_extraction_reliable": False,
+            "_classification": {
+                "raw_document_type": "Unknown",
+                "detection_method": "sandwich_smoothed",
+            },
+        },
+        detected=30,
+    )
+    weak["detection_method"] = "sandwich_smoothed"
+    result = build_automatic_document_index(
+        [weak],
+        {
+            "primary": {"applicant_name": "Peeru Lal"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal"},
+        },
+    )
+
+    assert result["documents"] == []
+    assert result["anomalies"][0]["rule_id"] == "AUTO_OWNER_UNRESOLVED"
+
+
+def test_zip_member_multi_page_pdf_is_one_document_candidate() -> None:
+    pages = [
+        _page(1, "Application Form", {"applicant_name": "Peeru Lal"}),
+        _page(2, "Application Form", {"pan_number": "TSTAA0001T"}, detected=1),
+    ]
+    result = build_automatic_document_index(
+        pages,
+        {"primary": {"applicant_name": "Peeru Lal", "pan_number": "TSTAA0001T"}},
+        source_documents=[{
+            "source_document_id": "file-0001",
+            "original_filename": "application-form.pdf",
+            "internal_page_start": 1,
+            "internal_page_end": 2,
+        }],
+    )
+
+    assert len(result["documents"]) == 1
+    assert result["documents"][0]["source_document_id"] == "file-0001"
+    assert result["documents"][0]["pages"] == [1, 2]

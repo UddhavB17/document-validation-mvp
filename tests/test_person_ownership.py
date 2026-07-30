@@ -13,23 +13,23 @@ PEERU_FAMILY = {
     "primary": {
         "role": "primary",
         "applicant_name": "Peeru Lal",
-        "pan_number": "BCXPL9010K",
+        "pan_number": "TSTAA0001T",
         "date_of_birth": "18-May-1994",
-        "phone_number": "8107058694",
+        "phone_number": "9000000001",
     },
     "coapplicant_1": {
         "role": "coapplicant",
         "applicant_name": "Unkar Lal",
-        "pan_number": "BBEPL4329P",
+        "pan_number": "TSTBB0002T",
         "date_of_birth": "05-June-1961",
-        "phone_number": "9509341692",
+        "phone_number": "9000000002",
     },
     "coapplicant_2": {
         "role": "coapplicant",
         "applicant_name": "Radha Bai",
-        "pan_number": "JGZPB3257C",
+        "pan_number": "TSTCC0003T",
         "date_of_birth": "01-January-1962",
-        "phone_number": "7339781668",
+        "phone_number": "9000000003",
     },
 }
 
@@ -64,7 +64,7 @@ def test_passbook_owner_resolves_from_ocr_name() -> None:
             "document_type": "PAN",
             "extracted_fields": {
                 "applicant_name": "UNKAR LAL",
-                "pan_number": "BBEPL4329P",
+                "pan_number": "TSTBB0002T",
                 "dob": "1961-06-05",
             },
         },
@@ -106,7 +106,7 @@ def test_assign_page_owners_stamps_coapplicant_pages() -> None:
             "document_type": "PAN",
             "extracted_fields": {
                 "applicant_name": "PEERU LAL",
-                "pan_number": "BCXPL9010K",
+                "pan_number": "TSTAA0001T",
                 "dob": "1994-05-18",
             },
         },
@@ -115,7 +115,7 @@ def test_assign_page_owners_stamps_coapplicant_pages() -> None:
             "document_type": "PAN",
             "extracted_fields": {
                 "applicant_name": "UNKAR LAL",
-                "pan_number": "BBEPL4329P",
+                "pan_number": "TSTBB0002T",
                 "dob": "1961-06-05",
             },
         },
@@ -138,7 +138,7 @@ def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
             "document_type": "PAN",
             "extracted_fields": {
                 "applicant_name": "PEERU LAL",
-                "pan_number": "BCXPL9010K",
+                "pan_number": "TSTAA0001T",
                 "dob": "1994-05-18",
             },
         },
@@ -147,7 +147,7 @@ def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
             "document_type": "PAN",
             "extracted_fields": {
                 "applicant_name": "UNKAR LAL",
-                "pan_number": "BBEPL4329P",
+                "pan_number": "TSTBB0002T",
                 "dob": "05-June-1961",
             },
         },
@@ -180,7 +180,7 @@ def test_strong_pan_overrides_wrong_provided_mapping() -> None:
             "document_type": "PAN",
             "extracted_fields": {
                 "applicant_name": "UNKAR LAL",
-                "pan_number": "BBEPL4329P",
+                "pan_number": "TSTBB0002T",
             },
         },
         PEERU_FAMILY,

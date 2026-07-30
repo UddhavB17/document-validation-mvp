@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from typing import Any
 
 from requests import RequestException
+from toon import decode, encode
 
 from services.config import get_bool
 from services.llm_client import llm_provider
+from services.person_names import canonicalize_person_name, is_name_field
 from services.structured_llm_classifier import (
     DEFAULT_MODEL,
     _call_ollama_generate,
@@ -29,6 +30,7 @@ _LABEL_VALUES = {
     "borrower name",
     "account holder",
     "account holder name",
+    "a/c holder name",
     "a/c number",
     "a/c numeber",
     "account number",
@@ -119,8 +121,8 @@ def is_suspicious_assignment(field_name: str, value: Any) -> bool:
     normalized = _normalize_text(text)
     if normalized in _LABEL_VALUES:
         return True
-    if field_name in {"applicant_name", "borrower_name", "account_holder_name"}:
-        return _looks_like_non_name(normalized)
+    if is_name_field(field_name):
+        return not canonicalize_person_name(text).valid or _looks_like_non_name(normalized)
     if field_name == "address":
         return _looks_like_address_placeholder(normalized)
     return False
@@ -174,7 +176,7 @@ def _assign_with_llm(
     except (ImportError, OSError, RuntimeError, TypeError, ValueError, RequestException) as exc:
         return None, {**metadata, "error": str(exc)}
 
-    parsed = _parse_json_object(response_text or "")
+    parsed = _parse_toon_object(response_text or "")
     if not parsed:
         return None, {**metadata, "error": "Malformed LLM field assignment response"}
     fields = parsed.get("fields")
@@ -196,12 +198,12 @@ def _build_prompt(document_type: str, ocr_text: str, extracted_fields: dict[str,
         "Never guess ID numbers such as PAN, Aadhaar, account number, or IFSC.\n"
         "Bad examples: applicant_name must not be 'Date of Birth'; address must not be "
         "'Landmark Locality City / District Pin Code'.\n\n"
-        "Return only JSON in this shape:\n"
-        '{"fields": {"field_name": "value or null"}, "reason": "short reason", "confidence": 0.0}\n\n'
+        "Return only TOON in this shape:\n"
+        "fields:\n  field_name: value or null\nreason: short reason\nconfidence: 0.0\n\n"
         f"Document type: {document_type}\n"
         f"Expected fields: {expected_fields}\n"
-        "Current extracted fields:\n"
-        f"{json.dumps(_public_fields(extracted_fields), ensure_ascii=False, sort_keys=True)}\n\n"
+        "Current extracted fields (TOON):\n"
+        f"{encode(_public_fields(extracted_fields))}\n\n"
         "OCR text:\n"
         f"{(ocr_text or '').strip()[:_MAX_TEXT_CHARS]}"
     )
@@ -267,25 +269,17 @@ def _with_assignment_metadata(
     return updated
 
 
-def _parse_json_object(response_text: str) -> dict[str, Any] | None:
+def _parse_toon_object(response_text: str) -> dict[str, Any] | None:
     stripped = response_text.strip()
     if not stripped:
         return None
-    candidates = [stripped]
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stripped, re.DOTALL | re.IGNORECASE)
-    if fence_match:
-        candidates.insert(0, fence_match.group(1))
-    brace_match = re.search(r"\{.*\}", stripped, re.DOTALL)
-    if brace_match:
-        candidates.append(brace_match.group(0))
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            return parsed
-    return None
+    fence_match = re.search(r"```(?:toon)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    candidate = fence_match.group(1).strip() if fence_match else stripped
+    try:
+        parsed = decode(candidate)
+    except Exception:  # noqa: BLE001
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _public_fields(fields: dict[str, Any]) -> dict[str, Any]:

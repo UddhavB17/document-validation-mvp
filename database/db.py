@@ -39,9 +39,55 @@ def init_db() -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column name" not in str(exc).lower():
                     raise
+        _migrate_ocr_route_events_for_google_vision(connection)
         for statement in INDEX_STATEMENTS:
             connection.execute(statement)
         seed_settings(connection)
+
+
+def _migrate_ocr_route_events_for_google_vision(connection: sqlite3.Connection) -> None:
+    """Expand the legacy route CHECK constraints without losing telemetry."""
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ocr_route_events'"
+    ).fetchone()
+    table_sql = str(row["sql"] if row else "")
+    if not table_sql or "google_vision" in table_sql:
+        return
+
+    connection.execute("ALTER TABLE ocr_route_events RENAME TO ocr_route_events_legacy")
+    connection.execute(
+        """
+        CREATE TABLE ocr_route_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id TEXT NOT NULL,
+            document_type TEXT,
+            page_number INTEGER NOT NULL,
+            event_type TEXT NOT NULL CHECK(event_type IN ('processing', 'escalation')),
+            requested_route TEXT NOT NULL
+                CHECK(requested_route IN ('fast', 'structured', 'google_vision')),
+            route_used TEXT NOT NULL
+                CHECK(route_used IN ('fast', 'structured', 'google_vision')),
+            reason TEXT,
+            original_confidence REAL,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO ocr_route_events (
+            id, document_id, document_type, page_number, event_type,
+            requested_route, route_used, reason, original_confidence,
+            duration_ms, created_at
+        )
+        SELECT id, document_id, document_type, page_number, event_type,
+               requested_route, route_used, reason, original_confidence,
+               duration_ms, created_at
+        FROM ocr_route_events_legacy
+        """
+    )
+    connection.execute("DROP TABLE ocr_route_events_legacy")
 
 
 def seed_settings(connection: sqlite3.Connection) -> None:
@@ -50,6 +96,14 @@ def seed_settings(connection: sqlite3.Connection) -> None:
         ("llm_provider", "ollama", "str", "llm", "LLM Provider", "Select the LLM backend provider (e.g. ollama, openai, gemini)."),
         ("llm_model", "llama3.2", "str", "llm", "Model Name", "Name of the LLM model to run queries against."),
         ("min_confidence", "0.70", "float", "classification", "Min Classification Confidence", "Minimum confidence score required to auto-classify a page."),
+        ("ocr.provider", "local", "str", "ocr", "OCR Provider", "Choose local OCR, Google Vision API OCR, or automatic fallback."),
+        ("google.vision.auth", "auto", "str", "ocr", "Google Vision Auth Mode", "Use API key, Application Default Credentials, or automatic Google Vision authentication."),
+        ("google.vision.api_key", "", "secret", "ocr", "Google Vision API Key", "Optional Google Vision API key used only for OCR calls."),
+        ("google.vision.feature", "DOCUMENT_TEXT_DETECTION", "str", "ocr", "Google Vision OCR Feature", "Google Vision feature used for OCR."),
+        ("google.vision.timeout.seconds", "60", "int", "ocr", "Google Vision Timeout", "Timeout in seconds for each Google Vision OCR request."),
+        ("google.vision.max_attempts", "3", "int", "ocr", "Google Vision Retry Attempts", "Retry transient Google Vision network and service failures before flagging a page."),
+        ("google.vision.api_endpoint", "", "str", "ocr", "Google Vision API Endpoint", "Optional custom client endpoint for Google Vision."),
+        ("google.vision.rest_url", "https://vision.googleapis.com/v1/images:annotate", "str", "ocr", "Google Vision REST URL", "REST endpoint used when authenticating Google Vision with an API key."),
         ("required_fields.pan", '["pan_number", "applicant_name", "date_of_birth"]', "json", "fields", "PAN Card Required Fields", "Fields required to validate a PAN Card."),
         ("required_fields.aadhaar", '["aadhaar_number", "applicant_name", "date_of_birth", "address", "pin_code"]', "json", "fields", "Aadhaar Required Fields", "Fields required to validate Aadhaar."),
         ("required_fields.voter_id", '["voter_id_number", "applicant_name", "date_of_birth", "address"]', "json", "fields", "Voter ID Required Fields", "Fields required to validate a Voter ID."),

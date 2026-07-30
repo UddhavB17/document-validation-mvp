@@ -10,6 +10,7 @@ from rapidfuzz import fuzz
 
 from database.models import DocumentVerificationReport, FieldVerificationResult, GravitonRecord
 from services.llm_verifier import llm_verify_field
+from services.person_names import canonicalize_person_name
 
 
 def verify_aadhaar(extracted: str, db_value: str) -> FieldVerificationResult:
@@ -98,6 +99,18 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
 
 def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify applicant names using rapidfuzz token-sort similarity."""
+    extracted_candidate = canonicalize_person_name(extracted)
+    db_candidate = canonicalize_person_name(db_value)
+    if not extracted_candidate.valid or not db_candidate.valid:
+        return FieldVerificationResult(
+            field_name="applicant_name",
+            extracted_value=extracted,
+            db_value=db_value,
+            match=False,
+            confidence=0.25,
+            method="fuzzy",
+            mismatch_reason="Name candidate is unreliable and requires manual review",
+        )
     extracted_compact = re.sub(r"[^a-z0-9]", "", str(extracted or "").lower())
     db_compact = re.sub(r"[^a-z0-9]", "", str(db_value or "").lower())
     if extracted_compact and extracted_compact == db_compact:

@@ -428,30 +428,30 @@ def test_coapplicant_presence_and_match_verifies_against_correct_person() -> Non
             1,
             "PAN Card",
             person_id="coapplicant_1",
-            extracted_fields={"pan_number": "BBEPL4329P"},
+            extracted_fields={"pan_number": "TSTBB0002T"},
         ),
         _confident_page(2, "Application Form"),
     ]
 
     system_data = {
-        "pan_number": "BCXPL9010K",  # primary PAN
+        "pan_number": "TSTAA0001T",  # primary PAN
         "applicant_name": "Peeru Lal",
         "reference_data": {
             "primary": {
                 "person_id": "primary",
                 "applicant_name": "Peeru Lal",
-                "pan_number": "BCXPL9010K",
+                "pan_number": "TSTAA0001T",
             },
             "coapplicant_1": {
                 "person_id": "coapplicant_1",
                 "applicant_name": "Unkar Lal",
-                "pan_number": "BBEPL4329P",
+                "pan_number": "TSTBB0002T",
             },
         },
     }
 
     # If the fix works:
-    # 1. It checks the coapplicant_1 page against coapplicant_1 reference PAN ("BBEPL4329P") and finds a MATCH.
+    # 1. It checks the coapplicant_1 page against coapplicant_1 reference PAN ("TSTBB0002T") and finds a MATCH.
     # 2. No FIELD_MISMATCH anomaly should be produced.
     anomalies = run_checks(pages, system_data, system_data, "LAP")
     mismatch_anomalies = [

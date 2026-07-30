@@ -36,6 +36,7 @@ from services.llm_service import generate_explanation, summarize_exceptions
 from services.ocr_json_export import merge_public_extracted_fields, save_ocr_document_json
 from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_router import OCRResult, OCRRouter, get_ocr_router, run_fast_ocr_on_page
+from services.person_names import has_independent_identity_anchor
 from services.pdf_processor import process_pdf_structure
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
@@ -56,6 +57,7 @@ from services.report_generator import build_report, save_report_json
 from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.structured_llm_classifier import classify_with_structured_llm
 from services.text_extractor import extract_digital_text, extract_ground_truth
+from services.validation_gates import attach_field_provenance
 from services.verification_pdf_parser import VerificationPdfParseError, parse_verification_pdf
 from services.verification_report_store import save_verification_report
 
@@ -69,6 +71,16 @@ DOCUMENT_TYPE_ALIASES = {
     "PAN Card": "PAN",
     "None": "Unknown",
 }
+
+_NO_PAGE_INHERITANCE_TYPES = {
+    "PAN",
+    "PAN Card",
+    "Driving License",
+    "Cheque",
+    "KYC OSV Mark",
+}
+_ONE_PAGE_INHERITANCE_TYPES = {"Aadhaar", "Voter ID"}
+_NO_SANDWICH_SMOOTHING_TYPES = _NO_PAGE_INHERITANCE_TYPES | _ONE_PAGE_INHERITANCE_TYPES
 
 logger = logging.getLogger("dmef.pipeline")
 _LOGGING_CONFIGURED = False
@@ -233,7 +245,31 @@ def run_pipeline(
         source_documents=source_documents,
     )
     mapped_result: dict[str, Any] | None = None
+    evidence_resolution: dict[str, Any] | None = None
     from services.person_ownership import assign_page_owners
+
+    if mapped_manifest is not None:
+        update_stage(
+            application_id,
+            "resolving_document_evidence",
+            "Resolving document groups and people from observed identity evidence",
+        )
+        from services.evidence_resolution import resolve_trusted_evidence
+
+        evidence_resolution = resolve_trusted_evidence(
+            pages,
+            mapped_manifest.get("reference_data") or {},
+            source_documents=source_documents,
+        )
+        log_action(
+            application_id,
+            "trusted_evidence_resolved",
+            {
+                "mode": evidence_resolution.get("mode"),
+                "resolved_groups": evidence_resolution.get("resolved_groups"),
+                "resolved_owners": evidence_resolution.get("resolved_owners"),
+            },
+        )
 
     assign_page_owners(pages, {**(ground_truth or {}), **(system_data or {}), **(mapped_manifest or {})})
     if mapped_manifest is not None:
@@ -263,6 +299,8 @@ def run_pipeline(
             mapped_manifest,
             source_documents=source_documents,
         )
+        if evidence_resolution is not None:
+            mapped_result["evidence_resolution"] = evidence_resolution
         if automatic_index is not None:
             mapped_result["anomalies"] = [
                 *automatic_index["anomalies"],
@@ -370,6 +408,7 @@ def run_pipeline(
             "automatic_document_index", []
         )
         reviewer_summary["unclassified_pages"] = mapped_result.get("unclassified_pages", [])
+        reviewer_summary["evidence_resolution"] = mapped_result.get("evidence_resolution", {})
         save_reviewer_summary(application_id, reviewer_summary)
 
     report_path = save_report_json(
@@ -391,6 +430,7 @@ def run_pipeline(
                     "source_classifications": mapped_result["source_classifications"],
                     "automatic_document_index": mapped_result.get("automatic_document_index", []),
                     "unclassified_pages": mapped_result.get("unclassified_pages", []),
+                    "evidence_resolution": mapped_result.get("evidence_resolution", {}),
                     "checklist_verification": checklist_verification.model_dump(mode="json"),
                 }
                 if mapped_result is not None
@@ -430,6 +470,7 @@ def run_pipeline(
                 "source_classifications": mapped_result["source_classifications"],
                 "automatic_document_index": mapped_result.get("automatic_document_index", []),
                 "unclassified_pages": mapped_result.get("unclassified_pages", []),
+                "evidence_resolution": mapped_result.get("evidence_resolution", {}),
             }
         )
     mark_completed(application_id, result["final_status"], pipeline_status)
@@ -766,7 +807,9 @@ def _build_page_records(
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 phase_name = "OCR classification pass"
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
-                preliminary_ocr = run_ocr_on_page(image_path or "")
+                preliminary_ocr = _pipeline_ocr_router().process_fast_for_classification(
+                    image_path or ""
+                )
                 ocr_result = _ocr_result_dict(preliminary_ocr)
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 text = ocr_result.get("ocr_text", "")
@@ -788,11 +831,11 @@ def _build_page_records(
             _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
 
             if triage["category"] == "photo":
-                document_type = "Property Image"
+                document_type = _image_evidence_type_from_text(text) or "Property Image"
                 classification = {"confidence": triage["confidence"]}
                 extracted_fields = {
                     **extracted_fields,
-                    "content_category": "property_image",
+                    "content_category": _content_category_for_image_type(document_type),
                     "_triage": triage,
                     "_classification": {
                         "source": "triage",
@@ -874,7 +917,13 @@ def _build_page_records(
                                 str(doc.get("original_filename") or "")
                             )
                             break
-                if source_filename_type in {"House Photo", "Workplace Photo", "Property Image"}:
+                if source_filename_type in {
+                    "House Photo",
+                    "Workplace Photo",
+                    "Property Image",
+                    "KYC Card Photo",
+                    "Ration Card Photo",
+                }:
                     document_type = source_filename_type
                     classification = {"confidence": 0.95}
                     detection_method = "filename_override"
@@ -940,6 +989,11 @@ def _build_page_records(
                     document_type=document_type,
                     ocr_text=text,
                     extracted_fields=extracted_fields,
+                )
+                _mark_unanchored_inherited_identity(
+                    extracted_fields,
+                    detection_method=detection_method,
+                    raw_document_type=assigned.get("raw_document_type"),
                 )
                 _log_page_phase_done(page_number, total_pages, phase_name, phase_started_at)
                 classification_meta = {
@@ -1062,6 +1116,10 @@ def _build_page_records(
             ),
             "extracted_fields": extracted_fields,
         }
+        attach_field_provenance(
+            completed_page,
+            source_document=_source_document_for_page(source_documents or [], page_number),
+        )
         pages.append(completed_page)
         page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
         _record_completed_page_event(
@@ -1220,7 +1278,11 @@ def _smooth_page_classifications(
         if curr_page.get("document_type") == "Unknown":
             prev_type = prev_page.get("document_type")
             next_type = next_page.get("document_type")
-            if prev_type != "Unknown" and prev_type == next_type:
+            if (
+                prev_type != "Unknown"
+                and prev_type == next_type
+                and prev_type not in _NO_SANDWICH_SMOOTHING_TYPES
+            ):
                 _apply_smoothed_document_type(
                     curr_page,
                     prev_type,
@@ -1236,6 +1298,14 @@ def _smooth_page_classifications(
                     application_id=application_id,
                     total_pages=total_pages,
                 )
+                fields = curr_page.get("extracted_fields") if isinstance(curr_page.get("extracted_fields"), dict) else {}
+                _mark_unanchored_inherited_identity(
+                    fields,
+                    detection_method="sandwich_smoothed",
+                    raw_document_type="Unknown",
+                )
+                curr_page["extracted_fields"] = fields
+                attach_field_provenance(curr_page)
 
     # Forward-fill long Unknown runs inside Loan Agreement / Application Form blocks.
     agreement_types = {"Loan Agreement", "Facility Agreement"}
@@ -1304,8 +1374,61 @@ def _smooth_page_classifications(
             application_id=application_id,
             total_pages=total_pages,
         )
+        fields = curr_page.get("extracted_fields") if isinstance(curr_page.get("extracted_fields"), dict) else {}
+        _mark_unanchored_inherited_identity(
+            fields,
+            detection_method="run_forward_smoothed",
+            raw_document_type="Unknown",
+        )
+        cls_meta = fields.get("_classification") if isinstance(fields, dict) else None
+        if isinstance(cls_meta, dict):
+            cls_meta["assigned_type"] = prev_type
+            cls_meta["detection_method"] = "run_forward_smoothed"
+        fields["_classification"] = cls_meta or {
+            "assigned_type": prev_type,
+            "detection_method": "run_forward_smoothed",
+            "raw_document_type": "Unknown",
+            "raw_confidence": 0.0,
+            "detected_page_number": curr_page.get("page_number"),
+            "triage": {},
+        }
+        curr_page["extracted_fields"] = fields
+        attach_field_provenance(curr_page)
 
     return sorted_pages
+
+
+def _source_document_for_page(
+    source_documents: list[dict[str, Any]],
+    page_number: int,
+) -> dict[str, Any] | None:
+    for source in source_documents:
+        start = source.get("internal_page_start")
+        end = source.get("internal_page_end")
+        if start is None or end is None:
+            continue
+        if int(start) <= page_number <= int(end):
+            return source
+    return None
+
+
+def _mark_unanchored_inherited_identity(
+    fields: dict[str, Any],
+    *,
+    detection_method: str | None,
+    raw_document_type: str | None,
+) -> None:
+    raw_type = _normalize_document_type(raw_document_type)
+    if detection_method not in {"inherited", "sandwich_smoothed", "run_forward_smoothed"} or raw_type != "Unknown":
+        return
+    if has_independent_identity_anchor(fields):
+        return
+    if any(
+        fields.get(field) not in (None, "", [], {})
+        for field in ("applicant_name", "borrower_name", "account_holder_name", "customer_name")
+    ):
+        fields["_identity_extraction_reliable"] = False
+        fields["_identity_extraction_unreliable_reason"] = "inherited_unknown_without_identity_anchor"
 
 
 def _record_completed_page_event(
@@ -1479,7 +1602,9 @@ def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str,
 def _generic_detected_values(text: str) -> dict[str, list[str]]:
     return {
         "generic_pan_numbers": _unique_matches(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", text.upper()),
-        "generic_aadhaar_numbers": _unique_matches(r"\b\d{4}\s?\d{4}\s?\d{4}\b", text),
+        "generic_aadhaar_numbers": _unique_matches(
+            r"(?<!\d)\d{4}[ \t]?\d{4}[ \t]?\d{4}(?!\d)", text
+        ),
         "generic_phone_numbers": _unique_matches(r"\b[6-9]\d{9}\b", text),
         "generic_ifsc_codes": _unique_matches(r"\b[A-Z]{4}0[A-Z0-9]{6}\b", text.upper()),
         "generic_dates": _unique_matches(
@@ -1610,6 +1735,21 @@ def _assign_sequential_document_type(
                 "raw_confidence": raw_confidence,
                 "abstain_reason": "fresh-page-like-no-match",
             }
+        inheritance_reason = _identity_inheritance_block_reason(
+            current_type=current_type,
+            page_number=page_number,
+            current_detected_page=current_detected_page,
+        )
+        if inheritance_reason:
+            return {
+                "document_type": "Unknown",
+                "confidence": 0.0,
+                "detection_method": "unknown",
+                "detected_page_number": None,
+                "raw_document_type": raw_type,
+                "raw_confidence": raw_confidence,
+                "abstain_reason": inheritance_reason,
+            }
         inherited_confidence = max(0.55, min(0.85, current_confidence * 0.85))
         return {
             "document_type": current_type,
@@ -1629,6 +1769,20 @@ def _assign_sequential_document_type(
         "raw_document_type": raw_type,
         "raw_confidence": raw_confidence,
     }
+
+
+def _identity_inheritance_block_reason(
+    *,
+    current_type: str,
+    page_number: int,
+    current_detected_page: int | None,
+) -> str | None:
+    if current_type in _NO_PAGE_INHERITANCE_TYPES:
+        return "single-page-identity-document-does-not-inherit"
+    if current_type in _ONE_PAGE_INHERITANCE_TYPES:
+        if current_detected_page is None or page_number - current_detected_page > 1:
+            return "identity-document-inheritance-limit-reached"
+    return None
 
 
 def _looks_like_fresh_page_without_match(text: str) -> bool:
@@ -1916,22 +2070,28 @@ def _stamp_pages_from_document_index(
         person_id = str(document.get("applicant_role") or document.get("person_id") or "").strip()
         if not person_id or person_id in {"unassigned", "unknown"}:
             continue
+        multi_person = bool((document.get("auto_mapping") or {}).get("multi_person_document"))
         for page_number in document.get("pages") or []:
             page = by_number.get(int(page_number))
             if page is None:
                 continue
-            page["person_id"] = person_id
-            page["applicant_role"] = person_id
+            # Application forms and CAMs contain several people.  Keep any
+            # page/record-level ownership already resolved instead of stamping
+            # every page as the primary applicant merely because the document
+            # container is indexed under primary.
+            if not multi_person:
+                page["person_id"] = person_id
+                page["applicant_role"] = person_id
             fields = page.get("extracted_fields")
             if isinstance(fields, dict):
                 fields = dict(fields)
                 ownership = dict(fields.get("_ownership") or {})
-                ownership.update(
-                    {
-                        "person_id": person_id,
-                        "evidence": list(ownership.get("evidence") or []) + ["document_index"],
-                    }
-                )
+                if not multi_person:
+                    ownership["person_id"] = person_id
+                ownership.update({
+                    "document_scope": "multi_person" if multi_person else "single_person",
+                    "evidence": list(ownership.get("evidence") or []) + ["document_index"],
+                })
                 fields["_ownership"] = ownership
                 page["extracted_fields"] = fields
 
@@ -2105,7 +2265,12 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
     lower = filename.lower().replace("\\", "/")
     suffix = Path(lower).suffix
 
-    if suffix in {".jpg", ".jpeg", ".png", ".tif", ".tiff"} and any(
+    image_suffix = suffix in {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    if image_suffix and ("ration" in lower or "rashan" in lower):
+        return "Ration Card Photo"
+    if image_suffix and any(term in lower for term in ("kyc", "aadhaar", "aadhar", "pan", "voter")):
+        return "KYC Card Photo"
+    if image_suffix and any(
         folder in lower for folder in ("/collateral/", "/valuation/")
     ):
         return "Property Image"
@@ -2200,3 +2365,28 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         return " ".join(word.capitalize() for word in words)
 
     return None
+
+
+def _image_evidence_type_from_text(text: str) -> str | None:
+    normalized = _normalize_fresh_document_text(text)
+    if not normalized:
+        return None
+    if "gps map camera" in normalized:
+        return "Property Image"
+    if any(term in normalized for term in ("ration card", "राशन कार्ड", "परिवार राशन")):
+        return "Ration Card Photo"
+    if any(term in normalized for term in ("unique identification authority", "uidai", "aadhaar", "pan card", "voter")):
+        return "KYC Card Photo"
+    if any(term in normalized for term in ("patta", "पट्टा", "lease deed", "allotment order", "khasra")):
+        return "Property Document"
+    return None
+
+
+def _content_category_for_image_type(document_type: str) -> str:
+    return {
+        "Ration Card Photo": "ration_card_photo",
+        "KYC Card Photo": "kyc_card_photo",
+        "House Photo": "house_photo",
+        "Workplace Photo": "workplace_photo",
+        "Property Document": "property_document_photo",
+    }.get(document_type, "property_image")

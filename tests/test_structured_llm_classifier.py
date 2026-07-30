@@ -15,7 +15,7 @@ def test_prompt_contains_structured_fields_and_deterministic_result() -> None:
     assert "PAN" in prompt
     assert "ABCDE1234F" in prompt
     assert "_classification" not in prompt
-    assert "Return only JSON" in prompt
+    assert "Return only TOON" in prompt
 
 
 def test_structured_llm_disabled_returns_none(monkeypatch) -> None:
@@ -49,7 +49,7 @@ def test_structured_llm_successful_response(monkeypatch) -> None:
     monkeypatch.setattr("services.structured_llm_classifier._is_ollama_available", lambda *_args: True)
     monkeypatch.setattr(
         "services.structured_llm_classifier._call_ollama_generate",
-        lambda **_kwargs: '{"document_type": "PAN Card", "confidence": 0.87, "reason": "PAN number found"}',
+        lambda **_kwargs: "document_type: PAN Card\nconfidence: 0.87\nreason: PAN number found",
     )
 
     result = classify_with_structured_llm(
