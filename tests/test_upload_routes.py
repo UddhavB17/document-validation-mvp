@@ -117,6 +117,21 @@ def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> No
     assert job["status"] == "completed"
 
 
+def test_progress_poll_does_not_reinitialize_database(monkeypatch) -> None:
+    monkeypatch.setattr(
+        upload_route,
+        "init_db",
+        lambda: (_ for _ in ()).throw(AssertionError("progress polling must not initialize the database")),
+    )
+    monkeypatch.setattr(
+        upload_route,
+        "get_progress",
+        lambda application_id: {"application_id": application_id, "status": "processing"},
+    )
+
+    assert upload_route.upload_progress(80) == {"application_id": 80, "status": "processing"}
+
+
 def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
@@ -641,6 +656,5 @@ def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch) 
             (body["application_id"],),
         ).fetchone()
     assert uploaded["original_filename"] == "selected.pdf"
-
 
 

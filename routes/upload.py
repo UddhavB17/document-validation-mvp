@@ -1108,7 +1108,6 @@ def _load_package_source_documents(package_id: str | None) -> list[dict[str, obj
 
 @router.get("/{application_id}/progress", summary="Get upload processing progress")
 def upload_progress(application_id: int) -> dict[str, object]:
-    init_db()
     progress = get_progress(application_id)
     if progress is None:
         raise HTTPException(status_code=404, detail="Progress not found for application")
