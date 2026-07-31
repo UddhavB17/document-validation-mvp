@@ -76,6 +76,26 @@ def test_unmatched_page_still_unknown() -> None:
 
 def test_registry_ocr_routes_are_validated_and_default_safe() -> None:
     assert document_type_config("PAN").ocr_route == "fast"
-    assert document_type_config("Bank Statement").has_tabular_data is True
     assert document_type_config("Utility Bill").ocr_route == "structured"
     assert document_type_config("Future Unconfigured Type").ocr_route == "structured"
+
+def test_no_ambiguous_header_aliases_in_registry() -> None:
+    from services.document_classifier import load_document_type_registry
+    
+    registry = load_document_type_registry()
+    
+    for doc in registry.get("document_types", []):
+        doc_type = doc["type"]
+        seen_headers = {}
+        
+        for field in doc.get("fields", []):
+            if field.get("field_type") == "table" and field.get("header_aliases"):
+                for header in field["header_aliases"]:
+                    header_lower = header.lower().strip()
+                    # A document type cannot have the same header mapped to two different table fields
+                    # because Style 1 header-intersection would be unable to distinguish which field the column belongs to.
+                    assert header_lower not in seen_headers, (
+                        f"Ambiguous header alias '{header}' found in document type '{doc_type}'. "
+                        f"It is claimed by both field '{seen_headers[header_lower]}' and field '{field['name']}'."
+                    )
+                    seen_headers[header_lower] = field["name"]

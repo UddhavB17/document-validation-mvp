@@ -31,7 +31,7 @@ Required change:
 
 Why this is needed:
 - The old tab runtime rendered all tab contents, including inactive tabs.
-- Any repeated widget without a unique key can crash the page.
+- Any repeated widget wi  thout a unique key can crash the page.
 - A reviewer should never lose access to results after a long OCR run because of a UI widget collision.
 
 Expected impact:

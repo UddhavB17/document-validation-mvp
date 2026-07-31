@@ -935,7 +935,7 @@ def _build_page_records(
                 phase_name = "field extraction"
                 _mark_page_phase(application_id, page_number, total_pages, "extracting fields")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
-                extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
+                extracted_fields = {**extracted_fields, **extract_fields(document_type, text, ocr_result=routed_ocr)}
                 extracted_fields = refine_field_assignments(
                     document_type=document_type,
                     ocr_text=text,
@@ -1044,7 +1044,7 @@ def _build_page_records(
             "ocr_text": text,
             "ocr_confidence": ocr_confidence,
             "ocr_structure": _public_ocr_structure(ocr_metadata),
-            "structured_content": ocr_metadata.get("structured_content"),
+            "structured_content": ocr_metadata.get("structured_content") or {"layout_regions": ocr_metadata.get("bounding_boxes", [])},
             "ocr_route": ocr_metadata.get("ocr_route"),
             "ocr_escalated": bool(ocr_metadata.get("ocr_escalated", False)),
             "ocr_processing_time_ms": int(ocr_metadata.get("ocr_processing_time_ms") or 0),

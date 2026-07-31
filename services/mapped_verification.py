@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
+from services.document_classifier import load_document_type_registry
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.field_verification import (
@@ -203,7 +204,7 @@ def run_mapped_verification(
                     is_readable = bool(text)
                     text_source = f"paddle_ocr_{routed_ocr.route_used}"
                     ocr_page_numbers.add(page_number)
-                extracted = extract_fields(document_type, text)
+                extracted = extract_fields(document_type, text, ocr_result=routed_ocr if page_type == "scanned" else None)
                 for key, value in extracted.items():
                     if not str(key).startswith("_") and value not in (None, ""):
                         field = _canonical(key)
@@ -521,7 +522,60 @@ def _verify_document_fields(
     anomalies: list[dict[str, Any]],
     prefer_any_match: bool = False,
 ) -> dict[str, int]:
+    """Delegate to _verify_observations directly."""
+    return _verify_observations(
+        expected=expected,
+        document_observations=document_observations,
+        readable_pages=readable_pages,
+        provided_type=provided_type,
+        person_id=person_id,
+        reference_data=reference_data,
+        anomalies=anomalies,
+        prefer_any_match=prefer_any_match,
+    )
+
+
+def _collapse_observations(document_observations: dict[str, list[dict[str, Any]]], document_type: str) -> dict[str, list[dict[str, Any]]]:
+    """Collapse multi-page field observations into a single value if requested by the strategy."""
+    from services.document_classifier import load_document_type_registry
+    registry = load_document_type_registry()
+    doc_config = next((c for c in registry.get("document_types", []) if c.get("type") == document_type), {})
+    fields_config = {f["name"]: f for f in doc_config.get("fields", [])}
+
+    collapsed = {}
+    for field, obs_list in document_observations.items():
+        strategy = fields_config.get(field, {}).get("multi_page_strategy")
+        if strategy == "single_value" and obs_list:
+            # Pick the most frequently occurring non-empty value. If tied, pick the first occurring.
+            valid_vals = [obs for obs in obs_list if str(obs.get("value")).strip() not in ("None", "")]
+            if valid_vals:
+                counts = Counter(str(obs["value"]).strip().lower() for obs in valid_vals)
+                best_val = max(valid_vals, key=lambda x: counts[str(x["value"]).strip().lower()])
+                collapsed[field] = [best_val]
+            else:
+                collapsed[field] = [obs_list[0]]
+        else:
+            # For aggregate_list (e.g. running_balance) or legacy fields, leave as is.
+            collapsed[field] = obs_list
+            
+    return collapsed
+
+
+def _verify_observations(
+    expected: dict[str, Any],
+    document_observations: dict[str, list[dict[str, Any]]],
+    readable_pages: list[int],
+    provided_type: str,
+    person_id: str,
+    reference_data: dict[str, Any],
+    anomalies: list[dict[str, Any]],
+    prefer_any_match: bool = False,
+) -> dict[str, int]:
     """Compare extracted observations against expected values for one document unit."""
+    
+    # Collapse observations first based on multi-page strategy
+    document_observations = _collapse_observations(document_observations, provided_type)
+    
     checked = 0
     matched = 0
 

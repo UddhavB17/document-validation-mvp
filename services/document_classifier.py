@@ -33,6 +33,17 @@ HIGH_CONFIDENCE = 0.75
 OCRRoute = Literal["fast", "structured"]
 
 
+class DocumentFieldConfig(BaseModel):
+    name: str
+    field_type: Literal["form", "table"] | None = None
+    label_aliases: list[str] | None = None
+    value_pattern: str | None = None
+    description: str | None = None
+    header_aliases: list[str] | None = None
+    multi_page_strategy: Literal["single_value", "aggregate_list"] | None = None
+    field_hint: str | None = None  # e.g. "id_number" triggers sanity checks when value_pattern is absent
+
+
 class DocumentTypeConfig(BaseModel):
     """Validated registry schema for fields shared outside classification."""
 
@@ -42,6 +53,7 @@ class DocumentTypeConfig(BaseModel):
     ocr_route: OCRRoute = "structured"
     has_tabular_data: bool = False
     multi_column: bool = False
+    fields: list[DocumentFieldConfig] = []
 
 
 def classify_page(text: str) -> dict[str, Any]:

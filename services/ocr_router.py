@@ -132,7 +132,7 @@ class OCRRouter:
         multi_column = bool(metadata.get("multi_column", configured.multi_column))
         configured_route = metadata.get("ocr_route", configured.ocr_route)
         if configured_route not in {"fast", "structured"}:
-            configured_route = "structured"
+            configured_route = "fast"
         if has_tabular_data:
             return OCRRoutingDecision(
                 route="structured",
@@ -307,11 +307,19 @@ def run_fast_ocr_on_page(page_image: str | Path) -> OCRResult:
         texts.extend(str(text) for text in item_texts if text)
         scores.extend(float(score) for score in item_scores if score is not None)
         for index, text in enumerate(item_texts):
+            raw_box = item_boxes[index] if index < len(item_boxes) else []
+            if raw_box and isinstance(raw_box, list) and len(raw_box) == 4 and isinstance(raw_box[0], list):
+                x_coords = [pt[0] for pt in raw_box]
+                y_coords = [pt[1] for pt in raw_box]
+                bbox = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
+            else:
+                bbox = raw_box
+                
             boxes.append(
                 {
                     "text": str(text),
                     "confidence": float(item_scores[index]) if index < len(item_scores) else None,
-                    "bbox": item_boxes[index] if index < len(item_boxes) else [],
+                    "bbox": bbox,
                 }
             )
     confidence = sum(scores) / len(scores) if scores else 0.0

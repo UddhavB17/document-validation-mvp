@@ -1,0 +1,239 @@
+=== PART 1: Table schemas ===
+
+Columns in 'pages' table:
+  id (INTEGER)
+  application_id (INTEGER)
+  page_number (INTEGER)
+  page_type (TEXT)
+  image_path (TEXT)
+  is_readable (BOOLEAN)
+  ocr_text (TEXT)
+  ocr_confidence (REAL)
+  document_type (TEXT)
+  classification_confidence (REAL)
+  detection_method (TEXT)
+  detected_page_number (INTEGER)
+  extracted_fields (TEXT)
+
+Columns in 'classification_review_log' table:
+  id (INTEGER)
+  application_id (INTEGER)
+  page_number (INTEGER)
+  predicted_type (TEXT)
+  confidence (REAL)
+  reason (TEXT)
+  anchor_match_results (TEXT)
+  llm_document_type (TEXT)
+  created_at (TEXT)
+
+=== PART 2: Confidence distribution by resolution path ===
+  Type: Loan Agreement            | Path: >= 0.85 (Keyword)  | Pages: 182  | Avg Conf: 0.8965
+  Type: Sanction Letter           | Path: >= 0.85 (Keyword)  | Pages: 139  | Avg Conf: 0.8975
+  Type: Unknown                   | Path: < 0.85 (LLM)       | Pages: 139  | Avg Conf: 0.0000
+  Type: Aadhaar                   | Path: >= 0.85 (Keyword)  | Pages: 107  | Avg Conf: 0.9491
+  Type: Application Form          | Path: >= 0.85 (Keyword)  | Pages: 78   | Avg Conf: 0.8853
+  Type: CIBIL Report              | Path: >= 0.85 (Keyword)  | Pages: 59   | Avg Conf: 0.9881
+  Type: Report                    | Path: < 0.85 (LLM)       | Pages: 58   | Avg Conf: 0.0000
+  Type: Task                      | Path: < 0.85 (LLM)       | Pages: 58   | Avg Conf: 0.0000
+  Type: CERSAI Report             | Path: >= 0.85 (Keyword)  | Pages: 45   | Avg Conf: 0.9044
+  Type: CRIF Report               | Path: >= 0.85 (Keyword)  | Pages: 33   | Avg Conf: 0.9818
+  Type: KFS                       | Path: >= 0.85 (Keyword)  | Pages: 32   | Avg Conf: 0.9094
+  Type: Facility Agreement        | Path: >= 0.85 (Keyword)  | Pages: 31   | Avg Conf: 0.9226
+  Type: Technical Report          | Path: >= 0.85 (Keyword)  | Pages: 30   | Avg Conf: 0.8750
+  Type: Income Tax Return         | Path: >= 0.85 (Keyword)  | Pages: 29   | Avg Conf: 0.9328
+  Type: OTC PDD Document          | Path: >= 0.85 (Keyword)  | Pages: 22   | Avg Conf: 0.9727
+  Type: Guarantee Deed            | Path: >= 0.85 (Keyword)  | Pages: 17   | Avg Conf: 0.9118
+  Type: Loan Agreement            | Path: < 0.85 (LLM)       | Pages: 16   | Avg Conf: 0.8137
+  Type: PAN                       | Path: >= 0.85 (Keyword)  | Pages: 13   | Avg Conf: 1.0000
+  Type: Property Image            | Path: >= 0.85 (Keyword)  | Pages: 13   | Avg Conf: 0.9500
+  Type: Valuation                 | Path: < 0.85 (LLM)       | Pages: 13   | Avg Conf: 0.0000
+  Type: Consent Letter            | Path: >= 0.85 (Keyword)  | Pages: 12   | Avg Conf: 0.9375
+  Type: Facility Agreement        | Path: < 0.85 (LLM)       | Pages: 11   | Avg Conf: 0.7650
+  Type: Sanction Letter           | Path: < 0.85 (LLM)       | Pages: 11   | Avg Conf: 0.7723
+  Type: Cheque                    | Path: >= 0.85 (Keyword)  | Pages: 9    | Avg Conf: 0.9222
+  Type: Insurance Form            | Path: < 0.85 (LLM)       | Pages: 9    | Avg Conf: 0.7510
+  Type: PAN                       | Path: < 0.85 (LLM)       | Pages: 9    | Avg Conf: 0.7120
+  Type: Task 1                    | Path: < 0.85 (LLM)       | Pages: 9    | Avg Conf: 0.0000
+  Type: Bank Statement            | Path: >= 0.85 (Keyword)  | Pages: 8    | Avg Conf: 0.9187
+  Type: Collateral                | Path: < 0.85 (LLM)       | Pages: 8    | Avg Conf: 0.0000
+  Type: Property Document         | Path: >= 0.85 (Keyword)  | Pages: 8    | Avg Conf: 0.9750
+  Type: Stamp Duty                | Path: >= 0.85 (Keyword)  | Pages: 8    | Avg Conf: 0.9625
+  Type: CIBIL Report              | Path: < 0.85 (LLM)       | Pages: 7    | Avg Conf: 0.7650
+  Type: Voter ID                  | Path: >= 0.85 (Keyword)  | Pages: 7    | Avg Conf: 0.9357
+  Type: Bank Statement            | Path: < 0.85 (LLM)       | Pages: 6    | Avg Conf: 0.7630
+  Type: Insurance Form            | Path: >= 0.85 (Keyword)  | Pages: 5    | Avg Conf: 1.0000
+  Type: Property Document         | Path: < 0.85 (LLM)       | Pages: 4    | Avg Conf: 0.7738
+  Type: Charges Deduction Document | Path: >= 0.85 (Keyword)  | Pages: 3    | Avg Conf: 0.9000
+  Type: List of Documents         | Path: >= 0.85 (Keyword)  | Pages: 3    | Avg Conf: 1.0000
+  Type: NACH Form                 | Path: >= 0.85 (Keyword)  | Pages: 3    | Avg Conf: 1.0000
+  Type: Pension Payment Order     | Path: >= 0.85 (Keyword)  | Pages: 3    | Avg Conf: 1.0000
+  Type: Income                    | Path: < 0.85 (LLM)       | Pages: 2    | Avg Conf: 0.0000
+  Type: Bank                      | Path: < 0.85 (LLM)       | Pages: 1    | Avg Conf: 0.0000
+  Type: Creditbureau              | Path: < 0.85 (LLM)       | Pages: 1    | Avg Conf: 0.0000
+  Type: Disbursement Request      | Path: >= 0.85 (Keyword)  | Pages: 1    | Avg Conf: 0.9000
+  Type: Form 97                   | Path: >= 0.85 (Keyword)  | Pages: 1    | Avg Conf: 0.9000
+  Type: KYC OSV Mark              | Path: >= 0.85 (Keyword)  | Pages: 1    | Avg Conf: 0.9000
+  Type: Kyc                       | Path: < 0.85 (LLM)       | Pages: 1    | Avg Conf: 0.0000
+  Type: Life Insurance Form       | Path: >= 0.85 (Keyword)  | Pages: 1    | Avg Conf: 1.0000
+  Type: MNREGA Job Card           | Path: < 0.85 (LLM)       | Pages: 1    | Avg Conf: 0.8000
+  Type: MNREGA Job Card           | Path: >= 0.85 (Keyword)  | Pages: 1    | Avg Conf: 0.9000
+  Type: NOC                       | Path: >= 0.85 (Keyword)  | Pages: 1    | Avg Conf: 1.0000
+  Type: Valuation 1               | Path: < 0.85 (LLM)       | Pages: 1    | Avg Conf: 0.0000
+
+=== PART 3: Confusion pairings (Disagreements) ===
+  Keyword Stage: Unknown              -> LLM Stage: Property Document    | Count: 78
+  Keyword Stage: Task                 -> LLM Stage: Property Document    | Count: 27
+  Keyword Stage: Aadhaar              -> LLM Stage: Sanction Letter      | Count: 23
+  Keyword Stage: Application Form     -> LLM Stage: CERSAI Report        | Count: 20
+  Keyword Stage: PAN                  -> LLM Stage: PAN Card             | Count: 20
+  Keyword Stage: Report               -> LLM Stage: Loan Agreement       | Count: 19
+  Keyword Stage: Unknown              -> LLM Stage: Loan Agreement       | Count: 18
+  Keyword Stage: CRIF Report          -> LLM Stage: CERSAI Report        | Count: 16
+  Keyword Stage: CIBIL Report         -> LLM Stage: CERSAI Report        | Count: 13
+  Keyword Stage: Report               -> LLM Stage: Sanction Letter      | Count: 13
+  Keyword Stage: Application Form     -> LLM Stage: Sanction Letter      | Count: 12
+  Keyword Stage: Report               -> LLM Stage: CERSAI Report        | Count: 12
+  Keyword Stage: KFS                  -> LLM Stage: Loan Agreement       | Count: 11
+  Keyword Stage: Unknown              -> LLM Stage: Sanction Letter      | Count: 11
+  Keyword Stage: Application Form     -> LLM Stage: Loan Agreement       | Count: 10
+  Keyword Stage: OTC PDD Document     -> LLM Stage: Facility Agreement   | Count: 10
+  Keyword Stage: Report               -> LLM Stage: Facility Agreement   | Count: 10
+  Keyword Stage: Technical Report     -> LLM Stage: Property Document    | Count: 10
+  Keyword Stage: Aadhaar              -> LLM Stage: CERSAI Report        | Count: 9
+  Keyword Stage: Income Tax Return    -> LLM Stage: Bank Statement       | Count: 9
+  Keyword Stage: Aadhaar              -> LLM Stage: Loan Agreement       | Count: 8
+  Keyword Stage: CRIF Report          -> LLM Stage: CIBIL Report         | Count: 8
+  Keyword Stage: Collateral           -> LLM Stage: None                 | Count: 8
+  Keyword Stage: Collateral           -> LLM Stage: Property Document    | Count: 8
+  Keyword Stage: Income Tax Return    -> LLM Stage: Cheque               | Count: 8
+  Keyword Stage: Unknown              -> LLM Stage: Facility Agreement   | Count: 8
+  Keyword Stage: Unknown              -> LLM Stage: Passbook             | Count: 8
+  Keyword Stage: Valuation            -> LLM Stage: Property Document    | Count: 8
+  Keyword Stage: Unknown              -> LLM Stage: CERSAI Report        | Count: 7
+  Keyword Stage: Unknown              -> LLM Stage: MNREGA Job Card      | Count: 7
+  Keyword Stage: OTC PDD Document     -> LLM Stage: CERSAI Report        | Count: 6
+  Keyword Stage: CERSAI Report        -> LLM Stage: Sanction Letter      | Count: 5
+  Keyword Stage: Income Tax Return    -> LLM Stage: Sanction Letter      | Count: 5
+  Keyword Stage: Unknown              -> LLM Stage: None                 | Count: 5
+  Keyword Stage: Valuation            -> LLM Stage: Valuation Report     | Count: 5
+  Keyword Stage: Income Tax Return    -> LLM Stage: Loan Agreement       | Count: 4
+  Keyword Stage: OTC PDD Document     -> LLM Stage: Sanction Letter      | Count: 4
+  Keyword Stage: Task                 -> LLM Stage: Bank Statement       | Count: 4
+  Keyword Stage: Technical Report     -> LLM Stage: Valuation Report     | Count: 4
+  Keyword Stage: Unknown              -> LLM Stage: PAN Card             | Count: 4
+  Keyword Stage: Aadhaar              -> LLM Stage: Insurance Form       | Count: 3
+  Keyword Stage: Aadhaar              -> LLM Stage: Passbook             | Count: 3
+  Keyword Stage: Aadhaar              -> LLM Stage: Property Insurance Form | Count: 3
+  Keyword Stage: Application Form     -> LLM Stage: Property Document    | Count: 3
+  Keyword Stage: Income Tax Return    -> LLM Stage: Facility Agreement   | Count: 3
+  Keyword Stage: KFS                  -> LLM Stage: Sanction Letter      | Count: 3
+  Keyword Stage: List of Documents    -> LLM Stage: CERSAI Report        | Count: 3
+  Keyword Stage: Loan Agreement       -> LLM Stage: CERSAI Report        | Count: 3
+  Keyword Stage: Loan Agreement       -> LLM Stage: Sanction Letter      | Count: 3
+  Keyword Stage: PAN                  -> LLM Stage: Property Document    | Count: 3
+  Keyword Stage: Pension Payment Order -> LLM Stage: Cheque               | Count: 3
+  Keyword Stage: Unknown              -> LLM Stage: Aadhaar              | Count: 3
+  Keyword Stage: Unknown              -> LLM Stage: Stamp Duty           | Count: 3
+  Keyword Stage: Unknown              -> LLM Stage: Utility Bill         | Count: 3
+  Keyword Stage: Aadhaar              -> LLM Stage: PDC                  | Count: 2
+  Keyword Stage: Bank Statement       -> LLM Stage: Property Document    | Count: 2
+  Keyword Stage: Guarantee Deed       -> LLM Stage: Facility Agreement   | Count: 2
+  Keyword Stage: NACH Form            -> LLM Stage: Insurance Form       | Count: 2
+  Keyword Stage: Property Document    -> LLM Stage: Sanction Letter      | Count: 2
+  Keyword Stage: Sanction Letter      -> LLM Stage: CERSAI Report        | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: Aadhaar              | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: CERSAI Report        | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: Insurance Form       | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: MNREGA Job Card      | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: None                 | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: PAN Card             | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: Passbook             | Count: 2
+  Keyword Stage: Task                 -> LLM Stage: Sanction Letter      | Count: 2
+  Keyword Stage: Task 1               -> LLM Stage: CERSAI Report        | Count: 2
+  Keyword Stage: Task 1               -> LLM Stage: Sanction Letter      | Count: 2
+  Keyword Stage: Unknown              -> LLM Stage: Cheque               | Count: 2
+  Keyword Stage: Unknown              -> LLM Stage: Insurance Form       | Count: 2
+  Keyword Stage: Unknown              -> LLM Stage: Life Insurance Form  | Count: 2
+  Keyword Stage: Unknown              -> LLM Stage: PDC                  | Count: 2
+  Keyword Stage: Aadhaar              -> LLM Stage: Facility Agreement   | Count: 1
+  Keyword Stage: Application Form     -> LLM Stage: Form 97              | Count: 1
+  Keyword Stage: Bank                 -> LLM Stage: Passbook             | Count: 1
+  Keyword Stage: Bank Statement       -> LLM Stage: CERSAI Report        | Count: 1
+  Keyword Stage: Bank Statement       -> LLM Stage: Loan Agreement       | Count: 1
+  Keyword Stage: CIBIL Report         -> LLM Stage: Loan Agreement       | Count: 1
+  Keyword Stage: Creditbureau         -> LLM Stage: CERSAI Report        | Count: 1
+  Keyword Stage: Disbursement Request -> LLM Stage: Sanction Letter      | Count: 1
+  Keyword Stage: Income               -> LLM Stage: Passbook             | Count: 1
+  Keyword Stage: Income               -> LLM Stage: Property Document    | Count: 1
+  Keyword Stage: Insurance Form       -> LLM Stage: Approval Letter      | Count: 1
+  Keyword Stage: Insurance Form       -> LLM Stage: Bank Statement       | Count: 1
+  Keyword Stage: Kyc                  -> LLM Stage: Voter ID             | Count: 1
+  Keyword Stage: NACH Form            -> LLM Stage: Property Insurance Form | Count: 1
+  Keyword Stage: NOC                  -> LLM Stage: Utility Bill         | Count: 1
+  Keyword Stage: Property Document    -> LLM Stage: Loan Agreement       | Count: 1
+  Keyword Stage: Report               -> LLM Stage: None                 | Count: 1
+  Keyword Stage: Report               -> LLM Stage: Passbook             | Count: 1
+  Keyword Stage: Report               -> LLM Stage: Property Document    | Count: 1
+  Keyword Stage: Report               -> LLM Stage: Stamp Duty           | Count: 1
+  Keyword Stage: Sanction Letter      -> LLM Stage: Loan Agreement       | Count: 1
+  Keyword Stage: Sanction Letter      -> LLM Stage: None                 | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Approval Letter      | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Divorce Decree       | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Income Tax Return    | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Life Insurance Form  | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Loan Agreement       | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: PDC                  | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Property Insurance Form | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Stamp Duty           | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Utility Bill         | Count: 1
+  Keyword Stage: Task                 -> LLM Stage: Valuation Report     | Count: 1
+  Keyword Stage: Task 1               -> LLM Stage: Bank Statement       | Count: 1
+  Keyword Stage: Task 1               -> LLM Stage: Facility Agreement   | Count: 1
+  Keyword Stage: Task 1               -> LLM Stage: Income Tax Return    | Count: 1
+  Keyword Stage: Task 1               -> LLM Stage: None                 | Count: 1
+  Keyword Stage: Task 1               -> LLM Stage: Valuation Report     | Count: 1
+  Keyword Stage: Unknown              -> LLM Stage: Divorce Decree       | Count: 1
+  Keyword Stage: Unknown              -> LLM Stage: Marriage Certificate | Count: 1
+  Keyword Stage: Valuation 1          -> LLM Stage: Property Document    | Count: 1
+
+=== PART 4: Examples of confusion pairings ===
+
+  Confusion Pair: Unknown -> Property Document (Count: 78)
+    Sample 1: App ID: 61, Page: 39, Type: scanned
+      Text: .2378206222 के क पौन प कोभता पिक ी पूका प ती समाज- के की समा आज पिमरे 2 6 222 को म्ववार महाेण मन््र हा ले हु है । जो ि छम आपस मै भिली ्ार का हिस १ पर क ई पुीा केल नी चर ४ आपख मे े कर यह लाक मा िया को हम दौनो पा क प तया मान्य है िना 2०6 222 ईशपी क समतीम। वच प० प्रथ प ः ार मेहट लालA5न 2कश किरन कुमारी ...
+    Sample 2: App ID: 61, Page: 42, Type: scanned
+      Text: स म ल अनऐ 04806 Pदललाप 5o A एम०के०जैन स्टाम्प वेन्डर, कालाबा लाoनं० 47/2005 अधिभार 30% औआ 1 51- गौ स e/- कुल neA s 04S0G Pi oau 59 四0时 ， 0104712005 3PER30% 3 2 51- Q-...
+    Sample 3: App ID: 61, Page: 174, Type: scanned
+      Text: GPS Map Camera Semlibakta, Rajasthan, India Cw7f+74p, Semlibakta, Rajasthan 326502, India Google Lat 24.413177° Long 75.923003° 16/06/2026 01:51 PM GMT +05:30 福 GPS Map Camera Semlibakta, Rajasthan, India Cw7f+74p, Semlibakta, Rajasthan 326502, India Google Lat 24.413177° Long 75.923003° 16/06/2026 ...
+
+  Confusion Pair: Task -> Property Document (Count: 27)
+    Sample 1: App ID: 65, Page: 422, Type: scanned
+      Text: तोमांकन : उत्तर 2भामलल का मन दक्षिण पर् जगारमती5 मा पश्िम ्ीश मम मानचित्र: अंहचित्ंेद्शित भूमि लाल स्याही से सीमाकित है।) 22 .57 उत्तर 174 5१ प > पश्चिम पूर्व 22 दक्षिण मापः दक्षिण की ओर पूर्व की ओर .. 51 पश्चिम की ओर. कुल क्े्वरग गज Xd शम कस अषकरी 3नवर शाप पशायत असाम्या हस्तकरसचव सारपेच ्याम इसताक्...
+    Sample 2: App ID: 65, Page: 423, Type: scanned
+      Text: Presentation Endorsement आज दिनांक 05 मार 01 मन 2022 को 03:01 PM बजे भी/थीभती/मुथी UNKAर LAL पुच/पुथी/पडि थीKANHA उ् 60 बर्ष, जालि 0-MEHAर, प्बमाच Other निबामी House No.:O. Colony: -, Area: -, City: SEMLIBAKHTA, Pin code: 326502, District: JHALAWAR, State: RAJASTHAN नेभेरेममष द्तावेत पंीवन हेतप्रमतत...
+    Sample 3: App ID: 65, Page: 424, Type: scanned
+      Text: Endorsement of Execution अनुक. पधकारों का नाम व पता पधकारों का प्रकार 1भी/शीभतीमुथी UNKAर कA. पु्र/ु्ी/पवि भीKANHA, भवगाय Claimant Otherजाति 0-MEHAR Age:60 Signatute House No.:0, Colony: -, Area: -, City: SEMLIBAKHTA, Pin code: 326502, District: JHALAWAR, State: RAJASTHAN े isuyx The lease deed or a...
+
+  Confusion Pair: Aadhaar -> Sanction Letter (Count: 23)
+    Sample 1: App ID: 61, Page: 54, Type: digital
+      Text: .नवे( के 1लए, न ही .कसी सpा, असामाAजक #ा कानून Yारा अनुम0 .कसी अ.# उ&े'# के 1लए। मN/हम समझ0े हN .क #ह आव'#क0ा .न#म* के अनुnप है। मN/हम समझ0े हN .क #Vद कंपनी को बाद म+ प0ा चल0ा है .क मुझे/हम+ दी /ई सु.व ा का उप#ो/ उस उ&े'# के अलावा .कसी अ.# उ&े'# के 1लए .क#ा जा रहा है Aजसके 1लए इसे 5दान .क#ा /#ा 2ा, ...
+    Sample 2: App ID: 61, Page: 88, Type: digital
+      Text: hereof & the same shall be the part and parcel of the outstanding amount of the facility at any time under this Agreement. R. Compliance of ‘Know your customer ("KYC”) Policy": The Borrower agrees to provide to the Lender Aadhaar, PAN and such further documents as may be required by the Lender from ...
+    Sample 3: App ID: 63, Page: 54, Type: digital
+      Text: .नवे( के 1लए, न ही .कसी सpा, असामाAजक #ा कानून Yारा अनुम0 .कसी अ.# उ&े'# के 1लए। मN/हम समझ0े हN .क #ह आव'#क0ा .न#म* के अनुnप है। मN/हम समझ0े हN .क #Vद कंपनी को बाद म+ प0ा चल0ा है .क मुझे/हम+ दी /ई सु.व ा का उप#ो/ उस उ&े'# के अलावा .कसी अ.# उ&े'# के 1लए .क#ा जा रहा है Aजसके 1लए इसे 5दान .क#ा /#ा 2ा, ...
+
+  Confusion Pair: Application Form -> CERSAI Report (Count: 20)
+    Sample 1: App ID: 61, Page: 153, Type: digital
+      Text: (vi) #Vद उ ारक0ा$ अ2वा 5;#ाभू.0 दा0ाs Yारा, .कसी भी .वलेख अ2वा द60ावेB के .नfपादन अ2वा उन पर .कए /ए ह60ा<र* के संबं म+ कोई आपQR #ा .ववाद उठा#ा /#ा हो; (vii) उ ारक0ा$ के .कसी भी उपgम अ2वा प`रसंपQR#* पर, .कसी अ.# ऋण को सुरQ<0 करने हे0ु सृAज0 कोई भी भार, 5व0$नी# हो जाना; (viii) उ ारक0ा$ Yारा अपने लेनदा...
+    Sample 2: App ID: 61, Page: 156, Type: digital
+      Text: 5ा कारी भी सîàम1ल0 है, Yारा सुर<ा के संबं म+ अ2वा अ.#2ा उ ारक0ा$ के .व,a कोई का#$वाही आरंभ की जा0ी है। (0) #Vद उ ारक0ा$, ऋणदा0ा के प< म+ सृAज0 सुर<ा पर कोई भी भार, 5भार, ारणा कार अ2वा .कसी 0ृ0ी# प< का कोई भी अ कार सृAज0 कर0ा है अ2वा सृAज0 करने का 5#ास कर0ा है। (म) #Vद उ ारक0ा$, ऋणदा0ा की 1लZख0 सहम.0...
+    Sample 3: App ID: 61, Page: 158, Type: digital
+      Text: अ2वा .कसी ला/ू .व के अं0/$0 .न.ह0 सभी अ कार*, (690#* एवं उपचार* का 5#ो/ कर सक0ा है। (घ) #Vद उ ारक0ा$ कोई कंपनी अ2वा .न/ म0 .नका# है, 0ो ऋणदा0ा अपने .ह0* की र<ा हे0ु उ ारक0ा$ के .नदे(क मंडल म+ एक .नदे(क ना म0 कर सक0ा है, और ऐसे .नदे(क का सामा.# पा`रä मक एवं 8# पूण$0ः उ ारक0ा$ Yारा वहन .क#ा जाए/ा। उ ा...
+
+  Confusion Pair: PAN -> PAN Card (Count: 20)
+    Sample 1: App ID: 61, Page: 7, Type: digital
+      Text:  Digitally signed on Date : 11/06/2026 14:32:55 IST PAN VERIFICATION RECORD Permanent Account Number BCXPL9010K NAME PEERU LAL GENDER MALE DATE OF BIRTH 18-05-1994 VERIFIED ON 11/06/2026 14:32:55 Note: 1. This PAN data is accessed using DigiLocker. 2. This digitally signed document is valid as per ...
+    Sample 2: App ID: 61, Page: 10, Type: digital
+      Text:  Digitally signed on Date : 17/06/2026 10:17:03 IST PAN VERIFICATION RECORD Permanent Account Number BBEPL4329P NAME UNKAR LAL GENDER MALE DATE OF BIRTH 05-06-1961 VERIFIED ON 17/06/2026 10:17:03 Note: 1. This PAN data is accessed using DigiLocker. 2. This digitally signed document is valid as per ...
+    Sample 3: App ID: 61, Page: 181, Type: scanned
+      Text: आयकर विभाग INCOME TAX DEPARTMENT भारत सरकार GOVT OF INDIA सथाथी लेखा संख्या काई Permanent Account Number Card BCXPL9010K PEERULAL जाम / Ne UNKAR LAL पिना का नाम / ath' Name जन्म की तारीख। 18/05/1994 Date of Birth पिकल 30062019 हस्तार/ Sgnature आयकर विभाग भारत सरकार INCOME TAX DEPARTMENT GOVT OF INDL...

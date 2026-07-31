@@ -567,3 +567,100 @@ def test_mapped_verification_flags_missing_required_document_and_checks_utility_
 
 def test_name_match_ignores_missing_ocr_whitespace() -> None:
     assert verify_name("PEERULAL", "Peeru Lal").match is True
+
+
+# ── _collapse_observations tests ──────────────────────────────────────────────
+
+from unittest.mock import patch
+from services.mapped_verification import _collapse_observations
+
+
+def _make_obs(value: str, page: int = 1) -> dict:
+    return {"value": value, "page_number": page, "source": "ocr"}
+
+
+def test_collapse_majority_vote_picks_majority_value() -> None:
+    """3 observations: '1234567890' x2, 'l234567890' x1 (OCR l/1 noise).
+    Must pick the majority value '1234567890'."""
+    obs = {
+        "account_number": [
+            _make_obs("1234567890", page=1),
+            _make_obs("1234567890", page=2),
+            _make_obs("l234567890", page=3),   # OCR confuses l with 1
+        ]
+    }
+    registry_stub = {
+        "document_types": [
+            {
+                "type": "Passbook",
+                "fields": [
+                    {"name": "account_number", "multi_page_strategy": "single_value"}
+                ]
+            }
+        ]
+    }
+    with patch("services.mapped_verification.load_document_type_registry", return_value=registry_stub):
+        result = _collapse_observations(obs, "Passbook")
+
+    assert len(result["account_number"]) == 1
+    assert result["account_number"][0]["value"] == "1234567890"
+
+
+def test_collapse_tie_picks_first_occurring() -> None:
+    """Genuine tie: '1111111111' x1, '2222222222' x1.
+    Must pick the first-occurring value '1111111111' (stable max() on insertion order)."""
+    obs = {
+        "account_number": [
+            _make_obs("1111111111", page=1),
+            _make_obs("2222222222", page=2),
+        ]
+    }
+    registry_stub = {
+        "document_types": [
+            {
+                "type": "Passbook",
+                "fields": [
+                    {"name": "account_number", "multi_page_strategy": "single_value"}
+                ]
+            }
+        ]
+    }
+    with patch("services.mapped_verification.load_document_type_registry", return_value=registry_stub):
+        result = _collapse_observations(obs, "Passbook")
+
+    # When tied, Python's max() is stable — it returns the first maximum encountered.
+    assert len(result["account_number"]) == 1
+    assert result["account_number"][0]["value"] == "1111111111"
+
+
+def test_collapse_aggregate_list_fields_are_unchanged() -> None:
+    """Fields without multi_page_strategy or with 'aggregate_list' must pass through as-is."""
+    obs = {
+        "running_balance": [
+            _make_obs("50000.00", page=1),
+            _make_obs("48000.00", page=2),
+        ]
+    }
+    registry_stub = {
+        "document_types": [
+            {
+                "type": "Bank Statement",
+                "fields": [
+                    {"name": "running_balance", "multi_page_strategy": "aggregate_list"}
+                ]
+            }
+        ]
+    }
+    with patch("services.mapped_verification.load_document_type_registry", return_value=registry_stub):
+        result = _collapse_observations(obs, "Bank Statement")
+
+    assert len(result["running_balance"]) == 2
+
+
+def test_collapse_legacy_fields_not_in_registry_pass_through() -> None:
+    """Fields with no matching registry config must be left unchanged."""
+    obs = {"applicant_name": [_make_obs("John Doe", page=1), _make_obs("John Doe", page=2)]}
+    registry_stub = {"document_types": [{"type": "Aadhaar", "fields": []}]}
+    with patch("services.mapped_verification.load_document_type_registry", return_value=registry_stub):
+        result = _collapse_observations(obs, "Aadhaar")
+    assert len(result["applicant_name"]) == 2

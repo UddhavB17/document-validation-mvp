@@ -8,85 +8,477 @@
       "has_tabular_data": true,
       "multi_column": true,
       "priority": 5,
-      "headings": ["Credit Approval Memo", "Credit Appraisal Memo"],
-      "keywords": ["credit approval memo", "credit appraisal memo", "application details", "key indicators"],
-      "required_any": ["credit approval memo", "credit appraisal memo"],
-      "min_confidence": 0.5
+      "headings": [
+        "Credit Approval Memo",
+        "Credit Appraisal Memo"
+      ],
+      "keywords": [
+        "credit approval memo",
+        "credit appraisal memo",
+        "application details",
+        "key indicators"
+      ],
+      "required_any": [
+        "credit approval memo",
+        "credit appraisal memo"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "application_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Application Id",
+            "Application Number",
+            "App No"
+          ],
+          "value_pattern": "\\b[A-Z0-9]{5,15}\\b",
+          "description": "Loan application identifier"
+        },
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name",
+            "Applicant Name",
+            "Borrower Name"
+          ],
+          "description": "Name of the applicant borrower"
+        },
+        {
+          "name": "requested_amount",
+          "field_type": "table",
+          "label_aliases": [
+            "Requested Loan Amount",
+            "Sanctioned Amount",
+            "Loan Amount"
+          ],
+          "header_aliases": [
+            "Amount",
+            "Requested",
+            "Value"
+          ],
+          "value_pattern": "\\b\\d{5,8}(?:\\.\\d{2})?\\b",
+          "description": "Requested loan amount value in table"
+        },
+        {
+          "name": "roi",
+          "field_type": "table",
+          "label_aliases": [
+            "Requested IRR",
+            "ROI",
+            "Interest Rate"
+          ],
+          "header_aliases": [
+            "IRR",
+            "Rate",
+            "ROI"
+          ],
+          "value_pattern": "\\b\\d{1,2}(?:\\.\\d{2})?\\b",
+          "description": "Rate of interest (IRR) in table"
+        }
+      ]
     },
     {
       "type": "PAN Card",
       "ocr_route": "fast",
       "priority": 10,
-      "headings": ["Permanent Account Number", "PAN Card", "Income Tax Department"],
-      "keywords": ["permanent account number", "income tax department", "pan card"],
-      "field_patterns": ["\\b[A-Z]{5}[0-9]{4}[A-Z]\\b"],
-      "min_confidence": 0.5
+      "headings": [
+        "Permanent Account Number",
+        "PAN Card",
+        "Income Tax Department"
+      ],
+      "keywords": [
+        "permanent account number",
+        "income tax department",
+        "pan card"
+      ],
+      "field_patterns": [
+        "\\b[A-Z]{5}[0-9]{4}[A-Z]\\b"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "pan_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Permanent Account Number",
+            "PAN Number",
+            "PAN",
+            "PAN No"
+          ],
+          "value_pattern": "\\b[A-Z]{5}[0-9]{4}[A-Z]\\b",
+          "description": "10-digit Permanent Account Number (PAN)"
+        },
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name",
+            "Applicant Name",
+            "Card Holder Name"
+          ],
+          "description": "Name of the card holder"
+        },
+        {
+          "name": "dob",
+          "field_type": "form",
+          "label_aliases": [
+            "Date of Birth",
+            "DOB",
+            "D.O.B"
+          ],
+          "value_pattern": "\\b\\d{2}[/-]\\d{2}[/-]\\d{4}\\b",
+          "description": "Date of birth of the card holder"
+        }
+      ]
     },
     {
       "type": "Aadhaar",
       "ocr_route": "fast",
       "priority": 20,
-      "headings": ["Unique Identification Authority of India", "UIDAI", "e-Aadhaar", "DigiLocker verified e-Aadhaar", "मेरा आधार"],
-      "keywords": ["aadhaar", "aadhar", "unique identification", "uidai", "आधार", "यूआईडीएआई", "e-aadhaar"],
-      "required_any": ["unique identification", "uidai", "e-aadhaar", "digilocker", "आधार", "यूआईडीएआई", "mera aadhaar"],
-      "negative_keywords": [
-        "applicant kyc details", "co-applicant kyc details", "coapplicant kyc details", "guarantor kyc details",
-        "know your customer", "kyc policy", "kyc norms", "provide to the lender aadhaar",
-        "non judicial", "india non judicial", "गैर न्यायिक", "stamp paper", "stamp duty",
-        "passbook", "पासबुक", "brought forward", "cheque no", "dicgc",
-        "facility agreement", "loan agreement", "ऋण अनुबंध"
+      "headings": [
+        "Unique Identification Authority of India",
+        "UIDAI",
+        "e-Aadhaar",
+        "DigiLocker verified e-Aadhaar",
+        "मेरा आधार"
       ],
-      "field_patterns": ["\\b\\d{4}\\s\\d{4}\\s\\d{4}\\b"],
-      "min_confidence": 0.5
+      "keywords": [
+        "aadhaar",
+        "aadhar",
+        "unique identification",
+        "uidai",
+        "आधार",
+        "यूआईडीएआई",
+        "e-aadhaar"
+      ],
+      "required_any": [
+        "unique identification",
+        "uidai",
+        "e-aadhaar",
+        "digilocker",
+        "आधार",
+        "यूआईडीएआई",
+        "mera aadhaar"
+      ],
+      "negative_keywords": [
+        "applicant kyc details",
+        "co-applicant kyc details",
+        "coapplicant kyc details",
+        "guarantor kyc details",
+        "know your customer",
+        "kyc policy",
+        "kyc norms",
+        "provide to the lender aadhaar",
+        "non judicial",
+        "india non judicial",
+        "गैर न्यायिक",
+        "stamp paper",
+        "stamp duty",
+        "passbook",
+        "पासबुक",
+        "brought forward",
+        "cheque no",
+        "dicgc",
+        "facility agreement",
+        "loan agreement",
+        "ऋण अनुबंध"
+      ],
+      "field_patterns": [
+        "\\b\\d{4}\\s\\d{4}\\s\\d{4}\\b"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "aadhaar_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Aadhaar Number",
+            "Aadhaar No",
+            "UID",
+            "Aadhar No"
+          ],
+          "value_pattern": "\\b\\d{4}\\s?\\d{4}\\s?\\d{4}\\b",
+          "description": "12-digit Aadhaar number"
+        },
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name",
+            "Applicant Name",
+            "Resident Name"
+          ],
+          "description": "Name of the card holder"
+        },
+        {
+          "name": "dob",
+          "field_type": "form",
+          "label_aliases": [
+            "Date of Birth",
+            "DOB",
+            "D.O.B",
+            "Year of Birth",
+            "YOB"
+          ],
+          "value_pattern": "\\b\\d{2}[/-]\\d{2}[/-]\\d{4}\\b",
+          "description": "Date of birth of the card holder"
+        },
+        {
+          "name": "gender",
+          "field_type": "form",
+          "label_aliases": [
+            "Gender",
+            "Sex",
+            "Male",
+            "Female"
+          ],
+          "description": "Gender of the card holder"
+        }
+      ]
     },
     {
       "type": "Passport",
       "priority": 30,
-      "headings": ["Passport", "Republic of India", "Ministry of External Affairs"],
-      "keywords": ["passport", "republic of india", "ministry of external affairs"],
-      "required_any": ["passport", "ministry of external affairs"],
-      "required_regex": ["[A-Z][0-9]{7}"],
-      "field_patterns": ["[A-Z][0-9]{7}"],
-      "min_confidence": 0.55
+      "headings": [
+        "Passport",
+        "Republic of India",
+        "Ministry of External Affairs"
+      ],
+      "keywords": [
+        "passport",
+        "republic of india",
+        "ministry of external affairs"
+      ],
+      "required_any": [
+        "passport",
+        "ministry of external affairs"
+      ],
+      "required_regex": [
+        "[A-Z][0-9]{7}"
+      ],
+      "field_patterns": [
+        "[A-Z][0-9]{7}"
+      ],
+      "min_confidence": 0.55,
+      "fields": [
+        {
+          "name": "passport_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Passport No",
+            "Passport Number"
+          ],
+          "value_pattern": "\\b[A-Z][0-9]{7}\\b",
+          "description": "8-character Indian Passport Number (1 Letter, 7 Digits)"
+        },
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name",
+            "Given Name(s)",
+            "Surname",
+            "Applicant Name"
+          ],
+          "description": "Full name of the passport holder"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Driving License",
       "priority": 40,
-      "headings": ["Driving Licence", "Driving License", "Transport Department"],
-      "keywords": ["driving licence", "driving license", "motor vehicles act", "transport department"],
-      "required_any": ["driving licence", "driving license", "motor vehicles act", "transport department"],
-      "required_regex": ["\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b|\\b\\d{4}[/-]\\d{2}[/-]\\d{2}\\b"],
-      "field_patterns": ["\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b|\\b\\d{4}[/-]\\d{2}[/-]\\d{2}\\b"],
-      "min_confidence": 0.55
+      "headings": [
+        "Driving Licence",
+        "Driving License",
+        "Transport Department"
+      ],
+      "keywords": [
+        "driving licence",
+        "driving license",
+        "motor vehicles act",
+        "transport department"
+      ],
+      "required_any": [
+        "driving licence",
+        "driving license",
+        "motor vehicles act",
+        "transport department"
+      ],
+      "required_regex": [
+        "\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b|\\b\\d{4}[/-]\\d{2}[/-]\\d{2}\\b"
+      ],
+      "field_patterns": [
+        "\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b|\\b\\d{4}[/-]\\d{2}[/-]\\d{2}\\b"
+      ],
+      "min_confidence": 0.55,
+      "fields": [
+        {
+          "name": "dl_number",
+          "field_type": "form",
+          "label_aliases": [
+            "DL No",
+            "Licence No",
+            "License No",
+            "DL Number",
+            "Licence Number",
+            "Driving Licence No",
+            "Driving License No",
+            "DL-No",
+            "Lic. No."
+          ],
+          "multi_page_strategy": "single_value",
+          "description": "Driving License Number",
+          "field_hint": "id_number"
+        },
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name",
+            "Name of Holder",
+            "Holder's Name",
+            "Applicant Name",
+            "Name/नाम"
+          ],
+          "description": "Name of the license holder"
+        },
+        {
+          "name": "dob",
+          "field_type": "form",
+          "label_aliases": [
+            "DOB",
+            "Date of Birth",
+            "D.O.B.",
+            "D.O.B / Date of Birth"
+          ],
+          "value_pattern": "\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b",
+          "description": "Date of birth of the license holder"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Voter ID",
       "priority": 50,
-      "headings": ["Voter ID", "Election Commission of India", "Electors Photo Identity Card", "EPIC", "मतदाता पहचान"],
-      "keywords": ["election commission", "voter id", "electors photo identity", "epic", "मतदाता", "मतदाता पहचान"],
-      "min_confidence": 0.5
+      "headings": [
+        "Voter ID",
+        "Election Commission of India",
+        "Electors Photo Identity Card",
+        "EPIC",
+        "मतदाता पहचान"
+      ],
+      "keywords": [
+        "election commission",
+        "voter id",
+        "electors photo identity",
+        "epic",
+        "मतदाता",
+        "मतदाता पहचान"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "epic_number",
+          "field_type": "form",
+          "label_aliases": [
+            "EPIC No",
+            "EPIC Number",
+            "Voter ID",
+            "Identity Card No",
+            "Identity Card Number",
+            "E.P.I.C."
+          ],
+          "description": "Electors Photo Identity Card (EPIC) Number",
+          "field_hint": "id_number"
+        },
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name",
+            "Elector's Name",
+            "Voter Name"
+          ],
+          "description": "Name of the elector"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "MNREGA Job Card",
       "priority": 51,
-      "headings": ["Mahatma Gandhi National Rural Employment Guarantee", "MGNREGA Job Card", "NREGA Job Card"],
-      "keywords": ["mgnrega", "mnrega", "nrega", "job card", "national rural employment guarantee"],
-      "required_any": ["mgnrega", "mnrega", "nrega", "job card"],
-      "min_confidence": 0.5
+      "headings": [
+        "Mahatma Gandhi National Rural Employment Guarantee",
+        "MGNREGA Job Card",
+        "NREGA Job Card"
+      ],
+      "keywords": [
+        "mgnrega",
+        "mnrega",
+        "nrega",
+        "job card",
+        "national rural employment guarantee"
+      ],
+      "required_any": [
+        "mgnrega",
+        "mnrega",
+        "nrega",
+        "job card"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "job_card_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Job Card No",
+            "Job Card Number",
+            "Registration No",
+            "Reg No"
+          ],
+          "description": "MGNREGA Job Card Registration Number"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "NPR Letter",
       "priority": 52,
-      "headings": ["National Population Register", "NPR Letter"],
-      "keywords": ["national population register", "npr letter", "letter issued by national population register"],
-      "required_any": ["national population register", "npr letter"],
-      "min_confidence": 0.5
+      "headings": [
+        "National Population Register",
+        "NPR Letter"
+      ],
+      "keywords": [
+        "national population register",
+        "npr letter",
+        "letter issued by national population register"
+      ],
+      "required_any": [
+        "national population register",
+        "npr letter"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "applicant_name",
+          "description": "Name of the applicant in the letter"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Form 97",
       "ocr_route": "fast",
       "priority": 53,
-      "headings": ["Form 97", "Form No. 97", "Form 60", "Form No. 60"],
+      "headings": [
+        "Form 97",
+        "Form No. 97",
+        "Form 60",
+        "Form No. 60"
+      ],
       "keywords": [
         "form 97",
         "form no 97",
@@ -119,58 +511,267 @@
         "account type",
         "credit grantor"
       ],
-      "min_confidence": 0.7
+      "min_confidence": 0.7,
+      "fields": [
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name of the Declarant",
+            "Name",
+            "Declarant Name"
+          ],
+          "description": "Name of the person making the declaration"
+        }
+      ]
     },
     {
       "type": "KFS",
       "ocr_route": "structured",
       "has_tabular_data": true,
       "priority": 55,
-      "headings": ["Key Fact Statement", "Key Facts Statement"],
-      "keywords": ["key fact statement", "key facts statement", "annual percentage rate", "apr"],
-      "required_any": ["key fact statement", "key facts statement"],
-      "negative_keywords": ["facility agreement", "event of default", "schedule/kfs", "borrower committing a default"],
-      "field_patterns": ["annual\\s+percentage\\s+rate", "loan\\s+amount", "\\btenure\\b"],
-      "min_confidence": 0.5
+      "headings": [
+        "Key Fact Statement",
+        "Key Facts Statement"
+      ],
+      "keywords": [
+        "key fact statement",
+        "key facts statement",
+        "annual percentage rate",
+        "apr"
+      ],
+      "required_any": [
+        "key fact statement",
+        "key facts statement"
+      ],
+      "negative_keywords": [
+        "facility agreement",
+        "event of default",
+        "schedule/kfs",
+        "borrower committing a default"
+      ],
+      "field_patterns": [
+        "annual\\s+percentage\\s+rate",
+        "loan\\s+amount",
+        "\\btenure\\b"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "loan_amount",
+          "field_type": "table",
+          "label_aliases": [
+            "Loan Amount",
+            "Total Loan Amount",
+            "Sanctioned Amount"
+          ],
+          "description": "Total loan amount sanctioned"
+        },
+        {
+          "name": "apr",
+          "field_type": "table",
+          "label_aliases": [
+            "Annual Percentage Rate",
+            "APR",
+            "Effective annualized interest rate"
+          ],
+          "description": "Annual Percentage Rate (APR) of the loan"
+        },
+        {
+          "name": "tenure",
+          "field_type": "table",
+          "label_aliases": [
+            "Tenure",
+            "Loan Term",
+            "Term of the loan",
+            "Duration"
+          ],
+          "description": "Tenure or term of the loan"
+        }
+      ]
     },
     {
       "type": "Sanction Letter",
       "priority": 60,
-      "headings": ["Sanction Letter", "Loan Sanction", "ऋण स्वीकृति पत्र", "स्वीकृति पत्र"],
-      "keywords": ["sanction letter", "loan sanction", "sanctioned amount", "tenure", "स्वीकृति पत्र", "ऋण स्वीकृति", "स्वीकृत राशि", "अवधि"],
-      "required_any": ["sanction letter", "loan sanction", "sanctioned amount", "ऋण स्वीकृति", "स्वीकृति पत्र"],
+      "headings": [
+        "Sanction Letter",
+        "Loan Sanction",
+        "ऋण स्वीकृति पत्र",
+        "स्वीकृति पत्र"
+      ],
+      "keywords": [
+        "sanction letter",
+        "loan sanction",
+        "sanctioned amount",
+        "tenure",
+        "स्वीकृति पत्र",
+        "ऋण स्वीकृति",
+        "स्वीकृत राशि",
+        "अवधि"
+      ],
+      "required_any": [
+        "sanction letter",
+        "loan sanction",
+        "sanctioned amount",
+        "ऋण स्वीकृति",
+        "स्वीकृति पत्र"
+      ],
       "negative_keywords": [
-        "facility agreement", "events of default", "event of default", "borrower agrees",
+        "facility agreement",
+        "events of default",
+        "event of default",
+        "borrower agrees",
         "in case the sanction letter contains"
       ],
-      "field_patterns": ["sanctioned\\s+amount", "loan\\s+amount", "\\btenure\\b"],
-      "min_confidence": 0.5
+      "field_patterns": [
+        "sanctioned\\s+amount",
+        "loan\\s+amount",
+        "\\btenure\\b"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "sanctioned_amount",
+          "description": "The total loan amount sanctioned to the borrower"
+        },
+        {
+          "name": "tenure",
+          "description": "The duration or term of the loan in months"
+        },
+        {
+          "name": "roi",
+          "description": "The rate of interest applied to the loan"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Facility Agreement",
       "priority": 65,
-      "headings": ["Facility Agreement"],
-      "keywords": ["facility agreement", "borrower", "lender", "repayment"],
-      "min_confidence": 0.5
+      "headings": [
+        "Facility Agreement"
+      ],
+      "keywords": [
+        "facility agreement",
+        "borrower",
+        "lender",
+        "repayment"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "borrower_name",
+          "description": "Name of the borrower"
+        },
+        {
+          "name": "facility_amount",
+          "description": "The total facility or loan amount"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Loan Agreement",
       "priority": 70,
-      "headings": ["Loan Agreement", "Loan Contract", "Facility Agreement", "ऋण समझौता", "ऋण अनुबंध"],
-      "keywords": [
-        "loan agreement", "facility agreement", "borrower", "lender", "repayment",
-        "ऋण समझौता", "ऋण अनुबंध", "उधारकर्ता", "अनुच्छेद", "article 19", "event of default"
+      "headings": [
+        "Loan Agreement",
+        "Loan Contract",
+        "Facility Agreement",
+        "ऋण समझौता",
+        "ऋण अनुबंध"
       ],
-      "negative_keywords": ["customer application form", "sourcing details", "co-applicant kyc details"],
-      "field_patterns": ["borrower", "lender", "repayment", "उधारकर्ता", "अनुच्छेद"],
-      "min_confidence": 0.5
+      "keywords": [
+        "loan agreement",
+        "facility agreement",
+        "borrower",
+        "lender",
+        "repayment",
+        "ऋण समझौता",
+        "ऋण अनुबंध",
+        "उधारकर्ता",
+        "अनुच्छेद",
+        "article 19",
+        "event of default"
+      ],
+      "negative_keywords": [
+        "customer application form",
+        "sourcing details",
+        "co-applicant kyc details"
+      ],
+      "field_patterns": [
+        "borrower",
+        "lender",
+        "repayment",
+        "उधारकर्ता",
+        "अनुच्छेद"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "borrower_name",
+          "description": "Name of the borrower"
+        },
+        {
+          "name": "loan_amount",
+          "description": "The total loan amount"
+        },
+        {
+          "name": "tenure",
+          "description": "The duration or term of the loan in months"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "NACH Form",
       "priority": 80,
-      "headings": ["NACH", "NACH Mandate", "ECS Mandate", "National Automated Clearing House"],
-      "keywords": ["nach", "national automated clearing house", "ecs mandate", "auto debit", "mandate"],
-      "min_confidence": 0.5
+      "headings": [
+        "NACH",
+        "NACH Mandate",
+        "ECS Mandate",
+        "National Automated Clearing House"
+      ],
+      "keywords": [
+        "nach",
+        "national automated clearing house",
+        "ecs mandate",
+        "auto debit",
+        "mandate"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "utility_code",
+          "field_type": "form",
+          "label_aliases": [
+            "Utility Code",
+            "UMRN"
+          ],
+          "description": "Utility Code or UMRN number"
+        },
+        {
+          "name": "account_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Account Number",
+            "Bank Account No",
+            "A/C No",
+            "A/c Number"
+          ],
+          "description": "Bank account number for debit"
+        },
+        {
+          "name": "amount",
+          "field_type": "form",
+          "label_aliases": [
+            "Amount",
+            "Maximum Amount",
+            "Amount in Figures"
+          ],
+          "description": "Maximum mandate amount"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "CERSAI Report",
@@ -178,11 +779,56 @@
       "has_tabular_data": true,
       "multi_column": true,
       "priority": 86,
-      "headings": ["CERSAI", "Debtor Based Search Report", "Central Registry of Securitisation Asset Reconstruction and Security Interest of India"],
-      "keywords": ["cersai", "debtor based search report", "central registry of securitisation", "security interest of india", "cersai details", "search criteria", "no match found"],
-      "required_any": ["central registry of securitisation", "debtor based search report", "cersai details", "search criteria", "no match found"],
-      "field_patterns": ["\\bcersai\\b", "debtor\\s+based\\s+search", "search\\s+reference\\s+number", "transaction\\s+id"],
-      "min_confidence": 0.5
+      "headings": [
+        "CERSAI",
+        "Debtor Based Search Report",
+        "Central Registry of Securitisation Asset Reconstruction and Security Interest of India"
+      ],
+      "keywords": [
+        "cersai",
+        "debtor based search report",
+        "central registry of securitisation",
+        "security interest of india",
+        "cersai details",
+        "search criteria",
+        "no match found"
+      ],
+      "required_any": [
+        "central registry of securitisation",
+        "debtor based search report",
+        "cersai details",
+        "search criteria",
+        "no match found"
+      ],
+      "field_patterns": [
+        "\\bcersai\\b",
+        "debtor\\s+based\\s+search",
+        "search\\s+reference\\s+number",
+        "transaction\\s+id"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "asset_id",
+          "field_type": "table",
+          "label_aliases": [
+            "Asset ID",
+            "Asset Registration Number",
+            "Security Interest ID"
+          ],
+          "description": "Registered Asset ID or Security Interest ID"
+        },
+        {
+          "name": "borrower_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Borrower Name",
+            "Name of Borrower",
+            "Debtor Name"
+          ],
+          "description": "Name of the borrower in the CERSAI record"
+        }
+      ]
     },
     {
       "type": "CIBIL Report",
@@ -190,12 +836,60 @@
       "has_tabular_data": true,
       "multi_column": true,
       "priority": 88,
-      "headings": ["TransUnion CIBIL", "CIBIL Report", "CIBIL Credit Report", "CIBIL Credit Information Report", "Consumer CIBIL Report"],
-      "keywords": ["transunion cibil", "cibil", "cibil score", "control number", "member id", "credit information report", "credit report"],
-      "required_any": ["cibil", "transunion cibil"],
-      "negative_keywords": ["crif", "high mark", "crif high mark", "cersai", "central registry of securitisation"],
-      "field_patterns": ["\\bcibil\\b", "control\\s+number", "member\\s+id"],
-      "min_confidence": 0.5
+      "headings": [
+        "TransUnion CIBIL",
+        "CIBIL Report",
+        "CIBIL Credit Report",
+        "CIBIL Credit Information Report",
+        "Consumer CIBIL Report"
+      ],
+      "keywords": [
+        "transunion cibil",
+        "cibil",
+        "cibil score",
+        "control number",
+        "member id",
+        "credit information report",
+        "credit report"
+      ],
+      "required_any": [
+        "cibil",
+        "transunion cibil"
+      ],
+      "negative_keywords": [
+        "crif",
+        "high mark",
+        "crif high mark",
+        "cersai",
+        "central registry of securitisation"
+      ],
+      "field_patterns": [
+        "\\bcibil\\b",
+        "control\\s+number",
+        "member\\s+id"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "cibil_score",
+          "field_type": "form",
+          "label_aliases": [
+            "CIBIL TransUnion Score",
+            "CIBIL Score",
+            "Score"
+          ],
+          "description": "CIBIL credit score"
+        },
+        {
+          "name": "total_accounts",
+          "field_type": "table",
+          "label_aliases": [
+            "Total Accounts",
+            "Total number of accounts"
+          ],
+          "description": "Total number of credit accounts"
+        }
+      ]
     },
     {
       "type": "CRIF Report",
@@ -203,549 +897,2351 @@
       "has_tabular_data": true,
       "multi_column": true,
       "priority": 90,
-      "headings": ["CRIF Report", "CRIF Credit Information Report", "CRIF High Mark", "CRIF High Mark Credit Information Report", "High Mark Credit Report"],
-      "keywords": ["crif", "crif high mark", "high mark", "credit information report", "credit report", "credit score"],
-      "required_any": ["crif", "crif high mark", "high mark"],
-      "negative_keywords": ["cibil", "transunion cibil"],
-      "field_patterns": ["\\bcrif\\b", "high\\s+mark"],
-      "min_confidence": 0.5
+      "headings": [
+        "CRIF Report",
+        "CRIF Credit Information Report",
+        "CRIF High Mark",
+        "CRIF High Mark Credit Information Report",
+        "High Mark Credit Report"
+      ],
+      "keywords": [
+        "crif",
+        "crif high mark",
+        "high mark",
+        "credit information report",
+        "credit report",
+        "credit score"
+      ],
+      "required_any": [
+        "crif",
+        "crif high mark",
+        "high mark"
+      ],
+      "negative_keywords": [
+        "cibil",
+        "transunion cibil"
+      ],
+      "field_patterns": [
+        "\\bcrif\\b",
+        "high\\s+mark"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "crif_score",
+          "field_type": "form",
+          "label_aliases": [
+            "CRIF Score",
+            "Credit Score",
+            "Score"
+          ],
+          "description": "CRIF credit score"
+        }
+      ]
     },
     {
       "type": "Passbook",
       "ocr_route": "structured",
       "has_tabular_data": true,
       "priority": 96,
-      "headings": ["Passbook", "Pass Book", "Savings Bank Passbook", "Bank Passbook", "पासबुक"],
-      "keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "passbook no", "pass book no", "customer id", "खाता संख्या", "पासबुक"],
-      "required_any": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक"],
-      "field_patterns": ["account\\s*(number|no)", "pass\\s*book", "customer\\s*id"],
-      "min_confidence": 0.5
+      "headings": [
+        "Passbook",
+        "Pass Book",
+        "Savings Bank Passbook",
+        "Bank Passbook",
+        "पासबुक"
+      ],
+      "keywords": [
+        "passbook",
+        "pass book",
+        "savings bank passbook",
+        "bank passbook",
+        "passbook no",
+        "pass book no",
+        "customer id",
+        "खाता संख्या",
+        "पासबुक"
+      ],
+      "required_any": [
+        "passbook",
+        "pass book",
+        "savings bank passbook",
+        "bank passbook",
+        "पासबुक"
+      ],
+      "field_patterns": [
+        "account\\s*(number|no)",
+        "pass\\s*book",
+        "customer\\s*id"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "account_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Account Number",
+            "A/C No",
+            "Account No",
+            "A/c Number",
+            "A/c. No."
+          ],
+          "multi_page_strategy": "single_value",
+          "description": "Bank account number"
+        },
+        {
+          "name": "ifsc_code",
+          "field_type": "form",
+          "label_aliases": [
+            "IFSC Code",
+            "IFSC"
+          ],
+          "value_pattern": "\\b[A-Z]{4}0[A-Z0-9]{6}\\b",
+          "multi_page_strategy": "single_value",
+          "description": "11-character IFSC code"
+        },
+        {
+          "name": "account_holder_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name",
+            "Account Name",
+            "Name of Account Holder"
+          ],
+          "multi_page_strategy": "single_value",
+          "description": "Name of the account holder"
+        }
+      ]
     },
     {
       "type": "Bank Statement",
       "ocr_route": "structured",
       "has_tabular_data": true,
       "priority": 110,
-      "headings": ["Bank Statement", "Account Statement", "Statement of Account", "खाता विवरण", "बैंक विवरण"],
-      "keywords": ["bank statement", "account statement", "statement of account", "debit", "credit", "balance", "brought forward", "end balance", "neft", "aeps", "खाता विवरण", "बैंक विवरण"],
-      "negative_keywords": ["passbook", "pass book", "savings bank passbook", "bank passbook", "पासबुक", "crif", "cibil", "transunion cibil", "cersai", "co-applicant details", "coapplicant details", "security & offered property"],
-      "required_any": ["bank statement", "account statement", "statement of account", "brought forward", "end balance", "neft", "खाता विवरण", "बैंक विवरण"],
-      "field_patterns": ["account\\s*(number|no)", "statement\\s+period", "debit.*credit.*balance", "brought\\s+forward", "end\\s+balance"],
-      "min_confidence": 0.5
+      "headings": [
+        "Bank Statement",
+        "Account Statement",
+        "Statement of Account",
+        "खाता विवरण",
+        "बैंक विवरण"
+      ],
+      "keywords": [
+        "bank statement",
+        "account statement",
+        "statement of account",
+        "debit",
+        "credit",
+        "balance",
+        "brought forward",
+        "end balance",
+        "neft",
+        "aeps",
+        "खाता विवरण",
+        "बैंक विवरण"
+      ],
+      "negative_keywords": [
+        "passbook",
+        "pass book",
+        "savings bank passbook",
+        "bank passbook",
+        "पासबुक",
+        "crif",
+        "cibil",
+        "transunion cibil",
+        "cersai",
+        "co-applicant details",
+        "coapplicant details",
+        "security & offered property"
+      ],
+      "required_any": [
+        "bank statement",
+        "account statement",
+        "statement of account",
+        "brought forward",
+        "end balance",
+        "neft",
+        "खाता विवरण",
+        "बैंक विवरण"
+      ],
+      "field_patterns": [
+        "account\\s*(number|no)",
+        "statement\\s+period",
+        "debit.*credit.*balance",
+        "brought\\s+forward",
+        "end\\s+balance"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "account_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Account Number",
+            "A/C No",
+            "Account No",
+            "A/c Number",
+            "A/c. No."
+          ],
+          "multi_page_strategy": "single_value",
+          "description": "Bank account number"
+        },
+        {
+          "name": "running_balance",
+          "field_type": "table",
+          "label_aliases": [
+            "Balance",
+            "Closing Balance",
+            "Available Balance"
+          ],
+          "multi_page_strategy": "aggregate_list",
+          "description": "Running balance across statement pages"
+        }
+      ]
     },
     {
       "type": "Cheque",
       "priority": 112,
-      "headings": ["Cancelled Cheque", "Bank Cheque", "Cheque Leaf"],
-      "keywords": ["cancelled cheque", "bank cheque", "cheque leaf", "a/c payee", "account payee", "cts"],
-      "required_any": ["cancelled cheque", "cheque leaf", "a/c payee", "account payee", "cts"],
-      "negative_keywords": [
-        "post dated cheque", "post-dated cheque", "pdc", "security cheque",
-        "brought forward", "end balance", "neft", "aeps", "passbook", "पासबुक",
-        "account statement", "bank statement"
+      "headings": [
+        "Cancelled Cheque",
+        "Bank Cheque",
+        "Cheque Leaf"
       ],
-      "field_patterns": ["cancelled\\s+cheque", "a/c\\s*payee", "account\\s+payee", "\\bcts\\b"],
-      "min_confidence": 0.5
+      "keywords": [
+        "cancelled cheque",
+        "bank cheque",
+        "cheque leaf",
+        "a/c payee",
+        "account payee",
+        "cts"
+      ],
+      "required_any": [
+        "cancelled cheque",
+        "cheque leaf",
+        "a/c payee",
+        "account payee",
+        "cts"
+      ],
+      "negative_keywords": [
+        "post dated cheque",
+        "post-dated cheque",
+        "pdc",
+        "security cheque",
+        "brought forward",
+        "end balance",
+        "neft",
+        "aeps",
+        "passbook",
+        "पासबुक",
+        "account statement",
+        "bank statement"
+      ],
+      "field_patterns": [
+        "cancelled\\s+cheque",
+        "a/c\\s*payee",
+        "account\\s+payee",
+        "\\bcts\\b"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "account_number",
+          "field_type": "form",
+          "label_aliases": [
+            "A/c No",
+            "Account No",
+            "Account Number",
+            "A/c Number"
+          ],
+          "description": "Bank account number"
+        },
+        {
+          "name": "ifsc_code",
+          "field_type": "form",
+          "label_aliases": [
+            "IFSC Code",
+            "IFSC",
+            "RTGS/NEFT IFSC"
+          ],
+          "value_pattern": "\\b[A-Z]{4}0[A-Z0-9]{6}\\b",
+          "description": "11-character IFSC code"
+        },
+        {
+          "name": "payee_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Pay",
+            "Pay To",
+            "Name"
+          ],
+          "description": "Name of the payee"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Salary Slip",
       "ocr_route": "structured",
       "has_tabular_data": true,
       "priority": 120,
-      "headings": ["Salary Slip", "Pay Slip", "Payslip"],
-      "keywords": ["salary slip", "pay slip", "payslip", "gross salary", "net salary", "basic", "hra", "deductions"],
-      "field_patterns": ["gross\\s+(salary|pay)", "net\\s+(salary|pay)"],
-      "min_confidence": 0.5
+      "headings": [
+        "Salary Slip",
+        "Pay Slip",
+        "Payslip"
+      ],
+      "keywords": [
+        "salary slip",
+        "pay slip",
+        "payslip",
+        "gross salary",
+        "net salary",
+        "basic",
+        "hra",
+        "deductions"
+      ],
+      "field_patterns": [
+        "gross\\s+(salary|pay)",
+        "net\\s+(salary|pay)"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "gross_salary",
+          "field_type": "table",
+          "label_aliases": [
+            "Gross Salary",
+            "Gross Pay",
+            "Total Earnings",
+            "Gross Earning",
+            "Total Income"
+          ],
+          "multi_page_strategy": "single_value",
+          "description": "Total gross salary before deductions"
+        },
+        {
+          "name": "net_salary",
+          "field_type": "table",
+          "label_aliases": [
+            "Net Salary",
+            "Net Pay",
+            "Net Amount",
+            "Take Home Pay",
+            "Net Payable"
+          ],
+          "multi_page_strategy": "single_value",
+          "description": "Final take-home net salary"
+        },
+        {
+          "name": "employee_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Employee Name",
+            "Name",
+            "Emp Name",
+            "Mr./Ms.",
+            "Name of Employee"
+          ],
+          "multi_page_strategy": "single_value",
+          "description": "Name of the employee"
+        }
+      ]
     },
     {
       "type": "Form 16",
       "priority": 125,
-      "headings": ["Form 16", "Certificate under section 203"],
-      "keywords": ["form 16", "certificate under section 203", "tax deducted at source", "tds"],
-      "field_patterns": ["assessment\\s+year", "tan\\s+of\\s+the\\s+deductor"],
-      "min_confidence": 0.5
+      "headings": [
+        "Form 16",
+        "Certificate under section 203"
+      ],
+      "keywords": [
+        "form 16",
+        "certificate under section 203",
+        "tax deducted at source",
+        "tds"
+      ],
+      "field_patterns": [
+        "assessment\\s+year",
+        "tan\\s+of\\s+the\\s+deductor"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "pan_of_employee",
+          "field_type": "form",
+          "label_aliases": [
+            "PAN of the Employee",
+            "PAN of Employee"
+          ],
+          "value_pattern": "\\b[A-Z]{5}[0-9]{4}[A-Z]\\b",
+          "description": "PAN number of the employee"
+        },
+        {
+          "name": "gross_salary",
+          "field_type": "table",
+          "label_aliases": [
+            "Gross Salary",
+            "Total Salary",
+            "Gross Amount"
+          ],
+          "description": "Gross salary as per Form 16"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Income Tax Return",
       "priority": 130,
-      "headings": ["Income Tax Return", "Form 26AS", "ITR-V", "ITR Acknowledgement"],
-      "keywords": ["income tax return", "itr-v", "form 26as", "assessment year", "acknowledgement number"],
-      "required_any": ["income tax return", "form 26as", "assessment year", "itr-v", "itr acknowledgement"],
-      "negative_keywords": [
-        "facility agreement", "borrower", "lender", "event of default", "administrator", "permitted assign"
+      "headings": [
+        "Income Tax Return",
+        "Form 26AS",
+        "ITR-V",
+        "ITR Acknowledgement"
       ],
-      "field_patterns": ["assessment\\s+year", "acknowledgement\\s+number"],
-      "min_confidence": 0.55
+      "keywords": [
+        "income tax return",
+        "itr-v",
+        "form 26as",
+        "assessment year",
+        "acknowledgement number"
+      ],
+      "required_any": [
+        "income tax return",
+        "form 26as",
+        "assessment year",
+        "itr-v",
+        "itr acknowledgement"
+      ],
+      "negative_keywords": [
+        "facility agreement",
+        "borrower",
+        "lender",
+        "event of default",
+        "administrator",
+        "permitted assign"
+      ],
+      "field_patterns": [
+        "assessment\\s+year",
+        "acknowledgement\\s+number"
+      ],
+      "min_confidence": 0.55,
+      "fields": [
+        {
+          "name": "pan_number",
+          "field_type": "form",
+          "label_aliases": [
+            "PAN",
+            "Permanent Account Number",
+            "PAN No"
+          ],
+          "value_pattern": "\\b[A-Z]{5}[0-9]{4}[A-Z]\\b",
+          "description": "PAN number of the taxpayer"
+        },
+        {
+          "name": "assessment_year",
+          "field_type": "form",
+          "label_aliases": [
+            "Assessment Year",
+            "AY"
+          ],
+          "description": "Assessment Year (e.g. 2023-24)"
+        },
+        {
+          "name": "acknowledgement_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Acknowledgement Number",
+            "Ack No"
+          ],
+          "description": "ITR Acknowledgement Number"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Life Insurance Form",
       "priority": 136,
-      "headings": ["Life Insurance Form", "Life Insurance Proposal", "Life Insurance"],
-      "keywords": ["life insurance", "life cover", "life assured", "sum assured", "nominee"],
-      "required_any": ["life insurance", "life cover", "life assured"],
-      "min_confidence": 0.5
+      "headings": [
+        "Life Insurance Form",
+        "Life Insurance Proposal",
+        "Life Insurance"
+      ],
+      "keywords": [
+        "life insurance",
+        "life cover",
+        "life assured",
+        "sum assured",
+        "nominee"
+      ],
+      "required_any": [
+        "life insurance",
+        "life cover",
+        "life assured"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "policy_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Policy No",
+            "Policy Number"
+          ],
+          "description": "Insurance policy number"
+        },
+        {
+          "name": "sum_assured",
+          "field_type": "form",
+          "label_aliases": [
+            "Sum Assured",
+            "Base Sum Assured"
+          ],
+          "description": "Total sum assured"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Property Insurance Form",
       "priority": 137,
-      "headings": ["Property Insurance Form", "Property Insurance Proposal", "Property Insurance", "Kotak Bharat Griha Raksha", "Home Building and Home Contents"],
-      "keywords": ["property insurance", "insured property", "property cover", "building insurance", "home building", "home contents", "griha raksha"],
-      "required_any": ["property insurance", "insured property", "property cover", "home building", "home contents", "griha raksha"],
-      "min_confidence": 0.5
+      "headings": [
+        "Property Insurance Form",
+        "Property Insurance Proposal",
+        "Property Insurance",
+        "Kotak Bharat Griha Raksha",
+        "Home Building and Home Contents"
+      ],
+      "keywords": [
+        "property insurance",
+        "insured property",
+        "property cover",
+        "building insurance",
+        "home building",
+        "home contents",
+        "griha raksha"
+      ],
+      "required_any": [
+        "property insurance",
+        "insured property",
+        "property cover",
+        "home building",
+        "home contents",
+        "griha raksha"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "policy_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Policy No",
+            "Policy Number"
+          ],
+          "description": "Insurance policy number"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Insurance Form",
       "priority": 140,
-      "headings": ["Insurance Policy", "Insurance Form", "Life Insurance", "Property Insurance", "बीमा"],
-      "keywords": ["insurance", "life", "property", "premium", "policy", "sum assured", "nominee", "बीमा"],
-      "required_any": ["sum assured", "nominee", "proposal form", "group assure", "griha raksha", "insurance form", "insurance policy"],
-      "negative_keywords": [
-        "facility agreement", "event of default", "borrower agrees", "lender shall",
-        "repayment obligation", "enforce the security", "schedule/kfs"
+      "headings": [
+        "Insurance Policy",
+        "Insurance Form",
+        "Life Insurance",
+        "Property Insurance",
+        "बीमा"
       ],
-      "field_patterns": ["policy\\s*(number|no)", "sum\\s+assured"],
-      "min_confidence": 0.5
+      "keywords": [
+        "insurance",
+        "life",
+        "property",
+        "premium",
+        "policy",
+        "sum assured",
+        "nominee",
+        "बीमा"
+      ],
+      "required_any": [
+        "sum assured",
+        "nominee",
+        "proposal form",
+        "group assure",
+        "griha raksha",
+        "insurance form",
+        "insurance policy"
+      ],
+      "negative_keywords": [
+        "facility agreement",
+        "event of default",
+        "borrower agrees",
+        "lender shall",
+        "repayment obligation",
+        "enforce the security",
+        "schedule/kfs"
+      ],
+      "field_patterns": [
+        "policy\\s*(number|no)",
+        "sum\\s+assured"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "policy_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Policy No",
+            "Policy Number"
+          ],
+          "description": "Insurance policy number"
+        },
+        {
+          "name": "sum_assured",
+          "field_type": "form",
+          "label_aliases": [
+            "Sum Assured",
+            "Base Sum Assured"
+          ],
+          "description": "Total sum assured"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Medical Certificate",
       "priority": 145,
-      "headings": ["Medical Certificate", "Doctor Certificate", "Health Certificate"],
-      "keywords": ["medical certificate", "doctor", "fitness", "health certificate", "diagnosis", "hospital"],
-      "min_confidence": 0.5
+      "headings": [
+        "Medical Certificate",
+        "Doctor Certificate",
+        "Health Certificate"
+      ],
+      "keywords": [
+        "medical certificate",
+        "doctor",
+        "fitness",
+        "health certificate",
+        "diagnosis",
+        "hospital"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "doctor_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Doctor Name",
+            "Medical Officer",
+            "Name of Doctor"
+          ],
+          "description": "Name of the doctor certifying"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Insurance Consent Letter",
       "priority": 150,
-      "headings": ["Insurance Consent", "Insurance Consent Letter"],
-      "keywords": ["insurance consent", "insurance consent letter", "consent for insurance"],
-      "required_any": ["insurance consent", "consent for insurance", "insurance consent letter"],
-      "negative_keywords": [
-        "facility agreement", "borrower agrees", "lender at its option", "event of default",
-        "repayment obligation", "enforce the security"
+      "headings": [
+        "Insurance Consent",
+        "Insurance Consent Letter"
       ],
-      "min_confidence": 0.5
+      "keywords": [
+        "insurance consent",
+        "insurance consent letter",
+        "consent for insurance"
+      ],
+      "required_any": [
+        "insurance consent",
+        "consent for insurance",
+        "insurance consent letter"
+      ],
+      "negative_keywords": [
+        "facility agreement",
+        "borrower agrees",
+        "lender at its option",
+        "event of default",
+        "repayment obligation",
+        "enforce the security"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "consent_given_by",
+          "description": "Name of the person giving consent"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Stamp Duty",
       "priority": 15,
-      "headings": ["Stamp Duty", "e-Stamp", "Non Judicial Stamp", "Stamp Paper", "INDIA NON JUDICIAL", "भारतीय गैर न्यायिक"],
-      "keywords": ["stamp duty", "non judicial stamp", "india non judicial", "indianonjudicial", "e-stamp", "franking", "stamp paper", "five hundred rupees", "स्टाम्प", "गैर न्यायिक"],
-      "required_any": ["stamp duty", "non judicial", "india non judicial", "indianonjudicial", "e-stamp", "stamp paper", "गैर न्यायिक"],
-      "min_confidence": 0.5
+      "headings": [
+        "Stamp Duty",
+        "e-Stamp",
+        "Non Judicial Stamp",
+        "Stamp Paper",
+        "INDIA NON JUDICIAL",
+        "भारतीय गैर न्यायिक"
+      ],
+      "keywords": [
+        "stamp duty",
+        "non judicial stamp",
+        "india non judicial",
+        "indianonjudicial",
+        "e-stamp",
+        "franking",
+        "stamp paper",
+        "five hundred rupees",
+        "स्टाम्प",
+        "गैर न्यायिक"
+      ],
+      "required_any": [
+        "stamp duty",
+        "non judicial",
+        "india non judicial",
+        "indianonjudicial",
+        "e-stamp",
+        "stamp paper",
+        "गैर न्यायिक"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "stamp_amount",
+          "description": "Value of the stamp duty paid"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Guarantee Deed",
       "priority": 170,
-      "headings": ["Guarantee Deed", "Deed of Guarantee"],
-      "keywords": ["guarantee deed", "deed of guarantee", "deed of personal guarantee", "guarantor", "deed"],
-      "required_any": ["guarantee deed", "deed of guarantee", "deed of personal guarantee", "guarantor"],
-      "negative_keywords": ["facility agreement", "invoke the personal guarantee", "event of default", "loan agreement"],
-      "field_patterns": ["guarantee\\s+deed", "deed\\s+of\\s+guarantee"],
-      "min_confidence": 0.5
+      "headings": [
+        "Guarantee Deed",
+        "Deed of Guarantee"
+      ],
+      "keywords": [
+        "guarantee deed",
+        "deed of guarantee",
+        "deed of personal guarantee",
+        "guarantor",
+        "deed"
+      ],
+      "required_any": [
+        "guarantee deed",
+        "deed of guarantee",
+        "deed of personal guarantee",
+        "guarantor"
+      ],
+      "negative_keywords": [
+        "facility agreement",
+        "invoke the personal guarantee",
+        "event of default",
+        "loan agreement"
+      ],
+      "field_patterns": [
+        "guarantee\\s+deed",
+        "deed\\s+of\\s+guarantee"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "guarantor_name",
+          "description": "Name of the guarantor"
+        },
+        {
+          "name": "guaranteed_amount",
+          "description": "Amount guaranteed"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Utility Bill",
       "priority": 180,
-      "headings": ["Electricity Bill", "Water Bill", "Gas Bill", "Telephone Bill", "Broadband Bill", "Broadband", "Utility Bill", "विद्युत वितरण", "Jaipur Vidyut"],
-      "keywords": ["electricity bill", "water bill", "gas bill", "telephone bill", "broadband", "consumer no", "due date", "bill month", "vidyut", "jvvnl", "बिजली", "विद्युत"],
-      "required_any": ["electricity bill", "water bill", "gas bill", "utility bill", "vidyut", "jvvnl", "consumer no", "due date", "bill month", "broadband", "बिजली", "विद्युत"],
-      "min_confidence": 0.5
+      "headings": [
+        "Electricity Bill",
+        "Water Bill",
+        "Gas Bill",
+        "Telephone Bill",
+        "Broadband Bill",
+        "Broadband",
+        "Utility Bill",
+        "विद्युत वितरण",
+        "Jaipur Vidyut"
+      ],
+      "keywords": [
+        "electricity bill",
+        "water bill",
+        "gas bill",
+        "telephone bill",
+        "broadband",
+        "consumer no",
+        "due date",
+        "bill month",
+        "vidyut",
+        "jvvnl",
+        "बिजली",
+        "विद्युत"
+      ],
+      "required_any": [
+        "electricity bill",
+        "water bill",
+        "gas bill",
+        "utility bill",
+        "vidyut",
+        "jvvnl",
+        "consumer no",
+        "due date",
+        "bill month",
+        "broadband",
+        "बिजली",
+        "विद्युत"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "consumer_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Consumer No",
+            "Account No",
+            "CA Number",
+            "K Number"
+          ],
+          "description": "Utility consumer or account number"
+        },
+        {
+          "name": "bill_amount",
+          "field_type": "form",
+          "label_aliases": [
+            "Bill Amount",
+            "Total Amount",
+            "Amount Payable",
+            "Net Payable"
+          ],
+          "description": "Total bill amount"
+        },
+        {
+          "name": "due_date",
+          "field_type": "form",
+          "label_aliases": [
+            "Due Date",
+            "Pay by Date",
+            "Last Date of Payment"
+          ],
+          "description": "Due date for the bill payment"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Pension Payment Order",
       "priority": 181,
-      "headings": ["Pension Payment Order", "PPO"],
-      "keywords": ["pension payment order", "ppo number", "pensioner", "pension disbursing authority"],
-      "required_any": ["pension payment order", "ppo number"],
-      "min_confidence": 0.5
+      "headings": [
+        "Pension Payment Order",
+        "PPO"
+      ],
+      "keywords": [
+        "pension payment order",
+        "ppo number",
+        "pensioner",
+        "pension disbursing authority"
+      ],
+      "required_any": [
+        "pension payment order",
+        "ppo number"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "ppo_number",
+          "field_type": "form",
+          "label_aliases": [
+            "PPO No",
+            "PPO Number",
+            "Pension Payment Order No"
+          ],
+          "description": "Pension Payment Order Number"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Employer Accommodation Letter",
       "priority": 182,
-      "headings": ["Accommodation Allotment Letter", "Employer Accommodation Letter", "Quarter Allotment"],
-      "keywords": ["allotment of accommodation", "accommodation allotted", "employer issued", "quarter allotment"],
-      "required_any": ["allotment of accommodation", "accommodation allotted", "quarter allotment"],
-      "min_confidence": 0.5
+      "headings": [
+        "Accommodation Allotment Letter",
+        "Employer Accommodation Letter",
+        "Quarter Allotment"
+      ],
+      "keywords": [
+        "allotment of accommodation",
+        "accommodation allotted",
+        "employer issued",
+        "quarter allotment"
+      ],
+      "required_any": [
+        "allotment of accommodation",
+        "accommodation allotted",
+        "quarter allotment"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "employee_name",
+          "description": "Name of the employee allotted accommodation"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Rent Agreement",
       "priority": 185,
-      "headings": ["Rent Agreement", "Lease Agreement", "Leave and License Agreement"],
-      "keywords": ["rent agreement", "lease agreement", "leave and license", "landlord", "tenant", "monthly rent"],
-      "min_confidence": 0.5
+      "headings": [
+        "Rent Agreement",
+        "Lease Agreement",
+        "Leave and License Agreement"
+      ],
+      "keywords": [
+        "rent agreement",
+        "lease agreement",
+        "leave and license",
+        "landlord",
+        "tenant",
+        "monthly rent"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "landlord_name",
+          "description": "Name of the landlord (lessor)"
+        },
+        {
+          "name": "tenant_name",
+          "description": "Name of the tenant (lessee)"
+        },
+        {
+          "name": "monthly_rent",
+          "description": "Monthly rent amount"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Property Document",
       "priority": 190,
-      "headings": ["Sale Deed", "Title Deed", "Property Document", "Registered Deed", "सेल डीड", "बैनामा"],
-      "keywords": ["sale deed", "title deed", "property document", "registered deed", "survey number", "plot", "property", "संपत्ति", "बैनामा"],
-      "min_confidence": 0.5
+      "headings": [
+        "Sale Deed",
+        "Title Deed",
+        "Property Document",
+        "Registered Deed",
+        "सेल डीड",
+        "बैनामा"
+      ],
+      "keywords": [
+        "sale deed",
+        "title deed",
+        "property document",
+        "registered deed",
+        "survey number",
+        "plot",
+        "property",
+        "संपत्ति",
+        "बैनामा"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "purchaser_name",
+          "description": "Name of the property purchaser or owner"
+        },
+        {
+          "name": "property_address",
+          "description": "Full address of the property"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Property Tax Receipt",
       "priority": 195,
-      "headings": ["Property Tax Receipt", "Municipal Tax Receipt", "House Tax Receipt"],
-      "keywords": ["property tax receipt", "municipal tax", "house tax", "assessment number", "tax paid"],
-      "min_confidence": 0.5
+      "headings": [
+        "Property Tax Receipt",
+        "Municipal Tax Receipt",
+        "House Tax Receipt"
+      ],
+      "keywords": [
+        "property tax receipt",
+        "municipal tax",
+        "house tax",
+        "assessment number",
+        "tax paid"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "assessment_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Assessment No",
+            "Assessment Number",
+            "Property ID"
+          ],
+          "description": "Property assessment number or ID"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Valuation Report",
       "priority": 200,
-      "headings": ["Valuation Report", "Property Valuation", "Market Value Report"],
-      "keywords": ["valuation report", "property valuation", "market value", "valuer", "fair market value"],
-      "min_confidence": 0.5
+      "headings": [
+        "Valuation Report",
+        "Property Valuation",
+        "Market Value Report"
+      ],
+      "keywords": [
+        "valuation report",
+        "property valuation",
+        "market value",
+        "valuer",
+        "fair market value"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "market_value",
+          "description": "Fair market value of the property"
+        },
+        {
+          "name": "valuer_name",
+          "description": "Name of the valuer or valuation agency"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Technical Report",
       "priority": 205,
-      "headings": ["Technical Report", "Technical Evaluation", "Technical Valuation", "तकनीकी रिपोर्ट"],
-      "keywords": ["technical report", "technical evaluation", "technical valuation", "valuation report", "तकनीकी", "मूल्यांकन"],
-      "min_confidence": 0.5
+      "headings": [
+        "Technical Report",
+        "Technical Evaluation",
+        "Technical Valuation",
+        "तकनीकी रिपोर्ट"
+      ],
+      "keywords": [
+        "technical report",
+        "technical evaluation",
+        "technical valuation",
+        "valuation report",
+        "तकनीकी",
+        "मूल्यांकन"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "technical_status",
+          "description": "Overall status or recommendation of the technical report"
+        },
+        {
+          "name": "property_address",
+          "description": "Address of the property evaluated"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Technical Clearance Report",
       "priority": 210,
-      "headings": ["Technical Clearance", "Technical Clearance Report"],
-      "keywords": ["technical clearance", "technical report", "clearance"],
-      "min_confidence": 0.5
+      "headings": [
+        "Technical Clearance",
+        "Technical Clearance Report"
+      ],
+      "keywords": [
+        "technical clearance",
+        "technical report",
+        "clearance"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "clearance_status",
+          "description": "Clearance status (Cleared/Rejected/Pending)"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Legal Clearance Report",
       "priority": 220,
-      "headings": ["Legal Clearance", "Legal Report", "Title Search Report", "कानूनी रिपोर्ट"],
-      "keywords": ["legal clearance", "legal report", "title search report", "title", "unencumbered", "marketable", "कानूनी"],
-      "min_confidence": 0.5
+      "headings": [
+        "Legal Clearance",
+        "Legal Report",
+        "Title Search Report",
+        "कानूनी रिपोर्ट"
+      ],
+      "keywords": [
+        "legal clearance",
+        "legal report",
+        "title search report",
+        "title",
+        "unencumbered",
+        "marketable",
+        "कानूनी"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "legal_opinion",
+          "description": "Final legal opinion (e.g., Clear and Marketable)"
+        },
+        {
+          "name": "advocate_name",
+          "description": "Name of the advocate providing the clearance"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Divorce Decree",
       "priority": 230,
-      "headings": ["Divorce Decree", "Decree of Divorce", "Family Court"],
-      "keywords": ["divorce decree", "decree of divorce", "family court", "dissolution of marriage"],
-      "min_confidence": 0.5
+      "headings": [
+        "Divorce Decree",
+        "Decree of Divorce",
+        "Family Court"
+      ],
+      "keywords": [
+        "divorce decree",
+        "decree of divorce",
+        "family court",
+        "dissolution of marriage"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "husband_name",
+          "description": "Name of the husband"
+        },
+        {
+          "name": "wife_name",
+          "description": "Name of the wife"
+        },
+        {
+          "name": "court_name",
+          "description": "Name of the court issuing the decree"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Marriage Certificate",
       "priority": 235,
-      "headings": ["Marriage Certificate", "Certificate of Marriage"],
-      "keywords": ["marriage certificate", "certificate of marriage", "registrar of marriages", "bride", "groom"],
-      "min_confidence": 0.5
+      "headings": [
+        "Marriage Certificate",
+        "Certificate of Marriage"
+      ],
+      "keywords": [
+        "marriage certificate",
+        "certificate of marriage",
+        "registrar of marriages",
+        "bride",
+        "groom"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "husband_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Husband Name",
+            "Name of Husband",
+            "Groom Name"
+          ],
+          "description": "Name of the husband"
+        },
+        {
+          "name": "wife_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Wife Name",
+            "Name of Wife",
+            "Bride Name"
+          ],
+          "description": "Name of the wife"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Death Certificate",
       "priority": 240,
-      "headings": ["Death Certificate", "Certificate of Death"],
-      "keywords": ["death certificate", "certificate of death", "deceased", "date of death", "registrar of births and deaths"],
-      "min_confidence": 0.5
+      "headings": [
+        "Death Certificate",
+        "Certificate of Death"
+      ],
+      "keywords": [
+        "death certificate",
+        "certificate of death",
+        "deceased",
+        "date of death",
+        "registrar of births and deaths"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "deceased_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Name of Deceased",
+            "Deceased Name",
+            "Name"
+          ],
+          "description": "Name of the deceased person"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Succession Certificate",
       "priority": 245,
-      "headings": ["Succession Certificate", "Legal Heir Certificate"],
-      "keywords": ["succession certificate", "legal heir certificate", "heir", "successor", "estate"],
-      "min_confidence": 0.5
+      "headings": [
+        "Succession Certificate",
+        "Legal Heir Certificate"
+      ],
+      "keywords": [
+        "succession certificate",
+        "legal heir certificate",
+        "heir",
+        "successor",
+        "estate"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "deceased_name",
+          "description": "Name of the deceased person"
+        },
+        {
+          "name": "successor_name",
+          "description": "Name of the legal heir or successor"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Court Order",
       "priority": 250,
-      "headings": ["Court Order", "Order of the Court", "Judgement", "Judgment"],
-      "keywords": ["court order", "order of the court", "honourable court", "honorable court", "petition", "case no"],
-      "min_confidence": 0.5
+      "headings": [
+        "Court Order",
+        "Order of the Court",
+        "Judgement",
+        "Judgment"
+      ],
+      "keywords": [
+        "court order",
+        "order of the court",
+        "honourable court",
+        "honorable court",
+        "petition",
+        "case no"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "case_number",
+          "description": "Case number of the order"
+        },
+        {
+          "name": "order_date",
+          "description": "Date of the court order"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Affidavit",
       "priority": 255,
-      "headings": ["Affidavit", "Declaration Affidavit", "Notarised Affidavit"],
-      "keywords": ["affidavit", "deponent", "solemnly affirm", "notary", "notarised", "notarized"],
-      "min_confidence": 0.5
+      "headings": [
+        "Affidavit",
+        "Declaration Affidavit",
+        "Notarised Affidavit"
+      ],
+      "keywords": [
+        "affidavit",
+        "deponent",
+        "solemnly affirm",
+        "notary",
+        "notarised",
+        "notarized"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "deponent_name",
+          "description": "Name of the deponent making the affidavit"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Gift Deed",
       "priority": 260,
-      "headings": ["Gift Deed", "Deed of Gift"],
-      "keywords": ["gift deed", "deed of gift", "donor", "donee", "without consideration"],
-      "min_confidence": 0.5
+      "headings": [
+        "Gift Deed",
+        "Deed of Gift"
+      ],
+      "keywords": [
+        "gift deed",
+        "deed of gift",
+        "donor",
+        "donee",
+        "without consideration"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "donor_name",
+          "description": "Name of the person gifting (donor)"
+        },
+        {
+          "name": "donee_name",
+          "description": "Name of the person receiving the gift (donee)"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Offer Letter",
       "priority": 270,
-      "headings": ["Offer Letter", "Employment Offer", "Appointment Letter"],
-      "keywords": ["offer letter", "employment offer", "appointment letter", "joining date", "ctc"],
-      "min_confidence": 0.5
+      "headings": [
+        "Offer Letter",
+        "Employment Offer",
+        "Appointment Letter"
+      ],
+      "keywords": [
+        "offer letter",
+        "employment offer",
+        "appointment letter",
+        "joining date",
+        "ctc"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "candidate_name",
+          "description": "Name of the candidate"
+        },
+        {
+          "name": "designation",
+          "description": "Job designation offered"
+        },
+        {
+          "name": "ctc",
+          "description": "Total Cost to Company (CTC) or salary offered"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Relieving Letter",
       "priority": 275,
-      "headings": ["Relieving Letter", "Relieving Certificate"],
-      "keywords": ["relieving letter", "relieved from services", "last working day", "relieving certificate"],
-      "min_confidence": 0.5
+      "headings": [
+        "Relieving Letter",
+        "Relieving Certificate"
+      ],
+      "keywords": [
+        "relieving letter",
+        "relieved from services",
+        "last working day",
+        "relieving certificate"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "employee_name",
+          "description": "Name of the employee being relieved"
+        },
+        {
+          "name": "last_working_day",
+          "description": "Last working day of the employee"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Experience Certificate",
       "priority": 280,
-      "headings": ["Experience Certificate", "Service Certificate"],
-      "keywords": ["experience certificate", "service certificate", "worked with", "employment period"],
-      "min_confidence": 0.5
+      "headings": [
+        "Experience Certificate",
+        "Service Certificate"
+      ],
+      "keywords": [
+        "experience certificate",
+        "service certificate",
+        "worked with",
+        "employment period"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "employee_name",
+          "description": "Name of the employee"
+        },
+        {
+          "name": "designation",
+          "description": "Job designation held"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "GST Certificate",
       "priority": 290,
-      "headings": ["GST Registration Certificate", "Goods and Services Tax"],
-      "keywords": ["gst registration", "gstin", "goods and services tax", "registration certificate"],
-      "field_patterns": ["\\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]\\b"],
-      "min_confidence": 0.5
+      "headings": [
+        "GST Registration Certificate",
+        "Goods and Services Tax"
+      ],
+      "keywords": [
+        "gst registration",
+        "gstin",
+        "goods and services tax",
+        "registration certificate"
+      ],
+      "field_patterns": [
+        "\\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]\\b"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "gstin",
+          "field_type": "form",
+          "label_aliases": [
+            "GSTIN",
+            "Registration Number",
+            "GST Number"
+          ],
+          "value_pattern": "\\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]\\b",
+          "description": "15-character GSTIN"
+        },
+        {
+          "name": "legal_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Legal Name",
+            "Name of Business"
+          ],
+          "description": "Legal name of the business"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Udyam Certificate",
       "priority": 295,
-      "headings": ["Udyam Registration", "MSME Registration", "Udyam Certificate"],
-      "keywords": ["udyam", "msme registration", "udyam registration", "enterprise type"],
-      "min_confidence": 0.5
+      "headings": [
+        "Udyam Registration",
+        "MSME Registration",
+        "Udyam Certificate"
+      ],
+      "keywords": [
+        "udyam",
+        "msme registration",
+        "udyam registration",
+        "enterprise type"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "udyam_registration_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Udyam Registration Number",
+            "UDYAM Registration No"
+          ],
+          "description": "Udyam registration number"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Partnership Deed",
       "priority": 300,
-      "headings": ["Partnership Deed", "Deed of Partnership"],
-      "keywords": ["partnership deed", "deed of partnership", "partners", "profit sharing"],
-      "min_confidence": 0.5
+      "headings": [
+        "Partnership Deed",
+        "Deed of Partnership"
+      ],
+      "keywords": [
+        "partnership deed",
+        "deed of partnership",
+        "partners",
+        "profit sharing"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "firm_name",
+          "description": "Name of the partnership firm"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "MOA AOA",
       "priority": 305,
-      "headings": ["Memorandum of Association", "Articles of Association", "MOA", "AOA"],
-      "keywords": ["memorandum of association", "articles of association", "company limited", "subscriber"],
-      "min_confidence": 0.5
+      "headings": [
+        "Memorandum of Association",
+        "Articles of Association",
+        "MOA",
+        "AOA"
+      ],
+      "keywords": [
+        "memorandum of association",
+        "articles of association",
+        "company limited",
+        "subscriber"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "company_name",
+          "description": "Name of the company"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Board Resolution",
       "priority": 310,
-      "headings": ["Board Resolution", "Certified True Copy of Resolution"],
-      "keywords": ["board resolution", "resolved that", "board of directors", "authorised signatory", "authorized signatory"],
-      "min_confidence": 0.5
+      "headings": [
+        "Board Resolution",
+        "Certified True Copy of Resolution"
+      ],
+      "keywords": [
+        "board resolution",
+        "resolved that",
+        "board of directors",
+        "authorised signatory",
+        "authorized signatory"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "company_name",
+          "description": "Name of the company passing the resolution"
+        },
+        {
+          "name": "authorized_signatory",
+          "description": "Name of the authorized signatory"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Trade License",
       "priority": 315,
-      "headings": ["Trade License", "Shop and Establishment", "Shop Act"],
-      "keywords": ["trade license", "shop establishment", "shop act", "municipal license", "business license"],
-      "min_confidence": 0.5
+      "headings": [
+        "Trade License",
+        "Shop and Establishment",
+        "Shop Act"
+      ],
+      "keywords": [
+        "trade license",
+        "shop establishment",
+        "shop act",
+        "municipal license",
+        "business license"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "license_number",
+          "field_type": "form",
+          "label_aliases": [
+            "License No",
+            "License Number",
+            "Trade License No"
+          ],
+          "description": "Trade license number"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Shop Establishment Certificate",
       "priority": 320,
-      "headings": ["Shop Establishment Certificate", "Shop Act Certificate"],
-      "keywords": ["shop establishment", "shop act", "establishment certificate"],
-      "min_confidence": 0.5
+      "headings": [
+        "Shop Establishment Certificate",
+        "Shop Act Certificate"
+      ],
+      "keywords": [
+        "shop establishment",
+        "shop act",
+        "establishment certificate"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "registration_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Registration No",
+            "Registration Number",
+            "Certificate No"
+          ],
+          "description": "Shop and establishment registration number"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "NOC",
       "priority": 330,
-      "headings": ["No Objection Certificate", "NOC"],
-      "keywords": ["no objection certificate", "noc", "no objection", "previous lender"],
-      "min_confidence": 0.5
+      "headings": [
+        "No Objection Certificate",
+        "NOC"
+      ],
+      "keywords": [
+        "no objection certificate",
+        "noc",
+        "no objection",
+        "previous lender"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "noc_issued_by",
+          "description": "Name of the entity issuing the NOC"
+        },
+        {
+          "name": "noc_issued_to",
+          "description": "Name of the entity to whom the NOC is issued"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Foreclosure Letter",
       "priority": 335,
-      "headings": ["Foreclosure Letter", "Loan Foreclosure Statement"],
-      "keywords": ["foreclosure letter", "loan foreclosure", "foreclosure amount", "loan closure"],
-      "required_any": ["foreclosure", "loan closure"],
-      "min_confidence": 0.5
+      "headings": [
+        "Foreclosure Letter",
+        "Loan Foreclosure Statement"
+      ],
+      "keywords": [
+        "foreclosure letter",
+        "loan foreclosure",
+        "foreclosure amount",
+        "loan closure"
+      ],
+      "required_any": [
+        "foreclosure",
+        "loan closure"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "foreclosure_amount",
+          "description": "Total foreclosure amount"
+        },
+        {
+          "name": "loan_account_number",
+          "description": "Loan account number being foreclosed"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "List of Documents",
       "priority": 336,
-      "headings": ["List of Documents", "LOD"],
-      "keywords": ["list of documents", "lod", "documents held by lender", "original documents"],
-      "required_any": ["list of documents", "lod"],
-      "min_confidence": 0.5
+      "headings": [
+        "List of Documents",
+        "LOD"
+      ],
+      "keywords": [
+        "list of documents",
+        "lod",
+        "documents held by lender",
+        "original documents"
+      ],
+      "required_any": [
+        "list of documents",
+        "lod"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "borrower_name",
+          "description": "Name of the borrower whose documents are listed"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Application Form",
       "priority": 340,
-      "headings": ["Customer Application Form", "Application Form", "Loan Application", "SOURCING DETAILS"],
+      "headings": [
+        "Customer Application Form",
+        "Application Form",
+        "Loan Application",
+        "SOURCING DETAILS"
+      ],
       "keywords": [
-        "customer application form", "application form", "loan application", "sourcing details",
-        "application details", "co-applicant kyc", "guarantor kyc", "applicant name",
-        "loan product group", "ऋण आवेदन"
+        "customer application form",
+        "application form",
+        "loan application",
+        "sourcing details",
+        "application details",
+        "co-applicant kyc",
+        "guarantor kyc",
+        "applicant name",
+        "loan product group",
+        "ऋण आवेदन"
       ],
       "required_any": [
-        "customer application form", "sourcing details", "application details",
-        "loan product", "co-applicant kyc", "guarantor kyc", "applicant employemen",
-        "login date", "channel type", "application form", "loan application", "applicant name"
+        "customer application form",
+        "sourcing details",
+        "application details",
+        "loan product",
+        "co-applicant kyc",
+        "guarantor kyc",
+        "applicant employemen",
+        "login date",
+        "channel type",
+        "application form",
+        "loan application",
+        "applicant name"
       ],
       "negative_keywords": [
-        "facility agreement", "loan agreement", "ऋण अनुबंध", "अनुच्छेद",
-        "उधारकर्ता", "know your customer (kyc)", "seva mein", "सेवामें", "महोदय"
+        "facility agreement",
+        "loan agreement",
+        "ऋण अनुबंध",
+        "अनुच्छेद",
+        "उधारकर्ता",
+        "know your customer (kyc)",
+        "seva mein",
+        "सेवामें",
+        "महोदय"
       ],
-      "min_confidence": 0.5
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Applicant Name",
+            "Name of Applicant",
+            "Borrower Name"
+          ],
+          "description": "Name of the main applicant"
+        },
+        {
+          "name": "loan_amount",
+          "field_type": "form",
+          "label_aliases": [
+            "Loan Amount Requested",
+            "Requested Amount",
+            "Loan Amount"
+          ],
+          "description": "Amount of loan requested"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "KYC OSV Mark",
       "ocr_route": "fast",
       "priority": 350,
-      "headings": ["Original Seen and Verified", "OSV"],
-      "keywords": ["original seen and verified", "original seen verified", "osv"],
-      "min_confidence": 0.5
+      "headings": [
+        "Original Seen and Verified",
+        "OSV"
+      ],
+      "keywords": [
+        "original seen and verified",
+        "original seen verified",
+        "osv"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "verified_by",
+          "field_type": "form",
+          "label_aliases": [
+            "Verified By",
+            "OSV By",
+            "Name of Verifier"
+          ],
+          "description": "Name of the person who verified the original"
+        }
+      ]
     },
     {
       "type": "Consent Letter",
       "ocr_route": "fast",
       "priority": 360,
-      "headings": ["Consent Letter", "Customer Consent", "सहमति पत्र"],
-      "keywords": ["consent letter", "customer consent", "consent", "सहमति पत्र", "सहमति"],
-      "min_confidence": 0.5
+      "headings": [
+        "Consent Letter",
+        "Customer Consent",
+        "सहमति पत्र"
+      ],
+      "keywords": [
+        "consent letter",
+        "customer consent",
+        "consent",
+        "सहमति पत्र",
+        "सहमति"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "consent_given_by",
+          "description": "Name of the person giving consent"
+        }
+      ]
     },
     {
       "type": "FI Report",
       "priority": 370,
-      "headings": ["FI Report", "Field Investigation", "Field Inquiry Report"],
-      "keywords": ["fi report", "field investigation", "field inquiry report", "residence verification"],
-      "negative_keywords": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
-      "min_confidence": 0.5
+      "headings": [
+        "FI Report",
+        "Field Investigation",
+        "Field Inquiry Report"
+      ],
+      "keywords": [
+        "fi report",
+        "field investigation",
+        "field inquiry report",
+        "residence verification"
+      ],
+      "negative_keywords": [
+        "fi approval",
+        "field investigation approval",
+        "negative fi approved",
+        "referred fi approved"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "applicant_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Applicant Name",
+            "Name"
+          ],
+          "description": "Name of the applicant investigated"
+        },
+        {
+          "name": "fi_status",
+          "field_type": "form",
+          "label_aliases": [
+            "FI Status",
+            "Verification Status",
+            "Status",
+            "Overall Status"
+          ],
+          "description": "Final status of the field investigation (Positive/Negative)"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "FI Approval Letter",
       "priority": 369,
-      "headings": ["FI Approval", "Field Investigation Approval", "Approval for Negative FI", "Approval for Referred FI"],
-      "keywords": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
-      "required_any": ["fi approval", "field investigation approval", "negative fi approved", "referred fi approved"],
-      "min_confidence": 0.5
+      "headings": [
+        "FI Approval",
+        "Field Investigation Approval",
+        "Approval for Negative FI",
+        "Approval for Referred FI"
+      ],
+      "keywords": [
+        "fi approval",
+        "field investigation approval",
+        "negative fi approved",
+        "referred fi approved"
+      ],
+      "required_any": [
+        "fi approval",
+        "field investigation approval",
+        "negative fi approved",
+        "referred fi approved"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "approved_by",
+          "description": "Name of the person or authority approving the FI"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "PDC",
       "priority": 380,
-      "headings": ["Post Dated Cheque", "PDC", "Security Cheque"],
-      "keywords": ["post dated cheque", "post-dated cheque", "pdc", "security cheque"],
-      "min_confidence": 0.5
+      "headings": [
+        "Post Dated Cheque",
+        "PDC",
+        "Security Cheque"
+      ],
+      "keywords": [
+        "post dated cheque",
+        "post-dated cheque",
+        "pdc",
+        "security cheque"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "cheque_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Cheque No",
+            "Cheque Number"
+          ],
+          "description": "Cheque number of the PDC"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Disbursement Request",
       "priority": 390,
-      "headings": ["Disbursement Request", "Request for Disbursement"],
-      "keywords": ["request for disbursement", "disbursement request", "वितरण अनुरोध"],
-      "min_confidence": 0.5
+      "headings": [
+        "Disbursement Request",
+        "Request for Disbursement"
+      ],
+      "keywords": [
+        "request for disbursement",
+        "disbursement request",
+        "वितरण अनुरोध"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "disbursement_amount",
+          "field_type": "form",
+          "label_aliases": [
+            "Disbursement Amount",
+            "Amount to be Disbursed",
+            "Amount"
+          ],
+          "description": "Requested disbursement amount"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "BT Undertaking",
       "priority": 400,
-      "headings": ["BT Undertaking", "Balance Transfer Undertaking"],
-      "keywords": ["bt undertaking", "balance transfer undertaking"],
-      "min_confidence": 0.5
+      "headings": [
+        "BT Undertaking",
+        "Balance Transfer Undertaking"
+      ],
+      "keywords": [
+        "bt undertaking",
+        "balance transfer undertaking"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "borrower_name",
+          "description": "Name of the borrower providing the undertaking"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Crime Check Report",
       "priority": 410,
-      "headings": ["Crime Check", "Criminal Verification", "Police Verification Report"],
-      "keywords": ["crime check", "criminal verification", "police verification report"],
-      "min_confidence": 0.5
+      "headings": [
+        "Crime Check",
+        "Criminal Verification",
+        "Police Verification Report"
+      ],
+      "keywords": [
+        "crime check",
+        "criminal verification",
+        "police verification report"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "applicant_name",
+          "description": "Name of the applicant checked"
+        },
+        {
+          "name": "criminal_record_found",
+          "description": "Whether any criminal record was found (Yes/No)"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Customer App Proof",
       "priority": 420,
-      "headings": ["Customer App Proof", "Mobile App Installed"],
-      "keywords": ["customer app", "mobile app installed", "ms fincap app", "msfincap app"],
-      "min_confidence": 0.5
+      "headings": [
+        "Customer App Proof",
+        "Mobile App Installed"
+      ],
+      "keywords": [
+        "customer app",
+        "mobile app installed",
+        "ms fincap app",
+        "msfincap app"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "customer_id",
+          "field_type": "form",
+          "label_aliases": [
+            "Customer ID",
+            "Cust ID",
+            "User ID"
+          ],
+          "description": "Customer identifier in the app"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Bank Signature Verification",
       "ocr_route": "fast",
       "priority": 430,
-      "headings": ["Bank Signature Verification", "BSV"],
-      "keywords": ["bank signature verification", "signature verification from bank", "bsv"],
-      "min_confidence": 0.5
+      "headings": [
+        "Bank Signature Verification",
+        "BSV"
+      ],
+      "keywords": [
+        "bank signature verification",
+        "signature verification from bank",
+        "bsv"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "account_name",
+          "field_type": "form",
+          "label_aliases": [
+            "Account Name",
+            "Name of Account Holder"
+          ],
+          "description": "Name of the account holder whose signature is verified"
+        }
+      ]
     },
     {
       "type": "ACH Approval Document",
       "priority": 440,
-      "headings": ["ACH Approval", "NACH Approval", "CBO Approval", "CEO Approval"],
-      "keywords": ["cbo approval", "ceo approval", "nach approval", "ach approval"],
-      "min_confidence": 0.5
+      "headings": [
+        "ACH Approval",
+        "NACH Approval",
+        "CBO Approval",
+        "CEO Approval"
+      ],
+      "keywords": [
+        "cbo approval",
+        "ceo approval",
+        "nach approval",
+        "ach approval"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "approved_by",
+          "description": "Name of the person or authority approving"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Payment Favoring Letter",
       "priority": 450,
-      "headings": ["Payment Favoring Letter", "Payment Favouring Letter"],
-      "keywords": ["payment favoring", "payment favouring", "favoring account", "payee account"],
-      "min_confidence": 0.5
+      "headings": [
+        "Payment Favoring Letter",
+        "Payment Favouring Letter"
+      ],
+      "keywords": [
+        "payment favoring",
+        "payment favouring",
+        "favoring account",
+        "payee account"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "favoring_name",
+          "description": "Name of the entity in whose favor the payment is drawn"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Pre-Disbursement Conditions",
       "priority": 460,
-      "headings": ["Pre-Disbursement Conditions", "Sanction Conditions"],
-      "keywords": ["pre disbursement", "pre-disbursement", "sanction condition", "special condition"],
-      "min_confidence": 0.5
+      "headings": [
+        "Pre-Disbursement Conditions",
+        "Sanction Conditions"
+      ],
+      "keywords": [
+        "pre disbursement",
+        "pre-disbursement",
+        "sanction condition",
+        "special condition"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "condition_status",
+          "description": "Overall status of the pre-disbursement conditions"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Charges Deduction Document",
       "priority": 470,
-      "headings": ["Charges Deduction", "Fee Deduction", "Charges Deduction Details"],
-      "keywords": ["charges deduction", "fee deduction", "charges deduction details", "deduction of charges"],
-      "required_any": ["charges deduction", "fee deduction", "charges deduction details"],
-      "negative_keywords": [
-        "facility agreement", "event of default", "borrower committing", "processing fee/imd",
-        "schedule/kfs", "loan will be disbursed"
+      "headings": [
+        "Charges Deduction",
+        "Fee Deduction",
+        "Charges Deduction Details"
       ],
-      "min_confidence": 0.55
+      "keywords": [
+        "charges deduction",
+        "fee deduction",
+        "charges deduction details",
+        "deduction of charges"
+      ],
+      "required_any": [
+        "charges deduction",
+        "fee deduction",
+        "charges deduction details"
+      ],
+      "negative_keywords": [
+        "facility agreement",
+        "event of default",
+        "borrower committing",
+        "processing fee/imd",
+        "schedule/kfs",
+        "loan will be disbursed"
+      ],
+      "min_confidence": 0.55,
+      "fields": [
+        {
+          "name": "total_charges",
+          "field_type": "form",
+          "label_aliases": [
+            "Total Charges",
+            "Total Deduction",
+            "Total Deductions"
+          ],
+          "description": "Total amount of charges deducted"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "OTC PDD Document",
       "priority": 480,
-      "headings": ["OTC / PDD", "Post Disbursement Document", "OTC PDD"],
-      "keywords": ["otc / pdd", "otc pdd", "post disbursement document", "post-disbursement document"],
-      "required_any": ["otc / pdd", "otc pdd", "post disbursement document", "post-disbursement document"],
-      "negative_keywords": ["facility agreement", "sanction letter", "loan agreement"],
-      "min_confidence": 0.55
+      "headings": [
+        "OTC / PDD",
+        "Post Disbursement Document",
+        "OTC PDD"
+      ],
+      "keywords": [
+        "otc / pdd",
+        "otc pdd",
+        "post disbursement document",
+        "post-disbursement document"
+      ],
+      "required_any": [
+        "otc / pdd",
+        "otc pdd",
+        "post disbursement document",
+        "post-disbursement document"
+      ],
+      "negative_keywords": [
+        "facility agreement",
+        "sanction letter",
+        "loan agreement"
+      ],
+      "min_confidence": 0.55,
+      "fields": [
+        {
+          "name": "document_status",
+          "field_type": "form",
+          "label_aliases": [
+            "Status",
+            "Document Status",
+            "OTC Status",
+            "PDD Status"
+          ],
+          "description": "Status of the OTC or PDD documents"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Dual Name Declaration",
       "ocr_route": "fast",
       "priority": 490,
-      "headings": ["Dual Name Declaration", "Name Mismatch Declaration"],
-      "keywords": ["dual name", "name mismatch declaration", "affidavit", "name"],
-      "min_confidence": 0.5
+      "headings": [
+        "Dual Name Declaration",
+        "Name Mismatch Declaration"
+      ],
+      "keywords": [
+        "dual name",
+        "name mismatch declaration",
+        "affidavit",
+        "name"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "primary_name",
+          "description": "The primary or true name of the person"
+        },
+        {
+          "name": "alias_name",
+          "description": "The alias or mismatched name"
+        }
+      ]
     },
     {
       "type": "Approval Letter",
       "priority": 500,
-      "headings": ["Approval Letter", "Approval of Authority"],
-      "keywords": ["approval of authority", "sanctioning authority", "approved by credit"],
-      "min_confidence": 0.5
+      "headings": [
+        "Approval Letter",
+        "Approval of Authority"
+      ],
+      "keywords": [
+        "approval of authority",
+        "sanctioning authority",
+        "approved by credit"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "approved_by",
+          "description": "Name of the approving authority"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Relationship Proof",
       "priority": 510,
-      "headings": ["Relationship Proof"],
-      "keywords": ["relationship proof", "relationship between"],
-      "min_confidence": 0.5
+      "headings": [
+        "Relationship Proof"
+      ],
+      "keywords": [
+        "relationship proof",
+        "relationship between"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "person_1_name",
+          "description": "Name of the first person"
+        },
+        {
+          "name": "person_2_name",
+          "description": "Name of the second person"
+        },
+        {
+          "name": "relationship_type",
+          "description": "Type of relationship between the two persons"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Vernacular Document",
       "priority": 520,
-      "headings": ["Vernacular Declaration", "Regional Language Declaration"],
-      "keywords": ["vernacular", "regional language declaration"],
-      "min_confidence": 0.5
+      "headings": [
+        "Vernacular Declaration",
+        "Regional Language Declaration"
+      ],
+      "keywords": [
+        "vernacular",
+        "regional language declaration"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "declarant_name",
+          "description": "Name of the person making the declaration"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Agreement Signing Photo",
       "ocr_route": "fast",
       "priority": 530,
-      "headings": ["Agreement Signing Photo", "Signing Photo"],
-      "keywords": ["signing photo", "agreement photo", "signing video", "agreement signing"],
-      "min_confidence": 0.5
+      "headings": [
+        "Agreement Signing Photo",
+        "Signing Photo"
+      ],
+      "keywords": [
+        "signing photo",
+        "agreement photo",
+        "signing video",
+        "agreement signing"
+      ],
+      "min_confidence": 0.5,
+      "fields": []
     },
     {
       "type": "Assessed Income Document",
       "priority": 540,
-      "headings": ["Assessed Income", "Income Assessment"],
-      "keywords": ["assessed income", "income assessment"],
-      "min_confidence": 0.5
+      "headings": [
+        "Assessed Income",
+        "Income Assessment"
+      ],
+      "keywords": [
+        "assessed income",
+        "income assessment"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "assessed_income",
+          "field_type": "form",
+          "label_aliases": [
+            "Assessed Income",
+            "Income Assessed",
+            "Total Assessed Income"
+          ],
+          "description": "Total assessed income calculated by the credit team"
+        }
+      ],
+      "ocr_route": "fast"
     },
     {
       "type": "Operations Checklist",
       "priority": 550,
-      "headings": ["Operations Checklist", "Non Discrepancy Checklist", "NDC Checklist"],
-      "keywords": ["non discrepancy checklist", "operations checklist", "msfc / ndc", "checklist"],
-      "min_confidence": 0.5
+      "headings": [
+        "Operations Checklist",
+        "Non Discrepancy Checklist",
+        "NDC Checklist"
+      ],
+      "keywords": [
+        "non discrepancy checklist",
+        "operations checklist",
+        "msfc / ndc",
+        "checklist"
+      ],
+      "min_confidence": 0.5,
+      "fields": [
+        {
+          "name": "application_number",
+          "field_type": "form",
+          "label_aliases": [
+            "Application Number",
+            "App No",
+            "Application ID"
+          ],
+          "description": "Loan application identifier"
+        }
+      ],
+      "ocr_route": "fast"
     }
   ]
 }

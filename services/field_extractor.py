@@ -43,19 +43,60 @@ def _xml_cleaner(text: str) -> str:
         return text
 
 
+import logging
+from services.document_classifier import load_document_type_registry
+from services.generic_kv_extractor import (
+    extract_kv_deterministic,
+    extract_kv_from_table,
+)
+
 # ── Public dispatcher ─────────────────────────────────────────────────────────
 
-def extract_fields(document_type: str, text: str) -> dict[str, Any]:
+def extract_fields(document_type: str, text: str, ocr_result: Any = None) -> dict[str, Any]:
     """Extract structured fields from *text* for *document_type*.
 
     Args:
         document_type: Classifier output (e.g. "Sanction Letter").
         text:          Raw OCR text of the page / document.
+        ocr_result:    Optional PageOCRResult containing bounding_boxes and tables.
 
     Returns:
         Dict of field_name → extracted value (str | int | float | None).
         Unknown document types return an empty dict.
     """
+    registry = load_document_type_registry()
+    doc_config = next((c for c in registry.get("document_types", []) if c.get("type") == document_type), None)
+    
+    if doc_config and doc_config.get("fields"):
+        # Dynamic routing via generic_kv_extractor
+        final_results = {}
+        layout_blocks = ocr_result.bounding_boxes if ocr_result and hasattr(ocr_result, "bounding_boxes") else []
+        table_blocks = ocr_result.structured_content if ocr_result and hasattr(ocr_result, "structured_content") else []
+        
+        # 1. Deterministic Form Extraction
+        form_results = extract_kv_deterministic(layout_blocks, doc_config)
+        
+        # 2. Deterministic Table Extraction
+        table_results = extract_kv_from_table(table_blocks, doc_config)
+        
+        # 3. LLM fallback: any field not extracted deterministically is left as None here.
+        # The pipeline's LLM classification layer will handle those via the existing
+        # extract_kv_llm mechanism once it is implemented end-to-end.
+        all_deterministic = {**form_results, **table_results}
+        
+        for k, meta in all_deterministic.items():
+            if isinstance(meta, dict) and meta.get("value") is not None:
+                final_results[k] = meta["value"]
+                
+        # Format the fields generically if they match expected address processing etc.
+        for field_name in ("address", "current_address", "permanent_address", "communication_address"):
+            if field_name in final_results:
+                final_results[field_name] = _sanitize_address_value(final_results[field_name])
+        return final_results
+
+    # Fallback to legacy path if no "fields" array is defined in registry
+    logging.warning(f"Legacy extraction path used for {document_type} - fields config missing.")
+    
     _EXTRACTORS = {
         "CAM":              _extract_cam,
         "Sanction Letter":  _extract_sanction_letter,
