@@ -319,10 +319,25 @@ SCHEMA_STATEMENTS = [
         application_id INTEGER NOT NULL REFERENCES applications(id),
         job_type TEXT NOT NULL DEFAULT 'pdf_pipeline',
         status TEXT NOT NULL DEFAULT 'queued',
+        control_state TEXT NOT NULL DEFAULT 'running',
+        attempt INTEGER NOT NULL DEFAULT 1,
+        parent_job_id INTEGER REFERENCES pipeline_jobs(id),
+        heartbeat_at TEXT,
+        control_requested_at TEXT,
+        last_completed_page INTEGER NOT NULL DEFAULT 0,
         error TEXT,
         created_at TEXT NOT NULL,
         started_at TEXT,
         completed_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS pipeline_job_inputs (
+        job_id INTEGER PRIMARY KEY REFERENCES pipeline_jobs(id) ON DELETE CASCADE,
+        application_id INTEGER NOT NULL REFERENCES applications(id),
+        encrypted_payload TEXT NOT NULL,
+        source_sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL
     )
     """,
     """
@@ -408,6 +423,12 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE pages ADD COLUMN ocr_escalated BOOLEAN NOT NULL DEFAULT 0",
     "ALTER TABLE pages ADD COLUMN ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE pages ADD COLUMN structured_content TEXT",
+    "ALTER TABLE pipeline_jobs ADD COLUMN control_state TEXT NOT NULL DEFAULT 'running'",
+    "ALTER TABLE pipeline_jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE pipeline_jobs ADD COLUMN parent_job_id INTEGER REFERENCES pipeline_jobs(id)",
+    "ALTER TABLE pipeline_jobs ADD COLUMN heartbeat_at TEXT",
+    "ALTER TABLE pipeline_jobs ADD COLUMN control_requested_at TEXT",
+    "ALTER TABLE pipeline_jobs ADD COLUMN last_completed_page INTEGER NOT NULL DEFAULT 0",
 ]
 
 INDEX_STATEMENTS = [
@@ -423,6 +444,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pipeline_progress_application_id ON pipeline_progress(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_application_id ON pipeline_jobs(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status ON pipeline_jobs(status)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_application_attempt ON pipeline_jobs(application_id, attempt)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_job_inputs_application_id ON pipeline_job_inputs(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_id ON pipeline_page_events(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_page ON pipeline_page_events(application_id, page_number)",
     "CREATE INDEX IF NOT EXISTS idx_classification_review_log_application_id ON classification_review_log(application_id)",

@@ -32,6 +32,7 @@ from services.field_assignment_refiner import refine_field_assignments
 from services.field_verification import verify_all_fields
 from services.field_extractor import extract_fields
 from services.input_classifier import classify_input_text
+from services.job_control import cooperate, mark_checkpoint
 from services.llm_service import generate_explanation, summarize_exceptions
 from services.ocr_json_export import merge_public_extracted_fields, save_ocr_document_json
 from services.page_classification import classify_page_text, create_llm_classifier_budget
@@ -159,12 +160,15 @@ def run_pipeline(
     generate_llm_summary: bool | None = None,
     mapped_manifest: dict[str, Any] | None = None,
     source_documents: list[dict[str, Any]] | None = None,
+    job_id: int | None = None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
     pdf_path = Path(pdf_path)
     application_output_dir = Path(output_dir) / f"application_{application_id}"
     image_output_dir = application_output_dir / "pages"
 
+    cooperate(job_id, application_id)
     structure = process_pdf_structure(pdf_path, image_output_dir)
     start_tracking(
         application_id,
@@ -173,6 +177,7 @@ def run_pipeline(
         scanned_pages=int(structure.get("scanned_pages") or 0),
         stage="structure_processed",
         message="PDF structure extracted",
+        resume=resume,
     )
     update_stage(application_id, "extracting_digital_text", "Extracting digital text")
     digital_text_by_page = _extract_digital_text_by_page(pdf_path)
@@ -186,6 +191,12 @@ def run_pipeline(
                 system_data["people"] = ground_truth.get("reference_data")
     elif system_data:
         ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
+
+    # Persist validated recovery data before page work begins. This is the same
+    # data the completed pipeline stores, but saving it here prevents a crash
+    # from losing the manifest/reference payload held only in memory.
+    _save_ground_truth(application_id, ground_truth)
+    touch_progress(application_id, "Saved secure recovery ground truth")
 
     input_classification = classify_input_text(digital_text_by_page)
     if input_classification["input_type"] == "unsupported" and mapped_manifest is None:
@@ -237,18 +248,22 @@ def run_pipeline(
         source_page_starts.update(
             min(numbers) for numbers in source_mapping_pages.values() if numbers
         )
+    checkpoint_pages = _load_page_checkpoints(application_id) if resume else []
     pages = _build_page_records(
         structure["pages"],
         digital_text_by_page,
         application_id=application_id,
         source_page_starts=source_page_starts,
         source_documents=source_documents,
+        job_id=job_id,
+        checkpoint_pages=checkpoint_pages,
     )
     mapped_result: dict[str, Any] | None = None
     evidence_resolution: dict[str, Any] | None = None
     from services.person_ownership import assign_page_owners
 
     if mapped_manifest is not None:
+        cooperate(job_id, application_id)
         update_stage(
             application_id,
             "resolving_document_evidence",
@@ -317,10 +332,12 @@ def run_pipeline(
             }
         )
     else:
+        cooperate(job_id, application_id)
         update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
         verification_report, document_page_numbers = _run_document_verification(
             pdf_path, application_id, pages, ground_truth
         )
+    cooperate(job_id, application_id)
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
     _save_ground_truth(application_id, ground_truth)
     touch_progress(application_id, "Saved ground truth")
@@ -342,6 +359,7 @@ def run_pipeline(
             for page in pages
         ]
     }
+    cooperate(job_id, application_id)
     touch_progress(application_id, "Building OCR document JSON export")
     ocr_json_path = save_ocr_document_json(
         application_id,
@@ -355,6 +373,7 @@ def run_pipeline(
         save_verification_report(application_id, verification_report)
     _update_uploaded_file_counts(application_id, structure)
 
+    cooperate(job_id, application_id)
     update_stage(application_id, "running_checklist", "Running validation checks")
     anomalies = _run_checklist_with_fallback(pages, ground_truth, system_data, product_type)
     if mapped_result is not None:
@@ -388,6 +407,7 @@ def run_pipeline(
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
+        cooperate(job_id, application_id)
         touch_progress(application_id, "Generating LLM reviewer summary")
         llm_summary = generate_explanation(result["anomalies"], ground_truth, application_id)
         summary = llm_summary or summary
@@ -679,6 +699,8 @@ def _build_page_records(
     application_id: int | None = None,
     source_page_starts: set[int] | None = None,
     source_documents: list[dict[str, Any]] | None = None,
+    job_id: int | None = None,
+    checkpoint_pages: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     llm_budget = create_llm_classifier_budget()
@@ -690,6 +712,11 @@ def _build_page_records(
     current_confidence = 0.0
     current_detected_page: int | None = None
     current_ocr_route: str | None = None
+    checkpoints = {
+        int(page.get("page_number") or 0): page
+        for page in checkpoint_pages or []
+        if int(page.get("page_number") or 0) > 0
+    }
 
     for page_info in processing_order:
         page_started_at = time.perf_counter()
@@ -705,6 +732,15 @@ def _build_page_records(
             current_confidence = 0.0
             current_detected_page = None
             current_ocr_route = None
+        checkpoint = checkpoints.get(page_number)
+        if checkpoint is not None:
+            pages.append(checkpoint)
+            current_type = str(checkpoint.get("document_type") or "Unknown")
+            current_confidence = float(checkpoint.get("classification_confidence") or 0.0)
+            current_detected_page = checkpoint.get("detected_page_number")
+            current_ocr_route = checkpoint.get("ocr_route")
+            continue
+        cooperate(job_id, application_id or 0)
         needs_ocr = page_type == "scanned" and page_number in selected_scanned_pages
         ocr_metadata: dict[str, Any] = {}
         if application_id is not None:
@@ -746,6 +782,7 @@ def _build_page_records(
                     page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
                     _record_completed_page_event(
                         application_id,
+                        job_id=job_id,
                         page=db_data_page,
                         total_pages=total_pages,
                         elapsed_seconds=page_elapsed,
@@ -786,6 +823,7 @@ def _build_page_records(
                 page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
                 _record_completed_page_event(
                     application_id,
+                    job_id=job_id,
                     page=skipped_page,
                     total_pages=total_pages,
                     elapsed_seconds=page_elapsed,
@@ -1124,6 +1162,7 @@ def _build_page_records(
         page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
         _record_completed_page_event(
             application_id,
+            job_id=job_id,
             page=completed_page,
             total_pages=total_pages,
             elapsed_seconds=page_elapsed,
@@ -1434,6 +1473,7 @@ def _mark_unanchored_inherited_identity(
 def _record_completed_page_event(
     application_id: int | None,
     *,
+    job_id: int | None = None,
     page: dict[str, Any],
     total_pages: int,
     elapsed_seconds: float,
@@ -1453,6 +1493,8 @@ def _record_completed_page_event(
         status=status,
         error=error,
     )
+    _save_page_checkpoint(application_id, page)
+    mark_checkpoint(job_id, int(page.get("page_number") or 0))
 
 
 def _build_db_data_fields(*, page_number: int, text: str) -> dict[str, Any]:
@@ -2183,49 +2225,80 @@ def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
     with get_connection() as connection:
         connection.execute("DELETE FROM pages WHERE application_id = ?", (application_id,))
         for page in pages:
-            connection.execute(
-                """
-                INSERT INTO pages (
-                    application_id,
-                    page_number,
-                    page_type,
-                    image_path,
-                    is_readable,
-                    ocr_text,
-                    ocr_confidence,
-                    ocr_route,
-                    ocr_escalated,
-                    ocr_processing_time_ms,
-                    structured_content,
-                    document_type,
-                    classification_confidence,
-                    detection_method,
-                    detected_page_number,
-                    extracted_fields
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    application_id,
-                    page.get("page_number"),
-                    page.get("page_type"),
-                    page.get("image_path"),
-                    page.get("is_readable") if page.get("is_readable") is not None else None,
-                    page.get("ocr_text"),
-                    page.get("ocr_confidence"),
-                    page.get("ocr_route"),
-                    bool(page.get("ocr_escalated", False)),
-                    int(page.get("ocr_processing_time_ms") or 0),
-                    json.dumps(page.get("structured_content"), ensure_ascii=False)
-                    if page.get("structured_content") is not None
-                    else None,
-                    page.get("document_type"),
-                    page.get("classification_confidence"),
-                    page.get("detection_method"),
-                    page.get("detected_page_number"),
-                    json.dumps(page.get("extracted_fields") or {}, ensure_ascii=False),
-                ),
-            )
+            _insert_page(connection, application_id, page)
+
+
+def _save_page_checkpoint(application_id: int, page: dict[str, Any]) -> None:
+    """Persist one completed page atomically so a crash can resume after it."""
+    page_number = int(page.get("page_number") or 0)
+    if page_number < 1:
+        return
+    with get_connection() as connection:
+        connection.execute(
+            "DELETE FROM pages WHERE application_id = ? AND page_number = ?",
+            (application_id, page_number),
+        )
+        _insert_page(connection, application_id, page)
+
+
+def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> None:
+    connection.execute(
+        """
+        INSERT INTO pages (
+            application_id, page_number, page_type, image_path, is_readable,
+            ocr_text, ocr_confidence, ocr_route, ocr_escalated,
+            ocr_processing_time_ms, structured_content, document_type,
+            classification_confidence, detection_method, detected_page_number,
+            extracted_fields
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            application_id,
+            page.get("page_number"),
+            page.get("page_type"),
+            page.get("image_path"),
+            page.get("is_readable") if page.get("is_readable") is not None else None,
+            page.get("ocr_text"),
+            page.get("ocr_confidence"),
+            page.get("ocr_route"),
+            bool(page.get("ocr_escalated", False)),
+            int(page.get("ocr_processing_time_ms") or 0),
+            json.dumps(page.get("structured_content"), ensure_ascii=False)
+            if page.get("structured_content") is not None
+            else None,
+            page.get("document_type"),
+            page.get("classification_confidence"),
+            page.get("detection_method"),
+            page.get("detected_page_number"),
+            json.dumps(page.get("extracted_fields") or {}, ensure_ascii=False),
+        ),
+    )
+
+
+def _load_page_checkpoints(application_id: int) -> list[dict[str, Any]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM pages WHERE application_id = ? ORDER BY page_number",
+            (application_id,),
+        ).fetchall()
+    checkpoints: list[dict[str, Any]] = []
+    for row in rows:
+        page = dict(row)
+        page["extracted_fields"] = _decode_json_object(page.get("extracted_fields"))
+        page["structured_content"] = _decode_json_object(page.get("structured_content"))
+        page["ocr_structure"] = page.get("structured_content") or {}
+        checkpoints.append(page)
+    return checkpoints
+
+
+def _decode_json_object(value: Any) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def _update_uploaded_file_counts(application_id: int, structure: dict[str, Any]) -> None:

@@ -10,8 +10,10 @@ from database.db import get_connection
 from services.config import get_int
 
 
-ACTIVE_PROGRESS_STATES = frozenset({"queued", "processing"})
-RETRYABLE_PROGRESS_STATES = frozenset({"stale", "failed", "completed_with_warnings"})
+ACTIVE_PROGRESS_STATES = frozenset({"queued", "processing", "pause_requested"})
+RETRYABLE_PROGRESS_STATES = frozenset(
+    {"stale", "failed", "cancelled", "paused", "completed_with_warnings"}
+)
 
 
 def _utc_now_iso() -> str:
@@ -37,9 +39,30 @@ def start_tracking(
     scanned_pages: int = 0,
     stage: str = "queued",
     message: str | None = None,
+    resume: bool = False,
 ) -> None:
     now = _utc_now_iso()
     with get_connection() as connection:
+        if resume:
+            connection.execute(
+                """
+                UPDATE pipeline_progress
+                SET stage = ?, total_pages = ?, digital_pages = ?, scanned_pages = ?,
+                    status = 'processing', message = ?, error = NULL, completed_at = NULL,
+                    updated_at = ?
+                WHERE application_id = ?
+                """,
+                (
+                    stage,
+                    total_pages,
+                    digital_pages,
+                    scanned_pages,
+                    message,
+                    now,
+                    application_id,
+                ),
+            )
+            return
         connection.execute(
             """
             INSERT INTO pipeline_progress (
@@ -346,7 +369,7 @@ def operational_progress_status(progress: dict[str, Any] | None) -> str:
     status = str(progress.get("status") or "queued").lower()
     if status == "partial_failed":
         return "completed_with_warnings"
-    if status in {"completed", "failed"}:
+    if status in {"completed", "failed", "paused", "cancelled"}:
         return status
     if status in ACTIVE_PROGRESS_STATES and _is_stale_timestamp(progress.get("updated_at")):
         return "stale"
@@ -368,15 +391,29 @@ def _is_stale_timestamp(value: Any) -> bool:
     return (datetime.now(timezone.utc) - updated).total_seconds() > stale_minutes * 60
 
 
-def create_pipeline_job(application_id: int, job_type: str = "pdf_pipeline") -> int:
+def create_pipeline_job(
+    application_id: int,
+    job_type: str = "pdf_pipeline",
+    *,
+    parent_job_id: int | None = None,
+) -> int:
     now = _utc_now_iso()
     with get_connection() as connection:
+        attempt = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(attempt), 0) + 1 FROM pipeline_jobs WHERE application_id = ?",
+                (application_id,),
+            ).fetchone()[0]
+        )
         cursor = connection.execute(
             """
-            INSERT INTO pipeline_jobs (application_id, job_type, status, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO pipeline_jobs (
+                application_id, job_type, status, control_state, attempt,
+                parent_job_id, heartbeat_at, created_at
+            )
+            VALUES (?, ?, 'queued', 'running', ?, ?, ?, ?)
             """,
-            (application_id, job_type, "queued", now),
+            (application_id, job_type, attempt, parent_job_id, now, now),
         )
         return int(cursor.lastrowid)
 
@@ -386,10 +423,15 @@ def mark_job_started(job_id: int) -> None:
         connection.execute(
             """
             UPDATE pipeline_jobs
-            SET status = ?, started_at = ?
+            SET status = CASE
+                    WHEN control_state = 'pause_requested' THEN 'pause_requested'
+                    WHEN control_state = 'cancel_requested' THEN 'cancel_requested'
+                    ELSE 'running'
+                END,
+                started_at = ?, heartbeat_at = ?
             WHERE id = ?
             """,
-            ("running", _utc_now_iso(), job_id),
+            (_utc_now_iso(), _utc_now_iso(), job_id),
         )
 
 
@@ -398,10 +440,10 @@ def mark_job_completed(job_id: int) -> None:
         connection.execute(
             """
             UPDATE pipeline_jobs
-            SET status = ?, completed_at = ?
+            SET status = ?, control_state = 'completed', completed_at = ?, heartbeat_at = ?
             WHERE id = ?
             """,
-            ("completed", _utc_now_iso(), job_id),
+            ("completed", _utc_now_iso(), _utc_now_iso(), job_id),
         )
 
 
@@ -410,10 +452,10 @@ def mark_job_failed(job_id: int, error: str) -> None:
         connection.execute(
             """
             UPDATE pipeline_jobs
-            SET status = ?, error = ?, completed_at = ?
+            SET status = ?, control_state = 'failed', error = ?, completed_at = ?, heartbeat_at = ?
             WHERE id = ?
             """,
-            ("failed", error, _utc_now_iso(), job_id),
+            ("failed", error, _utc_now_iso(), _utc_now_iso(), job_id),
         )
 
 

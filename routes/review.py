@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 from database.db import get_connection, init_db
@@ -14,7 +16,13 @@ from services.checklist_service import get_ai_checkable_items, get_all_checklist
 from services.checklist_status import build_checklist_status
 from services.ocr_json_export import build_ocr_document_json
 from services.progress_tracker import get_progress
-from services.reprocessing import ReprocessConflictError, queue_application_reprocess
+from services.job_control import JobControlError, request_control
+from services.reprocessing import (
+    ReprocessConflictError,
+    queue_application_reprocess,
+    restart_application,
+    resume_application,
+)
 from services.reviewer import load_reviewer_summary, summarize_for_display
 
 router = APIRouter(prefix="/review", tags=["review"])
@@ -210,6 +218,75 @@ def reprocess_application(application_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=410, detail=str(exc)) from exc
     except ReprocessConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _authorize_job_control(request: Request, token: str | None) -> None:
+    """Require a configured control token, or limit development mode to localhost."""
+    configured = os.getenv("DMEF_JOB_CONTROL_TOKEN", "").strip()
+    if configured:
+        if token is None or not secrets.compare_digest(token, configured):
+            raise HTTPException(status_code=403, detail="Invalid job-control credentials")
+        return
+    client_host = request.client.host if request.client else ""
+    if client_host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        raise HTTPException(status_code=403, detail="Job control is restricted to localhost")
+
+
+@router.post("/applications/{application_id}/pause", summary="Pause at the next safe boundary")
+def pause_application(
+    application_id: int,
+    request: Request,
+    control_token: str | None = Header(default=None, alias="X-Job-Control-Token"),
+) -> dict[str, Any]:
+    _authorize_job_control(request, control_token)
+    try:
+        return request_control(application_id, "pause")
+    except JobControlError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/applications/{application_id}/cancel", summary="Cancel at the next safe boundary")
+def cancel_application(
+    application_id: int,
+    request: Request,
+    control_token: str | None = Header(default=None, alias="X-Job-Control-Token"),
+) -> dict[str, Any]:
+    _authorize_job_control(request, control_token)
+    try:
+        return request_control(application_id, "cancel")
+    except JobControlError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/applications/{application_id}/resume", summary="Resume from the last checkpoint")
+def resume_pipeline_application(
+    application_id: int,
+    request: Request,
+    control_token: str | None = Header(default=None, alias="X-Job-Control-Token"),
+) -> dict[str, Any]:
+    _authorize_job_control(request, control_token)
+    try:
+        return resume_application(application_id)
+    except (JobControlError, ReprocessConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (LookupError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
+
+
+@router.post("/applications/{application_id}/restart", summary="Start a new controlled attempt")
+def restart_pipeline_application(
+    application_id: int,
+    request: Request,
+    from_checkpoint: bool = True,
+    control_token: str | None = Header(default=None, alias="X-Job-Control-Token"),
+) -> dict[str, Any]:
+    _authorize_job_control(request, control_token)
+    try:
+        return restart_application(application_id, from_checkpoint=from_checkpoint)
+    except ReprocessConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (LookupError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
 
 
 @router.get("/applications/{application_id}/ocr-json")

@@ -29,6 +29,7 @@ from services.company_dump_adapter import (
     is_company_database_dump,
 )
 from services.job_runner import submit_job
+from services.job_control import PipelineCancelled, persist_job_input
 from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
@@ -477,12 +478,37 @@ def _queue_mapped_verification(
         ),
     )
     job_id = create_pipeline_job(application_id)
+    manifest_payload = parsed.pipeline_payload()
+    reference_data = manifest_payload.get("reference_data") or {}
+    primary_reference = (
+        reference_data.get("primary") if isinstance(reference_data, dict) else {}
+    )
+    primary_reference = primary_reference if isinstance(primary_reference, dict) else {}
+    recovery_system_data = {
+        **primary_reference,
+        "loan_id": manifest_payload.get("loan_id"),
+        "product_type": manifest_payload.get("product_type") or "LAP",
+        "branch": manifest_payload.get("branch"),
+        "reference_data": reference_data,
+        "people": reference_data,
+        "case_type": manifest_payload.get("case_type") or "Normal Case",
+    }
+    persist_job_input(
+        job_id,
+        application_id,
+        source_path=file_path,
+        system_data=recovery_system_data,
+        product_type=parsed.product_type,
+        mapped_manifest=manifest_payload,
+        package_id=package_id,
+        generate_llm_summary=True,
+    )
     submit_job(
         _run_mapped_pipeline_task,
         job_id,
         str(file_path),
         application_id,
-        parsed.pipeline_payload(),
+        manifest_payload,
         package_id,
     )
     return {
@@ -957,6 +983,13 @@ async def upload_file(
         message="Upload accepted and queued",
     )
     job_id = create_pipeline_job(application_id)
+    persist_job_input(
+        job_id,
+        application_id,
+        source_path=file_path,
+        system_data=system_data,
+        product_type=product_type,
+    )
 
     submit_job(
         _run_pipeline_task,
@@ -998,11 +1031,14 @@ def _run_pipeline_task(
             application_id,
             system_data=system_data,
             product_type=product_type,
+            job_id=job_id,
         )
         if result.get("pipeline_status") == "failed":
             mark_job_failed(job_id, "Pipeline completed with failed outcome")
         else:
             mark_job_completed(job_id)
+    except PipelineCancelled:
+        return
     except Exception as exc:  # noqa: BLE001
         mark_job_failed(job_id, str(exc))
         mark_failed(application_id, str(exc))
@@ -1049,6 +1085,7 @@ def _run_mapped_pipeline_task(
             generate_llm_summary=True,
             mapped_manifest=manifest,
             source_documents=_load_package_source_documents(package_id),
+            job_id=job_id,
         )
         if result.get("pipeline_status") == "failed":
             mark_job_failed(job_id, "Pipeline completed with failed outcome")
@@ -1064,6 +1101,8 @@ def _run_mapped_pipeline_task(
                     """,
                     (package_id, application_id),
                 )
+    except PipelineCancelled:
+        return
     except Exception as exc:  # noqa: BLE001
         mark_job_failed(job_id, str(exc))
         mark_failed(application_id, str(exc))
