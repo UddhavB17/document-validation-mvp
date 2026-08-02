@@ -155,6 +155,30 @@ def test_sanction_letter_via_kfs() -> None:
     assert _classify(text) == "KFS"
 
 
+def test_kfs_acronym_alone_is_classified() -> None:
+    text = "KFS Home Loan APR Tenure"
+    assert _classify(text) == "KFS"
+
+
+def test_application_form_employment_spelling_satisfies_required_any() -> None:
+    # Correct spelling alone must pass the required_any gate (typo used to block it).
+    from services.document_classifier import _score_rule, load_document_type_registry
+
+    load_document_type_registry.cache_clear()
+    rule = next(
+        item
+        for item in load_document_type_registry()["document_types"]
+        if item["type"] == "Application Form"
+    )
+    text = "Applicant Employment section with Login Date and Channel Type fields"
+    scored = _score_rule(text, rule)
+    assert any(
+        signal.get("value") == "applicant employment"
+        for signal in scored["matched_signals"]
+    )
+    assert "applicant employment" in rule["required_any"]
+
+
 def test_crif_classified() -> None:
     text = "CRIF Credit Information Report Credit Score"
     assert _classify(text) == "CRIF Report"
@@ -265,3 +289,41 @@ def test_hindi_sanction_letter_classified() -> None:
 def test_hindi_consent_letter_classified() -> None:
     text = "ग्राहक सहमति पत्र बीमा अवधि ऋण अवधि"
     assert _classify(text) == "Consent Letter"
+
+
+# ── KYC checklist context ─────────────────────────────────────────────────────
+
+from services.document_classifier import is_kyc_checklist_context  # noqa: E402
+
+
+def test_kyc_checklist_context_detected_for_id_enumeration() -> None:
+    text = (
+        "KYC Documents Collected: Aadhaar Card / PAN Card / Voter ID / "
+        "Driving License / Passport (any two)"
+    )
+    assert is_kyc_checklist_context(text) is True
+
+
+def test_kyc_checklist_context_detected_for_hindi_enumeration() -> None:
+    text = "दस्तावेज़: आधार कार्ड, पैन कार्ड, मतदाता पहचान पत्र, राशन कार्ड"
+    assert is_kyc_checklist_context(text) is True
+
+
+def test_genuine_aadhaar_card_is_not_checklist_context() -> None:
+    text = (
+        "Unique Identification Authority of India\n"
+        "Government of India\nAadhaar 2345 1234 1234\nDOB: 01/01/1990"
+    )
+    assert is_kyc_checklist_context(text) is False
+
+
+def test_checklist_page_not_classified_as_identity_card() -> None:
+    text = (
+        "Documents submitted for KYC verification:\n"
+        "1. Aadhaar Card\n2. PAN Card\n3. Voter ID Card\n4. Ration Card\n"
+        "Election Commission of India identity proofs accepted."
+    )
+    assert _classify(text) not in {
+        "Aadhaar", "PAN", "PAN Card", "Voter ID", "Driving License",
+        "Passport", "Ration Card",
+    }

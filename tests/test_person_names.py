@@ -36,3 +36,25 @@ def test_accepts_indian_and_devanagari_person_names(value: str) -> None:
 
 def test_devanagari_names_match_without_latin_transliteration() -> None:
     assert names_match("श्री राम लाल", "राम लाल")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "खाताधारक का नाम",  # account holder's name (Hindi label)
+        "संगठन का नाम",  # organisation name (Hindi label)
+        "અરજદારનું નામ",  # applicant's name (Gujarati label)
+        "ખાતાધારકનું નામ",  # account holder's name (Gujarati label)
+        "Landline",
+        "Business Constitution",
+        "Transaction Details",
+    ],
+)
+def test_rejects_form_labels_and_non_name_vocabulary(value: str) -> None:
+    assert canonicalize_person_name(value).valid is False
+
+
+def test_rejects_candidate_containing_indic_label_token() -> None:
+    # OCR often glues the label to the value; any candidate carrying a literal
+    # label word ("नाम"/"पता") is form furniture, not a person.
+    assert canonicalize_person_name("नाम रमेश").valid is False

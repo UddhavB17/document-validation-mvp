@@ -29,7 +29,7 @@ from services.company_dump_adapter import (
     is_company_database_dump,
 )
 from services.job_runner import submit_job
-from services.job_control import PipelineCancelled, persist_job_input
+from services.job_control import PipelineCancelled, persist_job_input_or_fail
 from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
@@ -493,16 +493,22 @@ def _queue_mapped_verification(
         "people": reference_data,
         "case_type": manifest_payload.get("case_type") or "Normal Case",
     }
-    persist_job_input(
-        job_id,
-        application_id,
-        source_path=file_path,
-        system_data=recovery_system_data,
-        product_type=parsed.product_type,
-        mapped_manifest=manifest_payload,
-        package_id=package_id,
-        generate_llm_summary=True,
-    )
+    try:
+        persist_job_input_or_fail(
+            job_id,
+            application_id,
+            source_path=file_path,
+            system_data=recovery_system_data,
+            product_type=parsed.product_type,
+            mapped_manifest=manifest_payload,
+            package_id=package_id,
+            generate_llm_summary=True,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Upload accepted but failed to queue securely for processing",
+        ) from exc
     submit_job(
         _run_mapped_pipeline_task,
         job_id,
@@ -983,13 +989,19 @@ async def upload_file(
         message="Upload accepted and queued",
     )
     job_id = create_pipeline_job(application_id)
-    persist_job_input(
-        job_id,
-        application_id,
-        source_path=file_path,
-        system_data=system_data,
-        product_type=product_type,
-    )
+    try:
+        persist_job_input_or_fail(
+            job_id,
+            application_id,
+            source_path=file_path,
+            system_data=system_data,
+            product_type=product_type,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Upload accepted but failed to queue securely for processing",
+        ) from exc
 
     submit_job(
         _run_pipeline_task,

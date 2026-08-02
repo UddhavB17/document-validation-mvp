@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
 from typing import Any
 
 from services.person_ownership import (
@@ -158,12 +157,19 @@ def build_automatic_document_index(
 def _group_pages(
     pages: list[dict[str, Any]], source_documents: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    if source_documents:
-        return _group_zip_sources_as_documents(pages, source_documents)
+    """Group pages by contiguous type, keeping ZIP member boundaries as hard walls.
 
+    Inside a multi-document ZIP member (e.g. PAN then Aadhaar in one PDF), split
+    on type change or heading detection. Loan-level runs are not fragmented by
+    false "page 1" heading detections.
+    """
     source_by_page: dict[int, str] = {}
+    source_meta: dict[str, dict[str, Any]] = {}
     for source in source_documents:
         source_id = str(source.get("source_document_id") or "")
+        if not source_id:
+            continue
+        source_meta[source_id] = source
         start = int(source.get("internal_page_start") or 0)
         end = int(source.get("internal_page_end") or 0)
         for page_number in range(start, end + 1):
@@ -171,13 +177,24 @@ def _group_pages(
 
     groups: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
+    pending_unknown: list[dict[str, Any]] = []
     for page in sorted(pages, key=lambda item: int(item.get("page_number") or 0)):
         page_number = int(page.get("page_number") or 0)
         document_type = _effective_document_type(page)
-        if document_type.strip().lower() in IGNORED_DOCUMENT_TYPES:
-            current = None
-            continue
         source_id = source_by_page.get(page_number)
+        if document_type.strip().lower() in IGNORED_DOCUMENT_TYPES:
+            if current is not None and current.get("zip_source_id") == source_id:
+                current["pages"].append(page_number)
+                current["pages_data"].append(page)
+                current["confidences"].append(float(page.get("classification_confidence") or 0.0))
+            elif source_id:
+                # Leading/middle Unknown pages inside a ZIP member attach to the
+                # next typed group from the same source.
+                pending_unknown.append(page)
+            else:
+                current = None
+                pending_unknown = []
+            continue
         starts_document = page.get("detected_page_number") == page_number
         is_loan_level = document_type.strip().lower() in LOAN_LEVEL_DOCUMENT_TYPES
         # Loan agreements / sanction letters often mis-detect every page as "page 1".
@@ -194,105 +211,52 @@ def _group_pages(
             or split_on_heading
         )
         if new_group:
-            generated_id = source_id or f"auto-{page_number:04d}-{_slug(document_type)}"
+            if source_id:
+                generated_id = f"{source_id}#{page_number:04d}-{_slug(document_type)}"
+            else:
+                generated_id = f"auto-{page_number:04d}-{_slug(document_type)}"
+            meta = source_meta.get(source_id or "", {})
             current = {
                 "source_document_id": generated_id,
                 "zip_source_id": source_id,
+                "original_filename": meta.get("original_filename"),
+                "file_type": meta.get("file_type"),
                 "document_type": document_type,
                 "pages": [],
                 "pages_data": [],
                 "confidences": [],
             }
             groups.append(current)
+            if source_id and pending_unknown:
+                for unknown_page in pending_unknown:
+                    unknown_number = int(unknown_page.get("page_number") or 0)
+                    if source_by_page.get(unknown_number) != source_id:
+                        continue
+                    current["pages"].append(unknown_number)
+                    current["pages_data"].append(unknown_page)
+                    current["confidences"].append(
+                        float(unknown_page.get("classification_confidence") or 0.0)
+                    )
+                pending_unknown = []
+            elif not source_id:
+                pending_unknown = []
         current["pages"].append(page_number)
         current["pages_data"].append(page)
         current["confidences"].append(float(page.get("classification_confidence") or 0.0))
 
     for group in groups:
-        confidences = group.pop("confidences")
+        confidences = [value for value in group.pop("confidences") if value > 0]
+        if not confidences:
+            confidences = [0.0]
         group["confidence"] = round(sum(confidences) / max(len(confidences), 1), 3)
-    return groups
-
-
-def _group_zip_sources_as_documents(
-    pages: list[dict[str, Any]], source_documents: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Treat every ZIP member as one complete document candidate."""
-    pages_by_number = {
-        int(page.get("page_number") or 0): page
-        for page in pages
-        if page.get("page_number") is not None
-    }
-    groups: list[dict[str, Any]] = []
-    for source in source_documents:
-        source_id = str(source.get("source_document_id") or "")
-        start = int(source.get("internal_page_start") or 0)
-        end = int(source.get("internal_page_end") or 0)
-        source_pages = [
-            pages_by_number[number]
-            for number in range(start, end + 1)
-            if number in pages_by_number
-        ]
-        if not source_pages:
-            continue
-        document_type, confidence = _select_source_document_type(source_pages, source)
-        if document_type.strip().lower() in IGNORED_DOCUMENT_TYPES:
-            continue
-        groups.append(
-            {
-                "source_document_id": source_id or f"auto-{start:04d}-{_slug(document_type)}",
-                "zip_source_id": source_id,
-                "original_filename": source.get("original_filename"),
-                "file_type": source.get("file_type"),
-                "document_type": document_type,
-                "pages": [
-                    int(page.get("page_number") or 0)
-                    for page in source_pages
-                    if int(page.get("page_number") or 0)
-                ],
-                "pages_data": source_pages,
-                "confidence": confidence,
-            }
+        # Keep page order stable after absorbing leading Unknown pages.
+        ordered = sorted(
+            zip(group["pages"], group["pages_data"]),
+            key=lambda item: item[0],
         )
+        group["pages"] = [number for number, _ in ordered]
+        group["pages_data"] = [page for _, page in ordered]
     return groups
-
-
-def _select_source_document_type(
-    pages: list[dict[str, Any]], source: dict[str, Any]
-) -> tuple[str, float]:
-    weighted_votes: Counter[str] = Counter()
-    confidences_by_type: dict[str, list[float]] = {}
-    for page in pages:
-        document_type = _effective_document_type(page)
-        type_key = document_type.strip().lower()
-        if type_key in IGNORED_DOCUMENT_TYPES:
-            continue
-        confidence = float(page.get("classification_confidence") or 0.0)
-        weighted_votes[document_type] += max(confidence, 0.01)
-        confidences_by_type.setdefault(document_type, []).append(confidence)
-    if not weighted_votes:
-        fallback = _source_type_from_filename(str(source.get("original_filename") or ""))
-        return (fallback, 0.55) if fallback else ("Unknown", 0.0)
-    document_type = weighted_votes.most_common(1)[0][0]
-    confidences = confidences_by_type.get(document_type) or [0.0]
-    return document_type, round(sum(confidences) / len(confidences), 3)
-
-
-def _source_type_from_filename(filename: str) -> str | None:
-    text = filename.lower()
-    if "application" in text or "app form" in text or "loan form" in text:
-        return "Application Form"
-    if "aadhaar" in text or "aadhar" in text:
-        return "Aadhaar"
-    if re.search(r"\bpan\b", text):
-        return "PAN"
-    if "bank" in text or "statement" in text:
-        return "Bank Statement"
-    if "agreement" in text:
-        return "Loan Agreement"
-    if "sanction" in text:
-        return "Sanction Letter"
-    return None
 
 
 def _effective_document_type(page: dict[str, Any]) -> str:

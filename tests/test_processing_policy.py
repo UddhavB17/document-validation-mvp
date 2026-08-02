@@ -73,6 +73,18 @@ def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> N
     monkeypatch.setenv("OCR_PROVIDER", "local")
     monkeypatch.setenv("DMEF_FULL_SCAN_OCR", "false")
     monkeypatch.setenv("DMEF_MAX_SCANNED_OCR_PAGES", "2")
+    import services.config as config_mod
+    import services.ocr_router as ocr_router_mod
+
+    real_get_setting = config_mod.get_setting
+
+    def _get_setting(key: str, default=None):
+        if key == "ocr.provider":
+            return "local"
+        return real_get_setting(key, default)
+
+    monkeypatch.setattr(config_mod, "get_setting", _get_setting)
+    monkeypatch.setattr(ocr_router_mod, "get_setting", _get_setting)
     ocr_calls: list[str] = []
 
     def fake_ocr(image_path: str) -> dict:

@@ -21,9 +21,9 @@ from services.config import get_int, get_setting
 
 def google_vision_configured() -> bool:
     return bool(
-        os.getenv("GOOGLE_VISION_API_KEY")
+        str(get_setting("google.vision.api_key", "") or "").strip()
+        or os.getenv("GOOGLE_VISION_API_KEY")
         or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        or str(get_setting("google.vision.api_key", "") or "").strip()
     )
 
 
@@ -86,7 +86,9 @@ def _auth_mode() -> str:
 
 
 def _api_key() -> str:
-    return str(os.getenv("GOOGLE_VISION_API_KEY") or get_setting("google.vision.api_key", "") or "").strip()
+    # Settings DB wins; the environment variable remains a fallback for
+    # deployments configured outside the settings table.
+    return str(get_setting("google.vision.api_key", "") or os.getenv("GOOGLE_VISION_API_KEY") or "").strip()
 
 
 def _feature_type() -> str:

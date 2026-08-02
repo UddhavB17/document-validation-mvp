@@ -59,3 +59,18 @@ def test_ocr_provider_can_be_controlled_from_settings_when_env_is_absent(tmp_pat
     update_setting("ocr.provider", SettingUpdatePayload(config_value="google_vision"))
 
     assert ocr_provider() == "google_vision"
+
+
+def test_settings_ocr_provider_wins_over_env_and_blank_api_key_falls_through(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "settings.db")
+    monkeypatch.setenv("OCR_PROVIDER", "local")
+    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "")
+    init_db()
+
+    update_setting("ocr.provider", SettingUpdatePayload(config_value="google_vision"))
+    update_setting("google.vision.api_key", SettingUpdatePayload(config_value="settings-key"))
+
+    assert ocr_provider() == "google_vision"
+    from services.config import get_setting
+
+    assert get_setting("google.vision.api_key") == "settings-key"

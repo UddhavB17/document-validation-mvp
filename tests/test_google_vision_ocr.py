@@ -7,6 +7,13 @@ import pytest
 from services import google_vision_ocr
 
 
+@pytest.fixture(autouse=True)
+def _isolate_from_settings_db(monkeypatch) -> None:
+    # The provider prefers the settings DB over environment variables; tests
+    # must not depend on whatever the developer's live settings table holds.
+    monkeypatch.setattr(google_vision_ocr, "get_setting", lambda _key, default=None: default)
+
+
 def test_google_vision_rest_api_key_parses_document_text(monkeypatch, tmp_path) -> None:
     image = tmp_path / "page.png"
     image.write_bytes(b"fake-image")

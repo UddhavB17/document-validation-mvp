@@ -234,7 +234,7 @@ SCHEMA_STATEMENTS = [
         is_readable BOOLEAN,
         ocr_text TEXT,
         ocr_confidence REAL,
-        ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured')),
+        ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured', 'google_vision')),
         ocr_escalated BOOLEAN NOT NULL DEFAULT 0,
         ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0,
         structured_content TEXT,

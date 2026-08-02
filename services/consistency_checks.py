@@ -298,8 +298,10 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
                 person_id = inferred
                 obs = {**obs, "person_id": inferred}
 
-        if person_id in {"", "unassigned"} and multi_person and field in PERSON_FIELDS:
-            # Unresolved owner: do not invent a primary mismatch.
+        if person_id in {"", "unassigned"} and field in PERSON_FIELDS:
+            # Unresolved owner: do not invent a mismatch against anyone.
+            # Single-person manifests still contain other people's documents
+            # (guarantors, family); those pages surface as AUTO_OWNER_UNRESOLVED.
             continue
         person = people.get(person_id, {})
         if field in PERSON_FIELDS:
@@ -335,6 +337,11 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
             for other_id, other in people.items()
         ):
             continue
+        # A name that adds only the person's trusted father/mother tokens
+        # ("Anupkumar Chetanbhai Suthar" for "Suthar Anupkumar") identifies
+        # the same person in Indian naming conventions.
+        if field in NAME_FIELDS and _name_matches_with_relatives(obs["value"], person):
+            continue
         key = (person_id, field, obs["page_number"])
         if key in emitted:
             continue
@@ -345,6 +352,17 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
             f"{field.replace('_', ' ').title()} does not match the trusted JSON/database dump.",
         ))
     return anomalies
+
+
+def _name_matches_with_relatives(observed: Any, person: dict) -> bool:
+    if not isinstance(person, dict) or not person:
+        return False
+    try:
+        from services.person_ownership import name_matches_trusted_person
+
+        return name_matches_trusted_person(observed, person)
+    except Exception:
+        return False
 
 
 def _page_text_supports_value(page_text: Any, expected: Any) -> bool:
@@ -465,9 +483,11 @@ def _application_name_checks(pages: list[dict], people: dict[str, dict]) -> list
         pn = int(page.get("page_number") or 0)
         if pn and any(abs(pn - other) <= 8 for other in app_nums):
             search_pages.append(page)
+    extraction_noise = False
     for page in app_pages:
         fields = page.get("extracted_fields") or {}
         if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False:
+            extraction_noise = True
             continue
         values = fields.get("applicant_names") or [fields.get("applicant_name")]
         for value in values:
@@ -476,6 +496,10 @@ def _application_name_checks(pages: list[dict], people: dict[str, dict]) -> list
             candidate = canonicalize_person_name(value)
             if candidate.valid and candidate.value:
                 found.append((candidate.value, page))
+            else:
+                # A rejected candidate (label/address noise) means extraction
+                # failed on this form, not that the name is absent from it.
+                extraction_noise = True
     anomalies: list[dict] = []
     for person_id, person in people.items():
         expected = person.get("applicant_name")
@@ -488,9 +512,11 @@ def _application_name_checks(pages: list[dict], people: dict[str, dict]) -> list
             _matches("applicant_name", expected, value) for value, _ in found
         ):
             continue
-        if not found:
+        if not found and extraction_noise:
+            # Name candidates existed but were rejected as noise (or extraction
+            # was marked unreliable): an extraction gap, not a mismatch.
             continue
-        page = found[0][1]
+        page = found[0][1] if found else app_pages[0]
         anomalies.append({
             "rule_id": "APPLICATION_NAME_MISMATCH", "s_no": 1, "severity": "HIGH",
             "document_type": "Application Form", "expected_value": expected,
@@ -727,7 +753,10 @@ def _matches(field: str, left: Any, right: Any) -> bool:
         overlap = len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
         return overlap >= 0.70 or _similarity(left, right) >= 0.82
     if field in NAME_FIELDS:
-        return names_match(_without_honorific(left), _without_honorific(right), threshold=0.85)
+        return (
+            names_match(_without_honorific(left), _without_honorific(right), threshold=0.85)
+            or _names_equivalent(left, right)
+        )
     return _similarity(left, right) >= 0.88
 
 
@@ -764,8 +793,10 @@ def _canonical_name_token(token: str) -> str:
 
 def _names_equivalent(left: Any, right: Any) -> bool:
     """True when two person names match after honorific/transliteration normalization."""
-    left_tokens = [_canonical_name_token(tok) for tok in _name_tokens(left)]
-    right_tokens = [_canonical_name_token(tok) for tok in _name_tokens(right)]
+    # Trusted dumps sometimes duplicate a token ("Kuldeep KULDEEP"); compare
+    # unique tokens in order so duplication does not create a mismatch.
+    left_tokens = list(dict.fromkeys(_canonical_name_token(tok) for tok in _name_tokens(left)))
+    right_tokens = list(dict.fromkeys(_canonical_name_token(tok) for tok in _name_tokens(right)))
     if not left_tokens or not right_tokens:
         return False
     if left_tokens == right_tokens:

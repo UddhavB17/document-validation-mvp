@@ -174,6 +174,81 @@ def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
     assert trusted == [], [item["rule_id"] for item in trusted]
 
 
+SINGLE_PERSON = {
+    "primary": {
+        "role": "primary",
+        "applicant_name": "Suthar Anupkumar",
+        "pan_number": "TSTAA0001T",
+        "father_name": "Chetanbhai Mohanlal Suthar",
+    }
+}
+
+
+def test_single_person_fallback_refused_when_observed_name_contradicts() -> None:
+    # A guarantor's Aadhaar in a single-person manifest must stay unassigned
+    # instead of defaulting to the primary and producing false mismatches.
+    owner = resolve_person_owner(
+        [
+            {
+                "document_type": "Aadhaar",
+                "extracted_fields": {
+                    "applicant_name": "Solanki Jayesh Chamanbhai",
+                    "aadhaar_number": "991010972822",
+                },
+                "ocr_text": "",
+            }
+        ],
+        SINGLE_PERSON,
+        "Aadhaar",
+    )
+    assert owner["person_id"] is None
+    assert "observed_name_contradicts_manifest" in owner["evidence"]
+
+
+def test_single_person_fallback_kept_for_matching_or_absent_names() -> None:
+    own_doc = resolve_person_owner(
+        [
+            {
+                "document_type": "Aadhaar",
+                "extracted_fields": {"applicant_name": "Suthar Anupkumar"},
+                "ocr_text": "",
+            }
+        ],
+        SINGLE_PERSON,
+        "Aadhaar",
+    )
+    assert own_doc["person_id"] == "primary"
+
+    nameless = resolve_person_owner(
+        [{"document_type": "Aadhaar", "extracted_fields": {}, "ocr_text": ""}],
+        SINGLE_PERSON,
+        "Aadhaar",
+    )
+    assert nameless["person_id"] == "primary"
+
+
+def test_name_with_trusted_father_token_matches_same_person() -> None:
+    from services.person_ownership import name_matches_trusted_person
+
+    # "Anupkumar Chetanbhai Suthar" = given name + father's name + surname:
+    # the same person under Gujarati naming conventions.
+    assert name_matches_trusted_person(
+        "Anupkumar Chetanbhai Suthar", SINGLE_PERSON["primary"]
+    )
+    # A relative sharing the father/surname tokens is still a different person.
+    assert not name_matches_trusted_person(
+        "Aaratiben Anupkumar Suthar", SINGLE_PERSON["primary"]
+    )
+
+
+def test_duplicated_trusted_name_tokens_still_match() -> None:
+    from services.person_ownership import name_matches_trusted_person
+
+    assert name_matches_trusted_person(
+        "Kuldeep", {"applicant_name": "Kuldeep KULDEEP"}
+    )
+
+
 def test_strong_pan_overrides_wrong_provided_mapping() -> None:
     owner = resolve_person_owner(
         {

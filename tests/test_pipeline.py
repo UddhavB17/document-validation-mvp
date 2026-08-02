@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 import pytest
 
@@ -12,6 +13,18 @@ from services.ocr_router import OCRRouter
 @pytest.fixture(autouse=True)
 def _default_to_local_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OCR_PROVIDER", "local")
+    import services.config as config_mod
+    import services.ocr_router as ocr_router_mod
+
+    real_get_setting = config_mod.get_setting
+
+    def _get_setting(key: str, default=None):
+        if key == "ocr.provider":
+            return os.getenv("OCR_PROVIDER") or default or "local"
+        return real_get_setting(key, default)
+
+    monkeypatch.setattr(config_mod, "get_setting", _get_setting)
+    monkeypatch.setattr(ocr_router_mod, "get_setting", _get_setting)
 
 
 def _create_application_pdf(path: Path) -> None:
@@ -565,3 +578,45 @@ def test_unsupported_page_records_do_not_mark_normal_digital_text_as_db_data() -
 
     assert pages[0]["document_type"] == "Unknown"
     assert pages[0]["detection_method"] == "unknown"
+
+
+def test_filename_identity_type_contradicted_by_email_thread() -> None:
+    from services.pipeline import _filename_type_contradicted_by_text
+
+    email_text = (
+        "Gmail - Aadhaar update request\n"
+        "From: branch.ops@lender.example.com\nTo: support@lender.example.com\n"
+        "Please find attached the customer's updated documents for approval. "
+    ) + "Further correspondence follows. " * 20
+
+    assert _filename_type_contradicted_by_text("Driving License", email_text) is True
+    assert _filename_type_contradicted_by_text("Aadhaar Card", email_text) is True
+
+
+def test_filename_identity_type_not_contradicted_by_card_ocr() -> None:
+    from services.pipeline import _filename_type_contradicted_by_text
+
+    # Short/noisy OCR from a card photo cannot contradict the filename.
+    short_ocr = "RJ-14 20110012345 DOB 01-01-1980"
+    assert _filename_type_contradicted_by_text("Driving License", short_ocr) is False
+
+    # Long text that carries the document's own anchors is consistent.
+    dl_text = (
+        "Driving Licence\nTransport Department, Government of Rajasthan\n"
+        "Licence No RJ-14 20110012345\nValid till 2030\n"
+    ) + "Vehicle classes: LMV MCWG. " * 20
+    assert _filename_type_contradicted_by_text("Driving License", dl_text) is False
+
+
+def test_filename_contradiction_only_applies_to_identity_types() -> None:
+    from services.pipeline import _filename_type_contradicted_by_text
+
+    long_unrelated = "Some property valuation narrative. " * 30
+    assert _filename_type_contradicted_by_text("Property Image", long_unrelated) is False
+
+
+def test_gps_overlay_photo_is_property_image_evidence() -> None:
+    from services.pipeline import _image_evidence_type_from_text
+
+    text = "GPS Map Camera\nJodhpur, Rajasthan, India\nLat 26.28 Long 73.02\n27/07/2026 07:14 AM"
+    assert _image_evidence_type_from_text(text) == "Property Image"

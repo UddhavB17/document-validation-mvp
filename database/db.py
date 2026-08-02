@@ -52,18 +52,34 @@ def init_db() -> None:
                 if "duplicate column name" not in str(exc).lower():
                     raise
         _migrate_ocr_route_events_for_google_vision(connection)
+        _migrate_pages_ocr_route_for_google_vision(connection)
         for statement in INDEX_STATEMENTS:
             connection.execute(statement)
         seed_settings(connection)
 
 
+def _table_sql(connection: sqlite3.Connection, table_name: str) -> str:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    if not row:
+        return ""
+    return str(row["sql"] if isinstance(row, sqlite3.Row) else row[0] or "")
+
+
+def _ocr_route_check_needs_google_vision(table_sql: str) -> bool:
+    """True when a legacy ocr_route CHECK exists but omits google_vision."""
+    if not table_sql or "google_vision" in table_sql:
+        return False
+    normalized = " ".join(table_sql.lower().split())
+    return "check(ocr_route in (" in normalized or "check(requested_route in (" in normalized or "check(route_used in (" in normalized
+
+
 def _migrate_ocr_route_events_for_google_vision(connection: sqlite3.Connection) -> None:
     """Expand the legacy route CHECK constraints without losing telemetry."""
-    row = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ocr_route_events'"
-    ).fetchone()
-    table_sql = str(row["sql"] if row else "")
-    if not table_sql or "google_vision" in table_sql:
+    table_sql = _table_sql(connection, "ocr_route_events")
+    if not _ocr_route_check_needs_google_vision(table_sql):
         return
 
     connection.execute("ALTER TABLE ocr_route_events RENAME TO ocr_route_events_legacy")
@@ -100,6 +116,64 @@ def _migrate_ocr_route_events_for_google_vision(connection: sqlite3.Connection) 
         """
     )
     connection.execute("DROP TABLE ocr_route_events_legacy")
+
+
+def _migrate_pages_ocr_route_for_google_vision(connection: sqlite3.Connection) -> None:
+    """Expand pages.ocr_route CHECK so Google Vision routes can be persisted."""
+    table_sql = _table_sql(connection, "pages")
+    if not _ocr_route_check_needs_google_vision(table_sql):
+        return
+
+    # SQLite only honors foreign_keys changes outside an open transaction.
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("ALTER TABLE pages RENAME TO pages_legacy")
+        connection.execute(
+            """
+            CREATE TABLE pages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_id INTEGER REFERENCES applications(id),
+                page_number INTEGER,
+                page_type TEXT CHECK(page_type IN ('digital', 'scanned')),
+                image_path TEXT,
+                is_readable BOOLEAN,
+                ocr_text TEXT,
+                ocr_confidence REAL,
+                ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured', 'google_vision')),
+                ocr_escalated BOOLEAN NOT NULL DEFAULT 0,
+                ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0,
+                structured_content TEXT,
+                document_type TEXT,
+                classification_confidence REAL,
+                detection_method TEXT DEFAULT 'detected',
+                detected_page_number INTEGER,
+                extracted_fields TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO pages (
+                id, application_id, page_number, page_type, image_path, is_readable,
+                ocr_text, ocr_confidence, ocr_route, ocr_escalated, ocr_processing_time_ms,
+                structured_content, document_type, classification_confidence,
+                detection_method, detected_page_number, extracted_fields
+            )
+            SELECT
+                id, application_id, page_number, page_type, image_path, is_readable,
+                ocr_text, ocr_confidence, ocr_route,
+                COALESCE(ocr_escalated, 0),
+                COALESCE(ocr_processing_time_ms, 0),
+                structured_content, document_type, classification_confidence,
+                COALESCE(detection_method, 'detected'),
+                detected_page_number, extracted_fields
+            FROM pages_legacy
+            """
+        )
+        connection.execute("DROP TABLE pages_legacy")
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
 
 
 def seed_settings(connection: sqlite3.Connection) -> None:

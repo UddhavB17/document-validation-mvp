@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import pytest
@@ -16,6 +17,20 @@ def _clear_low_memory_ocr_overrides(monkeypatch) -> None:
     monkeypatch.delenv("OCR_FORCE_FAST_PATH", raising=False)
     monkeypatch.delenv("DMEF_LOW_MEMORY", raising=False)
     monkeypatch.setenv("OCR_PROVIDER", "local")
+
+    # Unit tests drive OCR via OCR_PROVIDER; production Settings prefers DB.
+    import services.config as config_mod
+    import services.ocr_router as ocr_router_mod
+
+    real_get_setting = config_mod.get_setting
+
+    def _get_setting(key: str, default=None):
+        if key == "ocr.provider":
+            return os.getenv("OCR_PROVIDER") or default or "local"
+        return real_get_setting(key, default)
+
+    monkeypatch.setattr(config_mod, "get_setting", _get_setting)
+    monkeypatch.setattr(ocr_router_mod, "get_setting", _get_setting)
 
 
 def _fast_result(confidence: float = 0.96) -> OCRResult:
@@ -246,6 +261,34 @@ def test_init_db_migrates_legacy_ocr_route_constraint(tmp_path, monkeypatch) -> 
            (document_id, page_number, event_type, requested_route, route_used)
            VALUES ('old', 1, 'processing', 'fast', 'fast')"""
     )
+    connection.execute(
+        """
+        CREATE TABLE pages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER,
+            page_number INTEGER,
+            page_type TEXT CHECK(page_type IN ('digital', 'scanned')),
+            image_path TEXT,
+            is_readable BOOLEAN,
+            ocr_text TEXT,
+            ocr_confidence REAL,
+            ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured')),
+            ocr_escalated BOOLEAN NOT NULL DEFAULT 0,
+            ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0,
+            structured_content TEXT,
+            document_type TEXT,
+            classification_confidence REAL,
+            detection_method TEXT DEFAULT 'detected',
+            detected_page_number INTEGER,
+            extracted_fields TEXT
+        )
+        """
+    )
+    connection.execute(
+        """INSERT INTO pages
+           (application_id, page_number, page_type, ocr_route)
+           VALUES (1, 1, 'scanned', 'fast')"""
+    )
     connection.commit()
     connection.close()
 
@@ -257,6 +300,22 @@ def test_init_db_migrates_legacy_ocr_route_constraint(tmp_path, monkeypatch) -> 
                VALUES ('new', 2, 'processing', 'google_vision', 'google_vision')"""
         )
         assert migrated.execute("SELECT COUNT(*) FROM ocr_route_events").fetchone()[0] == 2
+        migrated.execute(
+            """INSERT INTO applications (loan_id, status)
+               VALUES ('LEGACY-TEST', 'processing')"""
+        )
+        application_id = migrated.execute("SELECT id FROM applications").fetchone()[0]
+        migrated.execute(
+            """INSERT INTO pages
+               (application_id, page_number, page_type, ocr_route)
+               VALUES (?, 2, 'scanned', 'google_vision')""",
+            (application_id,),
+        )
+        assert migrated.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 2
+        pages_sql = migrated.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pages'"
+        ).fetchone()[0]
+        assert "google_vision" in pages_sql
 
 
 def test_auto_ocr_provider_keeps_local_without_google_credentials(monkeypatch) -> None:

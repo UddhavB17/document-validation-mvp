@@ -201,3 +201,46 @@ def test_merged_application_form_aggregates_contiguous_pages() -> None:
     assert result["groups"][0]["pages"] == [10, 11]
     assert result["groups"][0]["multi_person_document"] is True
     assert result["groups"][0]["person_record_count"] == 2
+
+
+def test_intrinsic_inference_abstains_on_kyc_checklist_page() -> None:
+    from services.evidence_resolution import infer_document_type_from_evidence
+
+    text = (
+        "KYC Verification Sheet\n"
+        "Aadhaar Card: 2345 1234 1234 (Unique Identification Authority of India)\n"
+        "PAN Card: TSTAA0001T\nVoter ID: ABC1234567\nDriving License: RJ14 2011\n"
+    )
+    assert infer_document_type_from_evidence(text) is None
+
+
+def test_intrinsic_aadhaar_inference_ignores_phone_numbers() -> None:
+    from services.evidence_resolution import infer_document_type_from_evidence
+
+    # A 91-prefixed mobile number must not count as an Aadhaar number even
+    # next to an authority phrase quoted in a form.
+    text = "Contact: 919374200200\nRegistered with Unique Identification Authority of India"
+    result = infer_document_type_from_evidence(text)
+    assert result is None or result["document_type"] != "Aadhaar"
+
+
+def test_low_confidence_group_type_is_not_promoted_to_unknown_pages() -> None:
+    from services.evidence_resolution import _resolve_group
+
+    pages = [
+        _page(1, "faint text", document_type="Driving License", confidence=0.2),
+        _page(2, "more faint text", document_type="Unknown", confidence=0.0),
+    ]
+    _resolve_group({"document_id": "doc-1", "pages": pages}, {})
+    assert pages[1]["document_type"] == "Unknown"
+
+
+def test_confident_group_type_still_fills_unknown_pages() -> None:
+    from services.evidence_resolution import _resolve_group
+
+    pages = [
+        _page(1, "statement of account", document_type="Bank Statement", confidence=0.9),
+        _page(2, "txn rows", document_type="Unknown", confidence=0.0),
+    ]
+    _resolve_group({"document_id": "doc-2", "pages": pages}, {})
+    assert pages[1]["document_type"] == "Bank Statement"

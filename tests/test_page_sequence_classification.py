@@ -178,6 +178,75 @@ def test_body_word_does_not_create_boundary_on_single_line_digital_page() -> Non
     assert assigned[1]["detection_method"] == "inherited"
 
 
+def test_mid_confidence_type_change_starts_new_document_boundary() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Loan Agreement", "confidence": 0.95},
+            {"document_type": "None", "confidence": 0.0},
+            {"document_type": "Bank Statement", "confidence": 0.62},
+            {"document_type": "None", "confidence": 0.0},
+        ],
+        texts=[
+            "Facility Agreement Borrower Lender",
+            "Article 19 Event of Default repayment schedule",
+            "Brought Forward End Balance NEFT Debit Credit",
+            "Opening Balance Closing Balance Transaction Date",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == [
+        "Loan Agreement",
+        "Loan Agreement",
+        "Bank Statement",
+        "Bank Statement",
+    ]
+    assert assigned[2]["detection_method"] == "detected"
+    assert assigned[3]["detection_method"] == "inherited"
+
+
+def test_generic_header_words_do_not_break_agreement_inheritance() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Loan Agreement", "confidence": 0.95},
+            {"document_type": "None", "confidence": 0.0},
+        ],
+        texts=[
+            "Facility Agreement Borrower Lender",
+            "This form letter statement continues the repayment schedule and covenants",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Loan Agreement"
+    assert assigned[1]["detection_method"] == "inherited"
+
+
+def test_bank_statement_unknown_gap_is_sandwich_smoothed() -> None:
+    pages = [
+        {
+            "page_number": 1,
+            "document_type": "Bank Statement",
+            "classification_confidence": 0.92,
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 2,
+            "document_type": "Unknown",
+            "classification_confidence": 0.0,
+            "ocr_text": "Debit Credit Balance NEFT Transaction",
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 3,
+            "document_type": "Bank Statement",
+            "classification_confidence": 0.90,
+            "extracted_fields": {},
+        },
+    ]
+
+    smoothed = _smooth_page_classifications(pages, application_id=None, total_pages=3)
+    assert smoothed[1]["document_type"] == "Bank Statement"
+
+
 def test_generic_zip_folders_are_not_invented_as_document_types() -> None:
     assert _infer_document_type_from_filename("Loan/TASK/5.pdf") is None
     assert _infer_document_type_from_filename("LOAN/REPORT/combined.pdf") is None

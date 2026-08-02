@@ -26,6 +26,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
+from services.identifiers import plausible_aadhaar_digits
 from services.person_names import canonicalize_person_name, is_name_field
 from services.validation_gates import is_amortization_schedule
 
@@ -994,7 +995,7 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
     ))
     if form_kyc_section and not authority_evidence:
         return {}
-    aadhaar_number = _digits_only(aadhaar_match.group(1)) if aadhaar_match else None
+    aadhaar_number = plausible_aadhaar_digits(aadhaar_match.group(1)) if aadhaar_match else None
     relation_match = re.search(
         r"\b(S\s*/\s*O|D\s*/\s*O|W\s*/\s*O|C\s*/\s*O|son\s+of|daughter\s+of|wife\s+of|care\s+of)\b\s*[:\-]?\s*([^\n\r,]{3,70})",
         text,
@@ -1197,7 +1198,7 @@ def _extract_application_form(text: str) -> dict[str, Any]:
             text, "applicant name", "borrower name", "name of applicant"
         )),
         "pan_number": pan_match.group(1) if pan_match else None,
-        "aadhaar_number": _digits_only(aadhaar_match.group(1)) if aadhaar_match else None,
+        "aadhaar_number": plausible_aadhaar_digits(aadhaar_match.group(1)) if aadhaar_match else None,
         "date_of_birth": _extract_date_near(text.lower(), "date of birth", "dob"),
         "loan_amount": _normalize_amount(_numeric_line_after_label(text, "loan amount")),
         "phone_number": phone_match.group(1) if phone_match else None,

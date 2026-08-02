@@ -146,6 +146,43 @@ def persist_job_input(
         )
 
 
+def persist_job_input_or_fail(
+    job_id: int,
+    application_id: int,
+    *,
+    source_path: str | Path,
+    system_data: dict[str, Any] | None,
+    product_type: str,
+    mapped_manifest: dict[str, Any] | None = None,
+    package_id: str | None = None,
+    generate_llm_summary: bool | None = None,
+) -> None:
+    """Persist recovery input, or mark the queued job/application failed and re-raise."""
+    try:
+        persist_job_input(
+            job_id,
+            application_id,
+            source_path=source_path,
+            system_data=system_data,
+            product_type=product_type,
+            mapped_manifest=mapped_manifest,
+            package_id=package_id,
+            generate_llm_summary=generate_llm_summary,
+        )
+    except Exception as exc:
+        from services.progress_tracker import mark_failed, mark_job_failed
+
+        error = f"Failed to persist recovery input: {exc}"
+        mark_job_failed(job_id, error)
+        mark_failed(application_id, error)
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE applications SET status = ? WHERE id = ?",
+                ("failed", application_id),
+            )
+        raise
+
+
 def load_job_input(application_id: int, job_id: int | None = None) -> dict[str, Any]:
     """Decrypt and integrity-check the latest persisted recovery payload."""
     with get_connection() as connection:

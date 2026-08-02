@@ -12,6 +12,7 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+from services.identifiers import plausible_aadhaar_digits
 from services.person_names import is_person_name_candidate, name_similarity
 from services.validation_gates import field_reliable_for_validation
 
@@ -78,6 +79,8 @@ PERSON_SCOPED_DOCUMENT_TYPES = frozenset(
         "form 97",
         "mnrega job card",
         "npr letter",
+        "kyc card photo",
+        "ration card photo",
     }
 )
 
@@ -177,6 +180,20 @@ def resolve_person_owner(
 
     if len(people) == 1:
         only_id = next(iter(people))
+        # A single-person manifest still contains other people's documents
+        # (guarantors, family members).  When the page carries a clean name
+        # that is clearly someone else and nothing else matched, refusing the
+        # fallback keeps guarantor KYC out of the primary's comparisons.
+        if (
+            type_key in PERSON_SCOPED_DOCUMENT_TYPES
+            and not identity["scores"].get(only_id)
+            and _observed_names_contradict(page_list, people[only_id])
+        ):
+            return {
+                "person_id": None,
+                "confidence": 0.0,
+                "evidence": ["observed_name_contradicts_manifest"],
+            }
         return {"person_id": only_id, "confidence": 0.5, "evidence": ["single_person_manifest"]}
 
     # Person-scoped types must not silently fall back to primary.
@@ -289,6 +306,60 @@ def ownership_anomalies_for_unassigned(
             }
         )
     return anomalies
+
+
+def name_matches_trusted_person(observed: Any, person: dict[str, Any]) -> bool:
+    """True when an observed name identifies the trusted person.
+
+    Tolerates duplicated tokens ("Kuldeep KULDEEP"), reordered tokens, and
+    extra tokens that belong to the person's trusted father/mother name
+    ("Anupkumar Chetanbhai Suthar" for applicant "Suthar Anupkumar" whose
+    father is "Chetanbhai ... Suthar").
+    """
+    trusted_name = str(person.get("applicant_name") or "").strip()
+    if not trusted_name or not observed:
+        return False
+    if name_similarity(observed, trusted_name) >= 0.85:
+        return True
+    observed_tokens = _unique_name_tokens(observed)
+    trusted_tokens = _unique_name_tokens(trusted_name)
+    if not observed_tokens or not trusted_tokens:
+        return False
+    if observed_tokens == trusted_tokens:
+        return True
+    if set(trusted_tokens) <= set(observed_tokens):
+        relative_tokens = [
+            token
+            for field in ("father_name", "mother_name", "husband_name", "spouse_name")
+            for token in _unique_name_tokens(person.get(field))
+        ]
+        extras = [token for token in observed_tokens if token not in set(trusted_tokens)]
+        return bool(extras) and all(
+            any(name_similarity(extra, relative) >= 0.75 for relative in relative_tokens)
+            for extra in extras
+        )
+    return False
+
+
+def _unique_name_tokens(value: Any) -> list[str]:
+    tokens = re.findall(r"[a-z]+", str(value or "").casefold())
+    return list(dict.fromkeys(tokens))
+
+
+def _observed_names_contradict(
+    pages: list[dict[str, Any]],
+    person: dict[str, Any],
+) -> bool:
+    """True when every clean observed name points away from *person*."""
+    observed = identity_observations(pages).get("applicant_name") or []
+    clean = [
+        value
+        for value in observed
+        if is_person_name_candidate(value) and len(str(value).split()) <= 6
+    ]
+    if not clean:
+        return False
+    return not any(name_matches_trusted_person(value, person) for value in clean)
 
 
 def _score_people(
@@ -529,7 +600,8 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper()):
                 observations["pan_number"].append(match.group(0))
             for match in re.finditer(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", ocr_text):
-                observations["aadhaar_number"].append(match.group(1))
+                if plausible_aadhaar_digits(match.group(1)):
+                    observations["aadhaar_number"].append(match.group(1))
             for match in re.finditer(r"\b[6-9]\d{9}\b", ocr_text):
                 observations["phone_number"].append(match.group(0))
     return observations

@@ -61,11 +61,44 @@ _LABEL_ONLY_VALUES = {
     "संगठन का नाम",
     "सं/ठन का नाम",
     "सं/ठन का",
+    "खाताधारक का नाम",
+    "संगठन का",
+    "पता",
+    "आधार",
     "नाम",
     "लिंग",
     "जन्म की तारीख",
     "फोन नंबर",
     "नौकरी भूमिका",
+    "અરજદારનું નામ",
+    "ખાતાધારકનું નામ",
+    "નામ",
+    "સરનામું",
+}
+
+# Bilingual form labels leak into name values when OCR flattens label/value
+# tables.  Any candidate containing one of these Devanagari/Gujarati label
+# words is form furniture, not a person (genuine Indic names never contain
+# the literal words "name"/"address"/"Aadhaar"/"organisation").
+_INDIC_LABEL_TOKENS = {
+    "नाम",
+    "पता",
+    "आधार",
+    "संगठन",
+    "खाताधारक",
+    "आवेदक",
+    "हस्ताक्षर",
+    "विवरण",
+    "संख्या",
+    "नंबर",
+    "रुपये",
+    "रूपये",
+    "નામ",
+    "સરનામું",
+    "આધાર",
+    "અરજદારનું",
+    "ખાતાધારકનું",
+    "સહી",
 }
 
 _PLACEHOLDER_VALUES = {
@@ -135,6 +168,17 @@ _REJECTED_KEYWORDS = {
     "male",
     "female",
     "transgender",
+    # Generic non-name vocabulary that appears as form labels/section headings
+    # on financial documents and leaks into name extraction.
+    "landline",
+    "rupees",
+    "rupee",
+    "business",
+    "constitution",
+    "organisation",
+    "organization",
+    "transaction",
+    "transcation",
 }
 
 # Locality tokens observed in application 75 false positives. These remain
@@ -189,6 +233,11 @@ def canonicalize_person_name(value: Any) -> NameCandidate:
         return NameCandidate(None, False, "blank")
     if normalized in {_normalize_for_rules(label) for label in _LABEL_ONLY_VALUES}:
         return NameCandidate(None, False, "field_label")
+    if any(
+        piece.strip(" :,.–—\-/()[]|'\"") in _INDIC_LABEL_TOKENS
+        for piece in candidate.split()
+    ):
+        return NameCandidate(None, False, "indic_field_label")
     if normalized in _PLACEHOLDER_VALUES:
         return NameCandidate(None, False, "placeholder")
     if any(phrase in normalized for phrase in _REJECTED_PHRASES):

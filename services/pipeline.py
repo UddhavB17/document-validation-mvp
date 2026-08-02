@@ -82,6 +82,17 @@ _NO_PAGE_INHERITANCE_TYPES = {
 }
 _ONE_PAGE_INHERITANCE_TYPES = {"Aadhaar", "Voter ID"}
 _NO_SANDWICH_SMOOTHING_TYPES = _NO_PAGE_INHERITANCE_TYPES | _ONE_PAGE_INHERITANCE_TYPES
+# Registry min_confidence band: mid-confidence type changes open a new run.
+_MID_CONFIDENCE_BOUNDARY = 0.55
+_MULTI_PAGE_RUN_FILL_TYPES = {
+    "Bank Statement",
+    "CIBIL Report",
+    "CRIF Report",
+    "Application Form",
+    "Loan Agreement",
+    "Facility Agreement",
+    "Passbook",
+}
 
 logger = logging.getLogger("dmef.pipeline")
 _LOGGING_CONFIGURED = False
@@ -893,7 +904,7 @@ def _build_page_records(
                         end = doc.get("internal_page_end")
                         if start is not None and end is not None and start <= page_number <= end:
                             inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
-                            if inferred:
+                            if inferred and not _filename_type_contradicted_by_text(inferred, text):
                                 document_type = inferred
                                 detection_method = "filename_inference"
                                 classification = {"confidence": 0.85}
@@ -965,13 +976,20 @@ def _build_page_records(
                     document_type = source_filename_type
                     classification = {"confidence": 0.95}
                     detection_method = "filename_override"
+                if document_type == "Unknown" and "gps map camera" in _normalize_fresh_document_text(text):
+                    # GPS-overlay photos exported from messaging apps carry no
+                    # classifiable text, but the overlay itself proves the page
+                    # is photographic evidence rather than a named document.
+                    document_type = "Property Image"
+                    detection_method = "photo_evidence"
+                    classification = {"confidence": 0.85}
                 if document_type == "Unknown" and source_documents:
                     for doc in source_documents:
                         start = doc.get("internal_page_start")
                         end = doc.get("internal_page_end")
                         if start is not None and end is not None and start <= page_number <= end:
                             inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
-                            if inferred:
+                            if inferred and not _filename_type_contradicted_by_text(inferred, text):
                                 document_type = inferred
                                 detection_method = "filename_inference"
                             break
@@ -1300,6 +1318,45 @@ def _looks_like_loan_agreement_continuation(text: str) -> bool:
     return False
 
 
+def _looks_like_multi_page_continuation(document_type: str, text: str) -> bool:
+    lowered = str(text or "").lower()
+    if not lowered.strip():
+        return False
+    if document_type in {"Loan Agreement", "Facility Agreement"}:
+        return _looks_like_loan_agreement_continuation(text)
+    if document_type == "Application Form":
+        return any(
+            marker in lowered
+            for marker in (
+                "applicant", "co-applicant", "kyc", "mobile", "address",
+                "आवेदक", "सह-आवेदक", "पिनकोड", "pincode", "declaration",
+            )
+        )
+    if document_type == "Bank Statement":
+        return any(
+            marker in lowered
+            for marker in (
+                "debit", "credit", "balance", "neft", "upi", "withdrawal",
+                "deposit", "opening balance", "closing balance", "transaction",
+                "brought forward", "end balance",
+            )
+        )
+    if document_type in {"CIBIL Report", "CRIF Report"}:
+        return any(
+            marker in lowered
+            for marker in (
+                "account", "enquiry", "payment history", "overdue", "score",
+                "credit", "member", "control number", "high mark", "cibil", "crif",
+            )
+        )
+    if document_type == "Passbook":
+        return any(
+            marker in lowered
+            for marker in ("passbook", "pass book", "balance", "deposit", "withdrawal", "पासबुक")
+        )
+    return False
+
+
 def _smooth_page_classifications(
     pages: list[dict[str, Any]],
     application_id: int | None,
@@ -1346,7 +1403,31 @@ def _smooth_page_classifications(
                 curr_page["extracted_fields"] = fields
                 attach_field_provenance(curr_page)
 
-    # Forward-fill long Unknown runs inside Loan Agreement / Application Form blocks.
+    # Fill short Unknown runs (1-2 pages) between the same multi-page document type.
+    for i in range(1, len(sorted_pages) - 2):
+        left = sorted_pages[i - 1]
+        mid_a = sorted_pages[i]
+        mid_b = sorted_pages[i + 1]
+        right = sorted_pages[i + 2]
+        left_type = str(left.get("document_type") or "Unknown")
+        right_type = str(right.get("document_type") or "Unknown")
+        if (
+            left_type == right_type
+            and left_type in _MULTI_PAGE_RUN_FILL_TYPES
+            and mid_a.get("document_type") == "Unknown"
+            and mid_b.get("document_type") == "Unknown"
+        ):
+            for mid in (mid_a, mid_b):
+                _apply_smoothed_document_type(
+                    mid,
+                    left_type,
+                    confidence=0.70,
+                    method="sandwich_run_smoothed",
+                    application_id=application_id,
+                    total_pages=total_pages,
+                )
+
+    # Forward-fill Unknown runs inside multi-page document blocks.
     agreement_types = {"Loan Agreement", "Facility Agreement"}
     for i, curr_page in enumerate(sorted_pages):
         curr_type = str(curr_page.get("document_type") or "Unknown")
@@ -1391,20 +1472,10 @@ def _smooth_page_classifications(
 
         if curr_type != "Unknown":
             continue
-        if prev_type not in {"Loan Agreement", "Facility Agreement", "Application Form"}:
+        if prev_type not in _MULTI_PAGE_RUN_FILL_TYPES:
             continue
-        if prev_type in {"Loan Agreement", "Facility Agreement"} and not _looks_like_loan_agreement_continuation(text):
+        if not _looks_like_multi_page_continuation(prev_type, text):
             continue
-        if prev_type == "Application Form":
-            lowered = text.lower()
-            if not any(
-                marker in lowered
-                for marker in (
-                    "applicant", "co-applicant", "kyc", "mobile", "address",
-                    "आवेदक", "सह-आवेदक", "पिनकोड", "pincode",
-                )
-            ):
-                continue
         _apply_smoothed_document_type(
             curr_page,
             prev_type,
@@ -1766,6 +1837,22 @@ def _assign_sequential_document_type(
             "raw_confidence": raw_confidence,
         }
 
+    # Mid-confidence hits that disagree with the open run start a new document
+    # boundary instead of inheriting the previous type (or staying Unknown).
+    if (
+        raw_type != "Unknown"
+        and raw_confidence >= _MID_CONFIDENCE_BOUNDARY
+        and raw_type != current_type
+    ):
+        return {
+            "document_type": raw_type,
+            "confidence": raw_confidence,
+            "detection_method": "detected",
+            "detected_page_number": page_number,
+            "raw_document_type": raw_type,
+            "raw_confidence": raw_confidence,
+        }
+
     if current_type != "Unknown":
         if _looks_like_fresh_page_without_match(text):
             return {
@@ -1839,19 +1926,32 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
     if not normalized_text:
         return False
 
-    generic_header_terms = (
-        "certificate",
-        "letter",
-        "agreement",
-        "deed",
-        "report",
-        "statement",
-        "form",
-        "application",
-        "undertaking",
-        "declaration",
+    # Strong title-like phrases only — bare generics like "form"/"statement"
+    # appear on continuation pages and must not break inheritance.
+    strong_title_phrases = (
+        "key fact statement",
+        "key facts statement",
+        "sanction letter",
+        "loan sanction",
+        "facility agreement",
+        "loan agreement",
+        "customer application form",
+        "loan application form",
+        "credit approval memo",
+        "credit appraisal memo",
+        "bank statement",
+        "account statement",
+        "cibil report",
+        "crif report",
+        "credit information report",
+        "permanent account number",
+        "income tax department",
+        "driving licence",
+        "driving license",
+        "election commission",
+        "unique identification authority",
     )
-    if any(term in normalized_header for term in generic_header_terms):
+    if any(phrase in normalized_header for phrase in strong_title_phrases):
         return True
 
     strong_terms = (
@@ -2438,6 +2538,39 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         return " ".join(word.capitalize() for word in words)
 
     return None
+
+
+# Identity-document types inferred from ZIP member filenames must be supported
+# by page content when the page carries substantial text.  Audited runs showed
+# a Gmail thread inside "ADDHAR UPDATE APPROVEL AND DL APPROVEL.pdf" being
+# labelled Driving License purely because the filename contained "DL ".
+_FILENAME_IDENTITY_TYPE_ANCHORS: dict[str, tuple[str, ...]] = {
+    "PAN Card": ("permanent account number", "income tax", "पैन"),
+    "Aadhaar Card": ("aadhaar", "aadhar", "uidai", "आधार"),
+    "Driving License": (
+        "driving licence", "driving license", "transport department",
+        "motor vehicle", "ड्राइविंग",
+    ),
+    "Voter ID": ("election commission", "voter", "epic", "मतदाता"),
+    "Passport": ("passport", "पासपोर्ट"),
+}
+_EMAIL_ADDRESS_RE = re.compile(r"[\w.+-]+@[\w-]+\.\w+")
+
+
+def _filename_type_contradicted_by_text(document_type: str, text: str) -> bool:
+    """True when a filename-derived identity type conflicts with page content."""
+    anchors = _FILENAME_IDENTITY_TYPE_ANCHORS.get(str(document_type or ""))
+    if not anchors:
+        return False
+    raw = str(text or "")
+    if len(_EMAIL_ADDRESS_RE.findall(raw)) >= 2:
+        # Email correspondence about a document is not the document itself.
+        return True
+    if len(raw.strip()) < 300:
+        # Short/noisy OCR (card photos) cannot contradict the filename.
+        return False
+    lowered = raw.casefold()
+    return not any(anchor in lowered for anchor in anchors)
 
 
 def _image_evidence_type_from_text(text: str) -> str | None:

@@ -13,7 +13,9 @@ from collections import Counter
 from typing import Any
 
 from services.bureau_anchors import classify_credit_bureau_by_anchors
+from services.document_classifier import is_kyc_checklist_context
 from services.field_extractor import extract_fields
+from services.identifiers import plausible_aadhaar_digits
 from services.person_ownership import MULTI_PERSON_DOCUMENT_TYPES, resolve_person_owner
 from services.validation_gates import attach_field_provenance
 
@@ -22,6 +24,9 @@ UNKNOWN_TYPES = {"", "none", "unknown", "ocr skipped"}
 _PAN_RE = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
 _AADHAAR_RE = re.compile(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)")
 _PHONE_RE = re.compile(r"\b[6-9]\d{9}\b")
+# Group-level promotions below this confidence would stamp near-arbitrary
+# types (for example ZIP filename guesses) onto unrelated pages.
+_GROUP_PROMOTION_MIN_CONFIDENCE = 0.55
 
 
 def resolve_trusted_evidence(
@@ -72,6 +77,9 @@ def infer_document_type_from_evidence(text: str) -> dict[str, Any] | None:
     raw = str(text or "")
     lowered = raw.casefold()
     candidates: list[dict[str, Any]] = []
+    # KYC tables in application forms/CAMs enumerate several card names; a
+    # page that mentions Aadhaar AND PAN AND Voter ID is not any single card.
+    kyc_checklist = is_kyc_checklist_context(raw)
 
     bureau = classify_credit_bureau_by_anchors(raw)
     if bureau.get("document_type") and float(bureau.get("confidence") or 0.0) >= 0.75:
@@ -87,6 +95,8 @@ def infer_document_type_from_evidence(text: str) -> dict[str, Any] | None:
         lowered,
     ))
     pan_card_context = bool(re.search(r"\b(?:father(?:'s)?\s+name|date\s+of\s+birth)\b", lowered))
+    if kyc_checklist:
+        pan_heading = False
     if pan_numbers and pan_heading:
         confidence = 0.92 if pan_card_context else 0.82
         candidates.append({
@@ -95,14 +105,22 @@ def infer_document_type_from_evidence(text: str) -> dict[str, Any] | None:
             "evidence": ["pan_format", "pan_card_heading"] + (["pan_card_identity_fields"] if pan_card_context else []),
         })
 
-    aadhaar_numbers = _AADHAAR_RE.findall(raw)
+    aadhaar_numbers = [
+        digits
+        for item in _AADHAAR_RE.findall(raw)
+        if (digits := plausible_aadhaar_digits(item))
+    ]
     aadhaar_authority = bool(re.search(
         r"\b(?:uidai|aadhaar|aadhar|unique\s+identification\s+authority)\b|"
         r"भारतीय\s+विशिष्ट\s+पहचान|मेरा\s+आधार",
         lowered,
         re.IGNORECASE,
     ))
-    if aadhaar_authority and (aadhaar_numbers or re.search(r"\b(?:vid|virtual\s+id)\b", lowered)):
+    if (
+        not kyc_checklist
+        and aadhaar_authority
+        and (aadhaar_numbers or re.search(r"\b(?:vid|virtual\s+id)\b", lowered))
+    ):
         candidates.append({
             "document_type": "Aadhaar",
             "confidence": 0.93 if aadhaar_numbers else 0.80,
@@ -118,14 +136,18 @@ def infer_document_type_from_evidence(text: str) -> dict[str, Any] | None:
             "evidence": ["application_form_heading"],
         })
 
-    if re.search(r"\b(?:election\s+commission|elector(?:'s)?\s+photo\s+identity|epic\s+no)\b", lowered):
+    if not kyc_checklist and re.search(
+        r"\b(?:election\s+commission|elector(?:'s)?\s+photo\s+identity|epic\s+no)\b", lowered
+    ):
         candidates.append({
             "document_type": "Voter ID",
             "confidence": 0.86,
             "evidence": ["voter_identity_anchor"],
         })
 
-    if re.search(r"\b(?:driving\s+licen[cs]e|transport\s+department)\b", lowered) and re.search(
+    if not kyc_checklist and re.search(
+        r"\b(?:driving\s+licen[cs]e|transport\s+department)\b", lowered
+    ) and re.search(
         r"\b[A-Z]{2}[ -]?\d{2}[ -]?\d{4}[ -]?\d{7}\b", raw.upper()
     ):
         candidates.append({
@@ -146,7 +168,11 @@ def _attach_generic_evidence(page: dict[str, Any]) -> None:
         fields = {}
     generic = {
         "pan_numbers": list(dict.fromkeys(_PAN_RE.findall(text.upper()))),
-        "aadhaar_numbers": list(dict.fromkeys(re.sub(r"\D", "", item) for item in _AADHAAR_RE.findall(text))),
+        "aadhaar_numbers": list(dict.fromkeys(
+            digits
+            for item in _AADHAAR_RE.findall(text)
+            if (digits := plausible_aadhaar_digits(item))
+        )),
         "phone_numbers": list(dict.fromkeys(_PHONE_RE.findall(text))),
     }
     generic = {key: value for key, value in generic.items() if value}
@@ -211,39 +237,40 @@ def _build_groups(
         for page in pages
         if int(page.get("page_number") or 0) > 0
     }
-    if source_documents:
-        groups: list[dict[str, Any]] = []
-        for source in source_documents:
-            start = int(source.get("internal_page_start") or 0)
-            end = int(source.get("internal_page_end") or 0)
-            source_pages = [by_number[number] for number in range(start, end + 1) if number in by_number]
-            if source_pages:
-                groups.append({
-                    "document_id": str(source.get("source_document_id") or f"zip-{start}-{end}"),
-                    "source_document": source,
-                    "pages": source_pages,
-                    "mode": "zip",
-                })
-        return groups
+    source_by_page: dict[int, dict[str, Any]] = {}
+    for source in source_documents:
+        start = int(source.get("internal_page_start") or 0)
+        end = int(source.get("internal_page_end") or 0)
+        for page_number in range(start, end + 1):
+            source_by_page[page_number] = source
 
-    groups = []
+    groups: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     for page in sorted(by_number.values(), key=lambda item: int(item.get("page_number") or 0)):
+        page_number = int(page.get("page_number") or 0)
         page_type = str(page.get("document_type") or "Unknown")
         type_key = page_type.strip().casefold()
+        source = source_by_page.get(page_number)
+        source_id = str((source or {}).get("source_document_id") or "") or None
         if type_key in {"db data", "property image", "photo evidence", "ocr skipped"}:
             current = None
             continue
         detected_start = page.get("detected_page_number") == page.get("page_number")
         if type_key in UNKNOWN_TYPES:
-            if current is not None and _looks_like_continuation(page, str(current["document_type"])):
+            if (
+                current is not None
+                and current.get("zip_source_id") == source_id
+                and _looks_like_continuation(page, str(current["document_type"]))
+            ):
                 current["pages"].append(page)
             else:
                 current = None
             continue
         same_type = current is not None and str(current["document_type"]) == page_type
+        same_source = current is not None and current.get("zip_source_id") == source_id
         keep_detected_page_in_group = bool(
             same_type
+            and same_source
             and (
                 type_key in MULTI_PERSON_DOCUMENT_TYPES
                 or (
@@ -255,6 +282,7 @@ def _build_groups(
         starts_new = (
             current is None
             or not same_type
+            or not same_source
             or (
                 detected_start
                 and not keep_detected_page_in_group
@@ -263,12 +291,20 @@ def _build_groups(
         )
         if starts_new:
             number = int(page.get("page_number") or 0)
+            if source_id:
+                document_id = f"{source_id}#{number:04d}-{_slug(page_type)}"
+                mode = "zip"
+            else:
+                document_id = f"merged-{number:04d}-{_slug(page_type)}"
+                mode = "merged_pdf"
             current = {
-                "document_id": f"merged-{number:04d}-{_slug(page_type)}",
+                "document_id": document_id,
                 "document_type": page_type,
                 "pages": [],
                 "page_numbers": [],
-                "mode": "merged_pdf",
+                "mode": mode,
+                "zip_source_id": source_id,
+                "source_document": source,
             }
             groups.append(current)
         current["pages"].append(page)
@@ -340,7 +376,7 @@ def _page_aadhaar_numbers(page: dict[str, Any]) -> set[str]:
     return {
         digits
         for value in values
-        if len(digits := re.sub(r"\D", "", str(value or ""))) == 12
+        if (digits := plausible_aadhaar_digits(value))
     }
 
 
@@ -350,7 +386,11 @@ def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, An
     document_type, type_confidence, type_evidence = _group_document_type(pages, text)
     document_id = str(group.get("document_id") or "document")
 
-    if document_type and document_type.casefold() not in UNKNOWN_TYPES:
+    if (
+        document_type
+        and document_type.casefold() not in UNKNOWN_TYPES
+        and type_confidence >= _GROUP_PROMOTION_MIN_CONFIDENCE
+    ):
         for page in pages:
             current = str(page.get("document_type") or "Unknown")
             confidence = float(page.get("classification_confidence") or 0.0)

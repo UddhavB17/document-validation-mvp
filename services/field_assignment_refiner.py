@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import Any
@@ -273,13 +274,40 @@ def _parse_toon_object(response_text: str) -> dict[str, Any] | None:
     stripped = response_text.strip()
     if not stripped:
         return None
-    fence_match = re.search(r"```(?:toon)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    fence_match = re.search(r"```(?:toon|json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
     candidate = fence_match.group(1).strip() if fence_match else stripped
+
+    def _as_dict(value: Any) -> dict[str, Any] | None:
+        return value if isinstance(value, dict) else None
+
+    def _try_json(text: str) -> dict[str, Any] | None:
+        try:
+            return _as_dict(json.loads(text))
+        except Exception:  # noqa: BLE001
+            pass
+        json_match = re.search(r"\{[\s\S]*\}", text)
+        if not json_match:
+            return None
+        try:
+            return _as_dict(json.loads(json_match.group(0)))
+        except Exception:  # noqa: BLE001
+            return None
+
+    # JSON-looking payloads first: toon.decode() can "succeed" on JSON while
+    # producing a useless key/value map, which would skip refinement entirely.
+    if candidate.lstrip().startswith(("{", "[")):
+        parsed = _try_json(candidate)
+        if parsed is not None:
+            return parsed
+
     try:
-        parsed = decode(candidate)
+        parsed = _as_dict(decode(candidate))
+        if parsed is not None:
+            return parsed
     except Exception:  # noqa: BLE001
-        return None
-    return parsed if isinstance(parsed, dict) else None
+        pass
+
+    return _try_json(candidate)
 
 
 def _public_fields(fields: dict[str, Any]) -> dict[str, Any]:

@@ -12,7 +12,7 @@ from services.job_control import (
     JobInputUnavailableError,
     PipelineCancelled,
     load_job_input,
-    persist_job_input,
+    persist_job_input_or_fail,
     request_control,
 )
 from services.job_runner import submit_job
@@ -164,7 +164,7 @@ def queue_application_reprocess(application_id: int, *, resume: bool = True) -> 
         job_type="pdf_reprocess",
         parent_job_id=parent_job_id,
     )
-    persist_job_input(
+    persist_job_input_or_fail(
         job_id,
         application_id,
         source_path=file_path,

@@ -321,6 +321,38 @@ def test_application_names_are_verified_from_visible_form_text() -> None:
     assert not any(item["rule_id"] == "APPLICATION_NAME_MISMATCH" for item in anomalies)
 
 
+def test_missing_application_name_is_flagged_when_not_on_form() -> None:
+    trusted = {
+        "people": {
+            "primary": {"applicant_name": "Peeru Lal"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal"},
+        }
+    }
+    form = page(1, "Application Form", "primary", applicant_name="Peeru Lal")
+    form["ocr_text"] = "Customer Application Form\nApplicant: Peeru Lal"
+    anomalies = run_consistency_checks([form], trusted)
+    mismatches = [item for item in anomalies if item["rule_id"] == "APPLICATION_NAME_MISMATCH"]
+    assert len(mismatches) == 1
+    assert mismatches[0]["person_id"] == "coapplicant_1"
+    assert mismatches[0]["expected_value"] == "Unkar Lal"
+    assert mismatches[0]["found_value"] == "Peeru Lal"
+
+
+def test_missing_application_names_flag_when_form_has_no_extracted_names() -> None:
+    trusted = {
+        "people": {
+            "primary": {"applicant_name": "Peeru Lal"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal"},
+        }
+    }
+    form = page(1, "Application Form", "primary")
+    form["ocr_text"] = "Customer Application Form\nSourcing Details\nLoan Product Group"
+    anomalies = run_consistency_checks([form], trusted)
+    mismatches = [item for item in anomalies if item["rule_id"] == "APPLICATION_NAME_MISMATCH"]
+    assert {item["person_id"] for item in mismatches} == {"primary", "coapplicant_1"}
+    assert all(item["found_value"] == "Name not extracted" for item in mismatches)
+
+
 def test_unkar_onkar_name_variant_is_not_a_trusted_mismatch() -> None:
     trusted = {
         "people": {
@@ -439,3 +471,44 @@ def test_inherited_unknown_page_name_without_anchor_is_manual_review_not_high_mi
     assert not any(item["severity"] == "HIGH" and "NAME" in item["rule_id"] for item in anomalies)
     assert "Ramesh Kumar" not in _anomaly_text(anomalies)
     assert not any("NAME_EXTRACTION" in item["rule_id"] for item in anomalies)
+
+
+def test_duplicated_trusted_name_token_is_not_a_mismatch() -> None:
+    # Trusted dumps sometimes repeat a token ("Kuldeep KULDEEP").
+    trusted = {"people": {"primary": {"applicant_name": "Kuldeep KULDEEP"}}}
+    anomalies = run_consistency_checks(
+        [page(1, "Aadhaar", "primary", applicant_name="Kuldeep")],
+        trusted,
+    )
+    assert not any("NAME_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
+def test_name_with_father_tokens_is_not_a_trusted_mismatch() -> None:
+    # "Given + father's name + surname" identifies the same person under
+    # Indian naming conventions as the trusted "Surname Given" form.
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "Suthar Anupkumar",
+                "father_name": "Chetanbhai Mohanlal Suthar",
+            }
+        }
+    }
+    anomalies = run_consistency_checks(
+        [page(1, "PAN", "primary", applicant_name="Anupkumar Chetanbhai Suthar")],
+        trusted,
+    )
+    assert not any("NAME_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
+def test_unassigned_person_fields_skip_trusted_checks_in_single_person_manifest() -> None:
+    # A guarantor's document left unassigned must not be compared against the
+    # sole trusted person.
+    trusted = {"people": {"primary": {"applicant_name": "Suthar Anupkumar"}}}
+    guarantor_page = page(1, "Aadhaar", None, applicant_name="Solanki Jayesh Chamanbhai")
+    guarantor_page["person_id"] = "unassigned"
+    anomalies = run_consistency_checks([guarantor_page], trusted)
+    assert not any(
+        "TRUSTED_" in item["rule_id"] and "MISMATCH" in item["rule_id"]
+        for item in anomalies
+    )

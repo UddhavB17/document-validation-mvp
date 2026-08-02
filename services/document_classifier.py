@@ -32,6 +32,30 @@ HIGH_CONFIDENCE = 0.75
 
 OCRRoute = Literal["fast", "structured"]
 
+# Application forms and CAMs contain bilingual KYC tables that enumerate every
+# accepted identity document ("AADHAAR / PAN / VOTER ID / DRIVING LICENCE /
+# RATION CARD").  A real identity card never lists several other card types,
+# so those pages must not be classified as the cards they merely mention.
+IDENTITY_CARD_TYPES = frozenset({
+    "Aadhaar", "PAN", "PAN Card", "Voter ID", "Driving License", "Passport",
+    "Ration Card",
+})
+_ID_DOC_MENTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\baadhaa?r\b|आधार", re.IGNORECASE),
+    re.compile(r"\bpan\b|पैन", re.IGNORECASE),
+    re.compile(r"\bvoter\b|मतदाता", re.IGNORECASE),
+    re.compile(r"driving\s*licen[cs]e|ड्राइविंग", re.IGNORECASE),
+    re.compile(r"ration\s*card|राशन", re.IGNORECASE),
+    re.compile(r"\bpassport\b|पासपोर्ट", re.IGNORECASE),
+)
+
+
+def is_kyc_checklist_context(text: str) -> bool:
+    """True when a page enumerates three or more identity-document names."""
+    raw = str(text or "")
+    mentions = sum(1 for pattern in _ID_DOC_MENTION_PATTERNS if pattern.search(raw))
+    return mentions >= 3
+
 
 class DocumentTypeConfig(BaseModel):
     """Validated registry schema for fields shared outside classification."""
@@ -63,6 +87,13 @@ def classify_page(text: str) -> dict[str, Any]:
 def classify_page_with_candidates(text: str) -> dict[str, Any]:
     registry = load_document_type_registry()
     candidates = [_score_rule(text or "", rule) for rule in registry["document_types"]]
+    if is_kyc_checklist_context(text or ""):
+        for candidate in candidates:
+            if candidate["document_type"] in IDENTITY_CARD_TYPES and candidate["confidence"]:
+                candidate["confidence"] = 0.0
+                candidate["matched_signals"] = [
+                    {"kind": "suppressed", "value": "kyc_checklist_context"}
+                ]
     candidates.sort(key=lambda item: (-item["confidence"], item["priority"]))
 
     best = candidates[0] if candidates else _unknown_result([])

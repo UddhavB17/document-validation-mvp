@@ -47,7 +47,11 @@ def test_respects_zip_source_boundaries_for_same_document_type() -> None:
         ],
     )
 
-    assert [item["source_document_id"] for item in result["documents"]] == ["file-0001", "file-0002"]
+    assert [item["auto_mapping"]["source_document_id"] for item in result["documents"]] == [
+        "file-0001",
+        "file-0002",
+    ]
+    assert all(item["source_document_id"].startswith("file-000") for item in result["documents"])
 
 
 def test_does_not_guess_kyc_owner_when_multiple_people_have_no_matching_identity() -> None:
@@ -181,5 +185,30 @@ def test_zip_member_multi_page_pdf_is_one_document_candidate() -> None:
     )
 
     assert len(result["documents"]) == 1
-    assert result["documents"][0]["source_document_id"] == "file-0001"
+    assert result["documents"][0]["auto_mapping"]["source_document_id"] == "file-0001"
+    assert result["documents"][0]["source_document_id"].startswith("file-0001#")
     assert result["documents"][0]["pages"] == [1, 2]
+
+
+def test_zip_member_with_multiple_document_types_is_split() -> None:
+    pages = [
+        _page(1, "PAN", {"applicant_name": "Peeru Lal", "pan_number": "ABCDE1234F"}),
+        _page(2, "Aadhaar", {"applicant_name": "Peeru Lal", "aadhaar_number": "1234 5678 9012"}),
+        _page(3, "Aadhaar", {"address": "Rajasthan"}, detected=2),
+    ]
+    result = build_automatic_document_index(
+        pages,
+        {"primary": {"applicant_name": "Peeru Lal", "pan_number": "ABCDE1234F"}},
+        source_documents=[{
+            "source_document_id": "file-0001",
+            "original_filename": "kyc-pack.pdf",
+            "internal_page_start": 1,
+            "internal_page_end": 3,
+        }],
+    )
+
+    assert [(item["document_type"], item["pages"]) for item in result["documents"]] == [
+        ("PAN", [1]),
+        ("Aadhaar", [2, 3]),
+    ]
+    assert all(item["auto_mapping"]["source_document_id"] == "file-0001" for item in result["documents"])

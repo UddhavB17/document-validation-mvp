@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -182,50 +183,87 @@ def log_effective_config() -> None:
     logger.info("DMEF effective config: %s", config)
 
 
+_MISSING = object()
+
+# Settings UI keys: database wins over a leftover .env copy.
+_UI_MANAGED_SETTING_KEYS = frozenset({
+    "ocr.provider",
+    "llm_enabled",
+    "llm_provider",
+    "llm_model",
+    "min_confidence",
+    "classification_profile",
+})
+
+
 def get_setting(key: str, default: Any = None) -> Any:
-    """Read a setting from environment first (for overrides/tests), then system_settings DB table, with fallback to default."""
+    """Read a setting from system_settings, with non-empty env as fallback.
+
+    UI-managed keys prefer the database so Settings changes apply even when a
+    copied ``.env`` still defines the matching variable. Blank env values are
+    treated as unset. Non-UI keys keep env-first override behavior for tests
+    and ops toggles.
+    """
     import json
-    
+
     env_key = key.upper().replace(".", "_")
-    env_val = os.getenv(env_key)
-    if env_val is not None:
-        val_lower = env_val.strip().lower()
+    raw_env = os.getenv(env_key)
+    env_val = raw_env.strip() if isinstance(raw_env, str) and raw_env.strip() != "" else None
+
+    def _coerce_env(value: str) -> Any:
+        val_lower = value.strip().lower()
         if val_lower in {"true", "yes", "on", "1"}:
             return True
         if val_lower in {"false", "no", "off", "0"}:
             return False
         if val_lower.startswith("[") or val_lower.startswith("{"):
             try:
-                return json.loads(env_val)
+                return json.loads(value)
             except Exception:
                 pass
         try:
-            if "." in env_val:
-                return float(env_val)
-            return int(env_val)
+            if "." in value:
+                return float(value)
+            return int(value)
         except ValueError:
-            return env_val
+            return value
 
+    db_value: Any = _MISSING
     from database.db import get_connection
+
     try:
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT config_value, value_type FROM system_settings WHERE config_key = ?",
-                (key,)
+                (key,),
             ).fetchone()
             if row:
                 val = row["config_value"]
                 val_type = row["value_type"]
                 if val_type == "bool":
-                    return val.strip().lower() in ("1", "true", "yes", "on")
+                    db_value = str(val).strip().lower() in ("1", "true", "yes", "on")
                 elif val_type == "int":
-                    return int(val)
+                    db_value = int(val)
                 elif val_type == "float":
-                    return float(val)
+                    db_value = float(val)
                 elif val_type == "json":
-                    return json.loads(val)
-                return val
+                    db_value = json.loads(val)
+                else:
+                    db_value = val
     except Exception as exc:
-        logger.warning("Failed to load setting %r from database: %s; using default %r", key, exc, default)
-    
+        logger.warning(
+            "Failed to load setting %r from database: %s; using env/default",
+            key,
+            exc,
+        )
+
+    prefer_db = key in _UI_MANAGED_SETTING_KEYS or key.startswith("google.vision.")
+    if prefer_db and db_value is not _MISSING:
+        # Empty stored strings mean "unset" so a non-empty env fallback can apply.
+        if not (isinstance(db_value, str) and str(db_value).strip() == ""):
+            return db_value
+    if env_val is not None:
+        return _coerce_env(env_val)
+    if db_value is not _MISSING:
+        return db_value
     return default

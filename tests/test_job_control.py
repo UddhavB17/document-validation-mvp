@@ -12,6 +12,7 @@ from services.job_control import (
     cooperate,
     load_job_input,
     persist_job_input,
+    persist_job_input_or_fail,
     request_control,
 )
 from services.pipeline import _build_page_records
@@ -110,6 +111,39 @@ def test_pause_resume_and_cancel_transitions_are_audited(tmp_path, monkeypatch) 
     }.issubset(actions)
 
 
+def test_persist_job_input_failure_marks_job_and_application_failed(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    application_id, job_id, source = _seed_job(tmp_path)
+    source.unlink()
+
+    with pytest.raises(FileNotFoundError):
+        persist_job_input_or_fail(
+            job_id,
+            application_id,
+            source_path=source,
+            system_data={"loan_id": "SECURE-001"},
+            product_type="LAP",
+        )
+
+    with get_connection() as connection:
+        job = connection.execute(
+            "SELECT status, control_state FROM pipeline_jobs WHERE id = ?",
+            (job_id,),
+        ).fetchone()
+        application = connection.execute(
+            "SELECT status FROM applications WHERE id = ?",
+            (application_id,),
+        ).fetchone()
+        progress = connection.execute(
+            "SELECT status FROM pipeline_progress WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+    assert dict(job) == {"status": "failed", "control_state": "failed"}
+    assert application["status"] == "failed"
+    assert progress["status"] == "failed"
+
+
 def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setenv("DMEF_JOB_CONTROL_TOKEN", "control-secret")
@@ -129,6 +163,18 @@ def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch) -
 
 def test_page_builder_skips_completed_checkpoint(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("OCR_PROVIDER", "local")
+    import services.config as config_mod
+    import services.ocr_router as ocr_router_mod
+
+    real_get_setting = config_mod.get_setting
+
+    def _get_setting(key: str, default=None):
+        if key == "ocr.provider":
+            return "local"
+        return real_get_setting(key, default)
+
+    monkeypatch.setattr(config_mod, "get_setting", _get_setting)
+    monkeypatch.setattr(ocr_router_mod, "get_setting", _get_setting)
     calls: list[str] = []
 
     def fake_ocr(image_path: str) -> dict:

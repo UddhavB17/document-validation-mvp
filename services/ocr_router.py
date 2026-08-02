@@ -281,7 +281,7 @@ def get_ocr_router() -> OCRRouter:
 
 def ocr_provider() -> str:
     """Return the active OCR provider: local, google_vision, or auto fallback."""
-    raw = str(get_setting("ocr.provider", os.getenv("OCR_PROVIDER") or "local") or "local").strip().lower()
+    raw = str(get_setting("ocr.provider", "local") or "local").strip().lower()
     normalized = raw.replace("-", "_")
     if normalized in {"google", "google_cloud", "google_vision", "vision"}:
         return "google_vision"
