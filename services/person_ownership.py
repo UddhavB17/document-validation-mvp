@@ -150,6 +150,21 @@ def resolve_person_owner(
     provided = str(provided_person_id or "").strip() or None
 
     if provided and provided in people:
+        if (
+            type_key in PERSON_SCOPED_DOCUMENT_TYPES
+            and not identity["scores"].get(provided)
+            and not identity.get("best_id")
+            and _observed_names_clearly_contradict(page_list, people[provided])
+        ):
+            # A manifest/index hint is not identity evidence.  Packets often
+            # contain guarantors or relatives absent from the trusted people
+            # list; a clean contradictory name must remain unassigned instead
+            # of being compared with the hinted applicant.
+            return {
+                "person_id": None,
+                "confidence": 0.0,
+                "evidence": ["observed_name_contradicts_provided_mapping"],
+            }
         if not _strong_id_contradicts(identity, provided, people):
             evidence = list(identity.get("evidence_by_person", {}).get(provided, []))
             evidence.append("provided_mapping")
@@ -360,6 +375,23 @@ def _observed_names_contradict(
     if not clean:
         return False
     return not any(name_matches_trusted_person(value, person) for value in clean)
+
+
+def _observed_names_clearly_contradict(
+    pages: list[dict[str, Any]],
+    person: dict[str, Any],
+) -> bool:
+    """Require a wide name gap before rejecting an explicit mapping hint."""
+    expected = first_value(person, FIELD_ALIASES["applicant_name"])
+    if not expected:
+        return False
+    observed = identity_observations(pages).get("applicant_name") or []
+    clean = [value for value in observed if is_person_name_candidate(value)]
+    return bool(clean) and all(
+        not name_matches_trusted_person(value, person)
+        and name_similarity(value, expected) < 0.60
+        for value in clean
+    )
 
 
 def _score_people(

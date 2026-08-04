@@ -590,7 +590,7 @@ def test_filename_identity_type_contradicted_by_email_thread() -> None:
     ) + "Further correspondence follows. " * 20
 
     assert _filename_type_contradicted_by_text("Driving License", email_text) is True
-    assert _filename_type_contradicted_by_text("Aadhaar Card", email_text) is True
+    assert _filename_type_contradicted_by_text("Aadhaar", email_text) is True
 
 
 def test_filename_identity_type_not_contradicted_by_card_ocr() -> None:

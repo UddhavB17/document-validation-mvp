@@ -261,7 +261,7 @@ def test_archive_root_folder_keywords_do_not_leak_into_every_member() -> None:
     assert _infer_document_type_from_filename(f"{root}/LOAN/TASK/Technical Valuation Report (8).pdf") != "Cheque"
     assert (
         _infer_document_type_from_filename(f"{root}/Co-Applicant/KYC/8955707373_aadhaar.pdf")
-        == "Aadhaar Card"
+        == "Aadhaar"
     )
     assert (
         _infer_document_type_from_filename(f"{root}/Co-Applicant/KYC/1782724446316.jpeg")
@@ -307,3 +307,16 @@ def test_evidentiary_filenames_have_safe_specific_fallbacks() -> None:
     assert _infer_document_type_from_filename("LOAN/COLLATERAL/peeru lal proprty paper.pdf") == "Property Document"
     assert _infer_document_type_from_filename("Loan/TASK/House Photo.pdf") == "House Photo"
     assert _infer_document_type_from_filename("Loan/TASK/Working Place Visit.pdf") == "Workplace Photo"
+
+
+def test_unknown_filename_prose_does_not_invent_document_types() -> None:
+    assert _infer_document_type_from_filename("Loan/TASK/customer approval.pdf") is None
+    assert _infer_document_type_from_filename("Applicant/INCOME/TimePhoto_20260724.jpg") is None
+
+
+def test_generic_kyc_photo_does_not_override_intrinsic_card_type() -> None:
+    from services.pipeline import _source_filename_override_allowed
+
+    assert _source_filename_override_allowed("KYC Card Photo", "PAN Card") is False
+    assert _source_filename_override_allowed("KYC Card Photo", "Aadhaar") is False
+    assert _source_filename_override_allowed("KYC Card Photo", "Unknown") is True

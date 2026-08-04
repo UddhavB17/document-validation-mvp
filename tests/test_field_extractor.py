@@ -985,6 +985,34 @@ class TestNameLabelRejection:
         )
         assert result.get("applicant_name") == "Peeru Lal"
 
+    @pytest.mark.parametrize(
+        "label",
+        ["VOTER ID", "RATION", "DRIVING", "पैन कार्ड", "मतदाता पहचान पत्र"],
+    )
+    def test_identity_column_label_not_extracted_as_name(self, label: str) -> None:
+        result = extract_fields(
+            "Application Form",
+            f"APPLICANT NAME\n{label}\nAADHAAR\nPAN\nVOTER ID",
+        )
+        assert result.get("applicant_name") is None
+
+    def test_digilocker_split_address_is_reconstructed(self) -> None:
+        text = (
+            "DigiLocker verified e-Aadhaar\nName\nDate of Birth\nGender\nAddress\n"
+            "xxxxxxxx2791\nTika Ram Meena\n01-01-1963\nMale\nS/O: Nanga Ram\n"
+            "304023\nRajasthan\nS/O: Nanga\nRam,Deoli,Uniara,Tonk,Rajasthan,30402\n3\n"
+        )
+        result = extract_fields("Aadhaar", text)
+        assert result["address"] == "Deoli,Uniara,Tonk,Rajasthan,304023"
+        assert result["related_person_name"] == "Nanga Ram"
+
+    def test_address_column_headers_are_not_an_address(self) -> None:
+        result = extract_fields(
+            "Aadhaar",
+            "Name\nPeeru Lal\nAddress\nLandmark Locality City / District Pin Code",
+        )
+        assert result.get("address") is None
+
     def test_xml_signature_stripped_from_aadhaar(self) -> None:
         """X509Certificate block in digital Aadhaar text must not pollute address."""
         text = (

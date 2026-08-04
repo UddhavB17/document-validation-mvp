@@ -501,6 +501,15 @@ def test_name_with_father_tokens_is_not_a_trusted_mismatch() -> None:
     assert not any("NAME_MISMATCH" in item["rule_id"] for item in anomalies)
 
 
+def test_reordered_name_tokens_are_not_a_trusted_mismatch() -> None:
+    trusted = {"people": {"primary": {"applicant_name": "Suthar Anupkumar"}}}
+    anomalies = run_consistency_checks(
+        [page(1, "PAN", "primary", applicant_name="Anupkumar Suthar")],
+        trusted,
+    )
+    assert not any("NAME_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
 def test_unassigned_person_fields_skip_trusted_checks_in_single_person_manifest() -> None:
     # A guarantor's document left unassigned must not be compared against the
     # sole trusted person.

@@ -801,6 +801,10 @@ def _names_equivalent(left: Any, right: Any) -> bool:
         return False
     if left_tokens == right_tokens:
         return True
+    # Indian documents commonly rotate given/father/surname order while
+    # preserving the same complete token set.
+    if len(left_tokens) == len(right_tokens) and set(left_tokens) == set(right_tokens):
+        return True
     # Allow substring containment for "Unkar" vs "Unkar Lal" style pairs.
     if len(left_tokens) <= len(right_tokens):
         short, long = left_tokens, right_tokens

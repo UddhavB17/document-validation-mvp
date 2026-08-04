@@ -327,3 +327,13 @@ def test_checklist_page_not_classified_as_identity_card() -> None:
         "Aadhaar", "PAN", "PAN Card", "Voter ID", "Driving License",
         "Passport", "Ration Card",
     }
+
+
+def test_loan_consent_clause_listing_uidai_is_not_aadhaar() -> None:
+    text = (
+        "I/We authorise the Company's representatives to collect and verify personal data "
+        "from Credit Information Companies (CICs), CKYC, Account Aggregator, UIDAI, "
+        "NSDL, SIDBI or any other agency for the purpose of the loan facility.\n"
+        "KEY FACT STATEMENT (KFS)\nPART 1 - Interest Rate and Fees/Charges"
+    )
+    assert _classify(text) == "KFS"

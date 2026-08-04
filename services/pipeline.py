@@ -972,7 +972,7 @@ def _build_page_records(
                     "Property Image",
                     "KYC Card Photo",
                     "Ration Card Photo",
-                }:
+                } and _source_filename_override_allowed(source_filename_type, document_type):
                     document_type = source_filename_type
                     classification = {"confidence": 0.95}
                     detection_method = "filename_override"
@@ -2464,7 +2464,7 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
     if re.search(r"\bpan\b", scope):
         return "PAN Card"
     if "aadhar" in scope or "aadhaar" in scope or "uidai" in scope:
-        return "Aadhaar Card"
+        return "Aadhaar"
     if "passport" in scope:
         return "Passport"
     if "driving" in scope or re.search(r"\bdl\b", scope) or "licence" in scope or "license" in scope:
@@ -2512,47 +2512,24 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
     if re.search(r"(?:^|[/_\-\s])cam(?:[/_\-\s.(]|$)", scope):
         return "CAM"
 
-    # If it's a generic file name like page_1.png, image.jpg, scan.pdf, etc.,
-    # we can try to use the parent folder name if it exists.
-    if len(parts) > 1:
-        parent = parts[-2]
-        # Normalize separators and drop a trailing counter ("CREDITBUREAU_4",
-        # "Collateral 1") so numbered intake folders match the generic list.
-        parent_normalized = re.sub(r"\s+\d+$", "", parent.replace("_", " ").replace("-", " ").strip())
-        # Ignore generic parent folders
-        if parent_normalized not in {
-            "sources", "source", "uploads", "documents", "files", "temp", "tmp", "pages",
-            "task", "report", "bank", "kyc", "income", "creditbureau",
-            "loan", "applicant", "co applicant", "coapplicant", "guarantor",
-            "collateral", "valuation", "legal", "technical",
-        }:
-            cleaned = parent.replace("_", " ").replace("-", " ")
-            return " ".join(word.capitalize() for word in cleaned.split())
-
-    # Fallback to the file base name if it is not generic
-    base_name = Path(parts[-1]).stem
-    generic_patterns = {
-        "image", "img", "scan", "page", "document", "doc", "file", "photo", "pic",
-        "output", "export", "pdf", "unnamed", "untitled", "unknown"
-    }
-    cleaned_base = base_name.replace("_", " ").replace("-", " ").strip()
-    if re.search(r"\b(?:combine|combined|merged|bundle|packet)\b", cleaned_base, re.IGNORECASE):
-        return None
-    if re.fullmatch(r"credit\s*score(?:\s*\(\d+\))?", cleaned_base, re.IGNORECASE):
-        return None
-    words = cleaned_base.split()
-
-    is_generic = True
-    for word in words:
-        word_clean = "".join(c for c in word.lower() if c.isalpha())
-        if word_clean and word_clean not in generic_patterns:
-            is_generic = False
-            break
-
-    if not is_generic and cleaned_base:
-        return " ".join(word.capitalize() for word in words)
-
+    # Unknown prose in a file or folder name is not a document type. Only the
+    # generic markers above are safe evidence; everything else must degrade to
+    # Unknown and sequence smoothing.
     return None
+
+
+_INTRINSIC_IDENTITY_TYPES = frozenset({
+    "Aadhaar", "PAN", "PAN Card", "Voter ID", "Driving License", "Passport",
+    "Ration Card",
+})
+
+
+def _source_filename_override_allowed(source_type: str, detected_type: str) -> bool:
+    """Do not let a generic KYC-photo folder erase a card's intrinsic type."""
+    return not (
+        source_type == "KYC Card Photo"
+        and detected_type in _INTRINSIC_IDENTITY_TYPES
+    )
 
 
 # Identity-document types inferred from ZIP member filenames must be supported
@@ -2561,7 +2538,7 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
 # labelled Driving License purely because the filename contained "DL ".
 _FILENAME_IDENTITY_TYPE_ANCHORS: dict[str, tuple[str, ...]] = {
     "PAN Card": ("permanent account number", "income tax", "पैन"),
-    "Aadhaar Card": ("aadhaar", "aadhar", "uidai", "आधार"),
+    "Aadhaar": ("aadhaar", "aadhar", "uidai", "आधार"),
     "Driving License": (
         "driving licence", "driving license", "transport department",
         "motor vehicle", "ड्राइविंग",

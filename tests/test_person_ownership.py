@@ -264,3 +264,17 @@ def test_strong_pan_overrides_wrong_provided_mapping() -> None:
     )
     assert owner["person_id"] == "coapplicant_1"
     assert "overrode_provided_mapping" in owner["evidence"]
+
+
+def test_clean_external_name_rejects_unsubstantiated_provided_mapping() -> None:
+    owner = resolve_person_owner(
+        {
+            "document_type": "CIBIL Report",
+            "extracted_fields": {"applicant_name": "EXTERNAL GUARANTOR"},
+        },
+        PEERU_FAMILY,
+        "CIBIL Report",
+        provided_person_id="primary",
+    )
+    assert owner["person_id"] is None
+    assert owner["evidence"] == ["observed_name_contradicts_provided_mapping"]

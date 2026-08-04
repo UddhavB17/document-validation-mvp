@@ -302,7 +302,14 @@ def _sanitize_address_value(value: Any) -> str | None:
     compact = re.sub(r"\s+", " ", str(value or "")).strip()
     if not compact:
         return None
+    placeholder_tokens = {
+        "address", "landmark", "locality", "city", "district", "pin", "code",
+        "state", "country", "village", "tehsil",
+    }
     latin_tokens = re.findall(r"[A-Za-z0-9]+", compact)
+    if latin_tokens and not any(token.isdigit() for token in latin_tokens):
+        if {token.casefold() for token in latin_tokens} <= placeholder_tokens:
+            return None
     if not re.search(r"\b\d{6}\b", compact) and len(latin_tokens) < 3:
         return None
     return compact
@@ -1064,31 +1071,48 @@ def _extract_digilocker_aadhaar_summary(text: str) -> dict[str, Any]:
             fields["gender"] = gender
             break
 
-    relationship_pattern = re.compile(r"^(S/O|D/O|W/O|C/O)\s*:\s*([^,\n]{2,70})", re.IGNORECASE)
-    for index, line in enumerate(lines):
+    relationship_pattern = re.compile(r"^(S/O|D/O|W/O|C/O)\s*:?\s*([^,\n]{2,70})", re.IGNORECASE)
+    relationship_rows = [
+        index for index, line in enumerate(lines) if relationship_pattern.match(line)
+    ]
+    for index in relationship_rows:
+        line = lines[index]
         relationship = relationship_pattern.match(line)
-        if not relationship:
-            continue
+        assert relationship is not None
         related_name = _clean_name_like_value(relationship.group(2))
-        if related_name:
+        if related_name and not fields.get("related_person_name"):
             fields["relationship_qualifier"] = relationship.group(1).upper()
             fields["related_person_name"] = related_name
-        if "," not in line:
+
+        # DigiLocker table extraction often repeats the relationship at the
+        # start of the actual address, splitting both a name and PIN over lines
+        # ("S/O: Nanga" + "Ram,Deoli..." and "30402" + "3").
+        nearby = lines[index : index + 7]
+        if not any("," in part for part in nearby[:3]):
             continue
-        address_parts = [line]
-        for following in lines[index + 1 : index + 4]:
-            address_parts.append(following)
-            if re.search(r"\b[1-8]\d{5}\b", following):
-                break
-        address = re.sub(r"\s+", " ", " ".join(address_parts))
-        address = relationship_pattern.sub("", address, count=1).lstrip(" ,")
-        if related_name and address.casefold().startswith(related_name.casefold()):
-            address = address[len(related_name) :].lstrip(" ,")
+        address = re.sub(r"\s+", " ", " ".join(nearby))
+        address = re.sub(
+            r"\b([1-8]\d{1,4})\s+(\d{1,4})\b",
+            lambda match: (
+                match.group(1) + match.group(2)
+                if len(match.group(1) + match.group(2)) == 6
+                else match.group(0)
+            ),
+            address,
+        )
         pin = re.search(r"\b([1-8]\d{5})\b", address)
-        if pin:
-            fields["pin_code"] = pin.group(1)
-            fields["address"] = address
-            break
+        if not pin:
+            continue
+        address = address[:pin.end()]
+        combined_relationship = relationship_pattern.match(address)
+        if combined_relationship:
+            combined_name = _clean_name_like_value(combined_relationship.group(2))
+            if combined_name and len(combined_name) > len(str(fields.get("related_person_name") or "")):
+                fields["related_person_name"] = combined_name
+            address = address[combined_relationship.end():].lstrip(" ,")
+        fields["pin_code"] = pin.group(1)
+        fields["address"] = address
+        break
 
     if not fields.get("pin_code"):
         pin = re.search(r"(?m)^\s*([1-8]\d{5})\s*$", text or "")
