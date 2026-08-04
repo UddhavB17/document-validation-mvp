@@ -253,6 +253,31 @@ def test_generic_zip_folders_are_not_invented_as_document_types() -> None:
     assert _infer_document_type_from_filename("Applicant/KYC/1781168594259.pdf") is None
 
 
+def test_archive_root_folder_keywords_do_not_leak_into_every_member() -> None:
+    # A shared ZIP root ("Quality_Checker_Documents") once matched the bare
+    # "check" keyword and stamped "Cheque" onto all 175 unknown pages of a run.
+    root = "26000_Quality_Checker_Documents"
+    assert _infer_document_type_from_filename(f"{root}/LOAN/TASK/Batti lal jambandi.pdf") != "Cheque"
+    assert _infer_document_type_from_filename(f"{root}/LOAN/TASK/Technical Valuation Report (8).pdf") != "Cheque"
+    assert (
+        _infer_document_type_from_filename(f"{root}/Co-Applicant/KYC/8955707373_aadhaar.pdf")
+        == "Aadhaar Card"
+    )
+    assert (
+        _infer_document_type_from_filename(f"{root}/Co-Applicant/KYC/1782724446316.jpeg")
+        == "KYC Card Photo"
+    )
+
+
+def test_short_filename_keywords_require_word_boundaries() -> None:
+    assert _infer_document_type_from_filename("Loan/TASK/KYC checklist.pdf") != "Cheque"
+    assert _infer_document_type_from_filename("Loan/TASK/cancelled cheque peeru.pdf") == "Cheque"
+    assert _infer_document_type_from_filename("Loan/TASK/CHQ scan.pdf") == "Cheque"
+    assert _infer_document_type_from_filename("Loan/TASK/company profile.pdf") != "PAN Card"
+    assert _infer_document_type_from_filename("Loan/KYC/pan card peeru.pdf") == "PAN Card"
+    assert _infer_document_type_from_filename("Loan/TASK/handle bracket.pdf") != "Driving License"
+
+
 def test_smoothed_unknown_page_marks_unanchored_identity_unreliable() -> None:
     pages = [
         {"page_number": 1, "document_type": "Application Form", "classification_confidence": 0.95, "extracted_fields": {}},

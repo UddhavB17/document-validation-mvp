@@ -2438,78 +2438,93 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
     lower = filename.lower().replace("\\", "/")
     suffix = Path(lower).suffix
 
+    # Keyword inference must only see the file name and its immediate parent
+    # folder.  Matching the whole path lets a shared archive root (for example
+    # "26000_Quality_Checker_Documents/") stamp one bogus type onto every
+    # member of the ZIP ("Checker" once classified 175 pages as "Cheque").
+    parts = [part for part in lower.split("/") if part]
+    scope = " / ".join(parts[-2:]) if parts else ""
+
     image_suffix = suffix in {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-    if image_suffix and ("ration" in lower or "rashan" in lower):
+    if image_suffix and ("ration" in scope or "rashan" in scope):
         return "Ration Card Photo"
-    if image_suffix and any(term in lower for term in ("kyc", "aadhaar", "aadhar", "pan", "voter")):
+    if image_suffix and (
+        any(term in scope for term in ("kyc", "aadhaar", "aadhar", "voter"))
+        or re.search(r"\bpan\b", scope)
+    ):
         return "KYC Card Photo"
     if image_suffix and any(
         folder in lower for folder in ("/collateral/", "/valuation/")
     ):
         return "Property Image"
 
-    # Check for direct keyword matches in the whole path
-    if "pan" in lower:
+    # Direct keyword matches against the file name / immediate parent folder.
+    # Short tokens use word boundaries so "company" is not PAN and
+    # "checker"/"checklist" is not a Cheque.
+    if re.search(r"\bpan\b", scope):
         return "PAN Card"
-    if "aadhar" in lower or "aadhaar" in lower or "uidai" in lower:
+    if "aadhar" in scope or "aadhaar" in scope or "uidai" in scope:
         return "Aadhaar Card"
-    if "passport" in lower:
+    if "passport" in scope:
         return "Passport"
-    if "driving" in lower or "dl " in lower or "licence" in lower or "license" in lower:
+    if "driving" in scope or re.search(r"\bdl\b", scope) or "licence" in scope or "license" in scope:
         return "Driving License"
-    if "voter" in lower or "epic" in lower:
+    if "voter" in scope or re.search(r"\bepic\b", scope):
         return "Voter ID"
-    if "cheque" in lower or "check" in lower:
+    if re.search(r"\bcheques?\b|\bchq\b|cancelled\s+check\b", scope):
         return "Cheque"
-    if "spdc" in lower or re.search(r"(?:^|[/_\-\s])pdc(?:[/_\-\s.]|$)", lower):
+    if "spdc" in scope or re.search(r"(?:^|[/_\-\s])pdc(?:[/_\-\s.]|$)", scope):
         return "PDC"
-    if "property paper" in lower or "proprty paper" in lower:
+    if "property paper" in scope or "proprty paper" in scope:
         return "Property Document"
-    if "house photo" in lower:
+    if "house photo" in scope:
         return "House Photo"
-    if "working place" in lower or "workplace" in lower:
+    if "working place" in scope or "workplace" in scope:
         return "Workplace Photo"
-    if "technical report" in lower:
+    if "technical report" in scope:
         return "Technical Report"
-    if "ration card" in lower:
+    if "ration card" in scope:
         return "Ration Card"
-    if "cersai" in lower:
+    if "cersai" in scope:
         return "CERSAI Report"
-    if "insurance consent" in lower:
+    if "insurance consent" in scope:
         return "Insurance Consent Letter"
-    if "property insurance" in lower:
+    if "property insurance" in scope:
         return "Property Insurance Form"
-    if "life insurance" in lower:
+    if "life insurance" in scope:
         return "Life Insurance Form"
-    if "insurance" in lower:
+    if "insurance" in scope:
         return "Insurance Form"
-    if "banking" in lower:
+    if "banking" in scope:
         return "Bank Statement"
-    if "statement" in lower or "bank_stmt" in lower or "bank stmt" in lower or "bankstmt" in lower:
+    if "statement" in scope or "bank_stmt" in scope or "bank stmt" in scope or "bankstmt" in scope:
         return "Bank Statement"
-    if "utility" in lower or "bill" in lower or "electricity" in lower or "water" in lower or "gas_bill" in lower:
+    if "utility" in scope or "bill" in scope or "electricity" in scope or "water" in scope or "gas_bill" in scope:
         return "Utility Bill"
-    if "sanction" in lower or "loan_sanction" in lower:
+    if "sanction" in scope or "loan_sanction" in scope:
         return "Sanction Letter"
-    if "agreement" in lower or "contract" in lower or "loan_agreement" in lower:
+    if "agreement" in scope or "contract" in scope or "loan_agreement" in scope:
         return "Loan Agreement"
-    if "salary" in lower or "pay slip" in lower or "payslip" in lower or "salary_slip" in lower:
+    if "salary" in scope or "pay slip" in scope or "payslip" in scope or "salary_slip" in scope:
         return "Salary Slip"
-    if "kfs" in lower or "key fact" in lower:
+    if re.search(r"\bkfs\b", scope) or "key fact" in scope:
         return "KFS (Key Fact Statement)"
-    if re.search(r"(?:^|[/_\-\s])cam(?:[/_\-\s.(]|$)", lower):
+    if re.search(r"(?:^|[/_\-\s])cam(?:[/_\-\s.(]|$)", scope):
         return "CAM"
 
     # If it's a generic file name like page_1.png, image.jpg, scan.pdf, etc.,
     # we can try to use the parent folder name if it exists.
-    parts = [p for p in lower.split("/") if p]
     if len(parts) > 1:
         parent = parts[-2]
+        # Normalize separators and drop a trailing counter ("CREDITBUREAU_4",
+        # "Collateral 1") so numbered intake folders match the generic list.
+        parent_normalized = re.sub(r"\s+\d+$", "", parent.replace("_", " ").replace("-", " ").strip())
         # Ignore generic parent folders
-        if parent not in {
+        if parent_normalized not in {
             "sources", "source", "uploads", "documents", "files", "temp", "tmp", "pages",
-            "task", "task 1", "task_1", "report", "bank", "kyc", "income",
-            "creditbureau", "creditbureau 1", "creditbureau 2", "creditbureau 3",
+            "task", "report", "bank", "kyc", "income", "creditbureau",
+            "loan", "applicant", "co applicant", "coapplicant", "guarantor",
+            "collateral", "valuation", "legal", "technical",
         }:
             cleaned = parent.replace("_", " ").replace("-", " ")
             return " ".join(word.capitalize() for word in cleaned.split())
