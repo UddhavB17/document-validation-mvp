@@ -267,19 +267,22 @@
       "headings": [
         "Key Fact Statement",
         "Key Facts Statement",
-        "KFS"
+        "KFS",
+        "કી ફેક્ટ સ્ટેટમેન્ટ"
       ],
       "keywords": [
         "key fact statement",
         "key facts statement",
         "annual percentage rate",
         "apr",
-        "kfs"
+        "kfs",
+        "વાર્ષિક ટકાવારી દર"
       ],
       "required_any": [
         "key fact statement",
         "key facts statement",
-        "kfs"
+        "kfs",
+        "કી ફેક્ટ સ્ટેટમેન્ટ"
       ],
       "negative_keywords": [
         "facility agreement",
@@ -301,7 +304,8 @@
         "Sanction Letter",
         "Loan Sanction",
         "ऋण स्वीकृति पत्र",
-        "स्वीकृति पत्र"
+        "स्वीकृति पत्र",
+        "મંજૂરી પત્ર"
       ],
       "keywords": [
         "sanction letter",
@@ -311,14 +315,18 @@
         "स्वीकृति पत्र",
         "ऋण स्वीकृति",
         "स्वीकृत राशि",
-        "अवधि"
+        "अवधि",
+        "મંજૂર રકમ",
+        "લોનની મુદત"
       ],
       "required_any": [
         "sanction letter",
         "loan sanction",
         "sanctioned amount",
         "ऋण स्वीकृति",
-        "स्वीकृति पत्र"
+        "स्वीकृति पत्र",
+        "મંજૂરી પત્ર",
+        "મંજૂર રકમ"
       ],
       "negative_keywords": [
         "facility agreement",
@@ -338,7 +346,8 @@
       "type": "Facility Agreement",
       "priority": 65,
       "headings": [
-        "Facility Agreement"
+        "Facility Agreement",
+        "ફેસિલિટી એગ્રીમમેન્ટ"
       ],
       "keywords": [
         "facility agreement",
@@ -347,7 +356,10 @@
         "repayment",
         "event of default",
         "covenant",
-        "governing law"
+        "governing law",
+        "ઉધારકર્તા",
+        "લોનદાતા",
+        "ડિફોલ્ટની ઘટના"
       ],
       "required_any": [
         "facility agreement",
@@ -355,7 +367,13 @@
         "borrower",
         "lender",
         "covenant",
-        "governing law"
+        "governing law",
+        "ઉધારકર્તા",
+        "લોનદાતા"
+      ],
+      "negative_keywords": [
+        "request for disbursal",
+        "request for disbursement"
       ],
       "min_confidence": 0.5
     },
@@ -367,7 +385,9 @@
         "Loan Contract",
         "Facility Agreement",
         "ऋण समझौता",
-        "ऋण अनुबंध"
+        "ऋण अनुबंध",
+        "લોન કરાર",
+        "ફેસિલિટી એગ્રીમમેન્ટ"
       ],
       "keywords": [
         "loan agreement",
@@ -383,7 +403,11 @@
         "event of default",
         "covenant",
         "governing law",
-        "conditions precedent"
+        "conditions precedent",
+        "ઉધારકર્તા",
+        "લોનદાતા",
+        "કલમ",
+        "ડિફોલ્ટની ઘટના"
       ],
       "required_any": [
         "loan agreement",
@@ -395,12 +419,19 @@
         "lender",
         "covenant",
         "governing law",
-        "conditions precedent"
+        "conditions precedent",
+        "ઉધારકર્તા",
+        "લોનદાતા",
+        "કલમ"
       ],
       "negative_keywords": [
         "customer application form",
         "sourcing details",
-        "co-applicant kyc details"
+        "co-applicant kyc details",
+        "end-use letter",
+        "end use letter",
+        "request for disbursal",
+        "request for disbursement"
       ],
       "field_patterns": [
         "borrower",
@@ -922,7 +953,9 @@
         "Non Judicial Stamp",
         "Stamp Paper",
         "INDIA NON JUDICIAL",
-        "भारतीय गैर न्यायिक"
+        "भारतीय गैर न्यायिक",
+        "સ્ટેમ્પ ડ્યુટી",
+        "બિન ન્યાયિક"
       ],
       "keywords": [
         "stamp duty",
@@ -934,7 +967,9 @@
         "stamp paper",
         "five hundred rupees",
         "स्टाम्प",
-        "गैर न्यायिक"
+        "गैर न्यायिक",
+        "સ્ટેમ્પ ડ્યુટી",
+        "બિન ન્યાયિક"
       ],
       "required_any": [
         "stamp duty",
@@ -943,7 +978,9 @@
         "indianonjudicial",
         "e-stamp",
         "stamp paper",
-        "गैर न्यायिक"
+        "गैर न्यायिक",
+        "સ્ટેમ્પ ડ્યુટી",
+        "બિન ન્યાયિક"
       ],
       "min_confidence": 0.5
     },
@@ -952,20 +989,25 @@
       "priority": 170,
       "headings": [
         "Guarantee Deed",
-        "Deed of Guarantee"
+        "Deed of Guarantee",
+        "ગેરંટી દસ્તાવેજ"
       ],
       "keywords": [
         "guarantee deed",
         "deed of guarantee",
         "deed of personal guarantee",
         "guarantor",
-        "deed"
+        "deed",
+        "જામીનદાર",
+        "ગેરંટી"
       ],
       "required_any": [
         "guarantee deed",
         "deed of guarantee",
         "deed of personal guarantee",
-        "guarantor"
+        "guarantor",
+        "જામીનદાર",
+        "ગેરંટી દસ્તાવેજ"
       ],
       "negative_keywords": [
         "facility agreement",
@@ -991,7 +1033,8 @@
         "Broadband",
         "Utility Bill",
         "विद्युत वितरण",
-        "Jaipur Vidyut"
+        "Jaipur Vidyut",
+        "વીજળી બિલ"
       ],
       "keywords": [
         "electricity bill",
@@ -1005,7 +1048,9 @@
         "vidyut",
         "jvvnl",
         "बिजली",
-        "विद्युत"
+        "विद्युत",
+        "ગ્રાહક નંબર",
+        "બાકી તારીખ"
       ],
       "required_any": [
         "electricity bill",
@@ -1019,7 +1064,9 @@
         "bill month",
         "broadband",
         "बिजली",
-        "विद्युत"
+        "विद्युत",
+        "ગ્રાહક નંબર",
+        "બાકી તારીખ"
       ],
       "min_confidence": 0.5
     },
@@ -1090,7 +1137,11 @@
         "Property Document",
         "Registered Deed",
         "सेल डीड",
-        "बैनामा"
+        "बैनामा",
+        "વેચાણ દસ્તાવેજ",
+        "મિલકત દસ્તાવેજ",
+        "માલિકી હક દસ્તાવેજ",
+        "નોંધાયેલ દસ્તાવેજ"
       ],
       "keywords": [
         "sale deed",
@@ -1101,7 +1152,20 @@
         "plot",
         "property",
         "संपत्ति",
-        "बैनामा"
+        "बैनामा",
+        "મિલકત",
+        "સર્વે નંબર",
+        "પ્લોટ નંબર",
+        "નોંધણી નંબર",
+        "સબ રજિસ્ટ્રાર",
+        "ચતુઃસીમા",
+        "ચાર સીમા"
+      ],
+      "negative_keywords": [
+        "sanction conditions",
+        "terms and conditions of loan",
+        "મંજૂરીની શરતો",
+        "લોનની શરતો"
       ],
       "min_confidence": 0.5
     },
@@ -1529,7 +1593,8 @@
         "Customer Application Form",
         "Application Form",
         "Loan Application",
-        "SOURCING DETAILS"
+        "SOURCING DETAILS",
+        "ગ્રાહક અરજી ફોર્મ"
       ],
       "keywords": [
         "customer application form",
@@ -1543,7 +1608,9 @@
         "loan product group",
         "ऋण आवेदन",
         "co-applicant",
-        "declaration"
+        "declaration",
+        "અરજદારની વિગતો",
+        "સહ અરજદાર"
       ],
       "required_any": [
         "customer application form",
@@ -1561,7 +1628,10 @@
         "applicant name",
         "co-applicant",
         "residence address",
-        "declaration"
+        "declaration",
+        "ગ્રાહક અરજી ફોર્મ",
+        "અરજદારની વિગતો",
+        "સહ અરજદાર"
       ],
       "negative_keywords": [
         "facility agreement",
@@ -1572,7 +1642,9 @@
         "know your customer (kyc)",
         "seva mein",
         "सेवामें",
-        "महोदय"
+        "महोदय",
+        "end-use letter",
+        "end use letter from the borrower"
       ],
       "min_confidence": 0.5
     },
@@ -1592,6 +1664,31 @@
       "min_confidence": 0.5
     },
     {
+      "type": "Acceptance Letter",
+      "ocr_route": "fast",
+      "priority": 355,
+      "headings": [
+        "Acceptance Letter",
+        "Letter of Acceptance"
+      ],
+      "keywords": [
+        "acceptance letter",
+        "letter of acceptance",
+        "profile image",
+        "entity name",
+        "thanks & regards"
+      ],
+      "required_any": [
+        "acceptance letter",
+        "letter of acceptance",
+        "profile image"
+      ],
+      "required_regex": [
+        "(?is)profile\\s+image.*thanks\\s*&\\s*regards"
+      ],
+      "min_confidence": 0.5
+    },
+    {
       "type": "Consent Letter",
       "ocr_route": "fast",
       "priority": 360,
@@ -1606,6 +1703,32 @@
         "consent",
         "सहमति पत्र",
         "सहमति"
+      ],
+      "min_confidence": 0.5
+    },
+    {
+      "type": "End-Use Letter",
+      "ocr_route": "fast",
+      "priority": 365,
+      "headings": [
+        "End-Use Letter From the Borrower",
+        "End-Use Letter",
+        "End Use Letter"
+      ],
+      "keywords": [
+        "end-use letter",
+        "end use letter",
+        "purpose of",
+        "valid & legal purpose",
+        "loan purpose"
+      ],
+      "required_any": [
+        "end-use letter",
+        "end use letter",
+        "valid & legal purpose"
+      ],
+      "negative_keywords": [
+        "insurance consent"
       ],
       "min_confidence": 0.5
     },
@@ -1675,11 +1798,15 @@
       "priority": 390,
       "headings": [
         "Disbursement Request",
-        "Request for Disbursement"
+        "Request for Disbursement",
+        "Request for Disbursal",
+        "Drawdown Request"
       ],
       "keywords": [
         "request for disbursement",
+        "request for disbursal",
         "disbursement request",
+        "drawdown request",
         "वितरण अनुरोध"
       ],
       "min_confidence": 0.5

@@ -42,8 +42,7 @@ def collect_local_health(*, check_ollama: bool = True) -> dict[str, Any]:
     items = [
         _python_item(),
         _module_item("PyMuPDF", "fitz"),
-        _module_item("PaddleOCR", "paddleocr"),
-        _module_item("PaddlePaddle", "paddle"),
+        _module_item("Google Cloud Vision", "google.cloud.vision"),
         _path_item("Database path", _database_path(), must_exist=False, parent_required=True),
         _path_item("Upload folder", _env_path("UPLOAD_DIR", "data/uploads"), must_exist=False, parent_required=False),
         _path_item("Page output folder", _env_path("PAGE_OUTPUT_DIR", "data/pages"), must_exist=False, parent_required=False),

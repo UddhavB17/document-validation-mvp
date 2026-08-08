@@ -3,6 +3,7 @@
   "loan_id": "LAP-EXAMPLE-001",
   "product_type": "LAP",
   "branch": "Delhi",
+  "application_form_languages": ["English", "Haryanvi"],
   "source": "manual_json",
   "pdf_file": "loan-file.pdf",
   "people": {

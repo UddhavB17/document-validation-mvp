@@ -112,16 +112,15 @@ def _call_rest_api_key(path: Path) -> dict[str, Any]:
         or "https://vision.googleapis.com/v1/images:annotate"
     ).rstrip("?")
     content = base64.b64encode(path.read_bytes()).decode("ascii")
+    request_payload: dict[str, Any] = {
+        "image": {"content": content},
+        "features": [{"type": _feature_type()}],
+    }
+    if hints := _language_hints():
+        request_payload["imageContext"] = {"languageHints": hints}
     response = requests.post(
         f"{endpoint}?key={key}",
-        json={
-            "requests": [
-                {
-                    "image": {"content": content},
-                    "features": [{"type": _feature_type()}],
-                }
-            ]
-        },
+        json={"requests": [request_payload]},
         timeout=_timeout_seconds(),
     )
     response.raise_for_status()
@@ -148,10 +147,17 @@ def _call_client_library(path: Path) -> dict[str, Any]:
         client_options = {"api_endpoint": endpoint}
     client = vision.ImageAnnotatorClient(client_options=client_options) if client_options else vision.ImageAnnotatorClient()
     image = vision.Image(content=path.read_bytes())
+    hints = _language_hints()
+    request_kwargs: dict[str, Any] = {
+        "image": image,
+        "timeout": _timeout_seconds(),
+    }
+    if hints:
+        request_kwargs["image_context"] = vision.ImageContext(language_hints=hints)
     if _feature_type() == "TEXT_DETECTION":
-        response = client.text_detection(image=image, timeout=_timeout_seconds())
+        response = client.text_detection(**request_kwargs)
     else:
-        response = client.document_text_detection(image=image, timeout=_timeout_seconds())
+        response = client.document_text_detection(**request_kwargs)
     if getattr(response, "error", None) and response.error.message:
         raise RuntimeError(response.error.message)
     if hasattr(response, "_pb"):
@@ -170,11 +176,13 @@ def _result_from_payload(path: Path, payload: Any, *, auth_mode: str) -> dict[st
     width, height = _image_dimensions(path)
     char_count = len(full_text.strip())
     megapixels = (width * height) / 1_000_000 if width and height else 1.0
+    detected_languages = _detected_languages(mapping)
     return {
         "ocr_text": full_text,
         "confidence": confidence if confidence > 0 else (0.9 if full_text.strip() else 0.0),
         "is_readable": bool(full_text.strip()),
-        "ocr_languages": ["google_vision"],
+        "ocr_languages": detected_languages or ["google_vision"],
+        "ocr_language_hints": _language_hints(),
         "ocr_pipeline": "Google Vision API",
         "ocr_provider": "google_vision",
         "google_vision_auth": auth_mode,
@@ -202,6 +210,54 @@ def _full_text(mapping: dict[str, Any]) -> str:
     if annotations and isinstance(annotations[0], dict):
         return str(annotations[0].get("description") or "")
     return ""
+
+
+def _language_hints() -> list[str]:
+    """Return optional BCP-47 hints; empty means API auto-detection.
+
+    DOCUMENT_TEXT_DETECTION can auto-detect multiple languages. Deployments may
+    still provide a small case-specific list (for example ``en,gu``) when scans
+    are noisy. A global all-India list is intentionally not forced.
+    """
+    raw = str(
+        get_setting(
+            "google.vision.language_hints",
+            os.getenv("GOOGLE_VISION_LANGUAGE_HINTS") or "",
+        )
+        or ""
+    )
+    return list(dict.fromkeys(part.strip() for part in raw.split(",") if part.strip()))[:10]
+
+
+def _detected_languages(mapping: dict[str, Any]) -> list[str]:
+    full = mapping.get("fullTextAnnotation") or mapping.get("full_text_annotation") or {}
+    found: list[tuple[str, float]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            detected = value.get("detectedLanguages") or value.get("detected_languages")
+            if isinstance(detected, list):
+                for item in detected:
+                    if not isinstance(item, dict):
+                        continue
+                    code = str(item.get("languageCode") or item.get("language_code") or "").strip()
+                    try:
+                        confidence = float(item.get("confidence") or 0.0)
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    if code:
+                        found.append((code, confidence))
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(full)
+    best: dict[str, float] = {}
+    for code, confidence in found:
+        best[code] = max(confidence, best.get(code, 0.0))
+    return [code for code, _confidence in sorted(best.items(), key=lambda item: (-item[1], item[0]))]
 
 
 def _text_annotation_boxes(annotations: Any) -> list[dict[str, Any]]:
@@ -281,7 +337,11 @@ def _collect_confidence(value: Any, values: list[float]) -> None:
                 values.append(float(confidence))
             except (TypeError, ValueError):
                 pass
-        for item in value.values():
+        for key, item in value.items():
+            # Language-detection confidence describes the language guess, not
+            # OCR recognition quality, and must not dilute the page score.
+            if key in {"detectedLanguages", "detected_languages"}:
+                continue
             _collect_confidence(item, values)
     elif isinstance(value, list):
         for item in value:

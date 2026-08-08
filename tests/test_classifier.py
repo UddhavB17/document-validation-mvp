@@ -98,6 +98,48 @@ def test_application_form_classified() -> None:
     assert _classify(text) == "Application Form"
 
 
+def test_health_insurer_application_is_not_a_loan_application_form() -> None:
+    text = (
+        "Care Health Insurance Limited IRDAI Registration No. 148\n"
+        "Group Care 360 Application Form\n"
+        "Proposer Details Nominee Details Policy Period Sum Insured Premium\n"
+        "Application No. 0030705"
+    )
+
+    assert _classify(text) == "Insurance Form"
+
+
+def test_optional_insurance_section_does_not_override_loan_application() -> None:
+    text = (
+        "LOAN APPLICATION FORM\nApplicant Details Loan Amount Employment Details\n"
+        "Optional insurance: name of insurance company, nominee, policy term, "
+        "sum insured and premium\nApplication No: GJ000030765"
+    )
+
+    assert _classify(text) == "Application Form"
+
+
+def test_insurer_words_without_insurance_form_boundary_do_not_override_application() -> None:
+    text = (
+        "LOAN APPLICATION FORM\nApplicant Name Date of Birth Loan Amount\n"
+        "Insurance offered by Care Health Insurance Limited, IRDAI Registration No. 148\n"
+        "Nominee Policy Sum Insured Premium"
+    )
+
+    assert _classify(text) == "Application Form"
+
+
+def test_embedded_optional_insurance_subform_does_not_replace_loan_form() -> None:
+    text = (
+        "LOAN APPLICATION FORM\nApplicant Details Loan Amount Employment Details\n"
+        "OPTIONAL INSURANCE APPLICATION FORM\n"
+        "Care Health Insurance Limited IRDAI Registration No. 148\n"
+        "Proposer Nominee Policy Sum Insured Premium"
+    )
+
+    assert _classify(text) == "Application Form"
+
+
 def test_unclassified_returns_none() -> None:
     text = "Some random unrelated text with no keywords"
     assert _classify(text) == "None"
@@ -206,6 +248,18 @@ def test_insurance_requires_all_three_groups() -> None:
     text = "Insurance Life Premium only"
     result = _classify(text)
     assert result != "Insurance Form"
+
+
+def test_account_aggregator_profile_cover_is_bank_statement() -> None:
+    text = (
+        "Statement From : 27 Jul 2025\nStatement To : 27 Jul 2026\n"
+        "Bank : BANK OF BARODA\nAccount Number : XXXX0605\nFI Type : DEPOSIT\n"
+        "PROFILE\nName\nDoB\nMobile\nPAN\nCKYC\n"
+        "ANUPKUMAR CHETANBHAI\nSUTHAR\n2001-06-18\n"
+        "TRANSACTIONS\nTrxn ID\nValue Date\nType\nAmount\nCurrent Balance"
+    )
+
+    assert _classify(text) == "Bank Statement"
 
 
 def test_stamp_duty_classified() -> None:
@@ -337,3 +391,32 @@ def test_loan_consent_clause_listing_uidai_is_not_aadhaar() -> None:
         "KEY FACT STATEMENT (KFS)\nPART 1 - Interest Rate and Fees/Charges"
     )
     assert _classify(text) == "KFS"
+
+
+def test_opening_guarantee_deed_title_outweighs_body_loan_agreement_reference() -> None:
+    result = classify_page(
+        "DEED OF GUARANTEE\n"
+        "This Deed of Guarantee is executed by the Guarantor in consideration "
+        "of the Loan Agreement between the Borrower and the Lender."
+    )
+
+    assert result["document_type"] == "Guarantee Deed"
+    assert result["confidence"] >= 0.9
+
+
+def test_compound_loan_agreement_end_use_title_prefers_specific_letter() -> None:
+    result = classify_page(
+        "LOAN AGREEMENT - END-USE LETTER FROM THE BORROWER\n"
+        "Purpose of: Business use\nBorrower: Ramesh Kumar"
+    )
+
+    assert result["document_type"] == "End-Use Letter"
+
+
+def test_compound_facility_disbursal_title_prefers_request() -> None:
+    result = classify_page(
+        "FACILITY AGREEMENT - REQUEST FOR DISBURSAL\n"
+        "Please disburse the sanctioned facility to the beneficiary account."
+    )
+
+    assert result["document_type"] == "Disbursement Request"

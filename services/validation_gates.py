@@ -125,6 +125,13 @@ def field_reliable_for_validation(
     fields = page.get("extracted_fields") or {}
     if field_key == "applicant_name" and not is_person_name_candidate(value):
         return False
+    if (
+        str(expected_document_type or page.get("document_type") or "").strip().casefold()
+        == "application form"
+        and field_key == "aadhaar_number"
+        and not has_labeled_aadhaar_value(str(page.get("ocr_text") or ""), value)
+    ):
+        return False
     if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False and field_key in IDENTITY_FIELDS:
         return False
     if _weak_smoothed_identity_page(page) and field_key in IDENTITY_FIELDS | BUREAU_SCORE_FIELDS | BANKING_FIELDS:
@@ -145,6 +152,23 @@ def compatible_field_for_document(document_type: str, field: str, page: dict[str
     doc_key = str(document_type or "").strip().lower()
     text = str(page.get("ocr_text") or "")
     fields = page.get("extracted_fields") or {}
+    if doc_key == "application form" and field == "application_number":
+        from services.document_classifier import (
+            is_insurance_application_context,
+            is_insurer_local_application_identifier,
+        )
+
+        if is_insurance_application_context(text) and is_insurer_local_application_identifier(
+            text, fields.get(field)
+        ):
+            return False
+    if doc_key in {
+        "insurance form", "life insurance form", "property insurance form"
+    } and field == "application_number":
+        from services.document_classifier import is_insurer_local_application_identifier
+
+        if is_insurer_local_application_identifier(text, fields.get(field)):
+            return False
     if doc_key in {"pan", "pan card"} and field in {"applicant_name", "date_of_birth", "pan_number"}:
         return has_pan_anchor(text, fields)
     if doc_key in {"bank statement"} and field in BANKING_FIELDS | {"applicant_name"}:
@@ -165,16 +189,47 @@ def has_pan_anchor(text: str, fields: dict[str, Any]) -> bool:
     ) or bool(fields.get("pan_number") and re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", str(fields.get("pan_number")).upper()))
 
 
+def has_labeled_aadhaar_value(text: str, value: Any) -> bool:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) != 12:
+        return False
+    for match in re.finditer(r"(?<!\d)\d{4}[ \t]?\d{4}[ \t]?\d{4}(?!\d)", text):
+        if re.sub(r"\D", "", match.group(0)) != digits:
+            continue
+        window = text[max(0, match.start() - 180) : min(len(text), match.end() + 60)]
+        if re.search(r"\b(?:aadhaar|aadhar|uid)\b|आधार", window, re.I):
+            return True
+    return False
+
+
 def has_bank_statement_anchor(text: str, fields: dict[str, Any]) -> bool:
     lowered = text.lower()
-    if not lowered.strip() and fields:
-        return True
     if is_amortization_schedule(text):
         return False
-    has_bank = bool(re.search(r"\b(bank|statement|account\s+statement|transaction|debit|credit|balance)\b", lowered))
-    has_account = bool(fields.get("account_number") or fields.get("ifsc") or re.search(r"\b[A-Z]{4}0[A-Z0-9]{6}\b", text.upper()))
-    has_period = bool(fields.get("statement_period_start") and fields.get("statement_period_end"))
-    return has_bank and (has_account or has_period)
+    if _is_disbursal_continuation(text):
+        return False
+
+    has_account = bool(
+        fields.get("account_number")
+        or fields.get("ifsc")
+        or re.search(r"\b[A-Z]{4}0[A-Z0-9]{6}\b", text.upper())
+        or re.search(
+            r"\b(?:a/?c|account)\s*(?:number|no\.?|#)\s*[:\-]?\s*(?:[X*]{2,}\d{3,}|\d{6,18})\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    if not lowered.strip():
+        return has_account
+
+    has_bank_context = bool(
+        re.search(
+            r"\b(?:bank|account\s+statement|bank\s+statement|statement\s+of\s+account|"
+            r"transaction|debit|credit|balance)\b",
+            lowered,
+        )
+    )
+    return has_bank_context and (has_account or _has_transaction_table_signature(text))
 
 
 def has_passbook_anchor(text: str, fields: dict[str, Any]) -> bool:
@@ -204,10 +259,40 @@ def has_bureau_anchor(text: str, fields: dict[str, Any], field: str) -> bool:
 
 def is_amortization_schedule(text: str) -> bool:
     lowered = text.lower()
+    explicit_schedule = (
+        "repayment schedule" in lowered
+        or "amortisation" in lowered
+        or "amortization" in lowered
+    ) and bool(re.search(r"\bemi\b", lowered))
+    schedule_table = all(
+        re.search(pattern, lowered)
+        for pattern in (r"\bprincipal\b", r"\binterest\b", r"\b(?:emi|instal+ment)\b", r"\bbalance\b")
+    )
     return bool(
-        ("repayment schedule" in lowered or "amortisation" in lowered or "amortization" in lowered)
-        and re.search(r"\bemi\b", lowered)
+        (explicit_schedule or schedule_table)
         and not re.search(r"\b(?:bank statement|account statement|transaction details)\b", lowered)
+    )
+
+
+def _has_transaction_table_signature(text: str) -> bool:
+    """Require a genuine bank-ledger column set, not merely two parsed dates."""
+    lowered = str(text or "").lower()
+    has_date = bool(re.search(r"\b(?:txn\.?\s*date|transaction\s+date|value\s+date|date)\b", lowered))
+    has_narration = bool(re.search(r"\b(?:narration|particulars|description|remarks)\b", lowered))
+    has_debit = bool(re.search(r"\b(?:debit|withdrawal|withdrawals)\b", lowered))
+    has_credit = bool(re.search(r"\b(?:credit|deposit|deposits)\b", lowered))
+    has_balance = bool(re.search(r"\b(?:balance|running\s+balance)\b", lowered))
+    return has_date and has_narration and has_debit and has_credit and has_balance
+
+
+def _is_disbursal_continuation(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if re.search(r"\b(?:request\s+for\s+disburs(?:al|ement)|drawdown\s+request)\b", lowered):
+        return True
+    return bool(
+        re.search(r"\bforeclosure\s+letter\b", lowered)
+        and re.search(r"\bstatement\s+of\s+account\b", lowered)
+        and re.search(r"\btime\s+of\s+disbursement\b", lowered)
     )
 
 

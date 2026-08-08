@@ -14,7 +14,10 @@ from typing import Any
 
 from services.identifiers import plausible_aadhaar_digits
 from services.person_names import is_person_name_candidate, name_similarity
-from services.validation_gates import field_reliable_for_validation
+from services.validation_gates import (
+    field_reliable_for_validation,
+    has_labeled_aadhaar_value,
+)
 
 try:  # pragma: no cover - rapidfuzz is the preferred scorer
     from rapidfuzz import fuzz
@@ -81,6 +84,9 @@ PERSON_SCOPED_DOCUMENT_TYPES = frozenset(
         "npr letter",
         "kyc card photo",
         "ration card photo",
+        "insurance form",
+        "life insurance form",
+        "property insurance form",
     }
 )
 
@@ -127,6 +133,7 @@ def resolve_person_owner(
     document_type: str = "",
     *,
     provided_person_id: str | None = None,
+    source_filename: str | None = None,
 ) -> dict[str, Any]:
     """Score trusted people against extracted identity and pick a clear winner.
 
@@ -148,6 +155,71 @@ def resolve_person_owner(
 
     identity = _score_people(page_list, people)
     provided = str(provided_person_id or "").strip() or None
+    source_role = source_role_from_filename(
+        source_filename
+        or next(
+            (
+                str(page.get("source_filename") or "")
+                for page in page_list
+                if isinstance(page, dict) and page.get("source_filename")
+            ),
+            "",
+        )
+    )
+
+    # A clean identity match is stronger than a folder/index hint. This also
+    # makes a wrongly filed primary PAN recoverable without trusting the path.
+    identity_winner = identity.get("best_id")
+    if source_role and identity_winner and _identity_is_decisive(
+        identity, str(identity_winner)
+    ):
+        evidence = list(identity.get("evidence") or [])
+        if _trusted_role(str(identity_winner), people[str(identity_winner)]) != source_role:
+            evidence.append(f"overrode_source_role:{source_role}")
+        return {
+            "person_id": identity_winner,
+            "confidence": identity["confidence"],
+            "evidence": sorted(set(evidence)),
+            "source_role": source_role,
+        }
+
+    if source_role:
+        role_candidates = [
+            person_id
+            for person_id, person in people.items()
+            if _trusted_role(person_id, person) == source_role
+        ]
+        if not role_candidates:
+            return {
+                "person_id": None,
+                "confidence": 0.0,
+                "evidence": [
+                    f"source_role:{source_role}",
+                    "source_role_not_in_trusted_data",
+                ],
+                "source_role": source_role,
+            }
+        if len(role_candidates) == 1:
+            role_person_id = role_candidates[0]
+            return {
+                "person_id": role_person_id,
+                "confidence": 0.85,
+                "evidence": [f"source_role:{source_role}"],
+                "source_role": source_role,
+            }
+        if identity_winner in role_candidates:
+            return {
+                "person_id": identity_winner,
+                "confidence": identity["confidence"],
+                "evidence": sorted(set([*(identity.get("evidence") or []), f"source_role:{source_role}"])),
+                "source_role": source_role,
+            }
+        return {
+            "person_id": None,
+            "confidence": 0.0,
+            "evidence": [f"source_role:{source_role}", "source_role_ambiguous"],
+            "source_role": source_role,
+        }
 
     if provided and provided in people:
         if (
@@ -202,7 +274,10 @@ def resolve_person_owner(
         if (
             type_key in PERSON_SCOPED_DOCUMENT_TYPES
             and not identity["scores"].get(only_id)
-            and _observed_names_contradict(page_list, people[only_id])
+            and (
+                _observed_names_contradict(page_list, people[only_id])
+                or _strong_observed_identity_conflicts(page_list, people[only_id])
+            )
         ):
             return {
                 "person_id": None,
@@ -255,6 +330,7 @@ def assign_page_owners(
             people,
             document_type,
             provided_person_id=provided,
+            source_filename=str(page.get("source_filename") or "") or None,
         )
         type_key = document_type.strip().lower()
         person_id = owner.get("person_id")
@@ -278,6 +354,7 @@ def assign_page_owners(
             "person_id": person_id,
             "confidence": owner.get("confidence", 0.0),
             "evidence": owner.get("evidence", []),
+            "source_role": owner.get("source_role"),
         }
         if isinstance(fields, dict):
             fields = dict(fields)
@@ -287,6 +364,72 @@ def assign_page_owners(
             page["extracted_fields"] = {"_ownership": ownership_meta}
 
     return pages
+
+
+def source_role_from_filename(value: Any) -> str | None:
+    """Return an applicant role from an explicit ZIP path segment.
+
+    Segment matching is intentional: ``Co-Applicant`` must never be caught by
+    a naive substring check for ``Applicant``.
+    """
+    segments = re.split(r"[/\\\\]+", str(value or ""))
+    for segment in segments:
+        key = re.sub(r"[^a-z0-9]+", "", segment.casefold())
+        if key.startswith("coapplicant") or key.startswith("coborrower"):
+            return "coapplicant"
+        if key.startswith("guarantor"):
+            return "guarantor"
+        if key == "applicant" or key.startswith("primaryapplicant"):
+            return "primary"
+    return None
+
+
+def _trusted_role(person_id: str, person: dict[str, Any]) -> str | None:
+    raw = re.sub(
+        r"[^a-z0-9]+",
+        "",
+        str(person.get("role") or person.get("applicant_role") or person_id).casefold(),
+    )
+    if person_id == "primary" or raw in {"primary", "applicant", "primaryapplicant"}:
+        return "primary"
+    if raw.startswith("coapplicant") or raw.startswith("coborrower"):
+        return "coapplicant"
+    if raw.startswith("guarantor"):
+        return "guarantor"
+    return None
+
+
+def _identity_is_decisive(identity: dict[str, Any], person_id: str) -> bool:
+    """Return True only for evidence strong enough to contradict a ZIP role.
+
+    Folder roles are participant-level provenance.  Names, phones and Aadhaar
+    last-four values are useful for choosing among candidates, but are too
+    collision-prone to move a document from one participant role to another.
+    Only a format-valid full PAN or a full Aadhaar printed next to an Aadhaar
+    label may override that source role.
+    """
+    return bool(
+        identity.get("source_override_evidence_by_person", {}).get(person_id)
+    )
+
+
+def _strong_observed_identity_conflicts(
+    pages: list[dict[str, Any]], person: dict[str, Any]
+) -> bool:
+    """Abstain when a nameless KYC page carries a different strong ID.
+
+    A positively matching name still wins earlier and preserves genuine typo
+    detection on an owned primary document.
+    """
+    observations = identity_observations(pages)
+    for field in ("pan_number", "aadhaar_number"):
+        expected = first_value(person, FIELD_ALIASES[field])
+        found = observations.get(field) or []
+        if expected not in (None, "") and found and not any(
+            identity_matches(field, value, expected) for value in found
+        ):
+            return True
+    return False
 
 
 def ownership_anomalies_for_unassigned(
@@ -300,6 +443,15 @@ def ownership_anomalies_for_unassigned(
         if person_id != "unassigned":
             continue
         if document_type.strip().lower() not in PERSON_SCOPED_DOCUMENT_TYPES:
+            continue
+        fields = page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
+        ownership = fields.get("_ownership") if isinstance(fields, dict) else {}
+        if (
+            isinstance(ownership, dict)
+            and "source_role_not_in_trusted_data" in set(ownership.get("evidence") or [])
+        ):
+            # The automatic index emits a single role-level trusted-data scope
+            # item; avoid an additional unresolved-owner warning per page.
             continue
         anomalies.append(
             {
@@ -358,7 +510,8 @@ def name_matches_trusted_person(observed: Any, person: dict[str, Any]) -> bool:
 
 def _unique_name_tokens(value: Any) -> list[str]:
     tokens = re.findall(r"[a-z]+", str(value or "").casefold())
-    return list(dict.fromkeys(tokens))
+    honorifics = {"mr", "mrs", "ms", "miss", "shri", "smt", "sri", "dr"}
+    return list(dict.fromkeys(token for token in tokens if token not in honorifics))
 
 
 def _observed_names_contradict(
@@ -399,6 +552,7 @@ def _score_people(
     people: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     observations = identity_observations(pages)
+    source_override_evidence = _source_override_evidence(pages, people)
     scores: Counter[str] = Counter()
     evidence: dict[str, list[str]] = {person_id: [] for person_id in people}
     for person_id, trusted in people.items():
@@ -447,6 +601,7 @@ def _score_people(
                 "evidence": sorted(set(evidence[best_id])),
                 "scores": dict(scores),
                 "evidence_by_person": evidence,
+                "source_override_evidence_by_person": source_override_evidence,
             }
     return {
         "best_id": None,
@@ -454,6 +609,98 @@ def _score_people(
         "evidence": [],
         "scores": dict(scores),
         "evidence_by_person": evidence,
+        "source_override_evidence_by_person": source_override_evidence,
+    }
+
+
+def _source_override_evidence(
+    pages: list[dict[str, Any]],
+    people: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    """Collect exact identifiers permitted to override a source-folder role."""
+    evidence: dict[str, set[str]] = {person_id: set() for person_id in people}
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        fields = page.get("extracted_fields")
+        if not isinstance(fields, dict):
+            fields = page if any(key in page for key in ("pan_number", "aadhaar_number")) else {}
+        candidates = [fields]
+        mapped = fields.get("_mapped_extraction")
+        if isinstance(mapped, dict):
+            candidates.append(mapped)
+        generic = fields.get("_generic_evidence")
+        ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
+
+        pan_values: list[Any] = []
+        aadhaar_values: list[Any] = []
+        for candidate in candidates:
+            pan_values.extend(
+                candidate.get(alias)
+                for alias in FIELD_ALIASES["pan_number"]
+                if candidate.get(alias) not in (None, "", [], {})
+            )
+            aadhaar_values.extend(
+                candidate.get(alias)
+                for alias in FIELD_ALIASES["aadhaar_number"]
+                if candidate.get(alias) not in (None, "", [], {})
+            )
+        if isinstance(generic, dict):
+            pan_values.extend(generic.get("pan_numbers") or [])
+            aadhaar_values.extend(generic.get("aadhaar_numbers") or [])
+        pan_values.extend(
+            match.group(0)
+            for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper())
+        )
+        aadhaar_values.extend(
+            match.group(1)
+            for match in re.finditer(
+                r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)",
+                ocr_text,
+            )
+        )
+
+        valid_pans = {
+            re.sub(r"\s+", "", str(value)).upper()
+            for value in pan_values
+            if re.fullmatch(
+                r"[A-Z]{5}\d{4}[A-Z]",
+                re.sub(r"\s+", "", str(value)).upper(),
+            )
+            and field_reliable_for_validation(
+                page,
+                "pan_number",
+                value,
+                expected_document_type=str(page.get("document_type") or "Unknown"),
+            )
+        }
+        valid_aadhaars = {
+            digits
+            for value in aadhaar_values
+            if (digits := plausible_aadhaar_digits(value))
+            and has_labeled_aadhaar_value(ocr_text, value)
+            and field_reliable_for_validation(
+                page,
+                "aadhaar_number",
+                value,
+                expected_document_type=str(page.get("document_type") or "Unknown"),
+            )
+        }
+
+        for person_id, trusted in people.items():
+            expected_pan = re.sub(
+                r"\s+", "", str(first_value(trusted, FIELD_ALIASES["pan_number"]) or "")
+            ).upper()
+            if expected_pan and expected_pan in valid_pans:
+                evidence[person_id].add("full_pan_number")
+            expected_aadhaar = plausible_aadhaar_digits(
+                first_value(trusted, FIELD_ALIASES["aadhaar_number"])
+            )
+            if expected_aadhaar and expected_aadhaar in valid_aadhaars:
+                evidence[person_id].add("full_labeled_aadhaar_number")
+    return {
+        person_id: sorted(values)
+        for person_id, values in evidence.items()
     }
 
 
@@ -589,6 +836,7 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
                 fields = page
             else:
                 continue
+        ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
         candidates = [fields]
         mapped = fields.get("_mapped_extraction")
         if isinstance(mapped, dict):
@@ -614,14 +862,17 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             for value in generic.get("pan_numbers") or []:
                 observations["pan_number"].append(value)
             for value in generic.get("aadhaar_numbers") or []:
-                observations["aadhaar_number"].append(value)
+                if (
+                    plausible_aadhaar_digits(value)
+                    and has_labeled_aadhaar_value(ocr_text, value)
+                ):
+                    observations["aadhaar_number"].append(value)
             for value in generic.get("phone_numbers") or []:
                 observations["phone_number"].append(value)
 
         # Fall back to raw OCR for exact identifiers.  For names, whole-page
         # haystack matching is restricted to banking documents; on Aadhaar and
         # other KYC backs, a W/O or S/O name is a relation, not the cardholder.
-        ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
         if ocr_text:
             observations["applicant_name"].extend(
                 _explicit_name_observations(
@@ -632,7 +883,10 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper()):
                 observations["pan_number"].append(match.group(0))
             for match in re.finditer(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", ocr_text):
-                if plausible_aadhaar_digits(match.group(1)):
+                if (
+                    plausible_aadhaar_digits(match.group(1))
+                    and has_labeled_aadhaar_value(ocr_text, match.group(1))
+                ):
                     observations["aadhaar_number"].append(match.group(1))
             for match in re.finditer(r"\b[6-9]\d{9}\b", ocr_text):
                 observations["phone_number"].append(match.group(0))

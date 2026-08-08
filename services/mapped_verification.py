@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
@@ -18,7 +19,6 @@ from services.field_verification import (
     verify_phone,
     verify_pincode,
 )
-from services.ocr_engine import run_ocr_on_page as run_structured_ocr_on_page
 from services.ocr_router import OCRRouter, run_fast_ocr_on_page
 from services.pdf_processor import convert_page_to_image, open_pdf
 from services.person_names import is_person_name_candidate
@@ -26,11 +26,27 @@ from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
 from services.text_extractor import extract_digital_text
 from services.validation_gates import attach_field_provenance, canonical_field, field_reliable_for_validation
+from database.models import FieldVerificationResult
 
 
 # Backward-compatible seam used by existing mapped-verification integrations.
 run_ocr_on_page = run_fast_ocr_on_page
 _DEFAULT_FAST_OCR_PROCESSOR = run_fast_ocr_on_page
+
+
+def _verify_supported_field(field: str, extracted: str, expected: str) -> FieldVerificationResult:
+    from services.consistency_checks import _matches
+
+    matched = _matches(field, expected, extracted)
+    return FieldVerificationResult(
+        field_name=field,
+        extracted_value=extracted,
+        db_value=expected,
+        match=matched,
+        confidence=1.0 if matched else 0.0,
+        method="exact" if field in {"account_number", "application_number", "ifsc"} else "fuzzy",
+        mismatch_reason=None if matched else "Value does not match the trusted JSON/database dump",
+    )
 
 
 VERIFY: dict[str, Callable[[str, str], Any]] = {
@@ -42,6 +58,22 @@ VERIFY: dict[str, Callable[[str, str], Any]] = {
     "applicant_name": verify_name,
     "address": verify_address,
     "pin_code": verify_pincode,
+    "account_number": partial(_verify_supported_field, "account_number"),
+    "application_number": partial(_verify_supported_field, "application_number"),
+    "ifsc": partial(_verify_supported_field, "ifsc"),
+    "tenure": partial(_verify_supported_field, "tenure"),
+    "installment_count": partial(_verify_supported_field, "installment_count"),
+    "emi": partial(_verify_supported_field, "emi"),
+    "roi": partial(_verify_supported_field, "roi"),
+    "apr": partial(_verify_supported_field, "apr"),
+    "sanction_amount": partial(_verify_supported_field, "sanction_amount"),
+    "total_interest": partial(_verify_supported_field, "total_interest"),
+    "total_repayment": partial(_verify_supported_field, "total_repayment"),
+    "processing_fee": partial(_verify_supported_field, "processing_fee"),
+    "insurance_amount": partial(_verify_supported_field, "insurance_amount"),
+    "net_disbursement": partial(_verify_supported_field, "net_disbursement"),
+    "foir": partial(_verify_supported_field, "foir"),
+    "ltv": partial(_verify_supported_field, "ltv"),
 }
 
 ALIASES = {
@@ -54,25 +86,39 @@ ALIASES = {
     "borrower_name": "applicant_name",
     "account_holder_name": "applicant_name",
     "pincode": "pin_code",
+    "current_address": "address",
+    "permanent_address": "address",
+    "communication_address": "address",
 }
 
 DOCUMENT_FIELDS = {
+    "cam": {
+        "application_number", "applicant_name", "phone_number", "loan_amount",
+        "sanction_amount", "tenure", "emi", "roi", "account_number", "ifsc",
+    },
     "aadhaar": {"aadhaar_number", "applicant_name", "date_of_birth", "address", "pin_code"},
     "pan": {"pan_number", "applicant_name", "date_of_birth"},
     "pan card": {"pan_number", "applicant_name", "date_of_birth"},
     "sanction letter": {"applicant_name", "loan_amount"},
+    "kfs": {"loan_amount"},
     "loan agreement": {"applicant_name", "loan_amount"},
+    "facility agreement": {"applicant_name", "loan_amount"},
     "application form": {
         "applicant_name", "aadhaar_number", "pan_number", "date_of_birth",
         "phone_number", "address", "pin_code", "loan_amount",
     },
-    "utility bill": {"applicant_name", "address", "pin_code"},
+    # A utility connection can remain in a landlord/relative's name and many
+    # providers omit a postal PIN.  The proof-of-address comparison is the
+    # defensible mapped check; bill recency is enforced separately by checklist
+    # accuracy rule S6.
+    "utility bill": {"address"},
     "voter id": {"applicant_name", "date_of_birth", "address"},
     "cibil report": {"applicant_name"},
     "crif report": {"applicant_name"},
-    "bank statement": {"applicant_name"},
-    "passbook": {"applicant_name"},
-    "cheque": {"applicant_name"},
+    "bank statement": {"applicant_name", "account_number", "ifsc"},
+    "passbook": {"applicant_name", "account_number", "ifsc"},
+    "cheque": {"applicant_name", "account_number", "ifsc"},
+    "nach form": {"applicant_name", "account_number", "ifsc"},
 }
 
 # These types are often split across many ZIP members / page groups. Verify
@@ -80,7 +126,10 @@ DOCUMENT_FIELDS = {
 _AGGREGATED_FIELD_DOC_TYPES = frozenset(
     {
         "sanction letter",
+        "cam",
+        "kfs",
         "loan agreement",
+        "facility agreement",
         "application form",
         "aadhaar",
         "pan",
@@ -110,14 +159,13 @@ _LOW_OCR_CONFIDENCE_THRESHOLD = 0.55
 
 def _mapped_ocr_router() -> OCRRouter:
     """Build a router while retaining the historical monkeypatch seam."""
-    structured_processor = (
-        run_structured_ocr_on_page
-        if run_ocr_on_page is _DEFAULT_FAST_OCR_PROCESSOR
-        else run_ocr_on_page
-    )
+    kwargs: dict[str, Any] = {}
+    if run_ocr_on_page is not _DEFAULT_FAST_OCR_PROCESSOR:
+        kwargs["google_vision_processor"] = run_ocr_on_page
     return OCRRouter(
         fast_processor=run_ocr_on_page,
-        structured_processor=structured_processor,
+        structured_processor=run_ocr_on_page,
+        **kwargs,
     )
 
 def run_mapped_verification(
@@ -132,7 +180,7 @@ def run_mapped_verification(
     target = Path(output_dir) / f"application_{application_id}" / "mapped_pages"
     document = open_pdf(pdf_path)
     total_pages = len(document)
-    reference_data = manifest.get("reference_data") or {}
+    reference_data = _verification_reference_data(manifest)
     pages: list[dict[str, Any]] = []
     anomalies: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
@@ -204,7 +252,7 @@ def run_mapped_verification(
                     text = routed_ocr.text
                     confidence = routed_ocr.confidence
                     is_readable = bool(text)
-                    text_source = f"paddle_ocr_{routed_ocr.route_used}"
+                    text_source = f"ocr_{routed_ocr.route_used}"
                     ocr_page_numbers.add(page_number)
                 extracted = extract_fields(document_type, text)
                 page_record = {
@@ -222,7 +270,11 @@ def run_mapped_verification(
                     "extracted_fields": extracted,
                 }
                 for key, value in extracted.items():
-                    if not str(key).startswith("_") and value not in (None, ""):
+                    if (
+                        not str(key).startswith("_")
+                        and key != "repayment_schedule_rows"
+                        and value not in (None, "")
+                    ):
                         field = _canonical(key)
                         if not field_reliable_for_validation(
                             page_record,
@@ -383,7 +435,7 @@ def compare_processed_pages(
     PDF pipeline. This function adds trusted ownership/mapping evidence without
     re-running OCR.
     """
-    reference_data = manifest.get("reference_data") or {}
+    reference_data = _verification_reference_data(manifest)
     documents = manifest.get("documents") or []
     source_lookup = _source_lookup(source_documents or [])
     pages_by_number = {
@@ -459,7 +511,11 @@ def compare_processed_pages(
                 readable_pages.append(page_number)
 
             for key, value in comparison_fields.items():
-                if value in (None, "", [], {}) or str(key).startswith("_"):
+                if (
+                    value in (None, "", [], {})
+                    or str(key).startswith("_")
+                    or key == "repayment_schedule_rows"
+                ):
                     continue
                 field = _canonical(key)
                 if not field_reliable_for_validation(
@@ -485,7 +541,11 @@ def compare_processed_pages(
                     "value": value,
                     "document_confidence": mapping.get("auto_mapping", {}).get("document_confidence"),
                     "ocr_confidence": page.get("ocr_confidence"),
-                    "text_source": "embedded_text" if page.get("page_type") == "digital" else "paddle_ocr",
+                    "text_source": (
+                        "embedded_text"
+                        if page.get("page_type") == "digital"
+                        else f"ocr_{page.get('ocr_route') or 'api'}"
+                    ),
                     "field_confidence": _observation_field_confidence(page, key),
                 }
                 observations.append(observation)
@@ -633,7 +693,12 @@ def _verify_document_fields(
             # One success across any fragment is enough for loan-level packets.
             matching = [
                 observation for observation in field_observations
-                if VERIFY[field](str(observation["value"]), str(expected_value)).match
+                if _mapped_field_matches(
+                    field,
+                    observation["value"],
+                    expected_value,
+                    reference_data.get(person_id, {}),
+                )
             ]
             checked += 1
             if matching:
@@ -654,9 +719,15 @@ def _verify_document_fields(
             if not prefer_any_match:
                 checked += 1
             result = VERIFY[field](str(observation["value"]), str(expected_value))
+            trusted_match = _mapped_field_matches(
+                field,
+                observation["value"],
+                expected_value,
+                reference_data.get(person_id, {}),
+            )
             observation["expected_value"] = expected_value
-            observation["status"] = "MATCH" if result.match else "MISMATCH"
-            if result.match:
+            observation["status"] = "MATCH" if trusted_match else "MISMATCH"
+            if trusted_match:
                 if not prefer_any_match:
                     matched += 1
                 continue
@@ -698,6 +769,32 @@ def _verify_document_fields(
     return {"checked": checked, "matched": matched}
 
 
+def _mapped_field_matches(
+    field: str,
+    observed: Any,
+    expected: Any,
+    person: dict[str, Any] | None,
+) -> bool:
+    person = person if isinstance(person, dict) else {}
+    if field == "applicant_name" and person:
+        try:
+            from services.person_ownership import name_matches_trusted_person
+
+            if name_matches_trusted_person(observed, person):
+                return True
+        except Exception:
+            pass
+    if field == "address" and person:
+        candidates = [
+            value
+            for key, value in person.items()
+            if _canonical(key) == "address" and value not in (None, "")
+        ]
+        if any(VERIFY["address"](str(observed), str(value)).match for value in candidates):
+            return True
+    return VERIFY[field](str(observed), str(expected)).match
+
+
 def _classify_source_documents(
     pages: list[dict[str, Any]],
     mappings: list[dict[str, Any]],
@@ -728,9 +825,9 @@ def _classify_source_documents(
         owner_votes: Counter[str] = Counter()
         for page in source_pages:
             fields = page.get("extracted_fields") or {}
-            llm_result = fields.get("_structured_llm_classification") if isinstance(fields, dict) else None
-            llm_type = llm_result.get("document_type") if isinstance(llm_result, dict) else None
-            predicted_type = str(llm_type or page.get("document_type") or "Unknown")
+            from services.automatic_document_index import _effective_document_type
+
+            predicted_type = _effective_document_type(page)
             if predicted_type not in {"Unknown", "None", "OCR Skipped"}:
                 type_votes[predicted_type] += 1
             if isinstance(fields, dict):
@@ -832,6 +929,10 @@ def _safe_digital_text(page: Any) -> str:
 
 def _get_allowed_fields_for_type(document_type: str) -> set[str] | None:
     doc_lower = document_type.strip().lower()
+    if doc_lower == "utility bill":
+        # Utility proof establishes the service address.  The account may be in
+        # a landlord/relative's name and the provider may omit the postal PIN.
+        return set(DOCUMENT_FIELDS[doc_lower])
     norm_key = doc_lower.replace(" ", "_")
     if norm_key == "pan_card":
         norm_key = "pan"
@@ -843,7 +944,9 @@ def _get_allowed_fields_for_type(document_type: str) -> set[str] | None:
     from services.config import get_setting
     db_fields = get_setting(f"required_fields.{norm_key}")
     if isinstance(db_fields, list):
-        return set(db_fields)
+        # Admin configuration can add case-specific fields, while the core
+        # identity/account/loan reconciliation contract remains mandatory.
+        return set(db_fields) | set(DOCUMENT_FIELDS.get(doc_lower) or set())
 
     return DOCUMENT_FIELDS.get(doc_lower)
 
@@ -865,6 +968,42 @@ def _expected_fields(
         # spreadsheets, or other document types that have no verification contract.
         return {}
     return {key: value for key, value in values.items() if _canonical(key) in allowed}
+
+
+def _verification_reference_data(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Include trusted root loan terms in the primary verification record."""
+    raw = manifest.get("reference_data") or {}
+    reference_data = {
+        str(person_id): dict(person)
+        for person_id, person in raw.items()
+        if isinstance(person, dict)
+    } if isinstance(raw, dict) and any(isinstance(value, dict) for value in raw.values()) else {}
+    if not reference_data:
+        reference_data = {"primary": dict(raw)} if isinstance(raw, dict) else {"primary": {}}
+    primary_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+    primary = reference_data[primary_id]
+    loan_fields = {
+        "application_number",
+        "loan_amount",
+        "sanction_amount",
+        "tenure",
+        "installment_count",
+        "emi",
+        "roi",
+        "apr",
+        "total_interest",
+        "total_repayment",
+        "processing_fee",
+        "insurance_amount",
+        "net_disbursement",
+        "foir",
+        "ltv",
+    }
+    for raw_field, value in manifest.items():
+        field = _canonical(raw_field)
+        if field in loan_fields and value not in (None, "", [], {}) and primary.get(field) in (None, ""):
+            primary[field] = value
+    return reference_data
 
 
 def _canonical(field: Any) -> str:

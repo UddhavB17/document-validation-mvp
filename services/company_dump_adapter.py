@@ -284,6 +284,15 @@ def _copy_known_loan_fields(target: dict[str, Any], *sections: str) -> None:
         "pending_conditions": ("pendingConditions",), "tranche_structure": ("trancheStructure",),
         "workflow_status": ("workflowStatus",), "repayment_status": ("repaymentStatus",),
         "overdue_status": ("overdueStatus",),
+        "stamp_certificate_number": ("stampCertificateNumber", "eStampNumber"),
+        "stamp_unique_document_reference": ("stampUniqueDocumentReference", "stampUin"),
+        "stamp_account_reference": ("stampAccountReference",),
+        "stamp_jurisdiction_state": ("stampJurisdictionState", "stampState"),
+        "stamp_duty_amount": ("stampDutyAmount",),
+        "stamp_consideration_amount": ("stampConsiderationAmount",),
+        "stamp_instrument_description": ("stampInstrumentDescription",),
+        "stamp_article": ("stampArticle", "stampInstrumentCode"),
+        "stamp_date": ("stampDate", "stampIssueDate"),
     }
     for target_key, source_keys in aliases.items():
         value = next((_value(section, key) for section in sections for key in source_keys if _value(section, key)), None)

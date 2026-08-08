@@ -87,6 +87,77 @@ def test_loan_level_docs_skip_owner_noise_and_still_index() -> None:
     assert all(item["applicant_role"] == "primary" for item in result["documents"])
 
 
+def test_strong_deterministic_type_wins_over_disagreeing_llm_advice() -> None:
+    page = _page(
+        10,
+        "CAM",
+        {
+            "loan_amount": "450000",
+            "_structured_llm_classification": {
+                "document_type": "Loan Agreement",
+                "confidence": 0.99,
+            },
+        },
+    )
+    page["classification_confidence"] = 1.0
+
+    result = build_automatic_document_index(
+        [page],
+        {"primary": {"applicant_name": "Suthar Anupkumar", "loan_amount": "450000"}},
+    )
+
+    assert result["documents"][0]["document_type"] == "CAM"
+
+
+def test_weak_inherited_type_yields_to_high_confidence_structured_advice() -> None:
+    page = _page(
+        10,
+        "Application Form",
+        {
+            "pan_number": "ABCDE1234F",
+            "_structured_llm_classification": {
+                "document_type": "PAN",
+                "confidence": 0.99,
+            },
+        },
+    )
+    page["classification_confidence"] = 0.70
+    page["detection_method"] = "sandwich_smoothed"
+
+    result = build_automatic_document_index(
+        [page],
+        {"primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"}},
+    )
+
+    assert result["documents"][0]["document_type"] == "PAN"
+
+
+def test_unsupported_llm_agreement_guess_does_not_override_spreadsheet_context() -> None:
+    page = _page(
+        467,
+        "Application Form",
+        {
+            "_structured_llm_classification": {
+                "document_type": "Loan Agreement",
+                "confidence": 0.999,
+            },
+        },
+    )
+    page["classification_confidence"] = 0.58
+    page["detection_method"] = "inherited"
+    page["ocr_text"] = (
+        "Workbook: case.xlsx | Sheet: CFA | Columns 9-10 | Rows 1-33\n"
+        "=IFERROR(ROUNDDOWN(IF(E11>0, =E30+(C36-E36) =C84+F90"
+    )
+
+    result = build_automatic_document_index(
+        [page],
+        {"primary": {"applicant_name": "Ramesh Kumar"}},
+    )
+
+    assert result["documents"][0]["document_type"] == "Application Form"
+
+
 def test_non_person_scoped_document_does_not_raise_owner_unresolved() -> None:
     result = build_automatic_document_index(
         [_page(1, "NOC", {"status": "issued"})],

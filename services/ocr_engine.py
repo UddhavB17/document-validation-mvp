@@ -1,6 +1,6 @@
 """Structured OCR engine for scanned loan-document pages.
 
-Uses PP-StructureV3 with Hindi + English coverage for Indian loan files.
+Uses PP-StructureV3 with a configurable script/language model for Indian loan files.
 Models are initialised lazily and reused across pages. In addition to the
 backwards-compatible flattened OCR text, each result includes reading-order
 layout blocks and the JSON-safe PP-StructureV3 response.
@@ -8,7 +8,7 @@ layout blocks and the JSON-safe PP-StructureV3 response.
 Public API
 ----------
 run_ocr_on_page(image_path)
-    Measure blur (advisory), run OCR, and return merged Hindi/English text.
+    Measure blur (advisory), run OCR, and return merged observed text.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 from services.config import get_bool, get_float, get_int
+from services.offline_ocr_languages import normalize_paddle_language, recognition_model_for_language
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def _dual_lang_enabled() -> bool:
 def _configured_ocr_langs() -> list[str]:
     if _dual_lang_enabled():
         return ["hi", "en"]
-    primary = (os.getenv("PADDLE_OCR_LANG") or "hi").strip().lower()
+    primary = normalize_paddle_language(os.getenv("PADDLE_OCR_LANG"))
     return [primary]
 
 
@@ -56,10 +57,7 @@ def _create_paddle_structure(lang: str) -> Any:
 
     det_limit = get_int("PADDLE_OCR_DET_LIMIT_SIDE_LEN", 1280, minimum=640, maximum=2400)
     det_model = os.getenv("PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det").strip() or "PP-OCRv5_mobile_det"
-    if lang == "hi":
-        rec_model = os.getenv("PADDLE_OCR_REC_MODEL_HI", "devanagari_PP-OCRv5_mobile_rec").strip()
-    else:
-        rec_model = os.getenv("PADDLE_OCR_REC_MODEL_EN", "PP-OCRv5_mobile_rec").strip()
+    rec_model = recognition_model_for_language(lang)
 
     base_kwargs = {
         "use_doc_orientation_classify": False,
@@ -67,7 +65,6 @@ def _create_paddle_structure(lang: str) -> Any:
         "use_textline_orientation": False,
         "lang": lang,
         "text_detection_model_name": det_model,
-        "text_recognition_model_name": rec_model,
         "text_det_limit_side_len": det_limit,
         "use_table_recognition": get_bool("PADDLE_STRUCTURE_USE_TABLE_RECOGNITION", True),
         "use_seal_recognition": get_bool("PADDLE_STRUCTURE_USE_SEAL_RECOGNITION", False),
@@ -75,6 +72,8 @@ def _create_paddle_structure(lang: str) -> Any:
         "use_chart_recognition": get_bool("PADDLE_STRUCTURE_USE_CHART_RECOGNITION", False),
         "use_region_detection": get_bool("PADDLE_STRUCTURE_USE_REGION_DETECTION", False),
     }
+    if rec_model:
+        base_kwargs["text_recognition_model_name"] = rec_model
     try:
         return PPStructureV3(**base_kwargs, enable_mkldnn=False)
     except TypeError:

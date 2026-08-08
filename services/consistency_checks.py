@@ -14,13 +14,23 @@ from services.person_names import (
     name_similarity,
     names_match,
 )
+from services.document_classifier import (
+    is_insurance_application_context,
+    is_insurer_local_application_identifier,
+)
 from services.validation_gates import field_reliable_for_validation
+from services.language_detection import (
+    analyze_text_languages,
+    is_regional_language_other_than_hindi,
+    normalize_language_code,
+)
 
 
 EXACT_FIELDS = {
     "loan_id", "application_number", "account_number", "pan_number",
     "aadhaar_number", "aadhaar_last4", "voter_id_number", "dl_number",
     "gstin", "ifsc", "pin_code", "phone_number", "customer_id",
+    "stamp_certificate_number", "stamp_unique_document_reference",
 }
 NUMERIC_FIELDS = {
     "loan_amount", "requested_amount", "recommended_amount", "sanction_amount",
@@ -28,12 +38,17 @@ NUMERIC_FIELDS = {
     "processing_fee", "insurance_amount", "net_disbursement", "foir", "ltv",
     "monthly_income", "verified_income", "considered_income", "monthly_obligations",
     "available_income", "maximum_emi", "turnover", "margin", "cibil_score", "crif_score",
+    "installment_count", "total_interest", "total_repayment", "other_charges",
+    "property_value", "market_value", "distress_value", "land_value",
+    "construction_value", "property_area", "mandate_amount",
+    "stamp_duty_amount", "stamp_consideration_amount",
 }
 NAME_FIELDS = {"applicant_name", "borrower_name", "account_holder_name", "father_name", "mother_name"}
+HOLDER_NAME_FIELDS = {"applicant_name", "borrower_name", "account_holder_name"}
 ADDRESS_FIELDS = {"address", "current_address", "permanent_address", "communication_address"}
 DATE_FIELDS = {
     "date_of_birth", "repayment_start_date", "maturity_date", "mandate_validity",
-    "occupied_since",
+    "occupied_since", "stamp_date",
 }
 
 # These are the requested JSON-to-document comparison fields. A field is checked
@@ -72,6 +87,10 @@ LOAN_FIELDS = {
     "site_address", "property_usage", "occupancy", "property_condition", "construction_status",
     "sanction_conditions", "approved_deviations", "pending_conditions", "tranche_structure",
     "workflow_status", "repayment_status", "overdue_status",
+    "stamp_certificate_number", "stamp_unique_document_reference", "stamp_account_reference",
+    "stamp_jurisdiction_state", "stamp_duty_amount", "stamp_consideration_amount",
+    "stamp_instrument_description", "stamp_article", "stamp_purchased_by", "stamp_first_party",
+    "stamp_second_party", "stamp_date",
 }
 
 
@@ -89,11 +108,15 @@ def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
 
     anomalies.extend(_trusted_matches(observations, people, trusted))
     anomalies.extend(_application_name_checks(pages, people))
-    anomalies.extend(_cross_document_matches(observations))
-    anomalies.extend(_aadhaar_address_checks(observations))
+    anomalies.extend(_cross_document_matches(observations, people))
+    anomalies.extend(_aadhaar_address_checks(observations, people))
     anomalies.extend(_relationship_checks(observations, people))
     anomalies.extend(_bureau_checks(pages, observations))
-    anomalies.extend(_application_language_checks(pages))
+    anomalies.extend(_application_language_checks(pages, trusted))
+    from services.repayment_schedule import validate_repayment_schedules
+
+    anomalies.extend(validate_repayment_schedules(pages, trusted))
+    anomalies.extend(_identity_affidavit_checks(pages, anomalies, people))
     return anomalies
 
 
@@ -104,12 +127,34 @@ def _people(trusted: dict) -> dict[str, dict]:
 
 def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
     result: list[dict] = []
-    for page in pages:
+    multi_person_section_roles: dict[str, str] = {}
+    for page in sorted(pages, key=lambda item: int(item.get("page_number") or 0)):
         fields = page.get("extracted_fields") or {}
         person_id = str(page.get("person_id") or page.get("applicant_role") or "").strip()
         if not person_id or person_id in {"unknown"}:
             person_id = _infer_person(fields, people, str(page.get("document_type") or ""))
         person_records = fields.get("person_records")
+        type_key = str(page.get("document_type") or "").strip().casefold()
+        is_multi_person_type = type_key in {"application form", "cam"}
+        section_role = "primary"
+        if is_multi_person_type:
+            context_key = _multi_person_context_key(page, fields)
+            role_hint = _multi_person_section_role(str(page.get("ocr_text") or ""))
+            if role_hint:
+                multi_person_section_roles[context_key] = role_hint
+            section_role = multi_person_section_roles.setdefault(context_key, "primary")
+        has_person_rows = (
+            isinstance(person_records, list)
+            and any(isinstance(record, dict) and bool(record) for record in person_records)
+        )
+        misowned_application_section = (
+            type_key == "application form"
+            and section_role in {"coapplicant", "guarantor"}
+            and not _section_role_matches_person(section_role, person_id, people)
+        )
+        multi_person_container = is_multi_person_type and (
+            has_person_rows or misowned_application_section
+        )
         if isinstance(person_records, list):
             for record in person_records:
                 if not isinstance(record, dict):
@@ -118,14 +163,17 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
                 record_person_id = (
                     provided_record_id
                     if provided_record_id in people
-                    else _infer_person(record, people, str(page.get("document_type") or ""))
+                    else _infer_person(record, people, "Application Form")
                 ) or "unassigned"
                 for field, value in record.items():
                     if str(field).startswith("_") or value in (None, "", [], {}):
                         continue
                     canonical_field = _canonical(str(field))
                     if not _usable_observation_value(
-                        str(page.get("document_type") or "Unknown"), canonical_field, value
+                        str(page.get("document_type") or "Unknown"),
+                        canonical_field,
+                        value,
+                        str(page.get("ocr_text") or ""),
                     ):
                         continue
                     if not _observation_is_reliable(page, canonical_field, value):
@@ -139,11 +187,24 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
                         "ocr_text": page.get("ocr_text"),
                     })
         for field, value in fields.items():
-            if str(field).startswith("_") or field == "person_records" or value in (None, "", [], {}):
+            if (
+                str(field).startswith("_")
+                or field in {"person_records", "repayment_schedule_rows"}
+                or value in (None, "", [], {})
+            ):
                 continue
             canonical_field = _canonical(str(field))
+            if multi_person_container and canonical_field in PERSON_FIELDS:
+                # Application/CAM pages are multi-person containers even when
+                # OCR cannot assemble a person_records row in an explicitly
+                # marked guarantor/co-applicant section. Re-reading that flat
+                # value as primary creates high-severity false mismatches.
+                continue
             if not _usable_observation_value(
-                str(page.get("document_type") or "Unknown"), canonical_field, value
+                str(page.get("document_type") or "Unknown"),
+                canonical_field,
+                value,
+                str(page.get("ocr_text") or ""),
             ):
                 continue
             if not _observation_is_reliable(page, canonical_field, value):
@@ -159,8 +220,73 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
     return result
 
 
-def _usable_observation_value(document_type: str, field: str, value: Any) -> bool:
-    if not _field_is_semantically_valid(document_type, field):
+def _multi_person_context_key(page: dict, fields: dict) -> str:
+    resolution = fields.get("_evidence_resolution")
+    if isinstance(resolution, dict) and resolution.get("document_id"):
+        return str(resolution["document_id"])
+    return str(
+        page.get("source_document_id")
+        or page.get("source_filename")
+        or f"{page.get('document_type')}:{page.get('page_number')}"
+    )
+
+
+def _multi_person_section_role(text: str) -> str | None:
+    """Infer an explicit role section while allowing it to continue on later pages."""
+    header = " ".join(str(text or "").splitlines()[:16]).casefold()
+    header = re.sub(r"[^a-z0-9\- ]+", " ", header)
+    header = re.sub(r"\s+", " ", header).strip()
+    if not header:
+        return None
+    if re.search(r"\b(?:loan\s+application\s+form|application\s+details)\b", header):
+        return "primary"
+    if re.search(
+        r"\b(?:details\s+of\s+security|bank\s+account\s+details|"
+        r"existing\s+credit\s+facilities|loan\s+purpose|declaration)\b",
+        header,
+    ):
+        return "primary"
+    if re.search(r"\bguarantor(?:\s+details|\s+address|\s+kyc)?\b", header):
+        return "guarantor"
+    if re.search(r"\b(?:co[\s-]*applicant|co[\s-]*borrower)(?:\s+details|\s+address|\s+kyc|\s+personal)?\b", header):
+        return "coapplicant"
+    return None
+
+
+def _section_role_matches_person(
+    section_role: str,
+    person_id: str,
+    people: dict[str, dict],
+) -> bool:
+    if not person_id or person_id in {"unassigned", "unknown"}:
+        return False
+    person = people.get(person_id) or {}
+    role_text = " ".join(
+        str(value or "")
+        for value in (
+            person_id,
+            person.get("role"),
+            person.get("applicant_role"),
+            person.get("person_role"),
+        )
+    ).casefold()
+    normalized = re.sub(r"[^a-z0-9]+", "", role_text)
+    if section_role == "primary":
+        return person_id == "primary" or normalized in {"applicant", "primaryapplicant"}
+    if section_role == "coapplicant":
+        return "coapplicant" in normalized or "coborrower" in normalized
+    if section_role == "guarantor":
+        return "guarantor" in normalized
+    return False
+
+
+def _usable_observation_value(
+    document_type: str,
+    field: str,
+    value: Any,
+    ocr_text: str = "",
+) -> bool:
+    if not _field_is_semantically_valid(document_type, field, ocr_text, value):
         return False
     if _is_garbage_extracted_value(field, value):
         return False
@@ -204,37 +330,70 @@ def _is_garbage_extracted_value(field: str, value: Any) -> bool:
             return True
         if len(re.findall(r"[a-zA-Z\u0900-\u097f]", text)) < 6:
             return True
+        if re.search(r"\b(?:website|helpline|gst\s*(?:no|number))\b|www\.|\S+@\S+", text, re.I):
+            return True
 
     if field == "pin_code":
         digits = re.sub(r"\D", "", text)
         if not re.fullmatch(r"[1-9]\d{5}", digits):
             return True
 
+    if field in {"credit_score", "cibil_score", "crif_score"}:
+        cleaned = text.strip(" '\"()[]")
+        if not re.fullmatch(r"(?:0|[3-9]\d{2})", cleaned):
+            return True
+
     return False
 
 
-def _field_is_semantically_valid(document_type: str, field: str) -> bool:
+def _field_is_semantically_valid(
+    document_type: str,
+    field: str,
+    ocr_text: str = "",
+    value: Any = None,
+) -> bool:
     """Reject fields whose labels mean something different in this document.
 
     A bureau report's BRANCH ID, APR month column, and historic sanctioned
     amount are not the loan-file branch, annual percentage rate, or current
     sanction amount.
     """
-    if document_type in {"CRIF Report", "CIBIL Report"} and field in {
+    if (
+        document_type == "Application Form"
+        and field == "application_number"
+        and is_insurance_application_context(ocr_text)
+        and is_insurer_local_application_identifier(ocr_text, value)
+    ):
+        # Cached runs can retain the old generic type and an insurer-local
+        # application number.  It is not the loan application identifier.
+        return False
+    document_key = str(document_type or "").strip().casefold()
+    if document_key in {
+        "insurance form", "life insurance form", "property insurance form"
+    } and field == "application_number" and is_insurer_local_application_identifier(
+        ocr_text, value
+    ):
+        # Insurer proposal/application IDs are not loan application numbers.
+        return False
+    if document_key in {"crif report", "cibil report"} and field in {
         "branch", "apr", "roi", "sanction_amount", "loan_amount", "processing_fee",
         # Bureau phone numbers are often historic/shared-family and should not
         # create TRUSTED_PHONE mismatches against CRM numbers.
         "phone_number", "bank_linked_mobile",
     }:
         return False
-    if document_type == "CERSAI Report" and field in {
+    if document_key == "cersai report" and field in {
         # CERSAI debtor-search DOB is frequently OCR/parser noise relative to KYC.
         "date_of_birth", "dob", "phone_number",
     }:
         return False
-    if document_type in {"Technical Report", "Technical Clearance Report"} and field in {
+    if document_key in {"technical report", "technical clearance report"} and field in {
         "phone_number", "email", "branch",
     }:
+        return False
+    if document_key in {"bank statement", "passbook", "cheque", "nach form"} and field == "branch":
+        # The account-servicing bank branch is a different semantic field from
+        # the lender/originating branch stored in the loan JSON.
         return False
     return True
 
@@ -269,34 +428,17 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
     for obs in observations:
         person_id = obs["person_id"]
         field = obs["field"]
-        # Only repair clearly wrong ownership stamps. Do not reassign just because
-        # a field mismatches — that would hide real TRUSTED_* findings.
-        if people and person_id in {"", "unassigned", "primary"} and field in NAME_FIELDS | EXACT_FIELDS:
-            inferred = _infer_person(
-                {
-                    field: obs["value"],
-                    "applicant_name": obs["value"] if field in NAME_FIELDS else None,
-                    "pan_number": obs["value"] if field == "pan_number" else None,
-                    "phone_number": obs["value"] if field == "phone_number" else None,
-                    "aadhaar_number": obs["value"] if field == "aadhaar_number" else None,
-                    "date_of_birth": obs["value"] if field in DATE_FIELDS else None,
-                },
-                people,
-                obs.get("document_type") or "",
-            )
-            if inferred and inferred != person_id:
-                person_id = inferred
-                obs = {**obs, "person_id": inferred}
-        elif people and field in {"pan_number", "aadhaar_number"} and person_id in people:
-            # Exact ID on a stamped page that belongs to someone else.
-            inferred = _infer_person({field: obs["value"]}, people, obs.get("document_type") or "")
-            if (
-                inferred
-                and inferred != person_id
-                and _matches(field, people.get(inferred, {}).get(field), obs["value"])
-            ):
-                person_id = inferred
-                obs = {**obs, "person_id": inferred}
+        # Ownership was resolved from the complete document/record before
+        # observations were flattened. Never infer an owner from the very value
+        # that is about to be reported as a mismatch. A unique, positive exact-ID
+        # match may still correct an explicitly wrong page stamp.
+        if people and person_id in people and field in {
+            "pan_number", "aadhaar_number", "aadhaar_last4"
+        }:
+            exact_owner = _positive_exact_identity_owner(field, obs["value"], people)
+            if exact_owner and exact_owner != person_id:
+                person_id = exact_owner
+                obs = {**obs, "person_id": exact_owner}
 
         if person_id in {"", "unassigned"} and field in PERSON_FIELDS:
             # Unresolved owner: do not invent a mismatch against anyone.
@@ -314,6 +456,23 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
             expected = _lookup(trusted, field)
             if expected in (None, "") and field in LOAN_FIELDS:
                 expected = _lookup(next(iter(people.values()), {}), field)
+        address_records: list[dict | None] = [person]
+        if not multi_person or person_id == "primary":
+            # Flat/root person fields in the company dump describe the primary
+            # borrower.  They must not become accepted address variants for a
+            # co-applicant or guarantor in a multi-person manifest.
+            address_records.append(trusted)
+        address_variants = (
+            _trusted_address_variants(*address_records)
+            if field in ADDRESS_FIELDS
+            else []
+        )
+        if address_variants and any(
+            _matches("address", value, obs["value"]) for value in address_variants
+        ):
+            continue
+        if expected in (None, "") and address_variants:
+            expected = address_variants[0]
         if field in NAME_FIELDS and not is_person_name_candidate(expected):
             continue
         if expected in (None, "") or _matches(field, expected, obs["value"]):
@@ -332,7 +491,7 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
                 continue
         # If the extracted name matches another known person, this is ownership
         # noise rather than a trusted-data mismatch for the assigned person.
-        if field in NAME_FIELDS and people and any(
+        if field in HOLDER_NAME_FIELDS and people and any(
             other_id != person_id and _matches("applicant_name", other.get("applicant_name"), obs["value"])
             for other_id, other in people.items()
         ):
@@ -340,7 +499,7 @@ def _trusted_matches(observations: list[dict], people: dict[str, dict], trusted:
         # A name that adds only the person's trusted father/mother tokens
         # ("Anupkumar Chetanbhai Suthar" for "Suthar Anupkumar") identifies
         # the same person in Indian naming conventions.
-        if field in NAME_FIELDS and _name_matches_with_relatives(obs["value"], person):
+        if field in HOLDER_NAME_FIELDS and _name_matches_with_relatives(obs["value"], person):
             continue
         key = (person_id, field, obs["page_number"])
         if key in emitted:
@@ -374,7 +533,9 @@ def _page_text_supports_value(page_text: Any, expected: Any) -> bool:
     return _names_equivalent(expected, text)
 
 
-def _cross_document_matches(observations: list[dict]) -> list[dict]:
+def _cross_document_matches(
+    observations: list[dict], people: dict[str, dict] | None = None
+) -> list[dict]:
     anomalies: list[dict] = []
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
     consistency_fields = PERSON_FIELDS | LOAN_FIELDS | NAME_FIELDS | ADDRESS_FIELDS
@@ -388,6 +549,18 @@ def _cross_document_matches(observations: list[dict]) -> list[dict]:
         for other in values[1:]:
             if anchor["document_type"] == other["document_type"] or _matches(field, anchor["value"], other["value"]):
                 continue
+            person = (people or {}).get(person_id, {})
+            if field in HOLDER_NAME_FIELDS and person and (
+                _name_matches_with_relatives(anchor["value"], person)
+                and _name_matches_with_relatives(other["value"], person)
+            ):
+                continue
+            address_variants = _trusted_address_variants(person)
+            if field in ADDRESS_FIELDS and address_variants and all(
+                any(_matches("address", variant, item["value"]) for variant in address_variants)
+                for item in (anchor, other)
+            ):
+                continue
             anomalies.append(_anomaly(
                 f"CROSS_DOCUMENT_{field.upper()}_MISMATCH", "HIGH" if field in NAME_FIELDS | EXACT_FIELDS else "MEDIUM",
                 f"{anchor['value']} ({anchor['document_type']})", f"{other['value']} ({other['document_type']})", other,
@@ -397,7 +570,9 @@ def _cross_document_matches(observations: list[dict]) -> list[dict]:
     return anomalies
 
 
-def _aadhaar_address_checks(observations: list[dict]) -> list[dict]:
+def _aadhaar_address_checks(
+    observations: list[dict], people: dict[str, dict] | None = None
+) -> list[dict]:
     anomalies: list[dict] = []
     by_person: dict[str, list[dict]] = defaultdict(list)
     for obs in observations:
@@ -409,14 +584,49 @@ def _aadhaar_address_checks(observations: list[dict]) -> list[dict]:
         aadhaar = next((item for item in values if item["document_type"] == "Aadhaar"), None)
         if not aadhaar:
             continue
+        address_variants = _trusted_address_variants((people or {}).get(person_id, {}))
         for other in values:
             if other is aadhaar or _matches("address", aadhaar["value"], other["value"]):
+                continue
+            if address_variants and all(
+                any(_matches("address", variant, item["value"]) for variant in address_variants)
+                for item in (aadhaar, other)
+            ):
                 continue
             anomalies.append(_anomaly(
                 "AADHAAR_ADDRESS_MISMATCH", "HIGH", aadhaar["value"], other["value"], other,
                 f"Address does not match the Aadhaar address for {person_id}.",
             ))
     return anomalies
+
+
+def _positive_exact_identity_owner(
+    field: str, value: Any, people: dict[str, dict]
+) -> str | None:
+    matches = [
+        person_id
+        for person_id, person in people.items()
+        if _lookup(person, field) not in (None, "")
+        and _matches(field, _lookup(person, field), value)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _trusted_address_variants(*records: dict | None) -> list[Any]:
+    values: list[Any] = []
+    seen: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        for key, value in record.items():
+            if _canonical(str(key)) not in ADDRESS_FIELDS or value in (None, ""):
+                continue
+            marker = _compact(value)
+            if not marker or marker in seen:
+                continue
+            seen.add(marker)
+            values.append(value)
+    return values
 
 
 def _relationship_checks(observations: list[dict], people: dict[str, dict]) -> list[dict]:
@@ -533,6 +743,15 @@ def _name_observation_is_reliable(page: dict, field: str, value: Any) -> bool:
     fields = page.get("extracted_fields") or {}
     if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False:
         return False
+    if (
+        str(page.get("document_type") or "").strip().casefold() == "aadhaar"
+        and isinstance(fields, dict)
+        and fields.get("related_person_name") not in (None, "")
+        and _names_equivalent(value, fields.get("related_person_name"))
+    ):
+        # Aadhaar back sides print S/O, W/O, D/O or C/O. Older cached
+        # extraction sometimes copied that relative into applicant_name.
+        return False
     return is_person_name_candidate(value)
 
 
@@ -576,7 +795,7 @@ def _bureau_checks(pages: list[dict], observations: list[dict]) -> list[dict]:
                     score_values.append((value, page))
         valid_scores = [
             value for value, _page in score_values
-            if (score := _number(value)) is not None and 300 <= score <= 900
+            if (score := _number(value)) is not None and (score == 0 or 300 <= score <= 900)
         ]
         if valid_scores:
             continue
@@ -592,7 +811,7 @@ def _bureau_checks(pages: list[dict], observations: list[dict]) -> list[dict]:
             "person_id": person_id or "unassigned",
         }
         anomalies.append(_anomaly(
-            "BUREAU_SCORE_MISSING", "HIGH", "Valid bureau score from 300 to 900",
+            "BUREAU_SCORE_MISSING", "HIGH", "Bureau score of 0 (no score) or 300 to 900",
             found or "Blank score table", obs,
             "Credit bureau report does not expose a valid score on its score page.",
         ))
@@ -608,25 +827,255 @@ def _has_bureau_score_table(page: dict) -> bool:
     )
 
 
-def _application_language_checks(pages: list[dict]) -> list[dict]:
+def _identity_affidavit_checks(
+    pages: list[dict],
+    anomalies: list[dict],
+    people: dict[str, dict],
+) -> list[dict]:
+    """Require discrepancy-specific evidence when a name or DOB conflicts.
+
+    A generic agreement clause mentioning the word ``affidavit`` is not enough.
+    The evidence must be classified as a declaration/affidavit and explicitly
+    discuss dual names, a name/DOB/signature mismatch, an alias, or the person's
+    correct identity.
+    """
+    discrepancy_rules = {
+        "TRUSTED_APPLICANT_NAME_MISMATCH",
+        "APPLICATION_NAME_MISMATCH",
+        "TRUSTED_DATE_OF_BIRTH_MISMATCH",
+    }
+    mismatches = [
+        anomaly
+        for anomaly in anomalies
+        if str(anomaly.get("rule_id") or "") in discrepancy_rules
+        and str(anomaly.get("severity") or "").upper() in {"HIGH", "MEDIUM"}
+    ]
+    pages_by_number = {
+        int(page.get("page_number") or 0): page
+        for page in pages
+        if page.get("page_number") is not None
+    }
+    mismatches = [
+        anomaly
+        for anomaly in mismatches
+        if _identity_mismatch_is_affidavit_worthy(
+            anomaly,
+            pages_by_number.get(int(anomaly.get("page_number") or 0), {}),
+            people.get(str(anomaly.get("person_id") or "primary"), {}),
+        )
+    ]
+    if not mismatches:
+        return []
+
+    person_ids = {
+        str(anomaly.get("person_id") or "primary")
+        for anomaly in mismatches
+    }
+    results: list[dict] = []
+    for person_id in sorted(person_ids):
+        person_mismatches = [
+            anomaly
+            for anomaly in mismatches
+            if str(anomaly.get("person_id") or "primary") == person_id
+        ]
+        person = people.get(person_id, {})
+        if any(_is_identity_declaration(page, person_id, person) for page in pages):
+            continue
+        first = person_mismatches[0]
+        mismatch_kinds = sorted(
+            {
+                "DOB" if "DATE_OF_BIRTH" in str(item.get("rule_id")) else "name"
+                for item in person_mismatches
+            }
+        )
+        results.append(
+            {
+                "rule_id": "IDENTITY_AFFIDAVIT_MISSING",
+                "s_no": 8,
+                "severity": "HIGH",
+                "document_type": "Dual Name Declaration / Affidavit",
+                "expected_value": (
+                    "Signed affidavit/declaration resolving the "
+                    + " and ".join(mismatch_kinds)
+                    + " discrepancy"
+                ),
+                "found_value": "No discrepancy-specific declaration found",
+                "page_number": first.get("page_number"),
+                "person_id": person_id,
+                "reason": (
+                    "A reliable identity mismatch exists, but the packet does not contain a "
+                    "dual-name/DOB/signature affidavit or declaration that resolves it."
+                ),
+            }
+        )
+    return results
+
+
+def _identity_mismatch_is_affidavit_worthy(
+    anomaly: dict, page: dict, person: dict
+) -> bool:
+    """Reject ownership/extraction noise before cascading to affidavit rules."""
+    if not isinstance(page, dict) or not isinstance(person, dict) or not person:
+        return False
+    if str(page.get("document_type") or "") not in {
+        "Aadhaar",
+        "PAN",
+        "PAN Card",
+        "Voter ID",
+        "Driving License",
+        "Passport",
+        "KYC Card Photo",
+        "Application Form",
+    }:
+        return False
+    fields = page.get("extracted_fields") or {}
+    if not isinstance(fields, dict):
+        return False
+
+    exact_anchors = (
+        "pan_number",
+        "aadhaar_number",
+        "aadhaar_last4",
+        "phone_number",
+        "customer_id",
+    )
+    has_exact_anchor = any(
+        fields.get(field) not in (None, "")
+        and _lookup(person, field) not in (None, "")
+        and _matches(field, _lookup(person, field), fields.get(field))
+        for field in exact_anchors
+    )
+    rule_id = str(anomaly.get("rule_id") or "")
+    if "DATE_OF_BIRTH" in rule_id:
+        if not _plausible_adult_date_of_birth(
+            fields.get("date_of_birth") or fields.get("dob")
+        ):
+            return False
+        observed_name = fields.get("applicant_name") or fields.get("borrower_name")
+        name_matches = (
+            observed_name not in (None, "")
+            and _matches("applicant_name", person.get("applicant_name"), observed_name)
+        )
+        return bool(has_exact_anchor or name_matches)
+
+    # A conflicting name must still be anchored to the same trusted person by
+    # another identifier/date; otherwise it is probably another person's page.
+    return bool(has_exact_anchor)
+
+
+def _plausible_adult_date_of_birth(value: Any) -> bool:
+    if value in (None, ""):
+        return False
+    try:
+        from datetime import date
+        from dateutil import parser
+
+        parsed = parser.parse(str(value), dayfirst=True).date()
+        today = date.today()
+        age = today.year - parsed.year - ((today.month, today.day) < (parsed.month, parsed.day))
+        return 18 <= age <= 100
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _is_identity_declaration(page: dict, person_id: str, person: dict) -> bool:
+    document_type = str(page.get("document_type") or "").casefold()
+    provided_type = str(page.get("provided_document_type") or "").casefold()
+    combined_type = f"{document_type} {provided_type}"
+    if not any(
+        marker in combined_type
+        for marker in ("affidavit", "dual name", "name declaration", "self declaration")
+    ):
+        return False
+
+    page_person = str(page.get("person_id") or "unassigned")
+    text = str(page.get("ocr_text") or "")
+    lowered = text.casefold()
+    identity_markers = (
+        "dual name",
+        "mismatch of name",
+        "mismatch of last name",
+        "mismatch of surname",
+        "dual date of birth",
+        "correct name",
+        "correct date of birth",
+        "one and the same",
+        "one & the same",
+        "also known as",
+        "alias",
+        "my name as per",
+        "name/surname",
+        "name or signature",
+    )
+    if not any(marker in lowered for marker in identity_markers):
+        return False
+    if page_person not in {"", "unassigned", "unknown", person_id}:
+        return False
+    expected_name = person.get("applicant_name") if isinstance(person, dict) else None
+    if page_person == person_id or not expected_name:
+        return True
+    return _page_text_supports_value(text, expected_name)
+
+
+def _application_language_checks(pages: list[dict], trusted: dict | None = None) -> list[dict]:
+    """Verify regional-language evidence without equating script to language.
+
+    Devanagari alone cannot distinguish Hindi from Haryanvi, Bhojpuri,
+    Maithili, Magahi, and related languages.  Exact resolution therefore uses
+    a printed declaration, provider language metadata, or trusted template
+    configuration before falling back to script-level evidence.
+    """
     anomalies: list[dict] = []
     app_pages = [page for page in pages if page.get("document_type") == "Application Form"]
     if not app_pages:
         return anomalies
 
+    configured_languages = _configured_application_languages(trusted or {})
     for page in app_pages:
         fields = page.get("extracted_fields") or {}
-        language = str(fields.get("second_language") or "").strip()
-        if language and language.lower() not in {"hindi", "हिंदी", "english"}:
+        declared_language = fields.get("second_language")
+        if is_regional_language_other_than_hindi(declared_language):
             return []
+        if any(is_regional_language_other_than_hindi(value) for value in configured_languages):
+            return []
+
+        language_metadata = fields.get("_language") if isinstance(fields.get("_language"), dict) else {}
+        provider_languages = language_metadata.get("provider_languages") or []
+        if any(is_regional_language_other_than_hindi(value) for value in provider_languages):
+            return []
+
         text = str(page.get("ocr_text") or "")
-        has_english = bool(re.search(r"[A-Za-z]{4,}", text))
-        has_hindi = bool(re.search(r"[\u0900-\u097f]{3,}", text))
-        # Bilingual application forms already satisfy the second-language intent.
-        if has_english and has_hindi:
+        scripts = set(analyze_text_languages(text)["scripts"])
+        # A distinct regional script is sufficient evidence for this checklist
+        # rule, but it still does not semantically identify the language.
+        if "latin" in scripts and scripts.difference({"latin", "devanagari"}):
             return []
 
     page = app_pages[0]
+    all_scripts = {
+        script
+        for app_page in app_pages
+        for script in analyze_text_languages(str(app_page.get("ocr_text") or ""))["scripts"]
+    }
+    if "latin" in all_scripts and all_scripts.difference({"latin", "devanagari"}):
+        return []
+    declared_codes = [
+        normalize_language_code((app_page.get("extracted_fields") or {}).get("second_language"))
+        for app_page in app_pages
+    ]
+    if "devanagari" in all_scripts and not any(code in {"en", "hi"} for code in declared_codes if code):
+        anomalies.append({
+            "rule_id": "APPLICATION_REGIONAL_LANGUAGE_UNVERIFIED", "s_no": 10, "severity": "MEDIUM",
+            "document_type": "Application Form", "expected_value": "Second language other than Hindi",
+            "found_value": "Devanagari script; exact language is ambiguous",
+            "page_number": page.get("page_number"), "person_id": None,
+            "reason": (
+                "Devanagari may be Hindi, Haryanvi, Bhojpuri, Maithili, Magahi, or another language. "
+                "Verify the printed language declaration or configure application_form_languages."
+            ),
+        })
+        return anomalies
+
     anomalies.append({
         "rule_id": "APPLICATION_SECOND_LANGUAGE_MISSING", "s_no": 10, "severity": "MEDIUM",
         "document_type": "Application Form", "expected_value": "Second language other than Hindi",
@@ -634,6 +1083,25 @@ def _application_language_checks(pages: list[dict]) -> list[dict]:
         "reason": "Verify that the application form includes a second language other than Hindi.",
     })
     return anomalies
+
+
+def _configured_application_languages(trusted: dict) -> list[Any]:
+    """Read optional case/template language declarations from trusted input."""
+    values: list[Any] = []
+    for key in ("application_form_languages", "required_application_languages"):
+        value = trusted.get(key)
+        if isinstance(value, list):
+            values.extend(value)
+        elif value not in (None, ""):
+            values.append(value)
+    document_languages = trusted.get("document_languages")
+    if isinstance(document_languages, dict):
+        value = document_languages.get("Application Form") or document_languages.get("application_form")
+        if isinstance(value, list):
+            values.extend(value)
+        elif value not in (None, ""):
+            values.append(value)
+    return values
 
 
 def _canonical(field: str) -> str:
@@ -685,6 +1153,9 @@ def _matches(field: str, left: Any, right: Any) -> bool:
             and left_compact[-4:] == right_compact[-4:]
         )
     if field in ADDRESS_FIELDS:
+        if _explicit_address_unit_conflict(left, right):
+            return False
+
         def address_tokens(value: Any) -> set[str]:
             normalized = re.sub(
                 r"\b([swdc])\s*/\s*o\b", r"\1o", str(value).lower()
@@ -746,18 +1217,109 @@ def _matches(field: str, left: Any, right: Any) -> bool:
         containment = len(shared) / max(1, min(len(left_tokens), len(right_tokens)))
         if same_pin and len(shared) >= 5 and containment >= 0.75:
             return True
+        generic_address_tokens = {
+            "so", "wo", "do", "co", "po", "dist", "district", "state",
+            "india", "gujarat", "rajasthan", "ahmedabad", "ahmadabad",
+            *re.findall(r"\b[1-8]\d{5}\b", f"{left} {right}"),
+        }
+        distinctive_shared = {
+            token for token in shared
+            if token not in generic_address_tokens and len(token) >= 3
+        }
+        left_distinctive = {
+            token for token in left_tokens
+            if token not in generic_address_tokens and len(token) >= 3 and not token.isdigit()
+        }
+        right_distinctive = {
+            token for token in right_tokens
+            if token not in generic_address_tokens and len(token) >= 3 and not token.isdigit()
+        }
+        fuzzy_distinctive_pairs = {
+            (left_token, right_token)
+            for left_token in left_distinctive - distinctive_shared
+            for right_token in right_distinctive - distinctive_shared
+            if _similarity(left_token, right_token) >= 0.78
+        }
+        left_units = _explicit_address_units(left)
+        right_units = _explicit_address_units(right)
+        matched_unit = any(
+            not left_values.isdisjoint(right_units[category])
+            for category, left_values in left_units.items()
+            if category in right_units
+        )
+        # Layout OCR may corrupt a PIN or one locality spelling while preserving
+        # the exact flat/unit plus multiple address anchors (B-402, Pandit,
+        # Hathijan). Conversely rural addresses often have an exact PIN plus
+        # one exact and one near-identical village token (Harniyau/Harniyav).
+        if (
+            matched_unit
+            and len(distinctive_shared) >= 2
+        ) or (
+            same_pin
+            and len(distinctive_shared) + len(fuzzy_distinctive_pairs) >= 2
+        ):
+            return True
+        # Trusted rural addresses often contain only village/locality + PIN,
+        # while Aadhaar adds relation, PO, tehsil and district text. Two shared
+        # distinctive locality tokens plus the same PIN identify that variant.
+        if same_pin and len(distinctive_shared) >= 2 and containment >= 0.55:
+            return True
         # Multi-card OCR collage: locality + PIN agree even when Hindi OCR is noisy.
         locality_markers = {"semli", "semali", "bakhta", "bakta", "sulia", "jhalawar", "pachpahar", "rajasthan"}
         if same_pin and len(shared & locality_markers) >= 2 and containment >= 0.4:
             return True
         overlap = len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
         return overlap >= 0.70 or _similarity(left, right) >= 0.82
-    if field in NAME_FIELDS:
+    if field in HOLDER_NAME_FIELDS:
         return (
             names_match(_without_honorific(left), _without_honorific(right), threshold=0.85)
             or _names_equivalent(left, right)
         )
+    if field in {"father_name", "mother_name"}:
+        return _related_names_equivalent(left, right)
     return _similarity(left, right) >= 0.88
+
+
+def _explicit_address_unit_conflict(left: Any, right: Any) -> bool:
+    """Reject locality-tolerant matches when both addresses disagree on a unit.
+
+    PIN and locality overlap are deliberately tolerant of OCR noise.  A clear
+    Flat/House/Unit number is different: B-402 and B-403 cannot describe the
+    same service address even if every remaining token is identical.
+    """
+    left_units = _explicit_address_units(left)
+    right_units = _explicit_address_units(right)
+    for category in left_units.keys() & right_units.keys():
+        if left_units[category].isdisjoint(right_units[category]):
+            return True
+    return False
+
+
+def _explicit_address_units(value: Any) -> dict[str, set[str]]:
+    text = str(value or "").casefold()
+    result: dict[str, set[str]] = defaultdict(set)
+    identifier = r"([a-z]?\s*[-/]?\s*\d{1,5}(?:\s*[-/]\s*\d{1,5})?[a-z]?)"
+    patterns = (
+        (
+            "occupancy",
+            rf"\b(?:flat|apartment|apt|house|unit|door|room|quarter)\s*(?:(?:number|no)\.?\s*)?{identifier}",
+        ),
+        ("occupancy", rf"\bh\s*\.?\s*no\.?\s*{identifier}"),
+        ("plot", rf"\bplot\s*(?:(?:number|no)\.?\s*)?{identifier}"),
+        ("block", rf"\bblock\s*(?:(?:number|no)\.?\s*)?{identifier}"),
+    )
+    for category, pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            normalized = re.sub(r"[^a-z0-9]", "", match.group(1).casefold())
+            if normalized:
+                result[category].add(normalized)
+
+    # Company dumps commonly omit the word "Flat" and start directly with
+    # an alphanumeric unit such as "B 402" or "B-402".
+    leading = re.match(r"^\s*([a-z])\s*[-/]?\s*(\d{1,5}[a-z]?)\b", text)
+    if leading:
+        result["occupancy"].add(f"{leading.group(1)}{leading.group(2)}")
+    return result
 
 
 def _without_honorific(value: Any) -> str:
@@ -767,6 +1329,25 @@ def _without_honorific(value: Any) -> str:
         str(value or ""),
         flags=re.IGNORECASE,
     )
+
+
+def _related_names_equivalent(left: Any, right: Any) -> bool:
+    """Compare parent names without holder-only extra-relative tolerance."""
+    left_tokens = list(
+        dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(left))
+    )
+    right_tokens = list(
+        dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(right))
+    )
+    if not left_tokens or not right_tokens or len(left_tokens) != len(right_tokens):
+        return False
+    if left_tokens == right_tokens or set(left_tokens) == set(right_tokens):
+        return True
+    return SequenceMatcher(
+        None,
+        "".join(left_tokens),
+        "".join(right_tokens),
+    ).ratio() >= 0.88
 
 
 # Common North-Indian OCR/transliteration variants that humans treat as the same person.

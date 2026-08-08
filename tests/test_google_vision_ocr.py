@@ -12,6 +12,7 @@ def _isolate_from_settings_db(monkeypatch) -> None:
     # The provider prefers the settings DB over environment variables; tests
     # must not depend on whatever the developer's live settings table holds.
     monkeypatch.setattr(google_vision_ocr, "get_setting", lambda _key, default=None: default)
+    monkeypatch.delenv("GOOGLE_VISION_LANGUAGE_HINTS", raising=False)
 
 
 def test_google_vision_rest_api_key_parses_document_text(monkeypatch, tmp_path) -> None:
@@ -32,6 +33,12 @@ def test_google_vision_rest_api_key_parses_document_text(monkeypatch, tmp_path) 
                     "fullTextAnnotation": {
                         "text": "Applicant Name\nRamesh Kumar",
                         "pages": [{
+                            "property": {
+                                "detectedLanguages": [
+                                    {"languageCode": "gu", "confidence": 0.96},
+                                    {"languageCode": "en", "confidence": 0.72},
+                                ]
+                            },
                             "blocks": [{
                                 "blockType": "TEXT",
                                 "confidence": 0.8,
@@ -73,6 +80,36 @@ def test_google_vision_rest_api_key_parses_document_text(monkeypatch, tmp_path) 
     assert result["confidence"] == pytest.approx(0.85)
     assert result["bounding_boxes"][0]["text"] == "Ramesh"
     assert result["layout_blocks"][0]["text"] == "RK"
+    assert result["ocr_languages"] == ["gu", "en"]
+    assert "imageContext" not in captured["json"]["requests"][0]
+
+
+def test_google_vision_sends_optional_multilingual_hints(monkeypatch, tmp_path) -> None:
+    image = tmp_path / "page.png"
+    image.write_bytes(b"fake-image")
+    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_VISION_AUTH", "api_key")
+    monkeypatch.setenv("GOOGLE_VISION_LANGUAGE_HINTS", "en, gu, en")
+    captured: dict = {}
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"responses": [{"fullTextAnnotation": {"text": "લોન Agreement", "pages": []}}]}
+
+    def fake_post(_url, *, json, timeout):
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(google_vision_ocr.requests, "post", fake_post)
+
+    result = google_vision_ocr.run_google_vision_ocr_on_page(image)
+
+    assert captured["json"]["requests"][0]["imageContext"] == {"languageHints": ["en", "gu"]}
+    assert result["ocr_language_hints"] == ["en", "gu"]
 
 
 def test_google_vision_returns_clear_error_when_image_missing(tmp_path) -> None:

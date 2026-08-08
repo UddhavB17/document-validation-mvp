@@ -5,6 +5,7 @@ from __future__ import annotations
 from services.consistency_checks import run_consistency_checks
 from services.person_ownership import (
     assign_page_owners,
+    name_matches_trusted_person,
     resolve_person_owner,
 )
 
@@ -278,3 +279,156 @@ def test_clean_external_name_rejects_unsubstantiated_provided_mapping() -> None:
     )
     assert owner["person_id"] is None
     assert owner["evidence"] == ["observed_name_contradicts_provided_mapping"]
+
+
+def test_source_role_missing_from_trusted_never_defaults_to_primary() -> None:
+    owner = resolve_person_owner(
+        {
+            "document_type": "PAN",
+            "extracted_fields": {
+                "applicant_name": "SUTHAR AARATIBEN ANUPKUMAR",
+                "pan_number": "SXPPS4453F",
+            },
+        },
+        SINGLE_PERSON,
+        "PAN",
+        source_filename="Co-Applicant/KYC/PAN.pdf",
+    )
+    assert owner["person_id"] is None
+    assert owner["source_role"] == "coapplicant"
+    assert "source_role_not_in_trusted_data" in owner["evidence"]
+    assert "single_person_manifest" not in owner["evidence"]
+
+
+def test_present_source_role_resolves_and_exact_identity_can_override_path() -> None:
+    coapp = resolve_person_owner(
+        {"document_type": "PAN", "extracted_fields": {}},
+        {
+            "primary": PEERU_FAMILY["primary"],
+            "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+        },
+        "PAN",
+        source_filename="Co_Applicant/KYC/PAN.pdf",
+    )
+    assert coapp["person_id"] == "coapplicant_1"
+
+    misplaced_primary = resolve_person_owner(
+        {
+            "document_type": "PAN",
+            "extracted_fields": {
+                "applicant_name": "PEERU LAL",
+                "pan_number": "TSTAA0001T",
+            },
+        },
+        PEERU_FAMILY,
+        "PAN",
+        source_filename="Co-Applicant/KYC/misfiled.pdf",
+    )
+    assert misplaced_primary["person_id"] == "primary"
+    assert "overrode_source_role:coapplicant" in misplaced_primary["evidence"]
+
+
+def test_unlabeled_generic_and_raw_aadhaar_do_not_override_source_role() -> None:
+    people = {
+        "primary": {
+            **PEERU_FAMILY["primary"],
+            "aadhaar_number": "822113513365",
+        },
+        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+    }
+    owner = resolve_person_owner(
+        {
+            "document_type": "Application Form",
+            "ocr_text": "Bank Account Number 8221 1351 3365",
+            "extracted_fields": {
+                "_generic_evidence": {"aadhaar_numbers": ["822113513365"]},
+            },
+        },
+        people,
+        "Application Form",
+        source_filename="Co-Applicant/Application/application.pdf",
+    )
+
+    assert owner["person_id"] == "coapplicant_1"
+    assert owner["evidence"] == ["source_role:coapplicant"]
+
+
+def test_phone_name_and_aadhaar_last4_cannot_override_source_role() -> None:
+    people = {
+        "primary": {
+            **PEERU_FAMILY["primary"],
+            "aadhaar_last4": "3365",
+        },
+        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+    }
+    owner = resolve_person_owner(
+        {
+            "document_type": "Application Form",
+            "extracted_fields": {
+                "applicant_name": "PEERU LAL",
+                "phone_number": "9000000001",
+                "aadhaar_last4": "3365",
+            },
+        },
+        people,
+        "Application Form",
+        source_filename="Co-Applicant/Application/application.pdf",
+    )
+
+    assert owner["person_id"] == "coapplicant_1"
+    assert owner["evidence"] == ["source_role:coapplicant"]
+
+
+def test_full_labeled_aadhaar_can_override_wrong_source_role() -> None:
+    people = {
+        "primary": {
+            **PEERU_FAMILY["primary"],
+            "aadhaar_number": "822113513365",
+        },
+        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+    }
+    owner = resolve_person_owner(
+        {
+            "document_type": "Application Form",
+            "ocr_text": "Aadhaar Number: 8221 1351 3365",
+            "extracted_fields": {"aadhaar_number": "822113513365"},
+        },
+        people,
+        "Application Form",
+        source_filename="Co-Applicant/Application/misfiled.pdf",
+    )
+
+    assert owner["person_id"] == "primary"
+    assert "overrode_source_role:coapplicant" in owner["evidence"]
+
+
+def test_full_observed_aadhaar_does_not_override_when_trusted_has_last4_only() -> None:
+    people = {
+        "primary": {
+            **PEERU_FAMILY["primary"],
+            "aadhaar_last4": "3365",
+        },
+        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+    }
+    owner = resolve_person_owner(
+        {
+            "document_type": "Application Form",
+            "ocr_text": "Aadhaar Number: 8221 1351 3365",
+            "extracted_fields": {"aadhaar_number": "822113513365"},
+        },
+        people,
+        "Application Form",
+        source_filename="Co-Applicant/Application/application.pdf",
+    )
+
+    assert owner["person_id"] == "coapplicant_1"
+
+
+def test_trusted_name_match_ignores_honorific_and_ocr_relative_noise() -> None:
+    assert name_matches_trusted_person(
+        "MR- ★ ANUPKUMAR CHSTAHBHAI SUTHAR",
+        {
+            "applicant_name": "SUTHAR ANUPKUMAR",
+            "father_name": "CHETANBHAI MOHANLAL SUTHAR",
+        },
+    )

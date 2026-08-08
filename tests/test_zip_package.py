@@ -72,6 +72,22 @@ def test_zip_package_emits_per_file_preparation_progress(tmp_path: Path) -> None
     assert completed["document"]["page_count"] == 2
 
 
+def test_zip_package_marks_exact_duplicates_and_filename_variants(tmp_path: Path) -> None:
+    source_pdf = tmp_path / "source.pdf"
+    _create_pdf(source_pdf, 2)
+    archive_path = tmp_path / "loan.zip"
+    with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+        archive.write(source_pdf, "LOAN/Agreement.pdf")
+        archive.write(source_pdf, "LOAN/e_signed_Agreement With Stamp Paper.pdf")
+
+    result = normalize_zip_package(archive_path, tmp_path / "package")
+
+    first, second = result["documents"]
+    assert second["source_sha256"] == first["source_sha256"]
+    assert second["duplicate_of_source_document_id"] == first["source_document_id"]
+    assert second["variant_hints"] == ["e_signed", "stamped"]
+
+
 @pytest.mark.parametrize(
     ("member_name", "message"),
     [

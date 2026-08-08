@@ -73,6 +73,44 @@ def test_sanction_boilerplate_is_not_treated_as_legal_clearance() -> None:
     assert not any(anomaly["rule_id"] == "STATUS_CHECK_S37" for anomaly in anomalies)
 
 
+def test_legal_otc_pdd_approval_email_satisfies_clearance_and_status() -> None:
+    pages = [
+        {
+            "page_number": 511,
+            "document_type": "OTC PDD Document",
+            "page_type": "digital",
+            "classification_confidence": 1.0,
+            "ocr_text": (
+                "Subject: Re: Request legal OTC/PDD approval for the case\n"
+                "App No: 30765\nFrom: Chief Operating Officer\nok\nThanks & regards"
+            ),
+            "extracted_fields": {},
+        }
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert not any(anomaly["rule_id"] == "MISSING_DOC_S37" for anomaly in anomalies)
+    assert not any(anomaly["rule_id"] in {"STATUS_CHECK_S37", "STATUS_UNVERIFIABLE_S37"} for anomaly in anomalies)
+
+
+def test_generic_otc_pdd_inventory_is_not_legal_clearance() -> None:
+    pages = [
+        {
+            "page_number": 512,
+            "document_type": "OTC PDD Document",
+            "page_type": "digital",
+            "classification_confidence": 1.0,
+            "ocr_text": "OTC/PDD inventory: tax receipt received; mortgage deed pending",
+            "extracted_fields": {},
+        }
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert any(anomaly["rule_id"] == "MISSING_DOC_S37" for anomaly in anomalies)
+
+
 def test_presence_any_fails_when_none_found() -> None:
     result = check_presence_any([{"document_type": "Bank Statement"}], ["Aadhaar", "Voter ID"])
     assert result["passed"] is False
@@ -101,6 +139,30 @@ def test_date_range_bank_stmt_old() -> None:
     assert check_date_range({"statement_period_end": old}, 3)["passed"] is False
 
 
+def test_disbursal_continuation_dates_do_not_trigger_bank_period_check() -> None:
+    pages = [
+        _confident_page(1, "Application Form"),
+        _confident_page(2, "Loan Agreement"),
+        _confident_page(
+            3,
+            "Bank Statement",
+            ocr_text=(
+                "In case the transaction is related to a Balance Transfer, the eligible amount "
+                "shall be based on the Foreclosure Letter or Statement of Account submitted by "
+                "the customer at the time of disbursement. Yours faithfully."
+            ),
+            extracted_fields={
+                "statement_period_start": "2026-07-31",
+                "statement_period_end": "2026-07-31",
+            },
+        ),
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert not any(item["rule_id"] == "PERIOD_CHECK_S17" for item in anomalies)
+
+
 def test_missing_pan() -> None:
     anomalies = run_checks([], {}, {}, "LAP")
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
@@ -118,6 +180,22 @@ def test_temporarily_excluded_physical_items_are_not_reviewed() -> None:
     anomalies = run_checks([], {}, {}, "LAP")
     assert any(anomaly["rule_id"] == "MISSING_DOC_S1" for anomaly in anomalies)
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
+    assert not any(anomaly.get("s_no") in {13, 19} for anomaly in anomalies)
+
+
+def test_manual_only_items_do_not_become_factual_missing_document_anomalies() -> None:
+    anomalies = run_checks(
+        [_confident_page(1, "Application Form")],
+        {"loan_amount": 450000},
+        {"loan_amount": 450000},
+        "LAP",
+    )
+
+    assert not any(
+        anomaly.get("s_no") in {13, 19}
+        and str(anomaly.get("rule_id") or "").startswith("MISSING_DOC")
+        for anomaly in anomalies
+    )
 
 
 def test_run_checks_flags_non_loan_document_instead_of_missing_docs() -> None:
@@ -458,4 +536,3 @@ def test_coapplicant_presence_and_match_verifies_against_correct_person() -> Non
         item for item in anomalies if item.get("rule_id", "").startswith("FIELD_MISMATCH")
     ]
     assert not mismatch_anomalies, f"Found unexpected mismatch anomalies: {mismatch_anomalies}"
-

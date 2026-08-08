@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from services.config import effective_config
@@ -63,10 +64,25 @@ def _is_legal_clearance_evidence(page: dict[str, Any], expected_type: str) -> bo
     if expected_type != "Legal Clearance Report":
         return False
 
-    if page.get("document_type") not in {"Legal Clearance Report", "Property Document", "Sanction Letter"}:
+    actual_type = page.get("document_type")
+    if actual_type not in {
+        "Legal Clearance Report",
+        "Property Document",
+        "Sanction Letter",
+        "OTC PDD Document",
+    }:
         return False
 
     text = str(page.get("ocr_text") or "").lower()
+    if actual_type == "OTC PDD Document":
+        # Operational legal clearance can arrive as an approval email thread
+        # bundled with the OTC/PDD list.  Require the explicit legal-approval
+        # subject so an ordinary OTC/PDD inventory cannot satisfy S37.
+        return bool(re.search(
+            r"\brequest\s+legal\s+(?:otc\s*/?\s*pdd|pdd\s*/?\s*otc)\s+approval\b",
+            text,
+        ))
+
     # Agreement/sanction boilerplate often contains isolated words such as
     # "legal", "security" and "clear".  Only accept it as alternate legal
     # clearance evidence when it actually states a positive title conclusion.

@@ -120,6 +120,49 @@ NA
     assert not any(record.get("crif_score") == "NA" for record in records)
 
 
+def test_cam_extracts_stacked_sanction_decision_and_repayment_bank_details() -> None:
+    text = """CREDIT APPROVAL MEMO
+APPLICATION BANK DETAILS
+Account Number
+11111111111111
+REPAYMENT BANK DETAILS
+Account Number
+83770100000605
+IFSC Code
+BARB0DBHARA
+Account Holder Name
+ANUPKUMAR CHETANBHAI SUTHAR
+DECISION
+Sanction Loan Amount
+Sanction Tenure
+Advance EMI
+Sanction Rate
+Sanction EMI
+Sanction Date
+Sanction Remarks
+Username
+450000.000000
+84
+-
+21.00
+10,266.00
+31-July-2026
+approved with condition
+msfc1500 - Rohit Kumar Banthia
+"""
+
+    result = extract_fields("CAM", text)
+
+    assert result["loan_amount"] == "450000"
+    assert result["sanction_amount"] == "450000"
+    assert result["tenure"] == 84
+    assert result["roi"] == pytest.approx(21.0)
+    assert result["emi"] == "10266"
+    assert result["account_number"] == "83770100000605"
+    assert result["ifsc"] == "BARB0DBHARA"
+    assert result["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
+
+
 def test_application_form_keeps_coapplicant_kyc_rows_person_scoped() -> None:
     text = """CO-APPLICANT KYC DETAILS
 APPLICANT NAME
@@ -179,6 +222,25 @@ Closing Balance
 270399
 """
     assert extract_fields("KFS", text)["emi"] == "8234"
+
+
+def test_kfs_repayment_summary_and_schedule_rows_are_structured() -> None:
+    fields = extract_fields(
+        "KFS",
+        "Illustration for computation of APR for Retail and MSME loans\n"
+        "1. Sanctioned Loan Amount (in Rupees)\n450000.00\n"
+        "2. Loan Term (in months)\n84\nMonthly 10266.00 & 84\n"
+        "5. Total interest amount to be charged during the entire tenure\n412250.18\n"
+        "6. Fee/ Charges payable\n1000.00\n"
+        "8. Total amount to be paid by the borrower (sum of 1 and 5)\n862250.18\n"
+        "Repayment Schedule EMI (In Rs.) Principal Interest Closing Balance\n"
+        "1 450000.00 10266.00 2391.00 7875.00 447609.00\n"
+        "2 447609.00 10266.00 2432.84 7833.16 445176.16",
+    )
+
+    assert fields["installment_count"] == 84
+    assert fields["total_interest"] == 412250.18
+    assert fields["total_repayment"] == 862250.18
 
 
 def test_pan_extracts_name_when_ocr_prefixes_name_label() -> None:
@@ -580,6 +642,50 @@ def test_stamp_duty_extracts_stamp_date() -> None:
     assert result["stamp_date"] == "2026-07-12"
 
 
+def test_stamp_duty_extracts_jurisdiction_certificate_and_amounts() -> None:
+    result = extract_fields(
+        "Stamp Duty",
+        "\n".join(
+            [
+                "Government of Gujarat",
+                "Certificate No: GJ-12345",
+                "Certificate Issued Date: 02/04/2025",
+                "Account Reference: ACC-9988",
+                "Unique Doc. Reference: UDR-5566",
+                "Purchased by: ABC Finance Limited",
+                "Description of Document: Article 5(h) Agreement - Loan Agreement",
+                "Consideration Price (Rs.): 500000",
+                "First Party: Ramesh Kumar",
+                "Second Party: ABC Finance Limited",
+                "Stamp Duty Amount (Rs.): 300",
+            ]
+        ),
+    )
+    assert result["stamp_jurisdiction_state"] == "Gujarat"
+    assert result["stamp_certificate_number"] == "GJ-12345"
+    assert result["stamp_unique_document_reference"] == "UDR-5566"
+    assert result["stamp_article"] == "5(h)"
+    assert result["stamp_consideration_amount"] == "500000"
+    assert result["stamp_duty_amount"] == "300"
+    assert result["stamp_date"] == "2025-04-02"
+
+
+def test_crif_zero_score_is_extracted() -> None:
+    result = extract_fields("CRIF Report", "CRIF Credit Information Report Credit Score: 0")
+    assert result["credit_score"] == "0"
+
+
+def test_end_use_letter_extracts_purpose_for_json_comparison() -> None:
+    result = extract_fields(
+        "End-Use Letter",
+        "END-USE LETTER FROM THE BORROWER\nRef.: GJ000030765\n"
+        "The said Loan is for the purpose of: Business Use and\nRunning Loan Closer\n"
+        "I / We hereby confirm the purpose is valid.",
+    )
+    assert result["application_number"] == "GJ000030765"
+    assert result["loan_purpose"] == "Business Use and Running Loan Closer"
+
+
 def test_clearance_report_prefers_negative_status() -> None:
     result = extract_fields(
         "Legal Clearance Report",
@@ -874,6 +980,174 @@ def test_bilingual_application_form_extracts_primary_values_not_header_phone() -
     assert result["phone_number"] is None
 
 
+def test_application_form_supports_residential_address_aliases() -> None:
+    result = extract_fields(
+        "Application Form",
+        "Current Resi. Address: B-402 Pandit Dindayal Nagar, Hathijan, Ahmedabad 382445\n"
+        "Permanent Resi. Address: 81 Modi Vas, Harniyav, Ahmedabad 382435",
+    )
+
+    assert result["current_address"] == (
+        "B-402 Pandit Dindayal Nagar, Hathijan, Ahmedabad 382445"
+    )
+    assert result["permanent_address"] == "81 Modi Vas, Harniyav, Ahmedabad 382435"
+
+
+def test_coapplicant_stacked_name_is_not_extracted_as_address() -> None:
+    result = extract_fields(
+        "Application Form",
+        """CO-APPLICANT ADDRESS
+COMMUNICATION ADDRESS
+NAME
+ADDRESS
+AARATIBEN ANUPKUMAR SUTHAR
+B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD,
+Ahmedabad, Gujarat, India, 382445, HATHIJAN
+PERMANENT ADDRESS
+NAME
+ADDRESS
+AARATIBEN ANUPKUMAR SUTHAR
+81 MODI VAS, HARNIVAV, AHMEDABAD, Gujarat, India, 382435
+OFFICE ADDRESS
+""",
+    )
+
+    assert result["current_address"] is None
+    assert result["permanent_address"] is None
+    assert result["person_records"] == [{
+        "applicant_name": "AARATIBEN ANUPKUMAR SUTHAR",
+        "current_address": (
+            "B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD "
+            "Ahmedabad, Gujarat, India, 382445, HATHIJAN"
+        ),
+        "communication_address": (
+            "B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD "
+            "Ahmedabad, Gujarat, India, 382445, HATHIJAN"
+        ),
+        "permanent_address": "81 MODI VAS, HARNIVAV, AHMEDABAD, Gujarat, India, 382435",
+    }]
+
+
+def test_kfs_boilerplate_clause_number_is_not_roi() -> None:
+    result = extract_fields(
+        "Loan Agreement",
+        """5.
+In case of collaborative lending, details may be furnished:
+Blended rate of interest
+6.
+In case of digital loans, specific disclosures may be furnished.
+The IRR and Repayment Schedule specified in this Key Facts Statement (KFS)
+are subject to change. The rate of interest in the loan documents is final.
+""",
+    )
+
+    assert result["roi"] is None
+
+
+def test_facility_schedule_extracts_line_broken_borrower_name() -> None:
+    result = extract_fields(
+        "Facility Agreement",
+        """APPLICANT
+NAME
+ADDRESS TYPE
+ADDRESS
+Mr. SUTHAR
+ANUPKUMAR
+Permanent
+MODIVAS, HARNIYAV, AHMEDABAD, GUJARAT, 382435
+Amount of Facility (in Rs.)
+450000.00
+""",
+    )
+
+    assert result["borrower_name"] == "SUTHAR ANUPKUMAR"
+    assert result["loan_amount"] == "450000"
+
+
+def test_insurance_form_keeps_insurer_and_loan_identifiers_separate() -> None:
+    result = extract_fields(
+        "Insurance Form",
+        """Care Health Insurance Limited
+Insurance Application Form - Group Care Scheme
+Loan Application No: GJ000030765
+Loan Account Number: 5000030765
+Application No: 0030705
+Proposal No: CARE-8842
+Policy No: POL-17
+Proposer Name: Suthar Anupkumar
+Nominee Name: Aartiben Suthar
+Policy Tenure: 5 Years
+Sum Insured: 4,50,000
+Total Premium: 5,707
+""",
+    )
+
+    assert "application_number" not in result
+    assert result["insurance_application_number"] == "0030705"
+    assert result["insurance_proposal_number"] == "CARE-8842"
+    assert result["insurance_policy_number"] == "POL-17"
+    assert result["loan_application_number"] == "GJ000030765"
+    assert result["loan_account_number"] == "5000030765"
+    assert result["policy_tenure_months"] == 60
+    assert result["sum_insured"] == "450000"
+    assert result["total_premium"] == "5707"
+
+
+def test_application_form_recovers_interleaved_residential_address_columns() -> None:
+    text = (
+        "LOAN APPLICATION FORM\nContact Details\nCurrent Resi. Address\nB\n402\nNAMAR\n"
+        "Post graduate\nPANDIT\nHATHIJAN\nCity\nTelephone\nDINDAJAL-2\nNRV\n"
+        "AHMEDABAD\nPIN 35244S\nMobile 3857927\nE-mail ID\nResidence\n"
+        "Permanent Resi. Address\nIf different from above)\n"
+        "MODIVAS HARNIYAU HARNSLAV\nAHMEDABAD\nCity\nCurrent Office Address\n"
+        "PIN 382M35 Tele\nPIN\nCity\nWhatsapp Available\nYes\nNo Whatsapp Contact No.\n"
+        "Occupation Details"
+    )
+
+    result = extract_fields("Application Form", text)
+
+    assert "B 402" in result["current_address"]
+    assert "PANDIT" in result["current_address"]
+    assert "HATHIJAN" in result["current_address"]
+    assert "382435" in result["permanent_address"]
+
+
+def test_bank_statement_profile_extracts_two_line_holder_name() -> None:
+    text = (
+        "Statement From : 27 Jul 2025\nStatement To : 27 Jul 2026\n"
+        "Account Number : XXXX0605\nPROFILE\nName\nDoB\nMobile\nLandline\nEmail\nPAN\n"
+        "Address\nHolding Nature\nNominee\nCKYC\nANUPKUMAR CHETANBHAI\nSUTHAR\n"
+        "2001-06-18\n9328577271\nNBRPS4867N\nTRANSACTIONS\nTrxn ID\nBalance"
+    )
+
+    result = extract_fields("Bank Statement", text)
+
+    assert result["account_holder_name"] == "Anupkumar Chetanbhai Suthar"
+    assert result["account_number"] == "0605"
+
+
+def test_nach_status_screen_extracts_holder_and_register_success() -> None:
+    text = (
+        "NACH Mandate UPI Mandate\n9328577271\nANUPKUMAR CHETANBHAI SUTHAR\n"
+        "CRN: GJ000030786\nSRN: APPLICANT\nREGISTER_SUCCESS\n2026-07-31 21:26:00"
+    )
+
+    result = extract_fields("NACH Form", text)
+
+    assert result["registration_status"] == "registered"
+    assert result["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
+
+
+def test_passbook_holder_allows_ocr_symbols_after_honorific() -> None:
+    result = extract_fields(
+        "Passbook",
+        "Bank of Baroda\nAccount No 83770100000605\nA/C Holder\n"
+        "MR- ★ ANUPKUMAR CHSTAHBHAI SUTHAR\nBranch Address: HARANIYAV",
+    )
+
+    assert result["account_holder_name"] == "ANUPKUMAR CHSTAHBHAI SUTHAR"
+
+
 # ════════════════════════════════════════════
 # BANK STATEMENT
 # ════════════════════════════════════════════
@@ -1057,3 +1331,44 @@ class TestDateVerification:
         assert result.confidence < 0.5, (
             f"Unparseable OCR date should have low confidence, got: {result.confidence}"
         )
+
+
+def test_utility_bill_prefers_service_block_over_provider_header() -> None:
+    fields = extract_fields(
+        "Utility Bill",
+        """UTTAR GUJARAT VIJ COMPANY LIMITED
+ADDRESS : VISNAGAR ROAD
+WEBSITE : www.ugvcl.com EMAIL : corporate@ugvcl.com
+E-ELECTRICITY BILL : Apr,26
+THE EXE ENGR GHB PH 2
+B 402 PANDIT DINDAYAL-2
+NR V NAGAR HATHIJAN
+VILL: Ahmadabad City
+DISTRICT: Ahmedabad
+Sub-division Office
+Bill Date 16-05-2026
+""",
+    )
+    assert fields["address"] == (
+        "B 402 PANDIT DINDAYAL-2 NR V NAGAR HATHIJAN "
+        "VILL: Ahmadabad City DISTRICT: Ahmedabad"
+    )
+    assert "ugvcl" not in fields["address"].lower()
+
+
+def test_passbook_stacked_name_and_branch_are_not_swapped() -> None:
+    fields = extract_fields(
+        "Passbook",
+        """Bank of Baroda
+SAVING ACCOUNT PASS BOOK
+A/c No. :
+Name :
+83770100000605
+Branch : ANUPKUMAR CHETANBHAI SUTHAR
+HARANIYAV
+IFSC Code : BARB0DBHARA
+""",
+    )
+    assert fields["account_number"] == "83770100000605"
+    assert fields["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
+    assert fields["branch"] == "HARANIYAV"

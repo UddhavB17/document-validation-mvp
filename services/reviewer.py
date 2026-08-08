@@ -26,6 +26,7 @@ PROCESSING_QUALITY_RULES = frozenset(
         "DOCUMENT_NOT_READABLE",
         "AUTO_OWNER_UNRESOLVED",
         "AUTO_OWNER_LOW_CONFIDENCE",
+        "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
     }
 )
 
@@ -43,6 +44,8 @@ _COLLAPSIBLE_RULES = frozenset(
         "UNREADABLE_PAGE",
         "AUTO_OWNER_UNRESOLVED",
         "AUTO_OWNER_LOW_CONFIDENCE",
+        "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
+        "TRUSTED_PERSON_SCOPE_MISSING",
         "LOAN_AMOUNT_NOT_FOUND",
         "APPLICANT_NAME_NOT_FOUND",
         "PIN_CODE_NOT_FOUND",
@@ -68,6 +71,8 @@ _SUMMARY_REASONS = {
     "UNREADABLE_PAGE": "Scanned pages flagged as blurry or unreadable",
     "AUTO_OWNER_UNRESOLVED": "Document groups could not be matched to an applicant",
     "AUTO_OWNER_LOW_CONFIDENCE": "Document groups assigned to an applicant with weak identity evidence",
+    "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE": "Document groups were classified with weak document-type evidence",
+    "TRUSTED_PERSON_SCOPE_MISSING": "Documents belong to a participant role that is absent from trusted data",
     "LOAN_AMOUNT_NOT_FOUND": "Loan amount missing from mapped loan documents",
     "APPLICANT_NAME_NOT_FOUND": "Applicant name missing from mapped documents",
     "PIN_CODE_NOT_FOUND": "PIN code missing from mapped documents",
@@ -83,18 +88,19 @@ def collapse_for_reviewer(anomalies: list[dict]) -> list[dict]:
     """Return a deduplicated list suitable for the reviewer UI."""
     actionable: list[dict] = []
     buckets: dict[str, list[dict]] = {}
+    unique_anomalies = _dedupe_exact(anomalies)
 
     # A trusted-data mismatch already identifies the offending document value.
     # Do not create a second operations task for the corresponding
     # cross-document mismatch for the same person and field.
     trusted_mismatch_keys: set[tuple[str, str]] = set()
-    for anomaly in anomalies:
+    for anomaly in unique_anomalies:
         rule_id = str(anomaly.get("rule_id") or "")
         match = re.match(r"^TRUSTED_(.+?)_MISMATCH(?:_SUMMARY)?$", rule_id)
         if match:
             trusted_mismatch_keys.add((str(anomaly.get("person_id") or ""), match.group(1)))
 
-    for anomaly in anomalies:
+    for anomaly in unique_anomalies:
         rule_id = str(anomaly.get("rule_id") or "")
         cross_match = re.match(r"^CROSS_DOCUMENT_(.+?)_MISMATCH$", rule_id)
         if cross_match and (
@@ -251,6 +257,14 @@ def _collapse_bucket_key(rule_id: str, anomaly: dict[str, Any] | None = None) ->
     person_suffix = ""
     if anomaly and anomaly.get("person_id"):
         person_suffix = f"::{anomaly['person_id']}"
+    if rule_id == "TRUSTED_PERSON_SCOPE_MISSING":
+        role = str((anomaly or {}).get("person_role") or "unknown")
+        return f"{rule_id}::role={role}"
+    if rule_id in {
+        "REPAYMENT_SCHEDULE_TOTAL_MISMATCH",
+        "REPAYMENT_SUMMARY_TOTAL_MISMATCH",
+    }:
+        return f"REPAYMENT_TOTAL_MISMATCH_ROOT{person_suffix}"
     if rule_id in _COLLAPSIBLE_RULES:
         return f"{rule_id}{person_suffix}"
     for prefix in _COLLAPSIBLE_PREFIXES:
@@ -292,16 +306,27 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
     if doc_preview:
         found_parts.append(doc_preview)
 
+    is_repayment_total_root = rule_id == "REPAYMENT_TOTAL_MISMATCH_ROOT"
     reason = _SUMMARY_REASONS.get(rule_id)
+    if is_repayment_total_root:
+        reason = (
+            "Repayment-schedule EMI total and KFS/facility summary checks point "
+            "to the same stated-total discrepancy"
+        )
     if reason is None:
         reason = items[0].get("reason") or f"Repeated {rule_id} flags"
     reason = f"{reason} ({len(items)} occurrences)"
 
-    return {
-        "rule_id": f"{rule_id}_SUMMARY",
+    result = {
+        "rule_id": (
+            "REPAYMENT_SCHEDULE_TOTAL_MISMATCH_SUMMARY"
+            if is_repayment_total_root
+            else f"{rule_id}_SUMMARY"
+        ),
         "severity": severity,
         "document_type": items[0].get("document_type"),
         "person_id": items[0].get("person_id"),
+        "person_role": items[0].get("person_role"),
         "field_name": items[0].get("field_name"),
         "expected_value": items[0].get("expected_value"),
         "found_value": "; ".join(found_parts),
@@ -311,6 +336,47 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
         "collapsed_count": len(items),
         "collapsed_document_types": dict(doc_types),
     }
+    if is_repayment_total_root:
+        result["contributing_rule_ids"] = list(
+            dict.fromkeys(str(item.get("rule_id") or "") for item in items)
+        )
+        result["contributing_evidence"] = [
+            {
+                key: item.get(key)
+                for key in (
+                    "rule_id",
+                    "page_number",
+                    "document_type",
+                    "person_id",
+                    "field_name",
+                    "expected_value",
+                    "found_value",
+                    "reason",
+                )
+                if item.get(key) is not None
+            }
+            for item in items
+        ]
+    return result
+
+
+def _dedupe_exact(anomalies: list[dict]) -> list[dict]:
+    """Keep the first copy of byte-for-byte-equivalent JSON-like anomalies."""
+    unique: list[dict] = []
+    seen: set[str] = set()
+    for anomaly in anomalies:
+        fingerprint = json.dumps(
+            anomaly,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=repr,
+        )
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        unique.append(anomaly)
+    return unique
 
 
 def _pages_from_anomaly(item: dict[str, Any]) -> list[int]:
@@ -328,7 +394,7 @@ def _needs_review(anomaly: dict[str, Any]) -> bool:
 
 
 def _review_item(anomaly: dict[str, Any]) -> dict[str, Any]:
-    return {
+    item = {
         "page_number": anomaly.get("page_number"),
         "person_id": anomaly.get("person_id"),
         "matched_person_id": anomaly.get("matched_person_id"),
@@ -341,6 +407,11 @@ def _review_item(anomaly: dict[str, Any]) -> dict[str, Any]:
         "extracted_masked": _mask(anomaly.get("found_value")),
         "collapsed_count": anomaly.get("collapsed_count"),
     }
+    if anomaly.get("contributing_rule_ids"):
+        item["contributing_rule_ids"] = anomaly["contributing_rule_ids"]
+    if anomaly.get("contributing_evidence"):
+        item["contributing_evidence"] = anomaly["contributing_evidence"]
+    return item
 
 
 def _field_from_rule(rule_id: Any) -> str | None:

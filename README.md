@@ -31,7 +31,7 @@ The Python UI has been removed. The browser interface is now the Next.js app in 
 
 | Requirement | Version | Notes |
 |---|---|---|
-| Python | 3.11.x | Required because PaddleOCR/PaddlePaddle are not supported here on Python 3.12+ |
+| Python | 3.11.x | Supported backend runtime |
 | Node.js | 20+ | Runs the Next.js UI |
 | Git | any | Source control |
 
@@ -84,10 +84,9 @@ cp .env.example .env
 
 ## Run Locally
 
-The default `.env.example` uses local OCR. Set `OCR_PROVIDER=google_vision` to
-use only Google Vision for scanned pages, or `OCR_PROVIDER=auto` to use Google
-when credentials exist and local OCR otherwise. On ~8GB machines using local
-OCR, set `DMEF_LOW_MEMORY=true` or use `scripts/start_mvp.sh`.
+The default `.env.example` uses Google Vision for scanned-page OCR. Configure
+an API key or Application Default Credentials before processing scans. Digital
+PDF pages continue to use embedded text without an OCR API call.
 
 Terminal 1, backend:
 
@@ -142,7 +141,7 @@ JSON remain separate; trusted JSON is never copied over an observed value.
 Google Vision is the API OCR provider currently implemented. When
 `OCR_PROVIDER=google_vision`, each scanned page is sent to Google once and the
 same response is reused for classification and field extraction. Local
-PaddleOCR is not called for those pages. Digital pages continue to use their
+OCR is not called for those pages. Digital pages continue to use their
 embedded PDF text and do not incur OCR API usage.
 
 Before setup, enable the Vision API and billing in your Google Cloud project.
@@ -209,9 +208,91 @@ containing approved dummy data. Backend page metadata should show:
 }
 ```
 
-If `OCR_PROVIDER=auto`, the application uses Google only when an API key or ADC
-credential path is configured. Explicit `google_vision` mode never silently
-falls back to local OCR; API failures are recorded as page-processing errors.
+Google Vision mode never silently falls back to local OCR; API failures are
+recorded as page-processing errors so incomplete validation cannot look like a
+successful result.
+
+## Multilingual and Regional-Language Documents
+
+The system treats **script detection** and **language identification** as two
+different operations. This is essential for North Indian documents: Hindi,
+Haryanvi, Bhojpuri, Maithili, Magahi, Marathi, Nepali, and other languages may
+all appear in Devanagari. A Devanagari page is therefore never labelled Hindi
+from its characters alone.
+
+Each processed page can carry four separate forms of evidence:
+
+1. `scripts`: deterministic Unicode observations such as `devanagari`,
+   `gurmukhi`, `gujarati`, `bengali`, `tamil`, or `arabic`.
+2. `language_candidates`: possible languages for those scripts, explicitly not
+   treated as detected languages.
+3. `declared_languages`: a printed value such as `Second language: Haryanvi`.
+4. `provider_languages`: language metadata reported by the OCR API.
+
+Document type classification continues to use identifiers, document structure,
+field labels, and page sequence; it does not require the complete packet to have
+one language. Preserve the original Unicode OCR text and classify each page or
+document group independently. For exact language-sensitive rules, use a printed
+language declaration or trusted template metadata and send unresolved cases to
+manual review.
+
+Trusted input may declare an application template's languages when that fact is
+known independently of OCR:
+
+```json
+{
+  "application_form_languages": ["English", "Haryanvi"]
+}
+```
+
+The application-form checklist accepts a recognized non-Hindi regional
+language from a printed declaration, trusted template metadata, OCR-provider
+metadata, or a distinct regional script. Unlabelled Devanagari produces
+`APPLICATION_REGIONAL_LANGUAGE_UNVERIFIED`, because it could be Hindi,
+Haryanvi, Bhojpuri, Maithili, Magahi, or another language. See
+`docs/multilingual_document_policy.md` for the evidence and decision model.
+
+## Optional Offline OCR Smoke Test
+
+Normal setup and production continue to use Google Vision. Local PaddleOCR is
+an isolated developer test path and is not installed by `requirements.txt`.
+Create a separate environment so its large native dependencies do not affect
+the API-backed app:
+
+```bash
+python3.11 -m venv .venv-ocr
+source .venv-ocr/bin/activate
+pip install -r requirements-ocr-local.txt
+python scripts/test_offline_ocr.py /absolute/path/to/sample.pdf --page 1 --lang bgc
+```
+
+On Windows PowerShell, activate with
+`.\.venv-ocr\Scripts\Activate.ps1` and run the same `pip` and `python`
+commands. Useful Paddle language values are:
+
+| Language | `--lang` |
+|---|---:|
+| Haryanvi | `bgc` |
+| Bihari language group | `bh` |
+| Bhojpuri | `bho` |
+| Maithili | `mai` |
+| Magahi | `mah` |
+| Hindi | `hi` |
+| Urdu | `ur` |
+| Tamil | `ta` |
+| Telugu | `te` |
+
+The first run downloads Paddle models into its cache. Run each model once while
+online before testing without a network connection. The smoke-test command
+directly calls local OCR and cannot call Google Vision. The full backend can
+only select local OCR when both `DMEF_LOCAL_OCR_TEST_MODE=true` and
+`OCR_PROVIDER=local` are present; do not use that override in production.
+
+PaddleOCR v5 does not provide dedicated Gujarati, Bengali, Gurmukhi, Odia,
+Kannada, or Malayalam recognizers in this test adapter. Use Google Vision for
+those in the application. If a fully offline cross-India test is later needed,
+add a Tesseract adapter and the appropriate trained-data files rather than
+pretending the Devanagari model supports those scripts.
 
 ### Adding Amazon Textract, Azure AI Vision, or another OCR API
 
@@ -238,42 +319,6 @@ Provider SDK credentials must come from environment variables, the cloud
 provider's standard credential chain, or a secret manager—not from committed
 configuration. Until an adapter is registered, setting an arbitrary provider
 name will not activate that API.
-
-## Local Structured OCR
-
-Scanned pages use deterministic hybrid OCR routing. A lightweight PaddleOCR
-text-detection/recognition pass supplies the existing classifier. Its resolved
-document type is then looked up in `data/document_type_registry.json`:
-
-- `ocr_route: "fast"` retains plain text, confidence, and bounding boxes.
-- `ocr_route: "structured"` runs PP-StructureV3 and retains reading-order
-  layout regions plus table HTML/Markdown in `structured_content`.
-- Missing `ocr_route` values default to `structured`. `has_tabular_data: true`
-  or `multi_column: true` always forces the structured route.
-- Fast results below `OCR_FAST_PATH_MIN_CONFIDENCE` (default `0.85`) escalate
-  to PP-StructureV3. Escalations and per-page route timing are recorded in
-  `ocr_route_events`; `get_ocr_route_metrics(document_id)` aggregates time by
-  route.
-
-To add another fast-path type, edit its registry entry without changing code:
-
-```json
-{
-  "type": "Example Declaration",
-  "ocr_route": "fast",
-  "has_tabular_data": false,
-  "multi_column": false
-}
-```
-
-Local OCR models are lazy-loaded and make no external inference calls. Model
-weights must be cached locally for a zero-egress deployment. On an RTX 3050
-with 6 GB VRAM, keeping the lightweight OCR and full PP-StructureV3 pipelines
-resident together can exhaust memory, especially with table/seal modules.
-Prefer route-homogeneous batches or separate workers with one model family per
-GPU; otherwise unload between batches. Per-page load/unload is usually too
-expensive. Table and seal modules can be controlled through the
-`PADDLE_STRUCTURE_*` settings in `.env`.
 
 ## Trusted JSON + Mapped-Page Verification
 

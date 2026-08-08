@@ -397,6 +397,13 @@ def _run_presence_checks(
     anomalies: list[dict] = []
 
     for item in items:
+        # Some manual checklist controls live in the source system or a CSO
+        # workflow rather than in the uploaded PDF.  Keep them visible in the
+        # 44-item checklist, but do not treat absent PDF evidence as proof that
+        # the control failed.
+        if item.get("automated_presence_check", True) is False:
+            continue
+
         check_type = item["check_type"]
         s_no = item.get("s_no")
         description = item.get("description", "")
@@ -609,7 +616,18 @@ def _page_status(page: dict, field_names: list[str]) -> str:
     for field_name in field_names:
         if fields.get(field_name) not in (None, ""):
             return _normalized_status(fields[field_name])
-    return _normalized_status(page.get("ocr_text"))
+    text = str(page.get("ocr_text") or "")
+    if (
+        page.get("document_type") == "OTC PDD Document"
+        and re.search(
+            r"\brequest\s+legal\s+(?:otc\s*/?\s*pdd|pdd\s*/?\s*otc)\s+approval\b",
+            text,
+            re.IGNORECASE,
+        )
+        and re.search(r"(?mi)^\s*ok\s*$", text)
+    ):
+        return "approved"
+    return _normalized_status(text)
 
 
 def _is_positive_status(page: dict, accepted: list[str], rejected: list[str], fields: list[str]) -> bool:
@@ -1056,7 +1074,12 @@ def _non_loan_relevance_anomaly(
 
 def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
     anomalies: list[dict] = []
-    pan_pages = _find_pages_any_confidence(pages, "PAN")
+    primary_id = str(ground_truth.get("person_id") or "primary")
+    pan_pages = [
+        page
+        for page in _find_pages_any_confidence(pages, "PAN")
+        if str(page.get("person_id") or page.get("applicant_role") or "") == primary_id
+    ]
     ocr_threshold = float(effective_config().min_scanned_ocr_confidence)
     image_heavy_types = {
         "property image",
@@ -1161,6 +1184,19 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
 
         ground_name = ground_truth.get("applicant_name")
         pan_name = pan_fields.get("applicant_name")
+        if ground_name and pan_name:
+            try:
+                from services.person_ownership import name_matches_trusted_person
+
+                primary_record = (
+                    (ground_truth.get("people") or {}).get(primary_id)
+                    or (ground_truth.get("reference_data") or {}).get(primary_id)
+                    or ground_truth
+                )
+                if name_matches_trusted_person(pan_name, primary_record):
+                    pan_name = None
+            except Exception:
+                pass
         if ground_name and pan_name:
             score = fuzz.ratio(str(ground_name).strip().lower(), str(pan_name).strip().lower())
             if 75 <= score < 90:

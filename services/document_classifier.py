@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
@@ -49,12 +50,136 @@ _ID_DOC_MENTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bpassport\b|पासपोर्ट", re.IGNORECASE),
 )
 
+_INSURANCE_APPLICATION_FIELD_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bproposer(?:'s)?\b", re.IGNORECASE),
+    re.compile(r"\bnominee\b", re.IGNORECASE),
+    re.compile(r"\bpolicy\b", re.IGNORECASE),
+    re.compile(r"\bsum\s+(?:insured|assured)\b", re.IGNORECASE),
+    re.compile(r"\bpremium\b", re.IGNORECASE),
+)
+
+_INSURER_LEGAL_MARKER = re.compile(
+    r"(?:\bunderwri(?:tt?en|sen)\s+by\b[\s\S]{0,100}?\binsurance\b|"
+    r"\b[A-Z][A-Za-z0-9&.,'() /-]{1,80}\s+insurance\s+"
+    r"(?:(?:company|co\.?)\s+)?(?:limited|ltd\.?)\b|"
+    r"\birdai\s+(?:registration|reg\.?)\s*(?:number|no\.?)\b|"
+    r"\binsurance\s+regulatory\s+and\s+development\s+authority\b)",
+    re.IGNORECASE,
+)
+
+_INSURANCE_FORM_BOUNDARY = re.compile(
+    r"(?:^|\n)\s*(?:"
+    r"(?:health|life|general|property|group|credit|personal\s+accident)\s+insurance\s+"
+    r"(?:proposal|application)\s+form|"
+    r"insurance\s+(?:proposal|application)\s+form|"
+    r"proposal\s+form(?:\s+for\s+(?:insurance|policy|cover))?|"
+    r"application\s+form[^\n]{0,100}\b(?:scheme|insurance|policy|cover|group\s+care)\b|"
+    r"(?:group\s+care|insurance|policy|cover)[^\n]{0,100}\bapplication\s+form\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_INSURANCE_IDENTIFIER_VALUE = r"([A-Z0-9][A-Z0-9./_-]{2,40})"
+
 
 def is_kyc_checklist_context(text: str) -> bool:
     """True when a page enumerates three or more identity-document names."""
     raw = str(text or "")
     mentions = sum(1 for pattern in _ID_DOC_MENTION_PATTERNS if pattern.search(raw))
     return mentions >= 3
+
+
+def is_insurance_application_context(text: str) -> bool:
+    """Return True for an insurer's proposal/application form.
+
+    Insurance proposal forms legitimately use the generic heading
+    ``Application Form`` and an insurer-local application number.  Requiring
+    both an insurer/regulator marker and several insurance-specific fields
+    keeps ordinary loan applications out of this semantic override.
+    """
+    raw = str(text or "")
+    # ``insurance``, ``premium`` and ``nominee`` also occur in ordinary loan
+    # applications that merely offer an optional add-on.  An override therefore
+    # needs both a legal insurer anchor and an insurance-form heading near the
+    # beginning of the page/document, not just a cluster of insurance words.
+    heading_area = "\n".join(raw.splitlines()[:30])[:2500]
+    if re.search(
+        r"(?:^|\n)\s*(?:loan|housing|mortgage|business)\s+application\s+form\b",
+        heading_area,
+        re.IGNORECASE,
+    ):
+        return False
+    has_insurer_marker = bool(_INSURER_LEGAL_MARKER.search(raw))
+    has_form_boundary = bool(_INSURANCE_FORM_BOUNDARY.search(heading_area))
+    if not (has_insurer_marker and has_form_boundary):
+        return False
+    field_families = sum(
+        1 for pattern in _INSURANCE_APPLICATION_FIELD_PATTERNS if pattern.search(raw)
+    )
+    return field_families >= 3
+
+
+def is_insurer_local_application_identifier(text: str, value: Any) -> bool:
+    """True only when *value* is labelled as the insurer's own form ID.
+
+    Health-insurance forms embedded in loan packets often print both an
+    insurer-local ``Application No``/``Proposal No`` and the originating
+    lender's ``Loan Application No`` or ``Loan Account No``.  The latter is
+    useful loan evidence and must not be discarded merely because the page is
+    an insurance form.
+    """
+    expected = _identifier_key(value)
+    if not expected or not _INSURER_LEGAL_MARKER.search(str(text or "")):
+        return False
+
+    raw = str(text or "")
+    loan_values = _insurance_identifier_values(
+        raw,
+        rf"\bloan\s+(?:application|account|a\s*/\s*c)\s*"
+        rf"(?:number|no\.?|#)?\s*[:\-–#]?\s*{_INSURANCE_IDENTIFIER_VALUE}",
+    )
+    # An explicit loan label wins even if an OCR layout also makes the value
+    # appear close to a generic Application No label.
+    if expected in loan_values:
+        return False
+
+    local_values = _insurance_identifier_values(
+        raw,
+        rf"\bproposal\s*(?:number|no\.?|#)\s*[:\-–#]?\s*"
+        rf"{_INSURANCE_IDENTIFIER_VALUE}",
+    )
+    local_values.update(
+        _insurance_identifier_values(
+            raw,
+            rf"(?<!loan\s)(?<!customer\s)\b(?:insurance\s+)?application\s*"
+            rf"(?:number|no\.?|#)\s*[:\-–#]?\s*{_INSURANCE_IDENTIFIER_VALUE}",
+        )
+    )
+    return expected in local_values
+
+
+def is_bank_statement_profile_context(text: str) -> bool:
+    """Recognize account-aggregator statement cover pages before transactions."""
+    raw = str(text or "")
+    return bool(
+        re.search(r"\bStatement\s+From\s*:", raw, re.IGNORECASE)
+        and re.search(r"\bStatement\s+To\s*:", raw, re.IGNORECASE)
+        and re.search(r"\bAccount\s+Number\b", raw, re.IGNORECASE)
+        and re.search(r"(?:^|\n)\s*PROFILE\s*(?:\n|$)", raw, re.IGNORECASE)
+        and re.search(r"(?:^|\n)\s*TRANSACTIONS\s*(?:\n|$)", raw, re.IGNORECASE)
+    )
+
+
+def _insurance_identifier_values(text: str, pattern: str) -> set[str]:
+    return {
+        key
+        for match in re.finditer(pattern, text, re.IGNORECASE)
+        if (key := _identifier_key(match.group(1)))
+    }
+
+
+def _identifier_key(value: Any) -> str:
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
 
 class DocumentTypeConfig(BaseModel):
@@ -94,7 +219,35 @@ def classify_page_with_candidates(text: str) -> dict[str, Any]:
                 candidate["matched_signals"] = [
                     {"kind": "suppressed", "value": "kyc_checklist_context"}
                 ]
-    candidates.sort(key=lambda item: (-item["confidence"], item["priority"]))
+    if is_insurance_application_context(text or ""):
+        for candidate in candidates:
+            if candidate["document_type"] == "Application Form":
+                candidate["confidence"] = 0.0
+                candidate["matched_signals"] = [
+                    {"kind": "suppressed", "value": "insurance_application_context"}
+                ]
+            elif candidate["document_type"] == "Insurance Form":
+                candidate["confidence"] = max(0.95, candidate["confidence"])
+                candidate["matched_signals"] = [
+                    *candidate["matched_signals"],
+                    {"kind": "semantic", "value": "insurance_application_context"},
+                ]
+    if is_bank_statement_profile_context(text or ""):
+        for candidate in candidates:
+            if candidate["document_type"] == "Bank Statement":
+                candidate["confidence"] = max(0.98, candidate["confidence"])
+                candidate["matched_signals"] = [
+                    *candidate["matched_signals"],
+                    {"kind": "semantic", "value": "statement_profile_and_transactions"},
+                ]
+                break
+    candidates.sort(
+        key=lambda item: (
+            -item["confidence"],
+            -int(any(signal.get("kind") == "opening_heading" for signal in item["matched_signals"])),
+            item["priority"],
+        )
+    )
 
     best = candidates[0] if candidates else _unknown_result([])
     threshold = float(registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
@@ -157,12 +310,18 @@ def registry_document_types(include_unknown: bool = True) -> list[str]:
 
 def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_text(text)
-    heading_area = _normalize_text("\n".join((text or "").splitlines()[:8])) or normalized[:1200]
+    # Combined loan packets can end one short letter and begin the next logical
+    # document halfway down a page. Twenty-four lines remains header-biased but
+    # still catches those embedded document boundaries.
+    heading_area = _normalize_text("\n".join((text or "").splitlines()[:24])) or normalized[:2000]
     matched: list[dict[str, Any]] = []
     score = 0.0
 
+    explicit_opening_heading = _has_explicit_opening_heading(
+        text, rule.get("headings", [])
+    )
     negative_hits = [term for term in rule.get("negative_keywords", []) if _contains(normalized, term)]
-    if negative_hits:
+    if negative_hits and not explicit_opening_heading:
         return _candidate(rule, 0.0, [{"kind": "negative_keyword", "value": term} for term in negative_hits])
 
     required_any = rule.get("required_any", [])
@@ -176,6 +335,8 @@ def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
     heading_score, heading_matches = _heading_score(heading_area, rule.get("headings", []))
     score += heading_score
     matched.extend(heading_matches)
+    if explicit_opening_heading:
+        matched.append({"kind": "opening_heading", "value": "explicit document title"})
 
     keyword_score, keyword_matches = _keyword_score(normalized, rule.get("keywords", []))
     score += keyword_score
@@ -207,6 +368,34 @@ def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
         confidence = 0.0
 
     return _candidate(rule, confidence, matched)
+
+
+def _has_explicit_opening_heading(text: str, headings: list[str]) -> bool:
+    """Return True when a configured title opens the first few non-empty lines.
+
+    Negative terms are useful for clause references, but legal documents often
+    mention the underlying loan agreement immediately after their own title.
+    An explicit opening title is stronger evidence than such body references.
+    """
+    opening_lines = [
+        _normalize_text(line)
+        for line in str(text or "").splitlines()
+        if _normalize_text(line)
+    ][:4]
+    for line in opening_lines:
+        for heading in headings:
+            normalized_heading = _normalize_text(heading)
+            if not normalized_heading:
+                continue
+            if line == normalized_heading:
+                return True
+            if line.startswith(f"{normalized_heading} "):
+                remainder = line[len(normalized_heading):].strip(" -:|")
+                if remainder.startswith(
+                    ("this ", "made ", "executed ", "dated ", "between ", "by ", "at ")
+                ):
+                    return True
+    return False
 
 
 def _heading_score(text: str, headings: list[str]) -> tuple[float, list[dict[str, Any]]]:
@@ -251,9 +440,10 @@ def _keyword_score(
     hits = [{"kind": kind, "value": term} for term in keywords if _contains(text, term)]
     if not hits:
         return 0.0, []
-    ratio = len(hits) / max(len(keywords), 1)
-    # Do not require every synonym.  Two strong keyword hits are usually enough.
-    capped_ratio = min(1.0, ratio * 2.0)
+    # Keywords are synonyms and translations, not a checklist. Adding support
+    # for another language must not dilute the score of existing languages.
+    # One hit contributes half and two independent hits saturate the family.
+    capped_ratio = min(1.0, len(hits) / 2.0)
     return max_score * capped_ratio, hits[:5]
 
 
@@ -304,17 +494,22 @@ def _public_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _normalize_text(value: str) -> str:
-    lowered = str(value or "").lower()
+    lowered = unicodedata.normalize("NFKC", str(value or "")).casefold()
     lowered = lowered.replace("\u2013", "-").replace("\u2014", "-")
-    lowered = re.sub(r"[^0-9a-z\u0900-\u097f]+", " ", lowered)
-    return re.sub(r"\s+", " ", lowered).strip()
+    normalized = "".join(
+        character
+        if character.isalnum() or unicodedata.category(character).startswith("M")
+        else " "
+        for character in lowered
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _contains(text: str, term: str) -> bool:
     normalized_term = _normalize_text(term)
     if not normalized_term:
         return False
-    if len(normalized_term.replace(" ", "")) <= 5:
+    if normalized_term.isascii() and len(normalized_term.replace(" ", "")) <= 5:
         return bool(re.search(rf"(?<![a-z0-9]){re.escape(normalized_term)}(?![a-z0-9])", text))
     return normalized_term in text
 

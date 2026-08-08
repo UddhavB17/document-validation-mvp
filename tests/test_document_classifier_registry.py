@@ -67,6 +67,45 @@ def test_stamp_and_utility_pages_classify_correctly() -> None:
     assert utility["document_type"] == "Utility Bill"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("લોન કરાર ઉધારકર્તા લોનદાતા ડિફોલ્ટ અને ચુકવણીની શરતો", "Loan Agreement"),
+        ("સ્ટેમ્પ ડ્યુટી બિન ન્યાયિક ગુજરાત પ્રમાણપત્ર", "Stamp Duty"),
+        ("ગ્રાહક અરજી ફોર્મ અરજદારની વિગતો સહ અરજદાર સરનામું", "Application Form"),
+        ("વીજળી બિલ ગ્રાહક નંબર બાકી તારીખ ચુકવવાની રકમ", "Utility Bill"),
+        ("નોંધાયેલ વેચાણ દસ્તાવેજ મિલકત સર્વે નંબર પ્લોટ નંબર ચતુઃસીમા", "Property Document"),
+    ],
+)
+def test_gujarati_document_signals_are_preserved_and_classified(text: str, expected: str) -> None:
+    assert classify_page(text)["document_type"] == expected
+
+
+def test_end_use_letter_beats_generic_application_form_terms() -> None:
+    result = classify_page(
+        "END-USE LETTER FROM THE BORROWER\nApplication date 23-July-2026\n"
+        "Applicant Mobile Number\nThe said Loan is for the purpose of: Business Use\n"
+        "I/We confirm this is a valid & legal purpose"
+    )
+    assert result["document_type"] == "End-Use Letter"
+
+
+def test_acceptance_profile_panel_is_not_unknown() -> None:
+    result = classify_page(
+        "Applicant Entity Name Profile Image\nCo-Applicant Entity Name Profile Image\n"
+        "Guarantor Entity Name Profile Image\nThanks & Regards\nMS Fincap Pvt Ltd"
+    )
+    assert result["document_type"] == "Acceptance Letter"
+
+
+def test_sanction_conditions_are_not_property_document_from_generic_property_words() -> None:
+    result = classify_page(
+        "Sanction Conditions\nTerms and conditions of loan\n"
+        "The property security documents must be self-attested before disbursement"
+    )
+    assert result["document_type"] != "Property Document"
+
+
 def test_unmatched_page_still_unknown() -> None:
     text = "Random narrative page about lunch plans and weather with no loan-file signals."
     result = classify_page(text)

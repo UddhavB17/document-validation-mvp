@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from services.config import get_bool, get_float, get_int
@@ -273,10 +274,15 @@ def _build_classifier_prompt(text: str) -> str:
 
 
 def _normalize_evidence_text(value: str) -> str:
-    lowered = str(value or "").lower()
+    lowered = unicodedata.normalize("NFKC", str(value or "")).casefold()
     lowered = lowered.replace("\u2013", "-").replace("\u2014", "-")
-    lowered = re.sub(r"[^0-9a-z\u0900-\u097f.]+", " ", lowered)
-    return re.sub(r"\s+", " ", lowered).strip()
+    normalized = "".join(
+        character
+        if character.isalnum() or character == "." or unicodedata.category(character).startswith("M")
+        else " "
+        for character in lowered
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _contains_evidence(haystack: str, phrase: str) -> bool:

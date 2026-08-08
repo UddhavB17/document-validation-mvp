@@ -155,10 +155,12 @@ export default function SettingsPage() {
     const provider = getVal("llm_provider");
     const model = getVal("llm_model");
     const minConfidence = parseFloat(getVal("min_confidence") || "0.70");
-    const ocrProvider = getVal("ocr.provider") || "local";
+    const ocrProvider = getVal("ocr.provider") || "google_vision";
     const googleAuth = getVal("google.vision.auth") || "auto";
     const googleFeature = getVal("google.vision.feature") || "DOCUMENT_TEXT_DETECTION";
     const googleTimeout = getVal("google.vision.timeout.seconds") || "60";
+    const googleLanguageHints =
+      draftValues["google.vision.language_hints"] ?? getVal("google.vision.language_hints");
     const googleApiKey = getSetting("google.vision.api_key");
     const googleApiKeyDraft = draftValues["google.vision.api_key"] ?? "";
     const googleControlsVisible = ocrProvider === "google_vision" || ocrProvider === "auto";
@@ -208,12 +210,10 @@ export default function SettingsPage() {
                   onChange={(e) => updateSingleSetting("ocr.provider", e.target.value)}
                   className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
                 >
-                  <option value="local">Local OCR</option>
                   <option value="google_vision">Google Vision API only</option>
-                  <option value="auto">Auto: Google when configured</option>
                 </select>
                 <p className="mt-1 text-xs text-slate-500">
-                  Google Vision mode sends scanned-page OCR to the API. Digital PDF text still uses embedded text.
+                  Scanned pages use Google Vision API. Digital PDF text still uses embedded text and incurs no OCR call.
                 </p>
               </div>
               <div>
@@ -254,6 +254,31 @@ export default function SettingsPage() {
                     onChange={(e) => updateSingleSetting("google.vision.timeout.seconds", e.target.value)}
                     className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
                   />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700">Optional language hints</label>
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      type="text"
+                      value={googleLanguageHints}
+                      onChange={(e) =>
+                        setDraftValues((prev) => ({ ...prev, "google.vision.language_hints": e.target.value }))
+                      }
+                      placeholder="Leave blank for auto-detection, or use en,gu"
+                      className="block min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => updateSingleSetting("google.vision.language_hints", googleLanguageHints)}
+                      disabled={savingKey === "google.vision.language_hints"}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-100"
+                    >
+                      Save hints
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Keep blank for automatic multilingual detection. Add a short BCP-47 list only for noisy regional batches.
+                  </p>
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-slate-700">Google Vision API Key</label>

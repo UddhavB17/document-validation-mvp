@@ -1,4 +1,5 @@
 from services.reviewer import (
+    build_reviewer_summary,
     collapse_for_reviewer,
     compute_final_status,
     split_reviewer_anomalies,
@@ -140,3 +141,110 @@ def test_reviewer_does_not_merge_mismatches_for_different_people() -> None:
 
     assert len(collapsed) == 2
     assert {item["person_id"] for item in collapsed} == {"primary", "coapplicant_1"}
+
+
+def test_auto_document_type_low_confidence_is_one_processing_warning() -> None:
+    anomalies = [
+        {
+            "rule_id": "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
+            "severity": "LOW",
+            "page_number": page,
+            "document_type": "Application Form",
+        }
+        for page in (4, 9, 12)
+    ]
+
+    collapsed = collapse_for_reviewer(anomalies)
+    business, processing = split_reviewer_anomalies(collapsed)
+
+    assert business == []
+    assert len(processing) == 1
+    assert processing[0]["rule_id"] == "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE_SUMMARY"
+    assert processing[0]["collapsed_count"] == 3
+
+
+def test_exact_duplicate_anomalies_do_not_inflate_bucket_count() -> None:
+    first = {
+        "rule_id": "UNCLASSIFIED_PAGE",
+        "severity": "LOW",
+        "page_number": 1,
+        "reason": "Unknown",
+    }
+    second = {**first, "page_number": 2}
+
+    collapsed = collapse_for_reviewer([first, dict(first), second])
+
+    assert len(collapsed) == 1
+    assert collapsed[0]["collapsed_count"] == 2
+    assert collapsed[0]["collapsed_page_numbers"] == [1, 2]
+
+
+def test_missing_trusted_person_scope_collapses_separately_by_role() -> None:
+    anomalies = [
+        {
+            "rule_id": "TRUSTED_PERSON_SCOPE_MISSING",
+            "severity": "MEDIUM",
+            "person_role": "coapplicant",
+            "page_number": page,
+        }
+        for page in (20, 21)
+    ] + [
+        {
+            "rule_id": "TRUSTED_PERSON_SCOPE_MISSING",
+            "severity": "MEDIUM",
+            "person_role": "guarantor",
+            "page_number": 30,
+        }
+    ]
+
+    collapsed = collapse_for_reviewer(anomalies)
+
+    assert len(collapsed) == 2
+    assert {item.get("person_role") for item in collapsed} == {"coapplicant", "guarantor"}
+    coapplicant = next(item for item in collapsed if item.get("person_role") == "coapplicant")
+    assert coapplicant["rule_id"] == "TRUSTED_PERSON_SCOPE_MISSING_SUMMARY"
+    assert coapplicant["collapsed_count"] == 2
+
+    business, processing = split_reviewer_anomalies(collapsed)
+    assert len(business) == 2
+    assert processing == []
+
+
+def test_repayment_total_checks_collapse_with_contributing_evidence() -> None:
+    schedule_check = {
+        "rule_id": "REPAYMENT_SCHEDULE_TOTAL_MISMATCH",
+        "severity": "HIGH",
+        "page_number": 36,
+        "document_type": "Repayment Schedule",
+        "expected_value": "INR 1,135,219.00 (KFS/facility summary)",
+        "found_value": "INR 862,250.18 (sum of EMI column)",
+        "reason": "Schedule total differs from the stated repayment total.",
+    }
+    summary_check = {
+        "rule_id": "REPAYMENT_SUMMARY_TOTAL_MISMATCH",
+        "severity": "HIGH",
+        "page_number": 36,
+        "document_type": "Repayment Schedule",
+        "expected_value": "Loan + interest = INR 450,000.00",
+        "found_value": "Stated total repayment = INR 1,135,219.00",
+        "reason": "KFS summary is internally inconsistent.",
+    }
+
+    collapsed = collapse_for_reviewer([schedule_check, summary_check])
+
+    assert len(collapsed) == 1
+    item = collapsed[0]
+    assert item["rule_id"] == "REPAYMENT_SCHEDULE_TOTAL_MISMATCH_SUMMARY"
+    assert item["contributing_rule_ids"] == [
+        "REPAYMENT_SCHEDULE_TOTAL_MISMATCH",
+        "REPAYMENT_SUMMARY_TOTAL_MISMATCH",
+    ]
+    assert [evidence["expected_value"] for evidence in item["contributing_evidence"]] == [
+        schedule_check["expected_value"],
+        summary_check["expected_value"],
+    ]
+
+    reviewer = build_reviewer_summary(total_pages=40, anomalies=[schedule_check, summary_check])
+    assert reviewer["anomaly_count"] == 1
+    assert reviewer["review_items"][0]["contributing_rule_ids"] == item["contributing_rule_ids"]
+    assert len(reviewer["review_items"][0]["contributing_evidence"]) == 2

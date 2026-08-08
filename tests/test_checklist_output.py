@@ -118,7 +118,7 @@ def test_system_flag_can_verify_kyc_checklist_row() -> None:
     assert kyc_item.extracted_fields["kyc_details_checked"] == "True"
 
 
-def test_complete_applicability_data_leaves_no_unknown_checklist_rows() -> None:
+def test_complete_applicability_data_keeps_external_controls_manual() -> None:
     system_data = {
         "loan_amount": 500000,
         "people": {"primary": {"role": "primary"}},
@@ -146,4 +146,6 @@ def test_complete_applicability_data_leaves_no_unknown_checklist_rows() -> None:
     )
 
     assert len(result.items) == 36
-    assert result.summary.unknown == 0
+    unknown_items = {item.item_number: item for item in result.items if item.status == "unknown"}
+    assert set(unknown_items) == {13, 14, 19}
+    assert all(item.flagged_reason == "manual_review_required" for item in unknown_items.values())

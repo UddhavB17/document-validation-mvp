@@ -104,6 +104,14 @@ def _migrate_ocr_route_events_for_google_vision(connection: sqlite3.Connection) 
     )
     connection.execute(
         """
+        UPDATE system_settings
+        SET config_value = '["stamp_duty_amount", "stamp_certificate_number", "stamp_jurisdiction_state", "stamp_first_party", "stamp_second_party"]'
+        WHERE config_key = 'required_fields.stamp_duty'
+          AND config_value = '["stamp_duty_amount", "stamp_paper_number", "first_party", "second_party"]'
+        """
+    )
+    connection.execute(
+        """
         INSERT INTO ocr_route_events (
             id, document_id, document_type, page_number, event_type,
             requested_route, route_used, reason, original_confidence,
@@ -182,12 +190,13 @@ def seed_settings(connection: sqlite3.Connection) -> None:
         ("llm_provider", "ollama", "str", "llm", "LLM Provider", "Select the LLM backend provider (e.g. ollama, openai, gemini)."),
         ("llm_model", "llama3.2", "str", "llm", "Model Name", "Name of the LLM model to run queries against."),
         ("min_confidence", "0.70", "float", "classification", "Min Classification Confidence", "Minimum confidence score required to auto-classify a page."),
-        ("ocr.provider", "local", "str", "ocr", "OCR Provider", "Choose local OCR, Google Vision API OCR, or automatic fallback."),
+        ("ocr.provider", "google_vision", "str", "ocr", "OCR Provider", "Use Google Vision API OCR for scanned pages."),
         ("google.vision.auth", "auto", "str", "ocr", "Google Vision Auth Mode", "Use API key, Application Default Credentials, or automatic Google Vision authentication."),
         ("google.vision.api_key", "", "secret", "ocr", "Google Vision API Key", "Optional Google Vision API key used only for OCR calls."),
         ("google.vision.feature", "DOCUMENT_TEXT_DETECTION", "str", "ocr", "Google Vision OCR Feature", "Google Vision feature used for OCR."),
         ("google.vision.timeout.seconds", "60", "int", "ocr", "Google Vision Timeout", "Timeout in seconds for each Google Vision OCR request."),
         ("google.vision.max_attempts", "3", "int", "ocr", "Google Vision Retry Attempts", "Retry transient Google Vision network and service failures before flagging a page."),
+        ("google.vision.language_hints", "", "str", "ocr", "Google Vision Language Hints", "Optional comma-separated BCP-47 hints such as en,gu; leave blank for automatic multilingual detection."),
         ("google.vision.api_endpoint", "", "str", "ocr", "Google Vision API Endpoint", "Optional custom client endpoint for Google Vision."),
         ("google.vision.rest_url", "https://vision.googleapis.com/v1/images:annotate", "str", "ocr", "Google Vision REST URL", "REST endpoint used when authenticating Google Vision with an API key."),
         ("required_fields.pan", '["pan_number", "applicant_name", "date_of_birth"]', "json", "fields", "PAN Card Required Fields", "Fields required to validate a PAN Card."),
@@ -198,11 +207,11 @@ def seed_settings(connection: sqlite3.Connection) -> None:
         ("required_fields.loan_agreement", '["applicant_name", "loan_amount"]', "json", "fields", "Loan Agreement Required Fields", "Fields required to validate a Loan Agreement."),
         ("required_fields.cibil_report", '["applicant_name"]', "json", "fields", "CIBIL Required Fields", "Fields required to validate a CIBIL report."),
         ("required_fields.crif_report", '["applicant_name"]', "json", "fields", "CRIF Required Fields", "Fields required to validate a CRIF report."),
-        ("required_fields.bank_statement", '["applicant_name"]', "json", "fields", "Bank Statement Required Fields", "Fields required to validate a Bank Statement."),
-        ("required_fields.passbook", '["applicant_name"]', "json", "fields", "Passbook Required Fields", "Fields required to validate a Passbook."),
-        ("required_fields.cheque", '["applicant_name"]', "json", "fields", "Cheque Required Fields", "Fields required to validate a Cheque."),
+        ("required_fields.bank_statement", '["applicant_name", "account_number", "ifsc"]', "json", "fields", "Bank Statement Required Fields", "Fields required to validate a Bank Statement."),
+        ("required_fields.passbook", '["applicant_name", "account_number", "ifsc"]', "json", "fields", "Passbook Required Fields", "Fields required to validate a Passbook."),
+        ("required_fields.cheque", '["applicant_name", "account_number", "ifsc"]', "json", "fields", "Cheque Required Fields", "Fields required to validate a Cheque."),
         ("required_fields.salary_slip", '["applicant_name", "salary_month", "net_salary"]', "json", "fields", "Salary Slip Required Fields", "Fields required to validate a Salary Slip."),
-        ("required_fields.stamp_duty", '["stamp_duty_amount", "stamp_paper_number", "first_party", "second_party"]', "json", "fields", "Stamp Duty Required Fields", "Fields required to validate a Stamp Duty document."),
+        ("required_fields.stamp_duty", '["stamp_duty_amount", "stamp_certificate_number", "stamp_jurisdiction_state", "stamp_first_party", "stamp_second_party"]', "json", "fields", "Stamp Duty Required Fields", "Fields required to validate a Stamp Duty document."),
         ("required_fields.insurance_consent", '["is_consent_given", "premium_amount"]', "json", "fields", "Insurance Consent Required Fields", "Fields required to validate Insurance Consent."),
         ("required_fields.clearance_report", '["search_result", "debtor_name", "pan_number"]', "json", "fields", "Clearance Report Required Fields", "Fields required to validate a Clearance/CERSAI Report."),
         ("required_fields.nach_form", '["account_number", "ifsc", "mandate_limit"]', "json", "fields", "NACH Form Required Fields", "Fields required to validate a NACH Mandate Form."),
@@ -218,3 +227,14 @@ def seed_settings(connection: sqlite3.Connection) -> None:
             """,
             (key, val, val_type, cat, lbl, desc)
         )
+
+    # API OCR is now the supported production path. Upgrade the former seeded
+    # default so existing installations do not remain on local OCR invisibly.
+    connection.execute(
+        """
+        UPDATE system_settings
+        SET config_value = 'google_vision',
+            description = 'Use Google Vision API OCR for scanned pages.'
+        WHERE config_key = 'ocr.provider' AND config_value IN ('local', 'auto', '')
+        """
+    )

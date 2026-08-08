@@ -1,0 +1,6 @@
+# Optional developer-only OCR dependencies.
+# Production and normal development continue to use requirements.txt only.
+-r requirements.txt
+
+paddlepaddle>=3.0.0
+paddleocr[doc-parser]>=3.0.0

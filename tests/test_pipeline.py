@@ -6,13 +6,19 @@ import pytest
 import database.db as db
 from database.db import get_connection, init_db
 from services.pipeline import run_pipeline
-from services.pipeline import _build_page_records, _build_unsupported_page_records
+from services.pipeline import (
+    _build_page_records,
+    _build_page_reuse_map,
+    _build_unsupported_page_records,
+    _clone_reused_page,
+)
 from services.ocr_router import OCRRouter
 
 
 @pytest.fixture(autouse=True)
 def _default_to_local_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OCR_PROVIDER", "local")
+    monkeypatch.setenv("DMEF_LOCAL_OCR_TEST_MODE", "true")
     import services.config as config_mod
     import services.ocr_router as ocr_router_mod
 
@@ -464,6 +470,61 @@ def test_build_page_records_routes_photo_without_classification(monkeypatch: pyt
     assert pages[0]["extracted_fields"]["content_category"] == "property_image"
 
 
+def test_page_reuse_map_handles_exact_files_and_repeated_embedded_text() -> None:
+    sources = [
+        {
+            "source_document_id": "file-1",
+            "internal_page_start": 1,
+            "internal_page_end": 2,
+        },
+        {
+            "source_document_id": "file-2",
+            "duplicate_of_source_document_id": "file-1",
+            "internal_page_start": 3,
+            "internal_page_end": 4,
+        },
+    ]
+    repeated = "Facility Agreement Borrower Lender repayment terms " * 5
+
+    reuse = _build_page_reuse_map(sources, {1: repeated, 5: repeated})
+
+    assert reuse[3]["canonical_page"] == 1
+    assert reuse[3]["method"] == "exact_file_sha256"
+    assert reuse[4]["canonical_page"] == 2
+    assert reuse[5]["canonical_page"] == 1
+    assert reuse[5]["visual_variant_check_required"] is True
+
+
+def test_cloned_duplicate_continuation_does_not_create_false_document_boundary() -> None:
+    canonical = {
+        "page_number": 2,
+        "page_type": "digital",
+        "image_path": None,
+        "document_type": "Loan Agreement",
+        "classification_confidence": 0.72,
+        "detection_method": "inherited",
+        "detected_page_number": 1,
+        "extracted_fields": {
+            "_classification": {
+                "assigned_type": "Loan Agreement",
+                "detection_method": "inherited",
+                "detected_page_number": 1,
+            }
+        },
+    }
+
+    cloned = _clone_reused_page(
+        canonical,
+        page_info={"page_number": 7, "page_type": "digital", "image_path": None},
+        reuse={"canonical_page": 2, "method": "exact_embedded_text"},
+        source_document=None,
+    )
+
+    assert cloned["detected_page_number"] is None
+    assert cloned["extracted_fields"]["_deduplication"]["reused_from_page"] == 2
+    assert cloned["ocr_processing_time_ms"] == 0
+
+
 def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "services.pipeline.run_ocr_on_page",
@@ -542,6 +603,36 @@ def test_build_page_records_does_not_mark_normal_digital_document_as_db_data(
     assert pages[0]["detection_method"] == "detected"
     assert pages[0]["extracted_fields"]["applicant_name"] == "Ramesh Kumar"
     assert "db_data_json" not in pages[0]["extracted_fields"]
+
+
+def test_stamp_page_records_rule_not_configured_instead_of_guessing_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.pipeline.classify_page_text",
+        lambda *_args, **_kwargs: (
+            {"document_type": "Stamp Duty", "confidence": 1.0},
+            {"source": "test_classifier"},
+        ),
+    )
+    monkeypatch.setattr("services.pipeline.classify_with_structured_llm", lambda **_kwargs: None)
+    monkeypatch.setattr("services.pipeline.load_stamp_duty_rules", lambda: [])
+    text = (
+        "Government of Gujarat\nCertificate No: GJ-12345\n"
+        "Certificate Issued Date: 02/04/2025\n"
+        "Description of Document: Article 5(h) Agreement\n"
+        "Stamp Duty Amount (Rs.): 300"
+    )
+
+    pages = _build_page_records(
+        [{"page_number": 1, "page_type": "digital", "image_path": None}],
+        {1: text},
+        application_id=None,
+    )
+
+    validation = pages[0]["extracted_fields"]["_stamp_duty_validation"]
+    assert validation["status"] == "RULE_NOT_CONFIGURED"
+    assert validation["jurisdiction"] == "gujarat"
 
 
 def test_build_page_records_does_not_mark_later_json_page_as_db_data(

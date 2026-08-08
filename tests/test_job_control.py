@@ -163,6 +163,7 @@ def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch) -
 
 def test_page_builder_skips_completed_checkpoint(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("OCR_PROVIDER", "local")
+    monkeypatch.setenv("DMEF_LOCAL_OCR_TEST_MODE", "true")
     import services.config as config_mod
     import services.ocr_router as ocr_router_mod
 

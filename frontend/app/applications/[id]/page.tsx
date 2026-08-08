@@ -271,6 +271,9 @@ function Verdict({ data }: { data: ApplicationReview }) {
 function Overview({ data }: { data: ApplicationReview }) {
   const uploaded = data.uploaded_file;
   const avgPageTime = averagePageTime(data.page_events);
+  const reviewerSummary = asRecordValue(data.reviewer_summary);
+  const reconciliation = asRecordValue(reviewerSummary?.trusted_reconciliation);
+  const reconciliationSummary = asRecordValue(reconciliation?.summary);
   
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-5">
@@ -295,8 +298,30 @@ function Overview({ data }: { data: ApplicationReview }) {
           <Metric label="Avg Page OCR" value={avgPageTime ? `${avgPageTime.toFixed(2)}s` : "-"} />
         </div>
       </div>
+      {reconciliationSummary ? (
+        <div className="border-t border-slate-100 pt-4">
+          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Trusted JSON Reconciliation</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
+            <Metric label="Trusted Fields" value={reconciliationSummary.trusted_fields} />
+            <Metric label="Compared" value={reconciliationSummary.checked_fields} />
+            <Metric label="Matched" value={reconciliationSummary.matched_fields} />
+            <Metric label="Matched + Conflicts" value={reconciliationSummary.matched_with_conflicts} />
+            <Metric label="Mismatched" value={reconciliationSummary.mismatched_fields} />
+            <Metric label="Not Observed" value={reconciliationSummary.not_observed_fields} />
+          </div>
+          <p className="mt-3 text-xs font-medium text-slate-500">
+            “Not Observed” means the value exists in trusted data but was not reliably extracted from any submitted document; it is coverage information, not an automatic mismatch.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function asRecordValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function ReviewerSummary({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number) => void }) {

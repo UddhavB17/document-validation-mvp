@@ -220,6 +220,203 @@ def test_generic_header_words_do_not_break_agreement_inheritance() -> None:
     assert assigned[1]["detection_method"] == "inherited"
 
 
+def test_agreement_references_do_not_open_false_kfs_or_moa_documents() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+            {"document_type": "KFS", "confidence": 1.0},
+            {"document_type": "MOA AOA", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+        ],
+        texts=[
+            "FACILITY AGREEMENT Borrower Lender",
+            "Event of Default: charges are listed in the KFS. Borrower shall repay the Lender. " * 8,
+            "The Borrower represents that its Memorandum and Articles do not conflict with this Agreement. " * 8,
+            "કલમ 7 ઉધારકર્તા લોનદાતા લોન કરાર ચુકવણીની શરતો",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == ["Facility Agreement"] * 4
+    assert [page["detection_method"] for page in assigned[1:]] == ["inherited"] * 3
+
+
+def test_true_kfs_heading_breaks_open_agreement_run() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+            {"document_type": "KFS", "confidence": 1.0},
+        ],
+        texts=[
+            "FACILITY AGREEMENT Borrower Lender",
+            "KEY FACT STATEMENT\nLoan amount APR tenure and instalment details",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "KFS"
+    assert assigned[1]["detection_method"] == "detected"
+
+
+def test_embedded_kfs_heading_breaks_agreement_and_keeps_kfs_tables_together() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Loan Agreement", "confidence": 0.82},
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+            {"document_type": "Property Insurance Form", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 0.85},
+            {"document_type": "Sanction Letter", "confidence": 1.0},
+        ],
+        texts=[
+            (
+                "Borrower consent and information sharing clauses. " * 20
+                + "\nKEY FACT STATEMENT (KFS)\nPART - 1 (Interest Rate & Fees/Charges)\n"
+                "Loan Proposal/Ac No. GJ000030765\nSanctioned loan Amount (in Rs.) 450000.00"
+            ),
+            (
+                "Type Of Loan\nLoan Terms (Months) 84\nInstallments Details\n"
+                "Frequency Of EPIs Monthly\nInterest rate 21.00 Fixed"
+            ),
+            (
+                "Annual Percentage Rate (APR) 24.27\nDetails of Contingent Charges\n"
+                "Foreclosure Charges\nLong Tenor Fee"
+            ),
+            (
+                "Part 2 (Other qualitative information)\n"
+                "Clause of Loan agreement relating to recovery agents"
+            ),
+            (
+                "The IRR and Repayment Schedule specified in this Key Facts Statement (KFS) "
+                "may change with the actual disbursement date."
+            ),
+            "SANCTION LETTER\nApplicant Name SUTHAR ANUPKUMAR\nSanction Amount 450000",
+        ],
+    )
+
+    assert assigned[0]["document_type"] == "KFS"
+    assert [page["document_type"] for page in assigned[:5]] == ["KFS"] * 5
+    assert assigned[5]["document_type"] == "Sanction Letter"
+    assert assigned[5]["detection_method"] == "detected"
+
+
+def test_agreement_sentence_referencing_sanction_letter_is_not_a_new_heading() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+            {"document_type": "KFS", "confidence": 1.0},
+        ],
+        texts=[
+            "FACILITY AGREEMENT Borrower Lender",
+            (
+                "Any other terms not specifically covered herein but stipulated in the "
+                "Sanction Letter should be complied with. The Borrower shall pay charges "
+                "as per the schedule of charges/KFS. The Lender may require documents. "
+            ) * 6,
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Facility Agreement"
+    assert assigned[1]["detection_method"] == "inherited"
+
+
+def test_bureau_appendix_account_table_stays_with_crif_report() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "CRIF Report", "confidence": 1.0},
+            {"document_type": "Bank Statement", "confidence": 1.0},
+        ],
+        texts=[
+            "CRIF High Mark Credit Information Report Credit Score",
+            "Appendix Account Information Payment History Overdue Asset Classification",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "CRIF Report"
+    assert assigned[1]["detection_method"] == "inherited"
+
+
+def test_disbursement_request_continuation_is_not_bank_statement() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Disbursement Request", "confidence": 1.0},
+            {"document_type": "Bank Statement", "confidence": 1.0},
+        ],
+        texts=[
+            "Request For Disbursal\nLoan No GJ000030765",
+            "In case of Balance Transfer use the Foreclosure Letter or Statement of Account. Yours faithfully.",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Disbursement Request"
+    assert assigned[1]["detection_method"] == "inherited"
+
+
+def test_sanction_conditions_do_not_split_on_property_agreement_or_stamp_references() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Sanction Letter", "confidence": 1.0},
+            {"document_type": "Property Document", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+            {"document_type": "Stamp Duty", "confidence": 1.0},
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+        ],
+        texts=[
+            "SANCTION LETTER\nSanctioned amount loan tenure and interest rate",
+            "Credit verification before disbursement. Property security documents and sanction conditions. " * 6,
+            "The offer and terms and conditions remain valid until loan disbursement. Sanction conditions apply. " * 6,
+            "મંજૂરી પત્રની શરતો લોન વિતરણ વ્યાજ દર અને સ્ટેમ્પ ડ્યુટી અંગે લાગુ પડશે. " * 8,
+            "FACILITY AGREEMENT\nThis agreement is between the Borrower and the Lender",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned[:4]] == ["Sanction Letter"] * 4
+    assert assigned[4]["document_type"] == "Facility Agreement"
+    assert assigned[4]["detection_method"] == "detected"
+
+
+def test_self_attested_sanction_condition_is_not_a_new_document_boundary() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Sanction Letter", "confidence": 1.0},
+            {"document_type": "Property Document", "confidence": 1.0},
+            {"document_type": "Stamp Duty", "confidence": 1.0},
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+        ],
+        texts=[
+            "SANCTION LETTER\nSanctioned amount loan tenure and interest rate",
+            (
+                "Credit Verification: Disbursement is subject to satisfactory credit verification.\n"
+                "Self-Attestation: All documents must be self-attested by the applicant.\n"
+                "Disbursement Conditions: loan and security documents must satisfy the lender. "
+            ) * 6,
+            (
+                "Security for Loan: the property secures the loan. The borrower must provide "
+                "documents before disbursement under these sanction conditions. "
+            ) * 7,
+            "FACILITY AGREEMENT\nThis agreement is between the Borrower and the Lender",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned[:3]] == ["Sanction Letter"] * 3
+    assert assigned[3]["document_type"] == "Facility Agreement"
+    assert assigned[3]["detection_method"] == "detected"
+
+
+def test_real_sale_deed_heading_breaks_open_sanction_run() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Sanction Letter", "confidence": 1.0},
+            {"document_type": "Property Document", "confidence": 1.0},
+        ],
+        texts=[
+            "SANCTION LETTER\nSanctioned amount and loan tenure",
+            "SALE DEED\nRegistered property survey number and plot boundaries",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Property Document"
+    assert assigned[1]["detection_method"] == "detected"
+
+
 def test_bank_statement_unknown_gap_is_sandwich_smoothed() -> None:
     pages = [
         {
@@ -245,6 +442,37 @@ def test_bank_statement_unknown_gap_is_sandwich_smoothed() -> None:
 
     smoothed = _smooth_page_classifications(pages, application_id=None, total_pages=3)
     assert smoothed[1]["document_type"] == "Bank Statement"
+
+
+def test_smoothing_does_not_cross_zip_source_boundaries() -> None:
+    pages = [
+        {
+            "page_number": 1,
+            "document_type": "Bank Statement",
+            "classification_confidence": 0.92,
+            "source_document_id": "file-a",
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 2,
+            "document_type": "Unknown",
+            "classification_confidence": 0.0,
+            "source_document_id": "file-b",
+            "ocr_text": "Debit Credit Balance Transaction",
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 3,
+            "document_type": "Bank Statement",
+            "classification_confidence": 0.92,
+            "source_document_id": "file-c",
+            "extracted_fields": {},
+        },
+    ]
+
+    smoothed = _smooth_page_classifications(pages, application_id=None, total_pages=3)
+
+    assert smoothed[1]["document_type"] == "Unknown"
 
 
 def test_generic_zip_folders_are_not_invented_as_document_types() -> None:
@@ -320,3 +548,104 @@ def test_generic_kyc_photo_does_not_override_intrinsic_card_type() -> None:
     assert _source_filename_override_allowed("KYC Card Photo", "PAN Card") is False
     assert _source_filename_override_allowed("KYC Card Photo", "Aadhaar") is False
     assert _source_filename_override_allowed("KYC Card Photo", "Unknown") is True
+
+
+def test_guarantee_clauses_do_not_become_a_loan_agreement() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Guarantee Deed", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 0.9},
+        ],
+        texts=[
+            "DEED OF GUARANTEE\nExecuted by the Guarantor",
+            "NOW THIS DEED OF GUARANTEE WITNESSETH. The Guarantor shall ensure repayment by the Borrower.",
+            "This Guarantee remains effective under the Loan Agreement and binds the Guarantor.",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == ["Guarantee Deed"] * 3
+    assert assigned[1]["inheritance_warning"] == "guarantee-deed-run-context"
+
+
+def test_application_form_declaration_does_not_become_a_loan_agreement() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Application Form", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 0.95},
+            {"document_type": "Loan Agreement", "confidence": 0.9},
+        ],
+        texts=[
+            "LOAN APPLICATION FORM\nApplicant details",
+            "Co-Applicant Personal Details\nCurrent Resi. Address\nDate of Birth",
+            "Declaration: I/We agree that this application for loan may be accepted by the Company.",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == ["Application Form"] * 3
+    assert assigned[1]["inheritance_warning"] == "application-form-run-context"
+
+
+def test_application_continuation_guard_does_not_hide_unrelated_strong_document() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Application Form", "confidence": 1.0},
+            {"document_type": "Utility Bill", "confidence": 1.0},
+        ],
+        texts=[
+            "LOAN APPLICATION FORM\nApplicant details",
+            "ELECTRICITY BILL\nConsumer Address\nBilling Month July 2026",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Utility Bill"
+    assert assigned[1]["detection_method"] == "detected"
+
+
+def test_guarantee_continuation_guard_does_not_hide_legal_report() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Guarantee Deed", "confidence": 1.0},
+            {"document_type": "Legal Clearance Report", "confidence": 1.0},
+        ],
+        texts=[
+            "DEED OF GUARANTEE\nExecuted by the Guarantor",
+            "LEGAL SCRUTINY REPORT\nThe proposed guarantee and title are legally clear.",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Legal Clearance Report"
+
+
+def test_explicit_facility_title_breaks_open_loan_agreement_run() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+        ],
+        texts=[
+            "LOAN AGREEMENT\nBorrower and Lender",
+            "FACILITY AGREEMENT\nThis Facility Agreement is made between the parties.",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == [
+        "Loan Agreement", "Facility Agreement",
+    ]
+    assert assigned[1]["detection_method"] == "detected"
+
+
+def test_agreement_body_affidavit_reference_does_not_switch_agreement_kind() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+        ],
+        texts=[
+            "FACILITY AGREEMENT\nThis agreement is made between the parties.",
+            "10. Allow the Lender to conduct due diligence and obtain affidavits from the Borrower.",
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == ["Facility Agreement"] * 2
+    assert assigned[1]["inheritance_warning"] == "agreement-run-context"

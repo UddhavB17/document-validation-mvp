@@ -7,12 +7,15 @@ extraction, checklist checks, exception aggregation, and report persistence.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 import os
 import re
 import sys
 import time
+import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -33,6 +36,7 @@ from services.field_verification import verify_all_fields
 from services.field_extractor import extract_fields
 from services.input_classifier import classify_input_text
 from services.job_control import cooperate, mark_checkpoint
+from services.language_detection import analyze_text_languages, normalize_language_code
 from services.llm_service import generate_explanation, summarize_exceptions
 from services.ocr_json_export import merge_public_extracted_fields, save_ocr_document_json
 from services.page_classification import classify_page_text, create_llm_classifier_budget
@@ -57,6 +61,7 @@ from services.progress_tracker import (
 from services.report_generator import build_report, save_report_json
 from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.structured_llm_classifier import classify_with_structured_llm
+from services.stamp_duty_rules import evaluate_stamp_duty, load_stamp_duty_rules
 from services.text_extractor import extract_digital_text, extract_ground_truth
 from services.validation_gates import attach_field_provenance
 from services.verification_pdf_parser import VerificationPdfParseError, parse_verification_pdf
@@ -415,6 +420,12 @@ def run_pipeline(
         processing_metadata=_checklist_processing_metadata(progress_snapshot),
         include_narration=False,
     )
+    from services.trusted_reconciliation import build_trusted_reconciliation
+
+    trusted_reconciliation = build_trusted_reconciliation(
+        pages,
+        {**ground_truth, **(system_data or {})},
+    )
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
@@ -440,6 +451,7 @@ def run_pipeline(
         )
         reviewer_summary["unclassified_pages"] = mapped_result.get("unclassified_pages", [])
         reviewer_summary["evidence_resolution"] = mapped_result.get("evidence_resolution", {})
+        reviewer_summary["trusted_reconciliation"] = trusted_reconciliation
         save_reviewer_summary(application_id, reviewer_summary)
 
     report_path = save_report_json(
@@ -462,10 +474,14 @@ def run_pipeline(
                     "automatic_document_index": mapped_result.get("automatic_document_index", []),
                     "unclassified_pages": mapped_result.get("unclassified_pages", []),
                     "evidence_resolution": mapped_result.get("evidence_resolution", {}),
+                    "trusted_reconciliation": trusted_reconciliation,
                     "checklist_verification": checklist_verification.model_dump(mode="json"),
                 }
                 if mapped_result is not None
-                else None
+                else {
+                    "trusted_reconciliation": trusted_reconciliation,
+                    "checklist_verification": checklist_verification.model_dump(mode="json"),
+                }
             ),
         )
     )
@@ -484,6 +500,7 @@ def run_pipeline(
                 else None
             ),
             "checklist_verification": checklist_verification.model_dump(mode="json"),
+            "trusted_reconciliation": trusted_reconciliation,
         }
     )
     if mapped_result is not None:
@@ -641,6 +658,12 @@ def run_partner_json_pipeline(
         processing_metadata={},
         include_narration=False,
     )
+    from services.trusted_reconciliation import build_trusted_reconciliation
+
+    trusted_reconciliation = build_trusted_reconciliation(
+        pages,
+        {**ground_truth, **(system_data or {})},
+    )
 
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
@@ -655,6 +678,10 @@ def run_partner_json_pipeline(
             loan_id=str(ground_truth.get("loan_id") or ""),
             exceptions=result["anomalies"],
             llm_summary=summary or "",
+            metadata={
+                "trusted_reconciliation": trusted_reconciliation,
+                "checklist_verification": checklist_verification.model_dump(mode="json"),
+            },
         )
     )
     result.update(
@@ -665,6 +692,7 @@ def run_partner_json_pipeline(
             "llm_summary": summary,
             "report_path": str(report_path),
             "checklist_verification": checklist_verification.model_dump(mode="json"),
+            "trusted_reconciliation": trusted_reconciliation,
         }
     )
     mark_completed(application_id, result["final_status"], pipeline_status)
@@ -728,6 +756,7 @@ def _build_page_records(
         for page in checkpoint_pages or []
         if int(page.get("page_number") or 0) > 0
     }
+    reuse_page_map = _build_page_reuse_map(source_documents or [], digital_text_by_page)
 
     for page_info in processing_order:
         page_started_at = time.perf_counter()
@@ -752,6 +781,53 @@ def _build_page_records(
             current_ocr_route = checkpoint.get("ocr_route")
             continue
         cooperate(job_id, application_id or 0)
+        reuse = reuse_page_map.get(page_number)
+        if reuse:
+            canonical_page = next(
+                (
+                    page
+                    for page in pages
+                    if int(page.get("page_number") or 0) == int(reuse["canonical_page"])
+                ),
+                None,
+            )
+            if canonical_page is not None:
+                if application_id is not None:
+                    mark_page_started(
+                        application_id,
+                        current_page=page_number,
+                        total_pages=total_pages,
+                        message=f"Reusing duplicate page {page_number}/{total_pages}",
+                    )
+                reused_page = _clone_reused_page(
+                    canonical_page,
+                    page_info=page_info,
+                    reuse=reuse,
+                    source_document=_source_document_for_page(source_documents or [], page_number),
+                )
+                pages.append(reused_page)
+                current_type = str(reused_page.get("document_type") or "Unknown")
+                current_confidence = float(reused_page.get("classification_confidence") or 0.0)
+                current_detected_page = reused_page.get("detected_page_number")
+                current_ocr_route = reused_page.get("ocr_route")
+                page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
+                _record_completed_page_event(
+                    application_id,
+                    job_id=job_id,
+                    page=reused_page,
+                    total_pages=total_pages,
+                    elapsed_seconds=page_elapsed,
+                    status="reused",
+                )
+                if application_id is not None:
+                    update_page_progress(
+                        application_id,
+                        processed_pages=len(pages),
+                        total_pages=total_pages,
+                        current_page=page_number,
+                        message=f"Processed {len(pages)}/{total_pages} pages (duplicate reused)",
+                    )
+                continue
         needs_ocr = page_type == "scanned" and page_number in selected_scanned_pages
         ocr_metadata: dict[str, Any] = {}
         if application_id is not None:
@@ -1046,6 +1122,12 @@ def _build_page_records(
                     ocr_text=text,
                     extracted_fields=extracted_fields,
                 )
+                if document_type == "Stamp Duty":
+                    extracted_fields["_stamp_duty_validation"] = evaluate_stamp_duty(
+                        extracted_fields,
+                        {},
+                        load_stamp_duty_rules(),
+                    )
                 _mark_unanchored_inherited_identity(
                     extracted_fields,
                     detection_method=detection_method,
@@ -1146,6 +1228,31 @@ def _build_page_records(
             text=text,
             extracted_fields=extracted_fields,
         )
+        language_profile = analyze_text_languages(text)
+        provider_languages = ocr_metadata.get("ocr_languages")
+        declared_languages = [
+            value
+            for value in (extracted_fields.get("second_language"),)
+            if value not in (None, "")
+        ]
+        identified_languages: list[dict[str, str]] = []
+        for source, values in (
+            ("declared_on_document", declared_languages),
+            ("ocr_provider", provider_languages or []),
+        ):
+            for value in values:
+                code = normalize_language_code(value)
+                if code and not any(
+                    item["code"] == code and item["source"] == source for item in identified_languages
+                ):
+                    identified_languages.append({"code": code, "source": source})
+        if language_profile["scripts"] or provider_languages or declared_languages:
+            extracted_fields["_language"] = {
+                **language_profile,
+                "declared_languages": declared_languages,
+                "provider_languages": provider_languages or [],
+                "identified_languages": identified_languages,
+            }
         completed_page = {
             "page_number": page_number,
             "page_type": page_type,
@@ -1207,10 +1314,117 @@ def _build_page_records(
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
 
+def _build_page_reuse_map(
+    source_documents: list[dict[str, Any]],
+    digital_text_by_page: dict[int, str],
+) -> dict[int, dict[str, Any]]:
+    """Map repeated pages to an earlier canonical page before OCR/LLM work.
+
+    Exact ZIP-member duplicates cover scanned files. Exact normalized embedded
+    text covers stamped/e-signed PDF variants whose business content is the
+    same but whose visual overlays still need a separate variant audit.
+    """
+    reuse: dict[int, dict[str, Any]] = {}
+    source_by_id = {
+        str(source.get("source_document_id") or ""): source
+        for source in source_documents
+        if source.get("source_document_id")
+    }
+    for source in source_documents:
+        canonical_id = str(source.get("duplicate_of_source_document_id") or "")
+        canonical = source_by_id.get(canonical_id)
+        if not canonical:
+            continue
+        start = int(source.get("internal_page_start") or 0)
+        end = int(source.get("internal_page_end") or 0)
+        canonical_start = int(canonical.get("internal_page_start") or 0)
+        canonical_end = int(canonical.get("internal_page_end") or 0)
+        if start <= 0 or canonical_start <= 0 or end - start != canonical_end - canonical_start:
+            continue
+        for offset, page_number in enumerate(range(start, end + 1)):
+            reuse[page_number] = {
+                "canonical_page": canonical_start + offset,
+                "method": "exact_file_sha256",
+                "canonical_source_document_id": canonical_id,
+            }
+
+    first_page_by_text: dict[str, int] = {}
+    for page_number, text in sorted(digital_text_by_page.items()):
+        fingerprint = _digital_text_fingerprint(text)
+        if not fingerprint:
+            continue
+        canonical_page = first_page_by_text.get(fingerprint)
+        if canonical_page is None:
+            first_page_by_text[fingerprint] = page_number
+            continue
+        reuse.setdefault(
+            page_number,
+            {
+                "canonical_page": canonical_page,
+                "method": "exact_embedded_text",
+                "visual_variant_check_required": True,
+            },
+        )
+    return reuse
+
+
+def _digital_text_fingerprint(text: str) -> str | None:
+    normalized = " ".join(
+        unicodedata.normalize("NFKC", str(text or "")).casefold().split()
+    )
+    # Avoid deduplicating short headers or near-empty pages that may have
+    # different visual evidence despite sharing a few words.
+    if len(normalized) < 120:
+        return None
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _clone_reused_page(
+    canonical_page: dict[str, Any],
+    *,
+    page_info: dict[str, Any],
+    reuse: dict[str, Any],
+    source_document: dict[str, Any] | None,
+) -> dict[str, Any]:
+    page_number = int(page_info.get("page_number") or 0)
+    cloned = copy.deepcopy(canonical_page)
+    canonical_number = int(canonical_page.get("page_number") or 0)
+    canonical_detected_number = canonical_page.get("detected_page_number")
+    starts_logical_document = canonical_detected_number == canonical_number
+    cloned.update(
+        {
+            "page_number": page_number,
+            "page_type": page_info.get("page_type"),
+            "image_path": page_info.get("image_path"),
+            "ocr_processing_time_ms": 0,
+            "ocr_escalated": False,
+            "detection_method": "deduplicated_reuse",
+            "detected_page_number": page_number if starts_logical_document else None,
+        }
+    )
+    fields = cloned.get("extracted_fields")
+    if not isinstance(fields, dict):
+        fields = {}
+        cloned["extracted_fields"] = fields
+    fields.pop("_field_provenance", None)
+    fields["_deduplication"] = {
+        **reuse,
+        "reused_from_page": int(reuse.get("canonical_page") or 0),
+    }
+    classification = fields.get("_classification")
+    if isinstance(classification, dict):
+        classification["detection_method"] = "deduplicated_reuse"
+        classification["detected_page_number"] = page_number if starts_logical_document else None
+    attach_field_provenance(cloned, source_document=source_document)
+    return cloned
+
+
 def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
     """Select structured OCR fields that should be persisted and exported."""
     keys = (
         "ocr_pipeline",
+        "ocr_languages",
+        "ocr_language_hints",
         "header_text",
         "layout_blocks",
         "tables",
@@ -1307,6 +1521,7 @@ def _looks_like_loan_agreement_continuation(text: str) -> bool:
     markers = (
         "borrower", "lender", "repayment", "facility", "event of default",
         "उधारकर्ता", "उ ारक", "अनुच्छेद", "अनुJेद", "ऋणदा", "ऋण अनुबंध",
+        "ઉધારકર્તા", "લોનદાતા", "લોન કરાર", "ફેસિલિટી એગ્રીમમેન્ટ", "કલમ",
         "sanction letter", "joint liability", "herein", "hereof", "article ",
     )
     hits = sum(1 for marker in markers if marker in lowered)
@@ -1330,6 +1545,7 @@ def _looks_like_multi_page_continuation(document_type: str, text: str) -> bool:
             for marker in (
                 "applicant", "co-applicant", "kyc", "mobile", "address",
                 "आवेदक", "सह-आवेदक", "पिनकोड", "pincode", "declaration",
+                "અરજદાર", "સહ અરજદાર", "સરનામું", "ઘોષણા",
             )
         )
     if document_type == "Bank Statement":
@@ -1353,6 +1569,14 @@ def _looks_like_multi_page_continuation(document_type: str, text: str) -> bool:
         return any(
             marker in lowered
             for marker in ("passbook", "pass book", "balance", "deposit", "withdrawal", "पासबुक")
+        )
+    if document_type == "Guarantee Deed":
+        return any(
+            marker in lowered
+            for marker in (
+                "deed of guarantee", "guarantee deed", "this guarantee",
+                "guarantor", "guaranteors", "guarantee", "જામીનદાર", "ગેરંટી",
+            )
         )
     return False
 
@@ -1378,6 +1602,7 @@ def _smooth_page_classifications(
                 prev_type != "Unknown"
                 and prev_type == next_type
                 and prev_type not in _NO_SANDWICH_SMOOTHING_TYPES
+                and _same_source_context(prev_page, curr_page, next_page)
             ):
                 _apply_smoothed_document_type(
                     curr_page,
@@ -1416,6 +1641,7 @@ def _smooth_page_classifications(
             and left_type in _MULTI_PAGE_RUN_FILL_TYPES
             and mid_a.get("document_type") == "Unknown"
             and mid_b.get("document_type") == "Unknown"
+            and _same_source_context(left, mid_a, mid_b, right)
         ):
             for mid in (mid_a, mid_b):
                 _apply_smoothed_document_type(
@@ -1450,7 +1676,6 @@ def _smooth_page_classifications(
                 "Insurance Form",
                 "Insurance Consent Letter",
                 "Charges Deduction Document",
-                "Sanction Letter",
                 "Guarantee Deed",
                 "Income Tax Return",
                 "Unknown",
@@ -1458,7 +1683,16 @@ def _smooth_page_classifications(
             and _looks_like_loan_agreement_continuation(text)
             and (prev_type in agreement_types or next_type in agreement_types)
         ):
-            target = prev_type if prev_type in agreement_types else next_type
+            target = (
+                prev_type
+                if prev_type in agreement_types
+                and _same_source_context(sorted_pages[i - 1], curr_page)
+                else next_type
+                if next_type in agreement_types
+                and i + 1 < len(sorted_pages)
+                and _same_source_context(curr_page, sorted_pages[i + 1])
+                else "Unknown"
+            )
             if target in agreement_types:
                 _apply_smoothed_document_type(
                     curr_page,
@@ -1473,6 +1707,8 @@ def _smooth_page_classifications(
         if curr_type != "Unknown":
             continue
         if prev_type not in _MULTI_PAGE_RUN_FILL_TYPES:
+            continue
+        if not _same_source_context(sorted_pages[i - 1], curr_page):
             continue
         if not _looks_like_multi_page_continuation(prev_type, text):
             continue
@@ -1506,6 +1742,18 @@ def _smooth_page_classifications(
         attach_field_provenance(curr_page)
 
     return sorted_pages
+
+
+def _same_source_context(*pages: dict[str, Any]) -> bool:
+    """Do not smooth classifications across ZIP-member boundaries."""
+    identifiers = [
+        str(page.get("source_document_id") or page.get("source_filename") or "").strip()
+        for page in pages
+    ]
+    if not any(identifiers):
+        # A plain merged PDF has no source-member metadata.
+        return True
+    return all(identifiers) and len(set(identifiers)) == 1
 
 
 def _source_document_for_page(
@@ -1669,6 +1917,12 @@ def _ensure_page_has_json_details(
     text: str,
     extracted_fields: dict[str, Any],
 ) -> dict[str, Any]:
+    # Repayment tables are structural evidence.  Parse them even when the page
+    # already has other public fields, and even when a continuation page was
+    # misclassified as a bank statement or NACH form.
+    from services.repayment_schedule import attach_repayment_fields
+
+    extracted_fields = attach_repayment_fields(extracted_fields, text)
     if _has_informative_public_fields(extracted_fields):
         return extracted_fields
     if not str(text or "").strip():
@@ -1827,6 +2081,154 @@ def _assign_sequential_document_type(
 ) -> dict[str, Any]:
     raw_type = _normalize_document_type(classification.get("document_type"))
     raw_confidence = float(classification.get("confidence") or 0.0)
+    agreement_types = {"Loan Agreement", "Facility Agreement"}
+
+    # A combined loan PDF can start the KFS near the bottom of a page after
+    # application/agreement boilerplate.  That embedded, explicit title is a
+    # real boundary even though it is not one of the first header lines.
+    if _looks_like_kfs_start(text):
+        return {
+            "document_type": "KFS",
+            "confidence": max(raw_confidence if raw_type == "KFS" else 0.0, 0.98),
+            "detection_method": "detected",
+            "detected_page_number": page_number,
+            "raw_document_type": raw_type,
+            "raw_confidence": raw_confidence,
+        }
+
+    # KFS fee tables, qualitative disclosures, APR illustrations, and the
+    # amortisation schedule often classify as insurance/agreement pages when
+    # viewed independently.  Keep them in the open KFS until a genuine next
+    # document heading appears.
+    if (
+        current_type == "KFS"
+        and _looks_like_kfs_continuation(text)
+        and not _looks_like_fresh_page_without_match(text)
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="kfs-run-context",
+        )
+
+    # Once an agreement title opens a run, references inside its clauses to a
+    # KFS, sanction letter, PDC, MOA/AOA, or another agreement synonym are not
+    # new documents. A real title at the top/embedded boundary still wins.
+    if current_type in agreement_types and (
+        (
+            raw_type in agreement_types
+            and (
+                raw_type == current_type
+                or not _looks_like_explicit_agreement_start(text, raw_type)
+            )
+        )
+        or (
+            _looks_like_loan_agreement_continuation(text)
+            and not _looks_like_fresh_page_without_match(text)
+        )
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="agreement-run-context",
+        )
+
+    # Guarantee deeds repeatedly refer to the underlying loan agreement and
+    # lender.  Those references are continuation clauses, not a new loan
+    # agreement, unless a genuine new-document heading is present.
+    if (
+        current_type == "Guarantee Deed"
+        and raw_type in {"Unknown", "Guarantee Deed", "Loan Agreement", "Facility Agreement"}
+        and _looks_like_multi_page_continuation(current_type, text)
+        and not _looks_like_fresh_page_without_match(text)
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="guarantee-deed-run-context",
+        )
+
+    # Multi-page application forms contain loan/facility declarations and can
+    # otherwise be reclassified as agreements halfway through the form.  Keep
+    # co-applicant, security, banking and declaration pages in the open form.
+    if (
+        current_type == "Application Form"
+        and raw_type in {
+            "Unknown", "Application Form", "Loan Agreement", "Facility Agreement",
+            "Property Document", "Aadhaar",
+        }
+        and _looks_like_multi_page_continuation(current_type, text)
+        and not _looks_like_fresh_page_without_match(text)
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="application-form-run-context",
+        )
+
+    # Sanction conditions often mention the agreement, property/security, and
+    # stamp duty. Those are clause references until a real next-document title
+    # appears (for example FACILITY AGREEMENT or SALE DEED).
+    if (
+        current_type == "Sanction Letter"
+        and _looks_like_sanction_letter_continuation(text)
+        and not _looks_like_fresh_page_without_match(text)
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="sanction-conditions-context",
+        )
+
+    # Credit-report appendices commonly lose the bureau name and look like a
+    # bank statement because they contain account/payment-history tables.
+    if (
+        current_type in {"CIBIL Report", "CRIF Report"}
+        and raw_type not in {"CIBIL Report", "CRIF Report"}
+        and _looks_like_multi_page_continuation(current_type, text)
+        and not _looks_like_fresh_page_without_match(text)
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="bureau-appendix-context",
+        )
+
+    # A disbursement request can continue with payment instructions mentioning
+    # a statement of account. Keep the short continuation in the open letter.
+    if (
+        current_type == "Disbursement Request"
+        and current_detected_page is not None
+        and page_number - current_detected_page <= 2
+        and not _looks_like_fresh_page_without_match(text)
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="disbursement-request-continuation",
+        )
+
     if raw_type != "Unknown" and raw_confidence >= HIGH_CONFIDENCE:
         return {
             "document_type": raw_type,
@@ -1900,6 +2302,27 @@ def _assign_sequential_document_type(
     }
 
 
+def _inherited_sequence_result(
+    *,
+    current_type: str,
+    current_confidence: float,
+    current_detected_page: int | None,
+    raw_type: str,
+    raw_confidence: float,
+    reason: str,
+) -> dict[str, Any]:
+    inherited_confidence = max(0.55, min(0.85, current_confidence * 0.85))
+    return {
+        "document_type": current_type,
+        "confidence": round(inherited_confidence, 3),
+        "detection_method": "inherited",
+        "detected_page_number": current_detected_page,
+        "raw_document_type": raw_type,
+        "raw_confidence": raw_confidence,
+        "inheritance_warning": reason,
+    }
+
+
 def _identity_inheritance_block_reason(
     *,
     current_type: str,
@@ -1914,14 +2337,96 @@ def _identity_inheritance_block_reason(
     return None
 
 
+def _looks_like_sanction_letter_continuation(text: str) -> bool:
+    normalized = _normalize_fresh_document_text(text)
+    if not normalized:
+        return False
+    markers = (
+        "sanction", "sanctioned", "terms and conditions", "disbursement",
+        "credit verification", "interest rate", "loan tenure", "loan amount",
+        "મંજૂરી", "મંજૂર", "વિતરણ", "વ્યાજ દર", "લોનની મુદત", "શરતો",
+    )
+    hits = sum(1 for marker in markers if marker in normalized)
+    return hits >= 2 or (hits >= 1 and len(normalized) >= 400)
+
+
+def _looks_like_explicit_agreement_start(text: str, document_type: str) -> bool:
+    """Recognize a real agreement title without treating body words as a boundary."""
+    phrases = {
+        "Loan Agreement": ("loan agreement", "loan contract", "ऋण समझौता", "ऋण अनुबंध", "લોન કરાર"),
+        "Facility Agreement": ("facility agreement", "ફેસિલિટી એગ્રીમમેન્ટ"),
+    }.get(document_type, ())
+    header_lines = [
+        _normalize_fresh_document_text(line)
+        for line in str(text or "").splitlines()[:6]
+        if _normalize_fresh_document_text(line)
+    ]
+    return any(
+        line == phrase
+        or (
+            line.startswith(f"{phrase} ")
+            and len(line.split()) <= len(phrase.split()) + 5
+        )
+        for line in header_lines
+        for phrase in phrases
+    )
+
+
+def _looks_like_kfs_start(text: str) -> bool:
+    normalized = _normalize_fresh_document_text(text)
+    if not re.search(r"\bkey facts? statement(?: kfs)?\b", normalized):
+        return False
+    return any(
+        marker in normalized
+        for marker in (
+            "part 1 interest rate fees charges",
+            "sanctioned loan amount",
+            "loan proposal ac no",
+            "annual percentage rate",
+        )
+    )
+
+
+def _looks_like_kfs_continuation(text: str) -> bool:
+    normalized = _normalize_fresh_document_text(text)
+    if not normalized:
+        return False
+    if any(
+        marker in normalized
+        for marker in (
+            "part 2 other qualitative information",
+            "illustration for computation of apr",
+            "repayment schedule under equated periodic instalment",
+        )
+    ):
+        return True
+    if "key facts statement" in normalized and any(
+        marker in normalized for marker in ("repayment schedule", "irr", "kfs")
+    ):
+        return True
+    marker_families = (
+        ("type of loan", "loan terms", "frequency of epis", "installments details"),
+        ("annual percentage rate", "contingent charges", "net disbursed amount"),
+        ("foreclosure charges", "prepayment charges", "long tenor fee", "rate reduction fee"),
+        ("statement of a c charges", "duplicate repayment schedule", "cheque ecs bounce charges"),
+        ("opening balance", "closing balance", "principal", "interest"),
+        ("total interest amount", "total amount to be paid", "sanctioned loan amount"),
+    )
+    family_hits = sum(
+        1
+        for family in marker_families
+        if sum(1 for marker in family if marker in normalized) >= 2
+    )
+    return family_hits >= 1
+
+
 def _looks_like_fresh_page_without_match(text: str) -> bool:
     raw_text = text or ""
     # Some digitally generated PDFs expose the entire page as one enormous
     # line.  Treating that whole line as a heading makes a continuation page
     # look "fresh" merely because words such as letter/report occur later in
     # boilerplate.  Document-boundary evidence belongs near the top of a page.
-    header = " ".join(raw_text.splitlines()[:6])[:360]
-    normalized_header = _normalize_fresh_document_text(header)
+    raw_header_lines = raw_text.splitlines()[:6]
     normalized_text = _normalize_fresh_document_text(raw_text)
     if not normalized_text:
         return False
@@ -1944,6 +2449,22 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
         "cibil report",
         "crif report",
         "credit information report",
+        "consent letter",
+        "end-use letter",
+        "end use letter",
+        "request for disbursal",
+        "request for disbursement",
+        "disbursement request",
+        "drawdown request",
+        "deed of guarantee",
+        "acceptance letter",
+        "certificate of stamp duty",
+        "sale deed",
+        "title deed",
+        "registered deed",
+        "વેચાણ દસ્તાવેજ",
+        "માલિકી હક દસ્તાવેજ",
+        "નોંધાયેલ દસ્તાવેજ",
         "permanent account number",
         "income tax department",
         "driving licence",
@@ -1951,7 +2472,20 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
         "election commission",
         "unique identification authority",
     )
-    if any(phrase in normalized_header for phrase in strong_title_phrases):
+    normalized_header_lines = [
+        _normalize_fresh_document_text(line)
+        for line in raw_header_lines
+        if _normalize_fresh_document_text(line)
+    ]
+    if any(
+        line == phrase
+        or (
+            line.startswith(f"{phrase} ")
+            and len(line.split()) <= len(phrase.split()) + 5
+        )
+        for line in normalized_header_lines
+        for phrase in strong_title_phrases
+    ):
         return True
 
     strong_terms = (
@@ -1959,7 +2493,6 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
         "notary",
         "notarised",
         "notarized",
-        "attested",
         "stamp paper",
         "non judicial",
         "non-judicial",
@@ -1985,10 +2518,15 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
 
 
 def _normalize_fresh_document_text(value: str) -> str:
-    normalized = str(value or "").lower()
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
-    normalized = re.sub(r"[^0-9a-z\u0900-\u097f-]+", " ", normalized)
-    return re.sub(r"\s+", " ", normalized).strip()
+    cleaned = "".join(
+        character
+        if character.isalnum() or character == "-" or unicodedata.category(character).startswith("M")
+        else " "
+        for character in normalized
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _fuzzy_contains(text: str, term: str, *, threshold: float = 0.85) -> bool:

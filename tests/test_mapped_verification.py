@@ -426,7 +426,7 @@ def test_mapped_verification_uses_embedded_text_without_running_ocr(
     monkeypatch.setattr("services.mapped_verification.open_pdf", lambda _path: document)
 
     def must_not_run(*_args, **_kwargs):
-        raise AssertionError("Digital mapped pages must not be rendered or sent to PaddleOCR")
+        raise AssertionError("Digital mapped pages must not be rendered or sent to an OCR API")
 
     monkeypatch.setattr("services.mapped_verification.convert_page_to_image", must_not_run)
     monkeypatch.setattr("services.mapped_verification.run_ocr_on_page", must_not_run)
@@ -704,8 +704,8 @@ def test_mapped_verification_flags_missing_required_document_and_checks_utility_
     )
 
     assert result["mapped_pages_processed"] == 1
-    assert result["checked_fields"] == 3
-    assert result["matched_fields"] == 3
+    assert result["checked_fields"] == 1
+    assert result["matched_fields"] == 1
     assert [item["rule_id"] for item in result["anomalies"]] == ["DOCUMENT_MISSING"]
     assert result["anomalies"][0]["document_type"] == "PAN"
     assert result["people_verification"]["primary"]["documents"]["Utility Bill"]["status"] == "MATCH"
@@ -714,3 +714,24 @@ def test_mapped_verification_flags_missing_required_document_and_checks_utility_
 
 def test_name_match_ignores_missing_ocr_whitespace() -> None:
     assert verify_name("PEERULAL", "Peeru Lal").match is True
+def test_mapped_name_and_address_accept_trusted_indian_variants() -> None:
+    from services.mapped_verification import _mapped_field_matches
+
+    person = {
+        "applicant_name": "Suthar Anupkumar",
+        "father_name": "Chetanbhai Mohanlal Suthar",
+        "permanent_address": "MODIVAS HARNIYAV AHMEDABAD 382435",
+        "communication_address": "B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445",
+    }
+    assert _mapped_field_matches(
+        "applicant_name",
+        "ANUPKUMAR CHETANBHAI SUTHAR",
+        person["applicant_name"],
+        person,
+    )
+    assert _mapped_field_matches(
+        "address",
+        "B-402 PANDIT DINDAYAL-2 HATHIJAN AHMEDABAD 382445",
+        person["permanent_address"],
+        person,
+    )

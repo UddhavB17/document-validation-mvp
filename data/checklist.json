@@ -209,6 +209,7 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
       "manual_review_reason": "Charges deduction is primarily a system cross-check."
@@ -221,6 +222,7 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
       "manual_review_reason": "OTC/PDD marking is primarily a system cross-check."
@@ -306,6 +308,7 @@
       "check_type": "presence",
       "required": true,
       "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
       "manual_review_reason": "Payment favoring check is a CSO/system control."

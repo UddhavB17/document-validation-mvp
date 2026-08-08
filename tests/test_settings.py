@@ -16,7 +16,8 @@ def test_ocr_settings_are_seeded_and_google_api_key_is_masked(tmp_path, monkeypa
 
     settings = _settings_by_key()
 
-    assert settings["ocr.provider"]["config_value"] == "local"
+    assert settings["ocr.provider"]["config_value"] == "google_vision"
+    assert settings["google.vision.language_hints"]["config_value"] == ""
     assert settings["google.vision.api_key"]["is_secret"] is True
     assert settings["google.vision.api_key"]["has_value"] is False
     assert settings["google.vision.api_key"]["config_value"] == ""
@@ -54,7 +55,7 @@ def test_ocr_provider_can_be_controlled_from_settings_when_env_is_absent(tmp_pat
     monkeypatch.delenv("OCR_PROVIDER", raising=False)
     init_db()
 
-    assert ocr_provider() == "local"
+    assert ocr_provider() == "google_vision"
 
     update_setting("ocr.provider", SettingUpdatePayload(config_value="google_vision"))
 

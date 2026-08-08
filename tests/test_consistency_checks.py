@@ -1,5 +1,5 @@
 from services.checklist_engine import run_checks
-from services.consistency_checks import run_consistency_checks
+from services.consistency_checks import _matches, run_consistency_checks
 from services.field_verification import verify_address
 from services.page_quality import is_confident_document_match
 
@@ -137,7 +137,22 @@ def test_garbage_name_and_masked_dob_do_not_create_trusted_mismatches() -> None:
     assert "TRUSTED_ADDRESS_MISMATCH" not in rules
 
 
-def test_bilingual_application_form_skips_second_language_anomaly() -> None:
+def test_regional_bilingual_application_form_skips_second_language_anomaly() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 1,
+                "document_type": "Application Form",
+                "ocr_text": "Loan Application Form અરજદારનું નામ Peeru Lal",
+                "extracted_fields": {"applicant_name": "Peeru Lal"},
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["rule_id"] == "APPLICATION_SECOND_LANGUAGE_MISSING" for item in anomalies)
+
+
+def test_unlabelled_devanagari_application_is_ambiguous_not_assumed_hindi() -> None:
     anomalies = run_consistency_checks(
         [
             {
@@ -149,7 +164,62 @@ def test_bilingual_application_form_skips_second_language_anomaly() -> None:
         ],
         {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
     )
+    assert any(item["rule_id"] == "APPLICATION_REGIONAL_LANGUAGE_UNVERIFIED" for item in anomalies)
     assert not any(item["rule_id"] == "APPLICATION_SECOND_LANGUAGE_MISSING" for item in anomalies)
+
+
+def test_declared_haryanvi_application_satisfies_regional_language_rule() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 1,
+                "document_type": "Application Form",
+                "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
+                "extracted_fields": {
+                    "applicant_name": "Peeru Lal",
+                    "second_language": "Haryanvi",
+                },
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["s_no"] == 10 for item in anomalies)
+
+
+def test_bhojpuri_provider_metadata_resolves_devanagari_ambiguity() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 1,
+                "document_type": "Application Form",
+                "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
+                "extracted_fields": {
+                    "applicant_name": "Peeru Lal",
+                    "_language": {"provider_languages": ["bho"]},
+                },
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["s_no"] == 10 for item in anomalies)
+
+
+def test_trusted_template_language_resolves_devanagari_ambiguity() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 1,
+                "document_type": "Application Form",
+                "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
+                "extracted_fields": {"applicant_name": "Peeru Lal"},
+            }
+        ],
+        {
+            "people": {"primary": {"applicant_name": "Peeru Lal"}},
+            "application_form_languages": ["English", "Maithili"],
+        },
+    )
+    assert not any(item["s_no"] == 10 for item in anomalies)
 
 
 def test_name_address_and_bureau_score_consistency() -> None:
@@ -164,7 +234,14 @@ def test_name_address_and_bureau_score_consistency() -> None:
     anomalies = run_consistency_checks(
         [
             page(1, "Aadhaar", "primary", applicant_name="Peeru Lal", address="Ward 2 Jhalawar Rajasthan 326001"),
-            page(2, "Bank Statement", "primary", account_holder_name="Piru Lal", address="Ward 9 Kota Rajasthan 324001"),
+            page(
+                2,
+                "Bank Statement",
+                "primary",
+                account_holder_name="Piru Lal",
+                account_number="123456789012",
+                address="Ward 9 Kota Rajasthan 324001",
+            ),
             page(3, "CIBIL Report", "primary", applicant_name="Peeru Lal", credit_score="950"),
         ],
         trusted,
@@ -191,6 +268,20 @@ def test_bureau_valid_first_page_suppresses_continuation_score_flags() -> None:
             },
         ],
         trusted,
+    )
+    assert not any(item["rule_id"].startswith("BUREAU_SCORE") for item in anomalies)
+
+
+def test_bureau_zero_score_is_valid_no_score_exemption() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                **page(1, "CRIF Report", "primary", applicant_name="Peeru Lal", credit_score="0"),
+                "ocr_text": "CRIF Credit Information Report CRIF HM Score 0",
+                "detected_page_number": 1,
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
     )
     assert not any(item["rule_id"].startswith("BUREAU_SCORE") for item in anomalies)
 
@@ -225,6 +316,75 @@ def test_repayment_schedule_does_not_satisfy_bank_statement_rules() -> None:
         "statement_period_end": "238241",
     }
     assert is_confident_document_match(schedule, "Bank Statement") is False
+
+
+def test_cached_insurance_application_number_is_not_compared_to_loan_dump() -> None:
+    insurance = page(
+        484,
+        "Application Form",
+        "primary",
+        application_number="0030705",
+    )
+    insurance["ocr_text"] = (
+        "Care Health Insurance Limited IRDAI Registration No. 148\n"
+        "Group Care 360 Application Form\n"
+        "Proposer Details Nominee Details Policy Period Sum Insured Premium\n"
+        "Application No: 0030705"
+    )
+
+    anomalies = run_consistency_checks(
+        [insurance],
+        {
+            "application_number": "GJ000030765",
+            "people": {"primary": {"applicant_name": "Suthar Anupkumar"}},
+        },
+    )
+
+    assert not any(
+        item["rule_id"] == "TRUSTED_APPLICATION_NUMBER_MISMATCH"
+        for item in anomalies
+    )
+
+
+def test_insurance_page_preserves_explicit_loan_application_number() -> None:
+    insurance = page(
+        484,
+        "Insurance Form",
+        "primary",
+        application_number="GJ000099999",
+    )
+    insurance["ocr_text"] = (
+        "Care Health Insurance Limited IRDAI Registration No. 148\n"
+        "Group Care 360 Application Form\n"
+        "Proposer Details Nominee Details Policy Period Sum Insured Premium\n"
+        "Loan Application No: GJ000099999\nApplication No: 0030705"
+    )
+
+    anomalies = run_consistency_checks(
+        [insurance],
+        {
+            "application_number": "GJ000030765",
+            "people": {"primary": {"applicant_name": "Suthar Anupkumar"}},
+        },
+    )
+
+    assert any(
+        item["rule_id"] == "TRUSTED_APPLICATION_NUMBER_MISMATCH"
+        for item in anomalies
+    )
+
+
+def test_health_insurance_form_does_not_satisfy_life_insurance_requirement() -> None:
+    health_form = page(484, "Insurance Form", "primary")
+    health_form["classification_confidence"] = 0.99
+    health_form["ocr_text"] = (
+        "Care Health Insurance Limited IRDAI Registration No. 148\n"
+        "Group Care 360 Application Form\n"
+        "Critical Illness Personal Accident Convalescence Benefit\n"
+        "Proposer Nominee Policy Sum Insured Premium"
+    )
+
+    assert is_confident_document_match(health_form, "Life Insurance Form") is False
 
 
 def test_multi_person_cam_rows_are_compared_to_the_correct_people() -> None:
@@ -520,4 +680,395 @@ def test_unassigned_person_fields_skip_trusted_checks_in_single_person_manifest(
     assert not any(
         "TRUSTED_" in item["rule_id"] and "MISMATCH" in item["rule_id"]
         for item in anomalies
+    )
+
+
+def test_unassigned_foreign_pan_is_not_repaired_to_single_primary() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "Suthar Anupkumar",
+                "pan_number": "NBRPS4867N",
+                "date_of_birth": "18-Jun-2001",
+            }
+        }
+    }
+    foreign = page(
+        519,
+        "PAN",
+        "unassigned",
+        applicant_name="SUTHAR AARATIBEN ANUPKUMAR",
+        pan_number="SXPPS4453F",
+        date_of_birth="22-08-2000",
+    )
+    anomalies = run_consistency_checks([foreign], trusted)
+    assert not [
+        item for item in anomalies
+        if item["rule_id"] in {
+            "TRUSTED_APPLICANT_NAME_MISMATCH",
+            "TRUSTED_PAN_NUMBER_MISMATCH",
+            "TRUSTED_DATE_OF_BIRTH_MISMATCH",
+        }
+    ]
+    assert foreign["person_id"] == "unassigned"
+
+
+def test_unresolved_second_person_record_is_not_compared_to_primary() -> None:
+    trusted = {"people": {"primary": {
+        "applicant_name": "SUTHAR ANUPKUMAR",
+        "pan_number": "NBRPS4867N",
+    }}}
+    form = page(
+        1,
+        "Application Form",
+        "primary",
+        person_records=[
+            {"_resolved_person_id": "primary", "applicant_name": "SUTHAR ANUPKUMAR", "pan_number": "NBRPS4867N"},
+            {"applicant_name": "SUTHAR AARATIBEN ANUPKUMAR", "pan_number": "SXPPS4453F", "aadhaar_last4": "8196"},
+        ],
+        applicant_name="SUTHAR AARATIBEN ANUPKUMAR",
+        pan_number="SXPPS4453F",
+    )
+    anomalies = run_consistency_checks([form], trusted)
+    assert not [
+        item for item in anomalies
+        if item["rule_id"].startswith("TRUSTED_")
+        and str(item.get("found_value")) in {
+            "SUTHAR AARATIBEN ANUPKUMAR", "SXPPS4453F", "8196"
+        }
+    ]
+
+
+def test_flat_guarantor_section_without_person_rows_is_not_compared_to_primary() -> None:
+    trusted = {"people": {"primary": {
+        "applicant_name": "SUTHAR ANUPKUMAR",
+        "pan_number": "NBRPS4867N",
+        "address": "MODIVAS HARNIYAV AHMEDABAD 382435",
+    }}}
+    form = page(
+        24,
+        "Application Form",
+        "primary",
+        applicant_name="SOLANKI JAYESH CHAMANBHAI",
+        pan_number="QMSPS2025D",
+        current_address="1739 INDIRA NAGAR LAMBHA AHMEDABAD 382405",
+        person_records=[],
+    )
+    form["ocr_text"] = "GUARANTOR DETAILS\nSOLANKI JAYESH CHAMANBHAI\nQMSPS2025D"
+    form["source_document_id"] = "application-1"
+    continuation = page(
+        25,
+        "Application Form",
+        "primary",
+        pan_number="QMSPS2025D",
+        person_records=[],
+    )
+    continuation["ocr_text"] = "SOLANKI JAYESH CHAMANBHAI\nQMSPS2025D\nREFERENCE DETAILS"
+    continuation["source_document_id"] = "application-1"
+
+    anomalies = run_consistency_checks([form, continuation], trusted)
+
+    assert not any(item["rule_id"].startswith("TRUSTED_") for item in anomalies)
+    assert not any(item["rule_id"] == "AADHAAR_ADDRESS_MISMATCH" for item in anomalies)
+
+
+def test_flat_primary_application_without_person_rows_still_reports_mismatch() -> None:
+    trusted = {"people": {"primary": {
+        "applicant_name": "RAMESH KUMAR",
+        "pan_number": "ABCDE1234F",
+    }}}
+    form = page(
+        1,
+        "Application Form",
+        "primary",
+        applicant_name="RAMESH KUMAR",
+        pan_number="ZZZZZ9999Z",
+        person_records=[],
+    )
+    form["ocr_text"] = "LOAN APPLICATION FORM\nApplicant Name RAMESH KUMAR\nPAN ZZZZZ9999Z"
+
+    anomalies = run_consistency_checks([form], trusted)
+
+    assert any(item["rule_id"] == "TRUSTED_PAN_NUMBER_MISMATCH" for item in anomalies)
+
+
+def test_flat_cam_application_details_without_person_rows_still_reports_mismatch() -> None:
+    trusted = {"people": {"primary": {
+        "applicant_name": "RAMESH KUMAR",
+        "phone_number": "9000000001",
+    }}}
+    cam = page(
+        1,
+        "CAM",
+        "primary",
+        applicant_name="RAMESH KUMAR",
+        phone_number="9000000002",
+        person_records=[],
+    )
+    cam["ocr_text"] = "CREDIT APPROVAL MEMO\nAPPLICATION DETAILS\nName\nRAMESH KUMAR"
+
+    anomalies = run_consistency_checks([cam], trusted)
+
+    assert any(item["rule_id"] == "TRUSTED_PHONE_NUMBER_MISMATCH" for item in anomalies)
+
+
+def test_global_security_section_resets_coapplicant_role_state() -> None:
+    trusted = {"people": {"primary": {
+        "applicant_name": "RAMESH KUMAR",
+        "account_number": "111111111111",
+    }}}
+    coapp = page(
+        1,
+        "Application Form",
+        "primary",
+        applicant_name="SITA KUMAR",
+        person_records=[],
+    )
+    coapp["ocr_text"] = "CO-APPLICANT PERSONAL DETAILS\nName SITA KUMAR"
+    coapp["source_document_id"] = "application-1"
+    security = page(
+        2,
+        "Application Form",
+        "primary",
+        account_number="999999999999",
+        person_records=[],
+    )
+    security["ocr_text"] = "DETAILS OF SECURITY OFFERED-PROPERTY\nBANK ACCOUNT DETAILS"
+    security["source_document_id"] = "application-1"
+
+    anomalies = run_consistency_checks([coapp, security], trusted)
+
+    assert any(item["rule_id"] == "TRUSTED_ACCOUNT_NUMBER_MISMATCH" for item in anomalies)
+
+
+def test_bank_branch_is_not_compared_to_loan_branch_but_loan_branch_is() -> None:
+    trusted = {
+        "branch": "AHMEDABAD-1",
+        "people": {"primary": {"applicant_name": "Suthar Anupkumar"}},
+    }
+    bank_only = run_consistency_checks(
+        [page(528, "Passbook", "primary", account_holder_name="ANUPKUMAR CHETANBHAI SUTHAR", branch="HARANIYAV")],
+        trusted,
+    )
+    assert not any("BRANCH_MISMATCH" in item["rule_id"] for item in bank_only)
+
+    loan_doc = run_consistency_checks(
+        [page(1, "Sanction Letter", "primary", branch="SURAT-2")],
+        trusted,
+    )
+    assert any(item["rule_id"] == "TRUSTED_BRANCH_MISMATCH" for item in loan_doc)
+
+
+def test_trusted_permanent_and_communication_addresses_are_valid_variants() -> None:
+    trusted = {"people": {"primary": {
+        "applicant_name": "Suthar Anupkumar",
+        "permanent_address": "MODIVAS GAM HARNIYAV AHMEDABAD 382435",
+        "communication_address": "B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445",
+    }}}
+    anomalies = run_consistency_checks(
+        [
+            page(1, "Aadhaar", "primary", address="MODIVAS GAM HARNIYAV AHMEDABAD GUJARAT 382435"),
+            page(2, "Application Form", "primary", current_address="B-402 PANDIT DINDAYAL-2 HATHIJAN AHMEDABAD 382445"),
+            page(3, "Utility Bill", "primary", address="B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445"),
+        ],
+        trusted,
+    )
+    assert not [item for item in anomalies if "ADDRESS_MISMATCH" in item["rule_id"]]
+
+    unrelated = run_consistency_checks(
+        [
+            page(1, "Aadhaar", "primary", address="MODIVAS GAM HARNIYAV AHMEDABAD 382435"),
+            page(3, "Utility Bill", "primary", address="99 UNKNOWN ROAD SURAT 395003"),
+        ],
+        trusted,
+    )
+    assert any("ADDRESS_MISMATCH" in item["rule_id"] for item in unrelated)
+
+
+def test_root_primary_address_is_not_a_coapplicant_address_variant() -> None:
+    trusted = {
+        "communication_address": "B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445",
+        "people": {
+            "primary": {
+                "role": "primary",
+                "applicant_name": "Suthar Anupkumar",
+            },
+            "coapplicant_1": {
+                "role": "coapplicant",
+                "applicant_name": "Suthar Aaratiben",
+                "permanent_address": "17 SHANTI NAGAR VATVA AHMEDABAD 382440",
+            },
+        },
+    }
+    anomalies = run_consistency_checks(
+        [
+            page(
+                1,
+                "Utility Bill",
+                "coapplicant_1",
+                address="B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445",
+            )
+        ],
+        trusted,
+    )
+
+    assert any(
+        item["rule_id"] == "TRUSTED_ADDRESS_MISMATCH"
+        and item["person_id"] == "coapplicant_1"
+        for item in anomalies
+    )
+
+
+def test_relative_token_tolerance_applies_only_to_holder_name() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "Suthar Anupkumar",
+                "father_name": "Chetanbhai Suthar",
+                "pan_number": "NBRPS4867N",
+            }
+        }
+    }
+    anomalies = run_consistency_checks(
+        [
+            page(
+                1,
+                "PAN",
+                "primary",
+                applicant_name="Anupkumar Chetanbhai Suthar",
+                father_name="Anupkumar Chetanbhai Suthar",
+                pan_number="NBRPS4867N",
+            )
+        ],
+        trusted,
+    )
+
+    assert not any(
+        item["rule_id"] == "TRUSTED_APPLICANT_NAME_MISMATCH"
+        for item in anomalies
+    )
+    assert any(
+        item["rule_id"] == "TRUSTED_FATHER_NAME_MISMATCH"
+        for item in anomalies
+    )
+
+
+def test_conflicting_explicit_flat_number_defeats_locality_tolerance() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "Suthar Anupkumar",
+                "communication_address": (
+                    "Flat No. B-402 Pandit Dindayal 2 Hathijan Ahmedabad 382445"
+                ),
+            }
+        }
+    }
+    anomalies = run_consistency_checks(
+        [
+            page(
+                1,
+                "Utility Bill",
+                "primary",
+                address="B 403 Pandit Dindayal 2 Hathijan Ahmedabad 382445",
+            )
+        ],
+        trusted,
+    )
+
+    assert any(
+        item["rule_id"] == "TRUSTED_ADDRESS_MISMATCH"
+        for item in anomalies
+    )
+
+
+def test_equivalent_explicit_flat_number_formats_still_match() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "Suthar Anupkumar",
+                "communication_address": (
+                    "Flat No. B-402 Pandit Dindayal 2 Hathijan Ahmedabad 382445"
+                ),
+            }
+        }
+    }
+    anomalies = run_consistency_checks(
+        [
+            page(
+                1,
+                "Utility Bill",
+                "primary",
+                address="B 402 Pandit Dindayal 2 Hathijan Ahmedabad 382445",
+            )
+        ],
+        trusted,
+    )
+
+    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
+def test_aadhaar_relation_name_and_masked_bureau_grid_are_not_identity_evidence() -> None:
+    aadhaar = page(
+        643,
+        "Aadhaar",
+        "primary",
+        applicant_name="Suthar Chetanbhai",
+        related_person_name="Suthar Chetanbhai",
+        relationship_qualifier="S/O",
+        aadhaar_number="822113513365",
+    )
+    bureau = page(762, "CRIF Report", "primary", crif_score="'900/XXX'")
+    anomalies = run_consistency_checks(
+        [aadhaar, bureau],
+        {"people": {"primary": {
+            "applicant_name": "Suthar Anupkumar",
+            "aadhaar_last4": "3365",
+            "crif_score": 628,
+        }}},
+    )
+    assert not any("NAME_MISMATCH" in item["rule_id"] for item in anomalies)
+    assert not any("CRIF_SCORE_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
+def test_reliable_name_mismatch_requires_identity_affidavit() -> None:
+    anomalies = run_consistency_checks(
+        [
+            page(1, "PAN", "primary", applicant_name="Ramesh Kumar", pan_number="ABCDE1234F"),
+            page(2, "KYC Card Photo", "primary", applicant_name="Ramesh Lal", pan_number="ABCDE1234F"),
+        ],
+        {"people": {"primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"}}},
+    )
+
+    assert any(item["rule_id"] == "IDENTITY_AFFIDAVIT_MISSING" for item in anomalies)
+
+
+def test_dual_name_affidavit_resolves_affidavit_requirement() -> None:
+    affidavit = page(3, "Affidavit", "primary")
+    affidavit["ocr_text"] = (
+        "AFFIDAVIT For Dual Name or Mismatch of Name. My correct name is Ramesh Kumar. "
+        "My name as per Aadhaar is Ramesh Lal."
+    )
+    anomalies = run_consistency_checks(
+        [
+            page(1, "PAN", "primary", applicant_name="Ramesh Kumar", pan_number="ABCDE1234F"),
+            page(2, "KYC Card Photo", "primary", applicant_name="Ramesh Lal", pan_number="ABCDE1234F"),
+            affidavit,
+        ],
+        {"people": {"primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"}}},
+    )
+
+    assert not any(item["rule_id"] == "IDENTITY_AFFIDAVIT_MISSING" for item in anomalies)
+
+
+def test_address_layout_ocr_matches_unit_and_rural_locality_variants() -> None:
+    assert _matches(
+        "address",
+        "B 402 PANDIT DINDAYAL-2 NR V NAGAR HATHIJAN AHMEDABAD 382445",
+        "B 402 NAMAR PANDIT HATHIJAN DINDAJAL-2 NRV AHMEDABAD 352445",
+    )
+    assert _matches(
+        "address",
+        "MODIVAS HARNIYAV MODIVAS AHMEDABAD GUJARAT INDIA 382435",
+        "MODIVAS HARNIYAU HARNSLAV AHMEDABAD 382435",
     )

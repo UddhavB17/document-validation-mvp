@@ -70,16 +70,32 @@ def build_automatic_document_index(
                 "evidence": ["multi_person_document_container"],
             }
         else:
-            person = resolve_person_owner(group["pages_data"], reference_data, document_type)
+            person = resolve_person_owner(
+                group["pages_data"],
+                reference_data,
+                document_type,
+                source_filename=str(group.get("original_filename") or "") or None,
+            )
 
         if person["person_id"] is None:
             # Person-scoped docs (PAN/Aadhaar/CIBIL/…) must not fall back to primary.
             if requires_person:
+                missing_role = (
+                    person.get("source_role")
+                    if "source_role_not_in_trusted_data" in set(person.get("evidence") or [])
+                    else None
+                )
                 anomalies.append(
                     _mapping_anomaly(
-                        "AUTO_OWNER_UNRESOLVED",
+                        "TRUSTED_PERSON_SCOPE_MISSING" if missing_role else "AUTO_OWNER_UNRESOLVED",
                         group,
-                        "The document type was identified, but no applicant identity matched trusted data.",
+                        (
+                            f"The ZIP contains {missing_role} documents, but trusted JSON has no "
+                            f"{missing_role} person record. Their values were not compared to primary."
+                            if missing_role
+                            else "The document type was identified, but no applicant identity matched trusted data."
+                        ),
+                        person_role=str(missing_role) if missing_role else None,
                     )
                 )
                 continue
@@ -262,12 +278,73 @@ def _group_pages(
 def _effective_document_type(page: dict[str, Any]) -> str:
     fields = page.get("extracted_fields")
     if isinstance(fields, dict):
+        if fields.get("repayment_schedule_rows"):
+            return "Repayment Schedule"
+        try:
+            from services.repayment_schedule import parse_repayment_schedule_rows
+
+            if parse_repayment_schedule_rows(page.get("ocr_text")):
+                return "Repayment Schedule"
+        except Exception:
+            pass
+        deterministic_type = str(page.get("document_type") or "Unknown").strip()
+        deterministic_confidence = float(page.get("classification_confidence") or 0.0)
+        detection_method = str(page.get("detection_method") or "").strip().casefold()
+        weak_methods = {
+            "inherited", "sandwich_smoothed", "sandwich_run_smoothed",
+            "agreement_context_smoothed",
+        }
+        # The local structured classifier is advisory.  It must not overwrite a
+        # strong deterministic/intrinsic classification (for example, turning
+        # a page headed CREDIT APPROVAL MEMO into a Loan Agreement merely
+        # because the CAM contains sanction clauses).
+        if (
+            deterministic_type.casefold() not in {"", "none", "unknown", "ocr skipped"}
+            and deterministic_confidence >= 0.50
+            and detection_method not in weak_methods
+        ):
+            return deterministic_type
         llm = fields.get("_structured_llm_classification")
         if isinstance(llm, dict):
             llm_type = str(llm.get("document_type") or "").strip()
-            if llm_type.lower() not in {"", "none", "unknown"}:
+            llm_confidence = float(llm.get("confidence") or 0.0)
+            if (
+                llm_type.lower() not in {"", "none", "unknown"}
+                and llm_confidence >= 0.75
+                and _llm_type_supported_by_page(page, llm_type)
+            ):
                 return llm_type
     return str(page.get("document_type") or "Unknown").strip()
+
+
+def _llm_type_supported_by_page(page: dict[str, Any], llm_type: str) -> bool:
+    """Require page evidence before a structured-model type can override context."""
+    fields = page.get("extracted_fields")
+    fields = fields if isinstance(fields, dict) else {}
+    classification = fields.get("_classification")
+    if isinstance(classification, dict):
+        raw_type = str(classification.get("raw_document_type") or "").strip()
+        try:
+            raw_confidence = float(classification.get("raw_confidence") or 0.0)
+        except (TypeError, ValueError):
+            raw_confidence = 0.0
+        if raw_type.casefold() == llm_type.casefold() and raw_confidence >= 0.50:
+            return True
+
+    text = str(page.get("ocr_text") or "")
+    header = " ".join(text.splitlines()[:8]).casefold()
+    normalized_header = re.sub(r"[^a-z0-9]+", " ", header).strip()
+    normalized_type = re.sub(r"[^a-z0-9]+", " ", llm_type.casefold()).strip()
+    if normalized_type and normalized_type in normalized_header:
+        return True
+
+    type_key = llm_type.strip().casefold()
+    if type_key in {"pan", "pan card"}:
+        return bool(re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", str(fields.get("pan_number") or "").upper()))
+    if type_key == "aadhaar":
+        digits = re.sub(r"\D", "", str(fields.get("aadhaar_number") or ""))
+        return len(digits) == 12
+    return False
 
 
 
@@ -281,6 +358,7 @@ def _mapping_anomaly(
     reason: str,
     *,
     person_id: str | None = None,
+    person_role: str | None = None,
 ) -> dict[str, Any]:
     return {
         "rule_id": rule_id,
@@ -291,6 +369,7 @@ def _mapping_anomaly(
         "severity": "LOW",
         "document_type": group["document_type"],
         "person_id": person_id,
+        "person_role": person_role,
         "matched_person_id": None,
         "field_name": None,
         "status": "MANUAL_REVIEW_REQUIRED",

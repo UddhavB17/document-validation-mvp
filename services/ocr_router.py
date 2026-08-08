@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from services.config import get_float, get_int, get_setting
 from services.document_classifier import document_type_config
 from services.low_memory import ocr_force_fast_path
+from services.offline_ocr_languages import normalize_paddle_language, recognition_model_for_language
 from services.ocr_engine import run_ocr_on_page
 
 logger = logging.getLogger(__name__)
@@ -280,14 +281,24 @@ def get_ocr_router() -> OCRRouter:
 
 
 def ocr_provider() -> str:
-    """Return the active OCR provider: local, google_vision, or auto fallback."""
-    raw = str(get_setting("ocr.provider", "local") or "local").strip().lower()
+    """Return Google Vision normally, or local only in explicit test mode."""
+    # Local OCR is deliberately unavailable through ordinary production
+    # settings.  It must be opted into explicitly for a developer smoke test.
+    local_test_mode = os.getenv("DMEF_LOCAL_OCR_TEST_MODE", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if local_test_mode:
+        raw = str(os.getenv("OCR_PROVIDER") or "local").strip().lower()
+    else:
+        raw = str(get_setting("ocr.provider", "google_vision") or "google_vision").strip().lower()
     normalized = raw.replace("-", "_")
     if normalized in {"google", "google_cloud", "google_vision", "vision"}:
         return "google_vision"
     if normalized == "auto":
-        return "google_vision" if _google_vision_configured() else "local"
-    return "local"
+        if local_test_mode and not _google_vision_configured():
+            return "local"
+        return "google_vision"
+    return "local" if local_test_mode else "google_vision"
 
 
 def _google_vision_configured() -> bool:
@@ -313,23 +324,20 @@ def _get_fast_model() -> Any:
         if _fast_model is None:
             from paddleocr import PaddleOCR
 
-            lang = (os.getenv("PADDLE_OCR_LANG") or "hi").strip().lower()
-            recognition_model = (
-                os.getenv("PADDLE_OCR_REC_MODEL_HI", "devanagari_PP-OCRv5_mobile_rec")
-                if lang == "hi"
-                else os.getenv("PADDLE_OCR_REC_MODEL_EN", "PP-OCRv5_mobile_rec")
-            )
+            lang = normalize_paddle_language(os.getenv("PADDLE_OCR_LANG"))
+            recognition_model = recognition_model_for_language(lang)
             kwargs = {
                 "use_doc_orientation_classify": False,
                 "use_doc_unwarping": False,
                 "use_textline_orientation": False,
                 "lang": lang,
                 "text_detection_model_name": os.getenv("PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det"),
-                "text_recognition_model_name": recognition_model,
                 "text_det_limit_side_len": get_int(
                     "PADDLE_OCR_DET_LIMIT_SIDE_LEN", 1280, minimum=640, maximum=2400
                 ),
             }
+            if recognition_model:
+                kwargs["text_recognition_model_name"] = recognition_model
             try:
                 _fast_model = PaddleOCR(**kwargs, enable_mkldnn=False)
             except TypeError:

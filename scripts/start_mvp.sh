@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Opt-in low-memory launcher for ~8GB laptops.
-# Default local run is full power: copy .env.example → .env and use uvicorn + npm.
+# OCR remains API-backed; this only reduces local application/LLM load.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -14,9 +14,8 @@ sleep 1
 source .venv/bin/activate
 export DMEF_LOW_MEMORY=true
 export ENABLE_LLM_PAGE_CLASSIFIER=false
-export OCR_FORCE_FAST_PATH=true
 
-nohup env DMEF_LOW_MEMORY=true OCR_FORCE_FAST_PATH=true ENABLE_LLM_PAGE_CLASSIFIER=false \
+nohup env DMEF_LOW_MEMORY=true ENABLE_LLM_PAGE_CLASSIFIER=false \
   python -m uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1 \
   > data/logs/uvicorn.log 2>&1 &
 disown $! 2>/dev/null || true

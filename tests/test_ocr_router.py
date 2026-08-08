@@ -7,7 +7,7 @@ import pytest
 
 from database import db
 from database.db import init_db
-from services.ocr_router import OCRResult, OCRRouter, get_ocr_route_metrics
+from services.ocr_router import OCRResult, OCRRouter, get_ocr_route_metrics, ocr_provider
 from services.pipeline import _deterministic_routing_document_type
 
 
@@ -17,6 +17,7 @@ def _clear_low_memory_ocr_overrides(monkeypatch) -> None:
     monkeypatch.delenv("OCR_FORCE_FAST_PATH", raising=False)
     monkeypatch.delenv("DMEF_LOW_MEMORY", raising=False)
     monkeypatch.setenv("OCR_PROVIDER", "local")
+    monkeypatch.setenv("DMEF_LOCAL_OCR_TEST_MODE", "true")
 
     # Unit tests drive OCR via OCR_PROVIDER; production Settings prefers DB.
     import services.config as config_mod
@@ -40,6 +41,27 @@ def _fast_result(confidence: float = 0.96) -> OCRResult:
         route_used="fast",
         bounding_boxes=[{"text": "ABCDE1234F", "confidence": confidence, "bbox": [1, 2, 3, 4]}],
     )
+
+
+def test_local_ocr_requires_explicit_test_mode_when_database_selects_google(monkeypatch) -> None:
+    import services.ocr_router as ocr_router_mod
+
+    monkeypatch.setattr(ocr_router_mod, "get_setting", lambda _key, _default=None: "google_vision")
+    monkeypatch.setenv("OCR_PROVIDER", "local")
+    monkeypatch.delenv("DMEF_LOCAL_OCR_TEST_MODE", raising=False)
+    assert ocr_provider() == "google_vision"
+
+    monkeypatch.setenv("DMEF_LOCAL_OCR_TEST_MODE", "true")
+    assert ocr_provider() == "local"
+
+
+def test_legacy_local_database_setting_is_forced_to_google_outside_test_mode(monkeypatch) -> None:
+    import services.ocr_router as ocr_router_mod
+
+    monkeypatch.setattr(ocr_router_mod, "get_setting", lambda _key, _default=None: "local")
+    monkeypatch.delenv("DMEF_LOCAL_OCR_TEST_MODE", raising=False)
+
+    assert ocr_provider() == "google_vision"
 
 
 def _structured_result() -> dict:

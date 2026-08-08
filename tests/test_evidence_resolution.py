@@ -244,3 +244,55 @@ def test_confident_group_type_still_fills_unknown_pages() -> None:
     ]
     _resolve_group({"document_id": "doc-2", "pages": pages}, {})
     assert pages[1]["document_type"] == "Bank Statement"
+
+
+def test_zip_role_absent_from_trusted_stays_unassigned_through_index() -> None:
+    pages = [_page(
+        1,
+        "Income Tax Department\nPermanent Account Number\nSXPPS4453F\nSUTHAR AARATIBEN ANUPKUMAR",
+        document_type="PAN",
+        confidence=0.95,
+        fields={
+            "applicant_name": "SUTHAR AARATIBEN ANUPKUMAR",
+            "pan_number": "SXPPS4453F",
+        },
+    )]
+    source = [{
+        "source_document_id": "file-1",
+        "original_filename": "Co-Applicant/KYC/PAN.pdf",
+        "file_type": "pdf",
+        "internal_page_start": 1,
+        "internal_page_end": 1,
+    }]
+    trusted = {"primary": {"role": "primary", "applicant_name": "Suthar Anupkumar", "pan_number": "TSTAA0001T"}}
+
+    resolve_trusted_evidence(pages, trusted, source_documents=source)
+    assert pages[0].get("person_id") in {None, "unassigned"}
+    assert pages[0].get("source_filename") == "Co-Applicant/KYC/PAN.pdf"
+    evidence = pages[0]["extracted_fields"]["_evidence_resolution"]["owner_evidence"]
+    assert "source_role_not_in_trusted_data" in evidence
+
+    index = build_automatic_document_index(pages, trusted, source_documents=source)
+    assert not index["documents"]
+    assert index["anomalies"][0]["rule_id"] == "TRUSTED_PERSON_SCOPE_MISSING"
+    assert index["anomalies"][0]["person_role"] == "coapplicant"
+
+
+def test_cached_generic_application_is_overridden_by_insurance_semantics() -> None:
+    pages = [_page(
+        1,
+        """Application Form - Group Care 360 Scheme
+Underwritten by Care Health Insurance Limited IRDAI
+Proposer Details Nominee Details Details of Person to be Insured
+Policy Tenure Sum Insured Total Premium
+""",
+        document_type="Application Form",
+        confidence=1.0,
+        fields={"application_number": "0030705"},
+    )]
+    resolve_trusted_evidence(
+        pages,
+        {"primary": {"application_number": "GJ000030765"}},
+    )
+    assert pages[0]["document_type"] == "Insurance Form"
+    assert pages[0]["extracted_fields"]["_evidence_resolution"]["document_type_changed"] is True

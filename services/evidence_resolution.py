@@ -81,6 +81,24 @@ def infer_document_type_from_evidence(text: str) -> dict[str, Any] | None:
     # page that mentions Aadhaar AND PAN AND Voter ID is not any single card.
     kyc_checklist = is_kyc_checklist_context(raw)
 
+    from services.document_classifier import is_insurance_application_context
+
+    if is_insurance_application_context(raw):
+        candidates.append({
+            "document_type": "Insurance Form",
+            "confidence": 0.99,
+            "evidence": ["insurer_anchor", "insurance_proposal_fields"],
+            "authoritative_override": True,
+        })
+
+    if re.search(r"\b(?:request\s+for\s+disburs(?:al|ement)|drawdown\s+request)\b", lowered):
+        candidates.append({
+            "document_type": "Disbursement Request",
+            "confidence": 0.98,
+            "evidence": ["disbursement_request_heading"],
+            "authoritative_override": True,
+        })
+
     bureau = classify_credit_bureau_by_anchors(raw)
     if bureau.get("document_type") and float(bureau.get("confidence") or 0.0) >= 0.75:
         candidates.append({
@@ -199,7 +217,8 @@ def _promote_page_type(page: dict[str, Any], candidate: dict[str, Any]) -> None:
     })
 
     can_promote = (
-        current_type.strip().casefold() in UNKNOWN_TYPES
+        bool(candidate.get("authoritative_override"))
+        or current_type.strip().casefold() in UNKNOWN_TYPES
         or current_confidence < 0.65
         or (current_type != candidate_type and current_confidence < candidate_confidence - 0.20)
     )
@@ -412,10 +431,21 @@ def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, An
     _attach_document_extraction(pages, document_id, document_type, document_fields)
 
     multi_person = document_type.casefold() in MULTI_PERSON_DOCUMENT_TYPES
+    source_document = group.get("source_document")
+    source_filename = (
+        str(source_document.get("original_filename") or "")
+        if isinstance(source_document, dict)
+        else ""
+    )
     owner = (
         {"person_id": None, "confidence": 0.0, "evidence": ["multi_person_document"]}
         if multi_person
-        else resolve_person_owner(pages, reference_data, document_type)
+        else resolve_person_owner(
+            pages,
+            reference_data,
+            document_type,
+            source_filename=source_filename or None,
+        )
     )
     resolved_person_id = owner.get("person_id")
     if resolved_person_id and not multi_person:
@@ -441,7 +471,10 @@ def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, An
         })
         fields["_evidence_resolution"] = resolution
         page["extracted_fields"] = fields
-        attach_field_provenance(page)
+        attach_field_provenance(
+            page,
+            source_document=source_document if isinstance(source_document, dict) else None,
+        )
 
     return {
         "document_id": document_id,

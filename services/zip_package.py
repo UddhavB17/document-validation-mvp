@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import shutil
@@ -65,6 +66,7 @@ def normalize_zip_package(
 
     output = fitz.open()
     inventory: list[dict[str, Any]] = []
+    first_source_by_hash: dict[str, str] = {}
     try:
         with ZipFile(zip_path) as archive:
             members = _validated_members(archive)
@@ -90,6 +92,9 @@ def normalize_zip_package(
                 stored_path = source_dir / f"{source_document_id}{suffix}"
                 with archive.open(info, "r") as source, stored_path.open("wb") as destination:
                     shutil.copyfileobj(source, destination, length=1024 * 1024)
+                source_sha256 = _sha256_file(stored_path)
+                duplicate_of = first_source_by_hash.get(source_sha256)
+                first_source_by_hash.setdefault(source_sha256, source_document_id)
 
                 first_page = output.page_count + 1
                 page_count, source_metadata = _append_source(output, stored_path, suffix)
@@ -104,6 +109,9 @@ def normalize_zip_package(
                         "original_filename": info.filename,
                         "file_type": suffix.removeprefix("."),
                         "source_size_bytes": info.file_size,
+                        "source_sha256": source_sha256,
+                        "duplicate_of_source_document_id": duplicate_of,
+                        "variant_hints": _document_variant_hints(info.filename),
                         "page_count": page_count,
                         "internal_page_start": first_page,
                         "internal_page_end": last_page,
@@ -227,6 +235,26 @@ def _is_macos_metadata(filename: str) -> bool:
 def _is_symlink(info: ZipInfo) -> bool:
     mode = (info.external_attr >> 16) & 0xFFFF
     return stat.S_ISLNK(mode)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _document_variant_hints(filename: str) -> list[str]:
+    normalized = " ".join(
+        Path(str(filename or "")).stem.casefold().replace("_", " ").replace("-", " ").split()
+    )
+    hints: list[str] = []
+    if "e signed" in normalized or "esign" in normalized or "digitally signed" in normalized:
+        hints.append("e_signed")
+    if "with stamp" in normalized or "stamp paper" in normalized or "e stamp" in normalized:
+        hints.append("stamped")
+    return hints
 
 
 def _append_source(
