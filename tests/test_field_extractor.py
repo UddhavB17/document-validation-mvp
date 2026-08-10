@@ -1126,6 +1126,24 @@ def test_bank_statement_profile_extracts_two_line_holder_name() -> None:
     assert result["account_number"] == "0605"
 
 
+def test_bank_statement_profile_extracts_title_case_holder_after_ckyc() -> None:
+    """CAMS profile tables must not treat "Holding Nature" as a person's name."""
+    text = (
+        "Statement From : 29 Jul 2025\nStatement To : 29 Jul 2026\n"
+        "Bank\n: STATE BANK OF INDIA\nAccount Number\n: XXXXXXXXXXXXX6368\n"
+        "PROFILE\nName\nDoB\nMobile\nLandline\nEmail\nPAN\nAddress\n"
+        "Holding Nature\nNominee\nCKYC\nKala Singh\n1968-01-01\n6377994745\n"
+        "VCQPS7972L\nS/O: Nand Singh, Kaminpura\nSINGLE\nTRUE\n"
+        "IFSC\nSBIN0031538\nTRANSACTIONS"
+    )
+
+    result = extract_fields("Bank Statement", text)
+
+    assert result["account_holder_name"] == "Kala Singh"
+    assert result["account_holder_name"] != "Holding Nature"
+    assert result["account_number"] == "6368"
+
+
 def test_nach_status_screen_extracts_holder_and_register_success() -> None:
     text = (
         "NACH Mandate UPI Mandate\n9328577271\nANUPKUMAR CHETANBHAI SUTHAR\n"

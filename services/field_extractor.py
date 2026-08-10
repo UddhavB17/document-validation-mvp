@@ -2002,15 +2002,27 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         text,
         re.IGNORECASE,
     )
+    # CAMS profile pages often present field labels in one column and their
+    # values in another.  Prefer the value immediately following CKYC and a
+    # date of birth, including title-case names (for example ``Kala Singh``).
+    # The former all-caps-only pattern missed those pages, causing the generic
+    # ``Name`` fallback to mistake a later profile label such as "Holding
+    # Nature" for the account holder.
     profile_name = re.search(
-        r"\bCKYC\s*\n\s*([A-Z][A-Z ]{2,70}(?:\n\s*[A-Z][A-Z ]{2,70})?)"
+        r"\bCKYC\s*\n\s*([A-Za-z][A-Za-z .]{2,70}(?:\n\s*[A-Za-z][A-Za-z .]{2,70})?)"
         r"\s*\n\s*\d{4}-\d{2}-\d{2}",
         text,
     )
+    fallback_name = _line_after_label(text, "account holder", "customer name", "name")
+    if fallback_name and fallback_name.casefold() in {
+        "holding nature", "dob", "mobile", "landline", "email", "pan",
+        "address", "nominee", "ckyc", "profile",
+    }:
+        fallback_name = None
     return {
         "account_holder_name": (
             _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1))).title()
-            if profile_name else _line_after_label(text, "account holder", "customer name", "name")
+            if profile_name else fallback_name
         ),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
         "ifsc": ifsc_match.group(1) if ifsc_match else None,

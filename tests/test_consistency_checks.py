@@ -772,6 +772,37 @@ def test_flat_guarantor_section_without_person_rows_is_not_compared_to_primary()
     assert not any(item["rule_id"] == "AADHAAR_ADDRESS_MISMATCH" for item in anomalies)
 
 
+def test_guarantor_addresses_are_excluded_from_borrower_address_checks() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "role": "primary",
+                "applicant_name": "Kala Singh",
+                "address": "27 F Kaminpura Ganganagar Rajasthan 335027",
+            },
+            "coapplicant_1": {
+                "role": "coapplicant",
+                "applicant_name": "Kuldeep Singh",
+                "address": "11 Chak 5 Sri Ganganagar Rajasthan 335001",
+            },
+            "guarantor_1": {
+                "role": "guarantor",
+                "applicant_name": "Ramesh Kumar",
+            },
+        }
+    }
+    pages = [
+        page(1, "Aadhaar", "primary", address="27 F Kaminpura Ganganagar Rajasthan 335027"),
+        page(2, "Application Form", "coapplicant_1", address="11 Chak 5 Sri Ganganagar Rajasthan 335001"),
+        page(3, "Aadhaar", "guarantor_1", address="99 Unrelated Road Jaipur Rajasthan 302001"),
+        page(4, "Application Form", "guarantor_1", address="12 Different Colony Kota Rajasthan 324001"),
+    ]
+
+    anomalies = run_consistency_checks(pages, trusted)
+
+    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
 def test_flat_primary_application_without_person_rows_still_reports_mismatch() -> None:
     trusted = {"people": {"primary": {
         "applicant_name": "RAMESH KUMAR",

@@ -169,6 +169,14 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
                     if str(field).startswith("_") or value in (None, "", [], {}):
                         continue
                     canonical_field = _canonical(str(field))
+                    if (
+                        canonical_field in ADDRESS_FIELDS
+                        and _is_guarantor_person(record_person_id, people)
+                    ):
+                        # Guarantors can supply their own address as supporting
+                        # evidence. It is not an applicant/co-applicant address
+                        # variant and must not enter address consistency checks.
+                        continue
                     if not _usable_observation_value(
                         str(page.get("document_type") or "Unknown"),
                         canonical_field,
@@ -194,6 +202,10 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
             ):
                 continue
             canonical_field = _canonical(str(field))
+            if canonical_field in ADDRESS_FIELDS and _is_guarantor_person(person_id, people):
+                # Keep guarantor documents in the packet, but exclude their
+                # address from borrower/co-borrower validation.
+                continue
             if multi_person_container and canonical_field in PERSON_FIELDS:
                 # Application/CAM pages are multi-person containers even when
                 # OCR cannot assemble a person_records row in an explicitly
@@ -278,6 +290,23 @@ def _section_role_matches_person(
     if section_role == "guarantor":
         return "guarantor" in normalized
     return False
+
+
+def _is_guarantor_person(person_id: str, people: dict[str, dict]) -> bool:
+    """Return whether an owner is a guarantor, including numbered IDs."""
+    if not person_id or person_id in {"unassigned", "unknown"}:
+        return False
+    person = people.get(person_id) or {}
+    role_text = " ".join(
+        str(value or "")
+        for value in (
+            person_id,
+            person.get("role"),
+            person.get("applicant_role"),
+            person.get("person_role"),
+        )
+    ).casefold()
+    return "guarantor" in re.sub(r"[^a-z0-9]+", "", role_text)
 
 
 def _usable_observation_value(
