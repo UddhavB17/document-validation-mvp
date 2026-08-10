@@ -278,11 +278,16 @@ def restart_pipeline_application(
     application_id: int,
     request: Request,
     from_checkpoint: bool = True,
+    refresh_cached_ocr: bool = False,
     control_token: str | None = Header(default=None, alias="X-Job-Control-Token"),
 ) -> dict[str, Any]:
     _authorize_job_control(request, control_token)
     try:
-        return restart_application(application_id, from_checkpoint=from_checkpoint)
+        return restart_application(
+            application_id,
+            from_checkpoint=from_checkpoint,
+            refresh_cached_ocr=refresh_cached_ocr,
+        )
     except ReprocessConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (LookupError, FileNotFoundError) as exc:

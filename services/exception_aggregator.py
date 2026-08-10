@@ -27,13 +27,34 @@ def _sort_anomalies(anomalies: list[dict]) -> list[dict]:
     )
 
 
+def _dedupe_anomalies(anomalies: list[dict]) -> list[dict]:
+    """Collapse the same finding emitted by overlapping validation passes."""
+    result: list[dict] = []
+    seen: set[tuple[object, ...]] = set()
+    for anomaly in anomalies:
+        key = (
+            anomaly.get("rule_id"),
+            anomaly.get("page_number"),
+            anomaly.get("person_id") or anomaly.get("applicant_role"),
+            anomaly.get("document_type") or anomaly.get("document"),
+            anomaly.get("field_name"),
+            _stringify(anomaly.get("expected_value")),
+            _stringify(anomaly.get("found_value")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(anomaly)
+    return result
+
+
 def aggregate(
     pages: list[dict],
     anomalies: list[dict],
     ground_truth: dict,
     application_id: int | None = None,
 ) -> dict:
-    sorted_anomalies = _sort_anomalies(anomalies)
+    sorted_anomalies = _sort_anomalies(_dedupe_anomalies(anomalies))
     documents_found = sorted(
         {
             page.get("document_type")
@@ -146,9 +167,10 @@ def aggregate_exceptions(*exception_groups: list[dict]) -> list[dict]:
         aggregated.extend(group)
 
     # Sort: severity first, then document name alphabetically
+    aggregated = _dedupe_anomalies(aggregated)
     aggregated.sort(
         key=lambda e: (
-            _SEVERITY_ORDER.get(e.get("severity", "low"), 2),
+            _SEVERITY_ORDER.get(str(e.get("severity", "low")).lower(), 2),
             e.get("document", ""),
         )
     )

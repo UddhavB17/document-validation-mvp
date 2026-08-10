@@ -25,6 +25,15 @@ def test_transaction_column_signature_can_anchor_a_bank_statement() -> None:
     )
 
 
+def test_lender_statement_with_dr_cr_columns_is_a_bank_statement_anchor() -> None:
+    assert has_bank_statement_anchor(
+        "Customer's Statement of Account\n"
+        "Name\nTIKARAM MEENA\nLoan Account No.\n221205302480415\n"
+        "Date Particulars Dr. Cr. Balance",
+        {"account_holder_name": "TIKARAM MEENA"},
+    )
+
+
 def test_repayment_schedule_continuation_is_not_a_bank_statement() -> None:
     assert not has_bank_statement_anchor(
         "Due Date Principal Interest Instalment Balance\n31/08/2026 2500 750 3250 447500",

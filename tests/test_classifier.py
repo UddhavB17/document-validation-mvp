@@ -72,6 +72,43 @@ def test_nach_form_classified() -> None:
     assert _classify(text) == "NACH Form"
 
 
+def test_nach_payment_narration_is_not_a_mandate_form() -> None:
+    text = (
+        "Amount Received Mode - NACH Instrument NO-NACH48041510022026 "
+        "Instrument Amount 10195 Loan Allocation Amount 10195 "
+        "Txn Date 2026-02-10 Value Date 2026-02-10 Receipt No RV1"
+    )
+    assert _classify(text) != "NACH Form"
+
+
+def test_premium_calculator_is_unclassified_not_a_form_or_gst_certificate() -> None:
+    text = (
+        "MS FINCAP PVT LTD - LOAN AGAINST PROPERTY\nPREMIUM CALCULATOR\n"
+        "SANCTIONED LOAN AMOUNT (IN RS.)\n6,10,000.00\n"
+        "KOTAK PREMIUM WITHOUT GOODS AND SERVICES TAX\n7,765.30\n"
+        "GOODS AND SERVICES TAX @ 18%\n1,397.75\nTOTAL PREMIUM\n9,163.05"
+    )
+    assert _classify(text) == "None"
+
+
+def test_hindi_notarised_identity_affidavit_is_classified_from_document_form() -> None:
+    text = (
+        "01 JUL 2026\nNOTARY\nGOVT OF RAJASTHAN\nIDENTIFIED BY\nशपथ-पत्र\n"
+        "मैं मोसमी मीना सशपथ बयान करती हूं कि आधार कार्ड में जन्म दिनांक और नाम "
+        "सही एवं मान्य है तथा पेन कार्ड में नाम अलग है।\nसत्यापन\nहस्ताक्षर शपथग्रहिता"
+    )
+    assert _classify(text) == "Affidavit"
+
+
+def test_agreement_clause_requesting_affidavit_is_not_an_affidavit_document() -> None:
+    text = (
+        "11. Submit to the Lender a duly attested affidavit confirming that the Borrower "
+        "does not appear in a defaulter list. The Borrower shall repay the Facility and "
+        "comply with all covenants under this Agreement."
+    )
+    assert _classify(text) != "Affidavit"
+
+
 def test_short_nach_substring_inside_ocr_word_is_not_a_nach_form() -> None:
     text = (
         "HOME CONTENTS INSURANCE PROPOSAL\n"

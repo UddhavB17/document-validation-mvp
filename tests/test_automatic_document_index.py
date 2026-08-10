@@ -283,3 +283,95 @@ def test_zip_member_with_multiple_document_types_is_split() -> None:
         ("Aadhaar", [2, 3]),
     ]
     assert all(item["auto_mapping"]["source_document_id"] == "file-0001" for item in result["documents"])
+
+
+def test_detected_bureau_appendix_remains_with_subject_page_in_same_source() -> None:
+    first = _page(1, "CRIF Report", {"applicant_name": "Mosmee Meena"})
+    first["ocr_text"] = (
+        "CRIF High Mark Credit Information Report Consumer Name Mosmee Meena Credit Score"
+    )
+    appendix = _page(2, "CRIF Report", {})
+    appendix["ocr_text"] = (
+        "Account Information Payment History Overdue High Mark Credit Member Asset Classification"
+    )
+    result = build_automatic_document_index(
+        [first, appendix],
+        {"coapplicant_3": {"applicant_name": "Mosmee Meena"}},
+        source_documents=[{
+            "source_document_id": "file-0001",
+            "original_filename": "credit_score.pdf",
+            "internal_page_start": 1,
+            "internal_page_end": 2,
+        }],
+    )
+
+    assert result["anomalies"] == []
+    assert len(result["documents"]) == 1
+    assert result["documents"][0]["pages"] == [1, 2]
+    assert result["documents"][0]["applicant_role"] == "coapplicant_3"
+
+
+def test_repeated_aadhaar_heading_does_not_split_front_and_back_in_same_source() -> None:
+    front = _page(
+        19,
+        "Aadhaar",
+        {
+            "applicant_name": "Tika Ram Meena",
+            "aadhaar_number": "111122223333",
+            "date_of_birth": "1992-12-02",
+        },
+    )
+    back = _page(20, "Aadhaar", {"address": "Village Deoli Tonk 304023"})
+    result = build_automatic_document_index(
+        [front, back],
+        {
+            "coapplicant_1": {
+                "applicant_name": "Tika Ram Meena",
+                "aadhaar_number": "111122223333",
+            },
+            "coapplicant_2": {"applicant_name": "Radha Bai"},
+        },
+        source_documents=[{
+            "source_document_id": "file-0007",
+            "original_filename": "Co-Applicant/KYC/aadhaar.pdf",
+            "internal_page_start": 19,
+            "internal_page_end": 20,
+        }],
+    )
+
+    assert result["anomalies"] == []
+    assert result["documents"][0]["pages"] == [19, 20]
+    assert result["documents"][0]["applicant_role"] == "coapplicant_1"
+
+
+def test_two_strongly_different_aadhaar_ids_still_split_in_same_source() -> None:
+    first = _page(
+        1,
+        "Aadhaar",
+        {"applicant_name": "Tika Ram Meena", "aadhaar_number": "111122223333"},
+    )
+    second = _page(
+        2,
+        "Aadhaar",
+        {"applicant_name": "Radha Bai", "aadhaar_number": "999988887777"},
+    )
+    result = build_automatic_document_index(
+        [first, second],
+        {
+            "coapplicant_1": {
+                "applicant_name": "Tika Ram Meena",
+                "aadhaar_number": "111122223333",
+            },
+            "coapplicant_2": {
+                "applicant_name": "Radha Bai",
+                "aadhaar_number": "999988887777",
+            },
+        },
+        source_documents=[{
+            "source_document_id": "file-0001",
+            "internal_page_start": 1,
+            "internal_page_end": 2,
+        }],
+    )
+
+    assert [item["pages"] for item in result["documents"]] == [[1], [2]]

@@ -432,3 +432,53 @@ def test_trusted_name_match_ignores_honorific_and_ocr_relative_noise() -> None:
             "father_name": "CHETANBHAI MOHANLAL SUTHAR",
         },
     )
+
+
+def test_document_index_owner_survives_nameless_continuation_reassignment() -> None:
+    page = {
+        "page_number": 2,
+        "document_type": "CRIF Report",
+        "person_id": "coapplicant_2",
+        "applicant_role": "coapplicant_2",
+        "source_filename": "Co-Applicant/CREDITBUREAU/credit_score.pdf",
+        "ocr_text": "ACCOUNT INFORMATION PAYMENT HISTORY OVERDUE",
+        "extracted_fields": {
+            "_ownership": {
+                "person_id": "coapplicant_2",
+                "document_scope": "single_person",
+                "evidence": ["document_index"],
+            }
+        },
+    }
+
+    # Checklist ownership plus consistency ownership: both passes must keep
+    # the group-level resolution on a nameless continuation.
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+
+    assert page["person_id"] == "coapplicant_2"
+    assert "document_index" in page["extracted_fields"]["_ownership"]["evidence"]
+
+
+def test_decisive_identity_still_overrides_document_index_owner() -> None:
+    page = {
+        "page_number": 2,
+        "document_type": "PAN",
+        "person_id": "coapplicant_2",
+        "applicant_role": "coapplicant_2",
+        "source_filename": "Co-Applicant/KYC/mixed.pdf",
+        "ocr_text": "PAN TSTBB0002T",
+        "extracted_fields": {
+            "applicant_name": "UNKAR LAL",
+            "pan_number": "TSTBB0002T",
+            "_ownership": {
+                "person_id": "coapplicant_2",
+                "document_scope": "single_person",
+                "evidence": ["document_index"],
+            },
+        },
+    }
+
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+
+    assert page["person_id"] == "coapplicant_1"

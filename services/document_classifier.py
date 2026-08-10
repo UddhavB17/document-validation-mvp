@@ -318,8 +318,27 @@ def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
     score = 0.0
 
     explicit_opening_heading = _has_explicit_opening_heading(
-        text, rule.get("headings", [])
+        text,
+        rule.get("headings", []),
+        max_lines=int(rule.get("opening_heading_lines") or 4),
     )
+    if rule.get("boundary_evidence_required"):
+        # Some words name both a document and an obligation mentioned inside
+        # another document ("submit an affidavit", "execute a declaration").
+        # Such types need either a title near the beginning or at least two
+        # independent document-form signals. A single body reference must not
+        # split the surrounding multi-page document.
+        boundary_keyword_hits = {
+            _normalize_text(term)
+            for term in rule.get("keywords", [])
+            if _contains(normalized, term)
+        }
+        if not explicit_opening_heading and len(boundary_keyword_hits) < 2:
+            return _candidate(
+                rule,
+                0.0,
+                [{"kind": "suppressed", "value": "missing_document_boundary_evidence"}],
+            )
     negative_hits = [term for term in rule.get("negative_keywords", []) if _contains(normalized, term)]
     if negative_hits and not explicit_opening_heading:
         return _candidate(rule, 0.0, [{"kind": "negative_keyword", "value": term} for term in negative_hits])
@@ -370,7 +389,12 @@ def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
     return _candidate(rule, confidence, matched)
 
 
-def _has_explicit_opening_heading(text: str, headings: list[str]) -> bool:
+def _has_explicit_opening_heading(
+    text: str,
+    headings: list[str],
+    *,
+    max_lines: int = 4,
+) -> bool:
     """Return True when a configured title opens the first few non-empty lines.
 
     Negative terms are useful for clause references, but legal documents often
@@ -381,7 +405,7 @@ def _has_explicit_opening_heading(text: str, headings: list[str]) -> bool:
         _normalize_text(line)
         for line in str(text or "").splitlines()
         if _normalize_text(line)
-    ][:4]
+    ][:max(1, max_lines)]
     for line in opening_lines:
         for heading in headings:
             normalized_heading = _normalize_text(heading)

@@ -112,3 +112,21 @@ def test_failed_application_can_be_queued_for_reprocess(tmp_path, monkeypatch) -
         ).fetchone()
     assert dict(job) == {"job_type": "pdf_reprocess", "status": "queued"}
     assert audit["action"] == "pipeline_reprocess_queued"
+
+
+def test_explicit_restart_can_reprocess_a_completed_application(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    application_id, _ = _seed_pdf_application(tmp_path, progress_status="completed")
+    submitted = []
+    monkeypatch.setattr(reprocessing, "submit_job", lambda *args: submitted.append(args))
+
+    result = reprocessing.restart_application(
+        application_id,
+        from_checkpoint=True,
+        refresh_cached_ocr=True,
+    )
+
+    assert result["previous_pipeline_status"] == "completed"
+    assert result["resume_from_checkpoint"] is True
+    assert result["refresh_cached_ocr"] is True
+    assert submitted

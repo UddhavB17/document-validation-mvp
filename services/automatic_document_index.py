@@ -12,7 +12,11 @@ from services.person_ownership import (
     resolve_person_owner,
 )
 
-from services.person_names import is_person_name_candidate, name_similarity
+from services.person_names import (
+    has_independent_identity_anchor,
+    is_person_name_candidate,
+    name_similarity,
+)
 from services.validation_gates import field_reliable_for_validation
 
 
@@ -219,6 +223,18 @@ def _group_pages(
             starts_document
             and page_number not in (current or {}).get("pages", [])
             and not is_loan_level
+            and not (
+                document_type in {"CIBIL Report", "CRIF Report"}
+                and (current or {}).get("document_type") == document_type
+                and not _bureau_page_starts_new_subject(page)
+            )
+            and not (
+                document_type in {"Aadhaar", "Voter ID", "Driving License", "Passport"}
+                and (current or {}).get("document_type") == document_type
+                and not _identity_page_starts_new_subject(
+                    (current or {}).get("pages_data") or [], page
+                )
+            )
         )
         new_group = (
             current is None
@@ -273,6 +289,74 @@ def _group_pages(
         group["pages"] = [number for number, _ in ordered]
         group["pages_data"] = [page for _, page in ordered]
     return groups
+
+
+def _bureau_page_starts_new_subject(page: dict[str, Any]) -> bool:
+    """Return True only for a bureau cover/header that identifies a new subject.
+
+    Bureau appendices repeat the bureau brand and can be independently detected
+    with high confidence. They must remain in the existing physical report. A
+    genuine second report exposes both a report title and fresh subject/report
+    identity near its beginning.
+    """
+    header = " ".join(str(page.get("ocr_text") or "").splitlines()[:24]).casefold()
+    header = re.sub(r"\s+", " ", header)
+    has_title = bool(re.search(
+        r"\b(?:cibil|crif|credit information|consumer credit)\s+(?:information\s+)?report\b",
+        header,
+    ))
+    has_subject = bool(re.search(
+        r"\b(?:consumer|applicant|subject)\s+name\b|"
+        r"\b(?:report\s+id|control\s+number|member\s+reference\s+number)\b",
+        header,
+    ))
+    return has_title and has_subject
+
+
+def _identity_page_starts_new_subject(
+    current_pages: list[dict[str, Any]], page: dict[str, Any]
+) -> bool:
+    """Distinguish a new identity document from the back/continuation side.
+
+    Repeated authority headings are common on both sides of identity cards and
+    therefore are not a boundary.  Split only on contradictory strong IDs or
+    independently anchored, clearly different holder names.
+    """
+    current_fields = [
+        item.get("extracted_fields")
+        for item in current_pages
+        if isinstance(item.get("extracted_fields"), dict)
+    ]
+    next_fields = page.get("extracted_fields")
+    next_fields = next_fields if isinstance(next_fields, dict) else {}
+
+    for key in ("aadhaar_number", "pan_number", "passport_number", "license_number"):
+        previous_values = {
+            re.sub(r"[^A-Z0-9]", "", str(fields.get(key) or "").upper())
+            for fields in current_fields
+            if fields.get(key) not in (None, "")
+        }
+        next_value = re.sub(r"[^A-Z0-9]", "", str(next_fields.get(key) or "").upper())
+        previous_values.discard("")
+        if previous_values and next_value and next_value not in previous_values:
+            return True
+
+    next_name = next_fields.get("applicant_name")
+    if not (
+        is_person_name_candidate(next_name)
+        and has_independent_identity_anchor(next_fields)
+    ):
+        return False
+    previous_names = [
+        fields.get("applicant_name")
+        for fields in current_fields
+        if is_person_name_candidate(fields.get("applicant_name"))
+        and has_independent_identity_anchor(fields)
+    ]
+    return bool(
+        previous_names
+        and max(name_similarity(next_name, candidate) for candidate in previous_names) < 0.60
+    )
 
 
 def _effective_document_type(page: dict[str, Any]) -> str:

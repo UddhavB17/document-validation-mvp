@@ -57,7 +57,12 @@ def resume_application(application_id: int) -> dict[str, Any]:
     raise ReprocessConflictError(f"Application cannot be resumed while pipeline status is {status}.")
 
 
-def restart_application(application_id: int, *, from_checkpoint: bool = True) -> dict[str, Any]:
+def restart_application(
+    application_id: int,
+    *,
+    from_checkpoint: bool = True,
+    refresh_cached_ocr: bool = False,
+) -> dict[str, Any]:
     """Create a new attempt after the previous worker is no longer active."""
     with get_connection() as connection:
         job = connection.execute(
@@ -68,13 +73,27 @@ def restart_application(application_id: int, *, from_checkpoint: bool = True) ->
         if _heartbeat_is_recent(job["heartbeat_at"]):
             raise ReprocessConflictError("Cancel the active worker before starting a new attempt.")
         _mark_worker_stale(application_id)
-    return queue_application_reprocess(application_id, resume=from_checkpoint)
+    return queue_application_reprocess(
+        application_id,
+        resume=from_checkpoint,
+        allow_completed_restart=True,
+        refresh_cached_ocr=refresh_cached_ocr,
+    )
 
 
-def queue_application_reprocess(application_id: int, *, resume: bool = True) -> dict[str, Any]:
+def queue_application_reprocess(
+    application_id: int,
+    *,
+    resume: bool = True,
+    allow_completed_restart: bool = False,
+    refresh_cached_ocr: bool = False,
+) -> dict[str, Any]:
     progress = get_progress(application_id)
     operational_status = str((progress or {}).get("operational_status") or "not_started")
-    if operational_status not in RETRYABLE_PROGRESS_STATES:
+    allowed_states = set(RETRYABLE_PROGRESS_STATES)
+    if allow_completed_restart:
+        allowed_states.add("completed")
+    if operational_status not in allowed_states:
         raise ReprocessConflictError(
             f"Application cannot be reprocessed while pipeline status is {operational_status}."
         )
@@ -190,6 +209,7 @@ def queue_application_reprocess(application_id: int, *, resume: bool = True) -> 
                         "parent_job_id": parent_job_id,
                         "previous_pipeline_status": operational_status,
                         "resume_from_checkpoint": resume,
+                        "refresh_cached_ocr": refresh_cached_ocr,
                     }
                 ),
             ),
@@ -206,6 +226,7 @@ def queue_application_reprocess(application_id: int, *, resume: bool = True) -> 
         package_id,
         generate_llm_summary,
         resume,
+        refresh_cached_ocr,
     )
     return {
         "application_id": application_id,
@@ -214,6 +235,7 @@ def queue_application_reprocess(application_id: int, *, resume: bool = True) -> 
         "pipeline_status": "queued",
         "previous_pipeline_status": operational_status,
         "resume_from_checkpoint": resume,
+        "refresh_cached_ocr": refresh_cached_ocr,
     }
 
 
@@ -227,6 +249,7 @@ def _run_reprocess_task(
     package_id: str | None,
     generate_llm_summary: bool | None,
     resume: bool,
+    refresh_cached_ocr: bool = False,
 ) -> None:
     try:
         mark_job_started(job_id)
@@ -240,6 +263,7 @@ def _run_reprocess_task(
             generate_llm_summary=generate_llm_summary,
             job_id=job_id,
             resume=resume,
+            refresh_cached_ocr=refresh_cached_ocr,
         )
         if result.get("pipeline_status") == "failed":
             mark_job_failed(job_id, "Recovery pipeline completed with failed outcome")

@@ -174,16 +174,17 @@ def extract_repayment_summary(text: Any) -> dict[str, Any]:
 
 
 def attach_repayment_fields(
-    extracted_fields: dict[str, Any], text: Any
+    extracted_fields: dict[str, Any], text: Any, *, include_summary: bool = True
 ) -> dict[str, Any]:
-    """Attach structured schedule rows and missing KFS summary values."""
+    """Attach structured rows and, when requested, KFS summary values."""
     result = dict(extracted_fields or {})
     rows = parse_repayment_schedule_rows(text)
     if rows:
         result["repayment_schedule_rows"] = rows
-    for field, value in extract_repayment_summary(text).items():
-        if result.get(field) in (None, "", [], {}):
-            result[field] = value
+    if include_summary:
+        for field, value in extract_repayment_summary(text).items():
+            if result.get(field) in (None, "", [], {}):
+                result[field] = value
     return result
 
 

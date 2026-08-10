@@ -196,6 +196,18 @@ _REJECTED_KEYWORDS = {
     "constitution",
     "organisation",
     "organization",
+    # Legal-entity markers. A lender/company header can look like a plausible
+    # multi-token human name after OCR, but these tokens make the entity type
+    # explicit and must never enter person ownership or identity comparison.
+    "company",
+    "private",
+    "limited",
+    "ltd",
+    "pvt",
+    "llp",
+    "corporation",
+    "corp",
+    "incorporated",
     "transaction",
     "transcation",
 }

@@ -446,7 +446,6 @@
       "type": "NACH Form",
       "priority": 80,
       "headings": [
-        "NACH",
         "NACH Mandate",
         "ECS Mandate",
         "National Automated Clearing House"
@@ -456,7 +455,22 @@
         "national automated clearing house",
         "ecs mandate",
         "auto debit",
-        "mandate"
+        "mandate",
+        "umrn",
+        "sponsor bank",
+        "utility code"
+      ],
+      "required_any": [
+        "nach mandate",
+        "ecs mandate",
+        "national automated clearing house",
+        "auto debit mandate",
+        "debit mandate",
+        "umrn",
+        "sponsor bank",
+        "utility code",
+        "authorise to debit",
+        "authorize to debit"
       ],
       "min_confidence": 0.5
     },
@@ -891,7 +905,8 @@
         "lender shall",
         "repayment obligation",
         "enforce the security",
-        "schedule/kfs"
+        "schedule/kfs",
+        "premium calculator"
       ],
       "field_patterns": [
         "policy\\s*(number|no)",
@@ -1345,7 +1360,11 @@
       "headings": [
         "Affidavit",
         "Declaration Affidavit",
-        "Notarised Affidavit"
+        "Notarised Affidavit",
+        "Notarized Affidavit",
+        "शपथ-पत्र",
+        "शपथ पत्र",
+        "हलफनामा"
       ],
       "keywords": [
         "affidavit",
@@ -1353,8 +1372,15 @@
         "solemnly affirm",
         "notary",
         "notarised",
-        "notarized"
+        "notarized",
+        "शपथ-पत्र",
+        "शपथ पत्र",
+        "हलफनामा",
+        "शपथग्रहिता",
+        "सशपथ"
       ],
+      "boundary_evidence_required": true,
+      "opening_heading_lines": 16,
       "min_confidence": 0.5
     },
     {
@@ -1425,12 +1451,19 @@
       "priority": 290,
       "headings": [
         "GST Registration Certificate",
-        "Goods and Services Tax"
+        "Certificate of Registration"
       ],
       "keywords": [
         "gst registration",
         "gstin",
         "goods and services tax",
+        "registration certificate"
+      ],
+      "required_any": [
+        "gst registration",
+        "gstin",
+        "gst reg-06",
+        "form gst reg-06",
         "registration certificate"
       ],
       "field_patterns": [

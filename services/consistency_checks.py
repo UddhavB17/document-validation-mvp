@@ -245,24 +245,35 @@ def _multi_person_context_key(page: dict, fields: dict) -> str:
 
 def _multi_person_section_role(text: str) -> str | None:
     """Infer an explicit role section while allowing it to continue on later pages."""
-    header = " ".join(str(text or "").splitlines()[:16]).casefold()
+    # Multi-person form sections often start below a KYC table or bilingual
+    # labels. Inspect a bounded page header/body window and use the first
+    # explicit section marker instead of defaulting an entire page to primary.
+    header = " ".join(str(text or "").splitlines()[:96]).casefold()
     header = re.sub(r"[^a-z0-9\- ]+", " ", header)
     header = re.sub(r"\s+", " ", header).strip()
     if not header:
         return None
-    if re.search(r"\b(?:loan\s+application\s+form|application\s+details)\b", header):
-        return "primary"
-    if re.search(
-        r"\b(?:details\s+of\s+security|bank\s+account\s+details|"
-        r"existing\s+credit\s+facilities|loan\s+purpose|declaration)\b",
-        header,
-    ):
-        return "primary"
-    if re.search(r"\bguarantor(?:\s+details|\s+address|\s+kyc)?\b", header):
-        return "guarantor"
-    if re.search(r"\b(?:co[\s-]*applicant|co[\s-]*borrower)(?:\s+details|\s+address|\s+kyc|\s+personal)?\b", header):
-        return "coapplicant"
-    return None
+    role_patterns = {
+        "primary": (
+            r"\b(?:loan\s+application\s+form|application\s+details)\b",
+            r"\b(?:details\s+of\s+security|bank\s+account\s+details|"
+            r"existing\s+credit\s+facilities|loan\s+purpose|declaration)\b",
+        ),
+        "guarantor": (
+            r"\bguarantor(?:\s+details|\s+address|\s+kyc|\s+employment|\s+business)?\b",
+        ),
+        "coapplicant": (
+            r"\b(?:co[\s-]*applicant|co[\s-]*borrower)"
+            r"(?:\s+details|\s+address|\s+kyc|\s+personal)?\b",
+        ),
+    }
+    matches = [
+        (match.start(), role)
+        for role, patterns in role_patterns.items()
+        for pattern in patterns
+        if (match := re.search(pattern, header))
+    ]
+    return min(matches)[1] if matches else None
 
 
 def _section_role_matches_person(
@@ -359,7 +370,14 @@ def _is_garbage_extracted_value(field: str, value: Any) -> bool:
             return True
         if len(re.findall(r"[a-zA-Z\u0900-\u097f]", text)) < 6:
             return True
-        if re.search(r"\b(?:website|helpline|gst\s*(?:no|number))\b|www\.|\S+@\S+", text, re.I):
+        if re.search(
+            r"\b(?:website|helpline|gst\s*(?:no|number)|"
+            r"unique\s+identification\s+authority|guarantor\s+"
+            r"(?:(?:employment|employement)(?:\s*/?\s*business)?|business|kyc)?\s*details)\b|"
+            r"भारतीय\s+विशिष्ट\s+पहचान\s+प्राधिकरण|www\.|\S+@\S+",
+            text,
+            re.I,
+        ):
             return True
 
     if field == "pin_code":
@@ -410,6 +428,14 @@ def _field_is_semantically_valid(
         # create TRUSTED_PHONE mismatches against CRM numbers.
         "phone_number", "bank_linked_mobile",
     }:
+        return False
+    if field in {"loan_amount", "sanction_amount", "requested_amount", "recommended_amount"} and document_key in {
+        "gst certificate", "utility bill", "bank statement", "passbook",
+        "cheque", "nach form", "affidavit", "insurance form",
+        "life insurance form", "property insurance form",
+    }:
+        # Tax/premium/ledger amounts do not establish the current loan terms.
+        # This also protects consistency checks that read older cached runs.
         return False
     if document_key == "cersai report" and field in {
         # CERSAI debtor-search DOB is frequently OCR/parser noise relative to KYC.
@@ -574,11 +600,16 @@ def _cross_document_matches(
         ):
             grouped[(obs["person_id"], obs["field"])].append(obs)
     for (person_id, field), values in grouped.items():
+        person = (people or {}).get(person_id, {})
+        values = sorted(
+            values,
+            key=lambda item: _observation_anchor_rank(item, field, person),
+            reverse=True,
+        )
         anchor = values[0]
         for other in values[1:]:
             if anchor["document_type"] == other["document_type"] or _matches(field, anchor["value"], other["value"]):
                 continue
-            person = (people or {}).get(person_id, {})
             if field in HOLDER_NAME_FIELDS and person and (
                 _name_matches_with_relatives(anchor["value"], person)
                 and _name_matches_with_relatives(other["value"], person)
@@ -599,6 +630,51 @@ def _cross_document_matches(
     return anomalies
 
 
+def _observation_anchor_rank(obs: dict, field: str, person: dict) -> tuple[int, int, int]:
+    """Prefer semantically authoritative, trusted-matching observations.
+
+    Page order is not evidence quality. In particular, an early tax, premium,
+    or transaction amount must never become the reference loan amount merely
+    because it was encountered first.
+    """
+    value = obs.get("value")
+    trusted_values = (
+        _trusted_address_variants(person)
+        if field in ADDRESS_FIELDS
+        else [_lookup(person, field)]
+    )
+    trusted_match = int(any(
+        expected not in (None, "") and _matches(field, expected, value)
+        for expected in trusted_values
+    ))
+    document_type = str(obs.get("document_type") or "").casefold()
+    authority: dict[str, int]
+    if field in {"loan_amount", "sanction_amount", "requested_amount", "recommended_amount"}:
+        authority = {
+            "cam": 8,
+            "sanction letter": 8,
+            "kfs": 8,
+            "facility agreement": 7,
+            "loan agreement": 7,
+            "application form": 6,
+        }
+    elif field in HOLDER_NAME_FIELDS:
+        authority = {
+            "aadhaar": 8, "pan": 8, "pan card": 8, "passport": 8,
+            "voter id": 7, "driving license": 7, "application form": 5,
+            "cam": 5, "bank statement": 4,
+        }
+    elif field in ADDRESS_FIELDS:
+        authority = {
+            "aadhaar": 8, "passport": 8, "voter id": 7,
+            "driving license": 7, "utility bill": 6, "application form": 5,
+        }
+    else:
+        authority = {}
+    value_detail = min(20, len(re.findall(r"[A-Za-z0-9\u0900-\u097f]+", str(value or ""))))
+    return trusted_match, authority.get(document_type, 1), value_detail
+
+
 def _aadhaar_address_checks(
     observations: list[dict], people: dict[str, dict] | None = None
 ) -> list[dict]:
@@ -610,10 +686,24 @@ def _aadhaar_address_checks(
     for person_id, values in by_person.items():
         if person_id == "unassigned":
             continue
-        aadhaar = next((item for item in values if item["document_type"] == "Aadhaar"), None)
+        address_variants = _trusted_address_variants((people or {}).get(person_id, {}))
+        aadhaar_values = [item for item in values if item["document_type"] == "Aadhaar"]
+        aadhaar = max(
+            aadhaar_values,
+            key=lambda item: (
+                int(any(_matches("address", variant, item["value"]) for variant in address_variants)),
+                -int(bool(re.search(
+                    r"unique\s+identification\s+authority|"
+                    r"भारतीय\s+विशिष्ट\s+पहचान\s+प्राधिकरण",
+                    str(item.get("value") or ""),
+                    re.I,
+                ))),
+                len(str(item.get("value") or "")),
+            ),
+            default=None,
+        )
         if not aadhaar:
             continue
-        address_variants = _trusted_address_variants((people or {}).get(person_id, {}))
         for other in values:
             if other is aadhaar or _matches("address", aadhaar["value"], other["value"]):
                 continue
@@ -676,19 +766,19 @@ def _relationship_checks(observations: list[dict], people: dict[str, dict]) -> l
         person_name = known_names.get(relation["person_id"])
         consistent = True
         if declared == "father" and primary_related:
-            consistent = _matches("applicant_name", primary_related["value"], person_name)
+            consistent = _relationship_name_matches(primary_related["value"], person_name)
         elif declared == "mother" and primary_related:
             if qualifier in {"w/o", "wife of"}:
-                consistent = _matches("applicant_name", primary_related["value"], related["value"])
+                consistent = _relationship_name_matches(primary_related["value"], related["value"])
             else:
-                consistent = _matches("applicant_name", primary_related["value"], person_name)
+                consistent = _relationship_name_matches(primary_related["value"], person_name)
         elif declared in {"son", "daughter"}:
-            consistent = qualifier in {"s/o", "d/o", "son of", "daughter of"} and _matches(
-                "applicant_name", related["value"], known_names.get("primary")
+            consistent = qualifier in {"s/o", "d/o", "son of", "daughter of"} and _relationship_name_matches(
+                related["value"], known_names.get("primary")
             )
         elif declared == "wife":
-            consistent = qualifier in {"w/o", "wife of"} and _matches(
-                "applicant_name", related["value"], known_names.get("primary")
+            consistent = qualifier in {"w/o", "wife of"} and _relationship_name_matches(
+                related["value"], known_names.get("primary")
             )
         if not consistent:
             anomalies.append(_anomaly(
@@ -705,6 +795,40 @@ def _relationship_checks(observations: list[dict], people: dict[str, dict]) -> l
                     "Related person's name could not be linked to a named applicant/co-applicant; review the family chain.",
                 ))
     return anomalies
+
+
+def _relationship_name_matches(left: Any, right: Any) -> bool:
+    """Compare family-chain names with transliteration and surname omission.
+
+    Aadhaar relationship lines commonly omit a surname, while trusted data may
+    spell a given name phonetically (Tika/Teeka). Require at least two aligned
+    name tokens before allowing that tolerance so unrelated one-word names do
+    not become matches.
+    """
+    if _matches("applicant_name", left, right):
+        return True
+    left_tokens = list(dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(left)))
+    right_tokens = list(dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(right)))
+    if min(len(left_tokens), len(right_tokens)) < 2:
+        return False
+    if len(left_tokens) <= len(right_tokens):
+        short, long = left_tokens, right_tokens
+    else:
+        short, long = right_tokens, left_tokens
+    aligned = long[: len(short)]
+    def token_matches(short_token: str, long_token: str) -> bool:
+        if _similarity(short_token, long_token) >= 0.80:
+            return True
+        # Transliteration often changes only the written vowel (Tika/Teeka,
+        # Mohammad/Mohammed). A shared two-character consonant skeleton is
+        # acceptable here only because the full relationship comparison also
+        # requires another aligned name token.
+        consonants = lambda token: re.sub(r"[aeiouy]", "", token.casefold())
+        left_skeleton = consonants(short_token)
+        right_skeleton = consonants(long_token)
+        return len(left_skeleton) >= 2 and left_skeleton == right_skeleton
+
+    return all(token_matches(a, b) for a, b in zip(short, aligned))
 
 
 def _application_name_checks(pages: list[dict], people: dict[str, dict]) -> list[dict]:
@@ -1010,16 +1134,26 @@ def _plausible_adult_date_of_birth(value: Any) -> bool:
 def _is_identity_declaration(page: dict, person_id: str, person: dict) -> bool:
     document_type = str(page.get("document_type") or "").casefold()
     provided_type = str(page.get("provided_document_type") or "").casefold()
-    combined_type = f"{document_type} {provided_type}"
-    if not any(
+    source_name = str(
+        page.get("source_filename")
+        or page.get("original_filename")
+        or ""
+    ).casefold()
+    combined_type = f"{document_type} {provided_type} {source_name}"
+    text = str(page.get("ocr_text") or "")
+    lowered = text.casefold()
+    has_declared_type = any(
         marker in combined_type
         for marker in ("affidavit", "dual name", "name declaration", "self declaration")
-    ):
+    )
+    has_affidavit_form = bool(
+        re.search(r"\b(?:affidavit|deponent|solemnly\s+affirm)\b|शपथ[\s-]*पत्र|हलफनामा", lowered)
+        and re.search(r"\b(?:notary|verified|verification)\b|नोटरी|सशपथ|शपथग्रहिता|सत्यापन", lowered)
+    )
+    if not (has_declared_type or has_affidavit_form):
         return False
 
     page_person = str(page.get("person_id") or "unassigned")
-    text = str(page.get("ocr_text") or "")
-    lowered = text.casefold()
     identity_markers = (
         "dual name",
         "mismatch of name",
@@ -1036,7 +1170,22 @@ def _is_identity_declaration(page: dict, person_id: str, person: dict) -> bool:
         "name/surname",
         "name or signature",
     )
-    if not any(marker in lowered for marker in identity_markers):
+    has_english_identity_resolution = any(marker in lowered for marker in identity_markers)
+    hindi_identity_families = sum(
+        1
+        for family in (
+            ("नाम",),
+            ("जन्म दिनांक", "जन्म तिथि"),
+            ("आधार कार्ड", "आधार"),
+            ("पेन कार्ड", "पैन कार्ड", "स्थायी लेखा"),
+        )
+        if any(marker in lowered for marker in family)
+    )
+    has_hindi_resolution = (
+        hindi_identity_families >= 3
+        and any(marker in lowered for marker in ("सही", "मान्य", "अंतर", "भिन्न", "अलग"))
+    )
+    if not (has_english_identity_resolution or has_hindi_resolution):
         return False
     if page_person not in {"", "unassigned", "unknown", person_id}:
         return False

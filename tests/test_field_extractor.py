@@ -1390,3 +1390,97 @@ IFSC Code : BARB0DBHARA
     assert fields["account_number"] == "83770100000605"
     assert fields["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
     assert fields["branch"] == "HARANIYAV"
+
+
+def test_aadhaar_address_removes_interleaved_uidai_authority_header() -> None:
+    fields = extract_fields(
+        "Aadhaar",
+        """आधार
+Address:
+भारतीय विशिष्ट पहचान प्राधिकरण
+Unique Identification Authority of India
+पता:
+S/O Teeka Ram Meena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023
+3575 9300 0596
+help@uidai.gov.in
+""",
+    )
+
+    assert fields["address"] == (
+        "S/O Teeka Ram Meena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023"
+    )
+    assert "authority" not in fields["address"].casefold()
+
+
+def test_whole_application_extraction_never_uses_company_header_as_person() -> None:
+    fields = extract_fields(
+        "Application Form",
+        """MS FINCAP PRIVATE LIMITED
+Corporate Office: Jaipur
+Customer Application Form
+APPLICANT DETAILS
+NAME
+Batti Lal Meena
+DATE OF BIRTH
+02-12-1992
+CO-APPLICANT ADDRESS
+COMMUNICATION ADDRESS
+NAME
+ADDRESS
+Tika Ram Meena
+44 Ward 2 Deoli Rajasthan 304023
+PERMANENT ADDRESS
+NAME
+ADDRESS
+Tika Ram Meena
+44 Ward 2 Deoli Rajasthan 304023
+OFFICE ADDRESS
+""",
+    )
+
+    assert fields["applicant_name"] == "Batti Lal Meena"
+    assert fields["person_records"][0]["applicant_name"] == "Tika Ram Meena"
+    assert all("FINCAP" not in str(record) for record in fields["person_records"])
+
+
+def test_empty_guarantor_address_does_not_consume_next_section_heading() -> None:
+    fields = extract_fields(
+        "Application Form",
+        """GUARANTOR DETAILS
+GUARANTOR ADDRESS
+COMMUNICATION ADDRESS
+NAME
+ADDRESS
+PERMANENT ADDRESS
+NAME
+ADDRESS
+GUARANTOR EMPLOYEMENT/BUSINESS DETAILS
+Income Source
+Organisation Name
+""",
+    )
+
+    assert fields["current_address"] is None
+    assert fields["permanent_address"] is None
+    assert fields["communication_address"] is None
+
+
+def test_lender_statement_of_account_is_not_blocked_as_amortization() -> None:
+    fields = extract_fields(
+        "Bank Statement",
+        """AAVAS FINANCIERS LIMITED
+Customer's Statement of Account
+Name
+TIKARAM MEENA
+Loan Account No.
+221205302480415
+Principal Interest EMI Balance
+Date Particulars Dr. Cr. Balance
+Amount Received Mode NEFT Instrument No X
+Txn Date 2026-01-01 Value Date 2026-01-01 Receipt No R1
+""",
+    )
+
+    assert fields.get("_validation_blocked_reason") is None
+    assert fields["account_holder_name"] == "TIKARAM MEENA"
+    assert fields["account_number"] == "221205302480415"

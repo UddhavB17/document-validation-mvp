@@ -259,6 +259,23 @@ def has_bureau_anchor(text: str, fields: dict[str, Any], field: str) -> bool:
 
 def is_amortization_schedule(text: str) -> bool:
     lowered = text.lower()
+    # A lender's statement of account legitimately contains principal,
+    # interest, instalment and balance columns. Its explicit statement title
+    # and transaction ledger are stronger semantic evidence than those shared
+    # financial terms.
+    statement_evidence = bool(re.search(
+        r"\b(?:bank statement|account statement|statement of account|"
+        r"customer(?:'s)? statement of account|transaction details)\b",
+        lowered,
+    ))
+    transaction_evidence = _has_transaction_table_signature(text) or sum(
+        1
+        for marker in (
+            "particulars", "amount received", "instrument no", "receipt no",
+            "txn date", "value date", "opening balance",
+        )
+        if marker in lowered
+    ) >= 3
     explicit_schedule = (
         "repayment schedule" in lowered
         or "amortisation" in lowered
@@ -270,7 +287,7 @@ def is_amortization_schedule(text: str) -> bool:
     )
     return bool(
         (explicit_schedule or schedule_table)
-        and not re.search(r"\b(?:bank statement|account statement|transaction details)\b", lowered)
+        and not (statement_evidence and transaction_evidence)
     )
 
 
@@ -279,8 +296,8 @@ def _has_transaction_table_signature(text: str) -> bool:
     lowered = str(text or "").lower()
     has_date = bool(re.search(r"\b(?:txn\.?\s*date|transaction\s+date|value\s+date|date)\b", lowered))
     has_narration = bool(re.search(r"\b(?:narration|particulars|description|remarks)\b", lowered))
-    has_debit = bool(re.search(r"\b(?:debit|withdrawal|withdrawals)\b", lowered))
-    has_credit = bool(re.search(r"\b(?:credit|deposit|deposits)\b", lowered))
+    has_debit = bool(re.search(r"\b(?:debit|withdrawal|withdrawals|dr)\.?\b", lowered))
+    has_credit = bool(re.search(r"\b(?:credit|deposit|deposits|cr)\.?\b", lowered))
     has_balance = bool(re.search(r"\b(?:balance|running\s+balance)\b", lowered))
     return has_date and has_narration and has_debit and has_credit and has_balance
 

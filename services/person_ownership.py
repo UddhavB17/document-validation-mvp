@@ -133,6 +133,7 @@ def resolve_person_owner(
     document_type: str = "",
     *,
     provided_person_id: str | None = None,
+    provided_person_is_document_scope: bool = False,
     source_filename: str | None = None,
 ) -> dict[str, Any]:
     """Score trusted people against extracted identity and pick a clear winner.
@@ -205,6 +206,19 @@ def resolve_person_owner(
                 "person_id": role_person_id,
                 "confidence": 0.85,
                 "evidence": [f"source_role:{source_role}"],
+                "source_role": source_role,
+            }
+        if provided_person_is_document_scope and provided in role_candidates:
+            # A continuation page commonly omits the subject name/ID.  The
+            # surrounding physical document may already have been resolved
+            # from its identity-bearing cover page.  Keep that group-level
+            # owner instead of discarding it merely because several trusted
+            # people share the same source-folder role.  A decisive full PAN
+            # or labelled full Aadhaar still overrides above.
+            return {
+                "person_id": provided,
+                "confidence": 0.9,
+                "evidence": ["document_index", f"source_role:{source_role}"],
                 "source_role": source_role,
             }
         if identity_winner in role_candidates:
@@ -317,6 +331,13 @@ def assign_page_owners(
         provided = existing if existing and existing not in {"unassigned", "unknown"} else None
         # Manifest/ZIP mapping may live on the page or in extraction metadata.
         fields = page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
+        ownership = fields.get("_ownership") if isinstance(fields, dict) else None
+        provided_person_is_document_scope = bool(
+            isinstance(ownership, dict)
+            and str(ownership.get("person_id") or "").strip() == provided
+            and ownership.get("document_scope") == "single_person"
+            and "document_index" in set(ownership.get("evidence") or [])
+        )
         mapped = fields.get("_mapped_extraction") if isinstance(fields, dict) else None
         if isinstance(mapped, dict) and mapped.get("person_id"):
             provided = str(mapped.get("person_id"))
@@ -330,6 +351,7 @@ def assign_page_owners(
             people,
             document_type,
             provided_person_id=provided,
+            provided_person_is_document_scope=provided_person_is_document_scope,
             source_filename=str(page.get("source_filename") or "") or None,
         )
         type_key = document_type.strip().lower()
@@ -356,6 +378,10 @@ def assign_page_owners(
             "evidence": owner.get("evidence", []),
             "source_role": owner.get("source_role"),
         }
+        if provided_person_is_document_scope:
+            # Keep the provenance durable across the checklist's intentional
+            # second ownership pass inside consistency checks.
+            ownership_meta["document_scope"] = "single_person"
         if isinstance(fields, dict):
             fields = dict(fields)
             fields["_ownership"] = ownership_meta

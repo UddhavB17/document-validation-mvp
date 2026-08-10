@@ -1103,3 +1103,121 @@ def test_address_layout_ocr_matches_unit_and_rural_locality_variants() -> None:
         "MODIVAS HARNIYAV MODIVAS AHMEDABAD GUJARAT INDIA 382435",
         "MODIVAS HARNIYAU HARNSLAV AHMEDABAD 382435",
     )
+
+
+def test_mother_spouse_chain_tolerates_transliteration_and_omitted_surname() -> None:
+    anomalies = run_consistency_checks(
+        [
+            page(
+                1,
+                "Aadhaar",
+                "primary",
+                applicant_name="Batti Lal Meena",
+                relationship_qualifier="S/O",
+                related_person_name="Teeka Ram Meena",
+            ),
+            page(
+                2,
+                "Aadhaar",
+                "coapplicant_2",
+                applicant_name="Rukamani Devi",
+                relationship_qualifier="W/O",
+                related_person_name="Tika Ram",
+            ),
+        ],
+        {"people": {
+            "primary": {"applicant_name": "Batti Lal Meena"},
+            "coapplicant_2": {
+                "applicant_name": "Rukamani Devi",
+                "relationship": "mother",
+            },
+        }},
+    )
+
+    assert not any(item["rule_id"] == "RELATIONSHIP_QUALIFIER_MISMATCH" for item in anomalies)
+
+
+def test_non_loan_tax_amount_cannot_anchor_cross_document_loan_amount() -> None:
+    application = page(
+        425,
+        "Application Form",
+        "primary",
+        applicant_name="Batti Lal Meena",
+        loan_amount="610000",
+    )
+    application["ocr_text"] = "Customer Application Form Applicant Name Batti Lal Meena Loan Amount 610000"
+    anomalies = run_consistency_checks(
+        [
+            page(61, "GST Certificate", "primary", loan_amount="1397.75"),
+            application,
+        ],
+        {"people": {"primary": {
+            "applicant_name": "Batti Lal Meena",
+            "loan_amount": "610000",
+        }}},
+    )
+
+    assert not any("LOAN_AMOUNT_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
+def test_authority_boilerplate_and_empty_guarantor_heading_are_not_addresses() -> None:
+    anomalies = run_consistency_checks(
+        [
+            page(
+                849,
+                "Aadhaar",
+                "primary",
+                address=(
+                    "भारतीय विशिष्ट पहचान प्राधिकरण Unique Identification Authority of India "
+                    "S/O Teeka Ram Meena 44 Ward 02 Deoli Rajasthan 304023"
+                ),
+            ),
+            page(
+                850,
+                "Aadhaar",
+                "primary",
+                address="S/O Teeka Ram Meena 44 Ward 02 Deoli Rajasthan 304023",
+            ),
+            page(
+                431,
+                "Application Form",
+                "primary",
+                permanent_address="GUARANTOR EMPLOYEMENT/BUSINESS DETAILS",
+            ),
+        ],
+        {"people": {"primary": {
+            "applicant_name": "Batti Lal Meena",
+            "address": "44 Ward 02 Deoli Rajasthan 304023",
+        }}},
+    )
+
+    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
+
+
+def test_hindi_identity_affidavit_is_used_even_if_page_was_typed_as_aadhaar() -> None:
+    affidavit = page(391, "Aadhaar", "coapplicant_3")
+    affidavit["ocr_text"] = (
+        "NOTARY\nशपथ-पत्र\nमैं मोसमी मीना सशपथ बयान करती हूं कि आधार कार्ड में "
+        "जन्म दिनांक 02/03/1993 व नाम MOSMEE MEENA सही एवं मान्य है तथा "
+        "पेन कार्ड में जन्म दिनांक 01/01/1993 व नाम MOSAMI MEENA अलग है।\n"
+        "सत्यापन\nहस्ताक्षर शपथग्रहिता"
+    )
+    anomalies = run_consistency_checks(
+        [
+            page(
+                18,
+                "PAN",
+                "coapplicant_3",
+                applicant_name="MOSAMI MEENA",
+                pan_number="DRPPM0479C",
+            ),
+            affidavit,
+        ],
+        {"people": {"coapplicant_3": {
+            "applicant_name": "MOSMEE MEENA",
+            "pan_number": "DRPPM0479C",
+        }}},
+    )
+
+    assert any(item["rule_id"] == "TRUSTED_APPLICANT_NAME_MISMATCH" for item in anomalies)
+    assert not any(item["rule_id"] == "IDENTITY_AFFIDAVIT_MISSING" for item in anomalies)

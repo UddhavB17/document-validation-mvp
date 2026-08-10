@@ -11,6 +11,7 @@ from services.pipeline import (
     _build_page_reuse_map,
     _build_unsupported_page_records,
     _clone_reused_page,
+    _ensure_page_has_json_details,
 )
 from services.ocr_router import OCRRouter
 
@@ -57,6 +58,20 @@ def _create_blank_scanned_pdf(path: Path, pages: int) -> None:
         doc.new_page()
     doc.save(path)
     doc.close()
+
+
+def test_unknown_premium_calculator_does_not_emit_semantic_loan_amount() -> None:
+    fields = _ensure_page_has_json_details(
+        document_type="Unknown",
+        text=(
+            "KOTAK PREMIUM WITHOUT GOODS AND SERVICES TAX\n"
+            "PREMIUM CALCULATOR\nSANCTIONED LOAN AMOUNT (IN RS.)\n"
+            "1,397.75\nTOTAL PREMIUM INCLUDING GOODS AND SERVICES TAX"
+        ),
+        extracted_fields={},
+    )
+
+    assert "loan_amount" not in fields
 
 
 @pytest.mark.parametrize(
@@ -759,3 +774,62 @@ def test_gps_overlay_photo_is_property_image_evidence() -> None:
 
     text = "GPS Map Camera\nJodhpur, Rajasthan, India\nLat 26.28 Long 73.02\n27/07/2026 07:14 AM"
     assert _image_evidence_type_from_text(text) == "Property Image"
+
+
+def test_cached_ocr_refresh_reclassifies_without_calling_ocr(monkeypatch) -> None:
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("OCR provider must not run for cached-text revalidation")
+
+    monkeypatch.setattr("services.pipeline.run_ocr_on_page", fail_if_called)
+    statement = "Customer's Statement of Account Date Particulars Debit Credit Balance"
+    narration = (
+        "Amount Received Mode - NACH Instrument No X Loan Allocation Amount 10195 "
+        "Txn Date 2026-02-10 Value Date 2026-02-10 Receipt No R1"
+    )
+    facility = "FACILITY AGREEMENT Borrower Lender repayment covenant event of default"
+    affidavit_clause = (
+        "Submit to the Lender a duly attested affidavit. The Borrower shall repay the "
+        "Facility and comply with covenants under this Agreement. " * 4
+    )
+    checkpoints = [
+        {
+            "page_number": number,
+            "page_type": "scanned",
+            "image_path": f"page-{number}.png",
+            "is_readable": True,
+            "ocr_text": text,
+            "ocr_confidence": 0.95,
+            "document_type": old_type,
+            "classification_confidence": 1.0,
+            "detection_method": "detected",
+            "detected_page_number": number,
+            "extracted_fields": {},
+        }
+        for number, text, old_type in (
+            (1, statement, "Bank Statement"),
+            (2, narration, "NACH Form"),
+            (3, facility, "Facility Agreement"),
+            (4, affidavit_clause, "Affidavit"),
+        )
+    ]
+
+    pages = _build_page_records(
+        [
+            {"page_number": item["page_number"], "page_type": "scanned", "image_path": item["image_path"]}
+            for item in checkpoints
+        ],
+        {},
+        checkpoint_pages=checkpoints,
+        refresh_cached_ocr=True,
+    )
+
+    assert [page["document_type"] for page in pages] == [
+        "Bank Statement", "Bank Statement", "Facility Agreement", "Facility Agreement",
+    ]
+    assert pages[1]["detection_method"] == "inherited"
+    assert pages[3]["detection_method"] == "inherited"
+    assert all(page["ocr_text"] for page in pages)
+    assert all(
+        page["extracted_fields"]["_classification"]["cached_ocr_revalidation"] is True
+        for page in pages
+    )

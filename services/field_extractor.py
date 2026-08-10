@@ -313,6 +313,16 @@ def _sanitize_address_value(value: Any) -> str | None:
     compact = re.sub(r"\s+", " ", str(value or "")).strip()
     if not compact:
         return None
+    normalized = re.sub(r"[^a-z0-9]+", " ", compact.casefold()).strip()
+    if re.fullmatch(
+        r"(?:guarantor|co applicant|applicant)?\s*"
+        r"(?:employment|employement|business|kyc|personal)?\s*details",
+        normalized,
+    ) or re.fullmatch(
+        r"(?:guarantor|co applicant|applicant)\s+(?:address|details)",
+        normalized,
+    ):
+        return None
     placeholder_tokens = {
         "address", "landmark", "locality", "city", "district", "pin", "code",
         "state", "country", "village", "tehsil",
@@ -1299,8 +1309,25 @@ def _extract_aadhaar_address(text: str) -> str | None:
         re.IGNORECASE | re.DOTALL,
     )
     if match:
-        return re.sub(r"\s+", " ", match.group(1)).strip(" ,.;")
-    return _lines_after_label(text, "address", max_lines=4)
+        return _clean_aadhaar_address_value(match.group(1))
+    return _clean_aadhaar_address_value(_lines_after_label(text, "address", max_lines=4))
+
+
+def _clean_aadhaar_address_value(value: Any) -> str | None:
+    """Remove issuing-authority text accidentally interleaved after Address:."""
+    if value in (None, ""):
+        return None
+    cleaned = str(value)
+    authority_patterns = (
+        r"भारतीय\s+विशिष्ट\s+पहचान\s+प्राधिकरण",
+        r"\bUnique\s+Identification\s+Authority\s+of\s+India\b",
+        r"\b(?:Government|Govt\.?)\s+of\s+India\b",
+    )
+    for pattern in authority_patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:^|\s)(?:address|पता)\s*:\s*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.;:-")
+    return cleaned or None
 
 
 def _extract_application_form(text: str) -> dict[str, Any]:
@@ -1435,9 +1462,21 @@ def _extract_application_address_block(
     start = upper.find(heading.upper())
     if start < 0:
         return None
+    section_boundaries = (
+        *stop_headings,
+        "GUARANTOR DETAILS",
+        "GUARANTOR ADDRESS",
+        "GUARANTOR EMPLOYEMENT/BUSINESS DETAILS",
+        "GUARANTOR EMPLOYMENT/BUSINESS DETAILS",
+        "GUARANTOR EMPLOYMENT DETAILS",
+        "GUARANTOR BUSINESS DETAILS",
+        "CO-APPLICANT DETAILS",
+        "CO-APPLICANT KYC DETAILS",
+        "APPLICANT DETAILS",
+    )
     ends = [
         upper.find(stop.upper(), start + len(heading))
-        for stop in stop_headings
+        for stop in section_boundaries
     ]
     end = min((value for value in ends if value >= 0), default=len(text))
     lines = [line.strip() for line in text[start:end].splitlines() if line.strip()]
@@ -1626,14 +1665,27 @@ def _extract_coapplicant_address_record(
     current_address: str | None,
     permanent_address: str | None,
 ) -> dict[str, Any] | None:
-    if not re.search(r"\bCO[\s-]*APPLICANT\s+ADDRESS\b", text, re.IGNORECASE):
+    section_start = re.search(r"\bCO[\s-]*APPLICANT\s+ADDRESS\b", text, re.IGNORECASE)
+    if not section_start:
         return None
+    # Search only inside the co-applicant address section. Whole-document
+    # extraction previously walked back to the lender's corporate header and
+    # manufactured a company-as-person record.
+    scoped_text = text[section_start.start():]
+    section_end = re.search(
+        r"(?:^|\n)\s*(?:GUARANTOR\s+(?:DETAILS|ADDRESS)|"
+        r"APPLICANT\s+DETAILS|DECLARATION|BANK\s+ACCOUNT\s+DETAILS)\b",
+        scoped_text[len(section_start.group(0)):],
+        re.IGNORECASE,
+    )
+    if section_end:
+        scoped_text = scoped_text[: len(section_start.group(0)) + section_end.start()]
     excluded = {
         "co applicant address", "communication address", "permanent address",
         "office address", "name", "address", "current",
     }
     person_name = None
-    for line in text.splitlines():
+    for line in scoped_text.splitlines():
         candidate_text = re.sub(r"\s+", " ", line).strip(" ,.;")
         normalized = re.sub(r"[^a-z]+", " ", candidate_text.casefold()).strip()
         if not candidate_text or normalized in excluded:
@@ -2013,6 +2065,7 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         r"\s*\n\s*\d{4}-\d{2}-\d{2}",
         text,
     )
+    statement_title_name = _statement_holder_after_title(text)
     fallback_name = _line_after_label(text, "account holder", "customer name", "name")
     if fallback_name and fallback_name.casefold() in {
         "holding nature", "dob", "mobile", "landline", "email", "pan",
@@ -2022,7 +2075,7 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
     return {
         "account_holder_name": (
             _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1))).title()
-            if profile_name else fallback_name
+            if profile_name else statement_title_name or fallback_name
         ),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
@@ -2038,6 +2091,39 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         "statement_period_start": period_start,
         "statement_period_end": period_end,
     }
+
+
+def _statement_holder_after_title(text: str) -> str | None:
+    """Recover holder names from lender statement cover-page column order.
+
+    OCR may emit the visual labels and lender logo before the statement title,
+    so a generic ``Name`` lookup lands on a logo token. The subject printed
+    immediately after an explicit statement-of-account title is stronger.
+    """
+    lines = [re.sub(r"\s+", " ", line).strip(" ,.;") for line in str(text or "").splitlines()]
+    title_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.search(
+                r"\b(?:customer(?:'s)?\s+)?statement\s+of\s+account\b|"
+                r"\baccount\s+statement\b|\bbank\s+statement\b",
+                line,
+                re.IGNORECASE,
+            )
+        ),
+        None,
+    )
+    if title_index is None:
+        return None
+    for line in lines[title_index + 1 : title_index + 10]:
+        candidate = canonicalize_person_name(line)
+        if not candidate.valid:
+            continue
+        latin_tokens = re.findall(r"[A-Za-z]+", str(candidate.value or ""))
+        if len(latin_tokens) >= 2:
+            return candidate.value
+    return None
 
 
 def _extract_passbook(text: str) -> dict[str, Any]:

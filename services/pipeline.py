@@ -179,6 +179,7 @@ def run_pipeline(
     source_documents: list[dict[str, Any]] | None = None,
     job_id: int | None = None,
     resume: bool = False,
+    refresh_cached_ocr: bool = False,
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
     pdf_path = Path(pdf_path)
@@ -274,6 +275,7 @@ def run_pipeline(
         source_documents=source_documents,
         job_id=job_id,
         checkpoint_pages=checkpoint_pages,
+        refresh_cached_ocr=refresh_cached_ocr,
     )
     mapped_result: dict[str, Any] | None = None
     evidence_resolution: dict[str, Any] | None = None
@@ -741,6 +743,7 @@ def _build_page_records(
     source_documents: list[dict[str, Any]] | None = None,
     job_id: int | None = None,
     checkpoint_pages: list[dict[str, Any]] | None = None,
+    refresh_cached_ocr: bool = False,
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     llm_budget = create_llm_classifier_budget()
@@ -775,6 +778,14 @@ def _build_page_records(
             current_ocr_route = None
         checkpoint = checkpoints.get(page_number)
         if checkpoint is not None:
+            if refresh_cached_ocr:
+                checkpoint = _refresh_page_from_cached_ocr(
+                    checkpoint,
+                    current_type=current_type,
+                    current_confidence=current_confidence,
+                    current_detected_page=current_detected_page,
+                    source_documents=source_documents or [],
+                )
             pages.append(checkpoint)
             current_type = str(checkpoint.get("document_type") or "Unknown")
             current_confidence = float(checkpoint.get("classification_confidence") or 0.0)
@@ -1331,6 +1342,133 @@ def _build_page_records(
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
 
+def _refresh_page_from_cached_ocr(
+    checkpoint: dict[str, Any],
+    *,
+    current_type: str,
+    current_confidence: float,
+    current_detected_page: int | None,
+    source_documents: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Re-run rules/extraction on persisted OCR without calling an OCR provider.
+
+    OCR text is expensive evidence and does not become stale when deterministic
+    classification or extraction rules change. This path lets a completed
+    application be revalidated offline while preserving the original OCR,
+    images, confidence, layout, and source provenance.
+    """
+    refreshed = copy.deepcopy(checkpoint)
+    page_number = int(refreshed.get("page_number") or 0)
+    text = str(refreshed.get("ocr_text") or "")
+    old_type = str(refreshed.get("document_type") or "Unknown")
+    if not text.strip() or old_type in {"DB Data", OCR_SKIPPED_DOCUMENT_TYPE}:
+        return refreshed
+
+    ocr_confidence = refreshed.get("ocr_confidence")
+    classification, classification_meta = classify_page_text(
+        text,
+        ocr_confidence=ocr_confidence,
+        layout_metadata=None,
+        llm_budget=None,
+    )
+    assigned = _assign_sequential_document_type(
+        page_number=page_number,
+        text=text,
+        classification=classification,
+        current_type=current_type,
+        current_confidence=current_confidence,
+        current_detected_page=current_detected_page,
+    )
+    document_type = assigned["document_type"]
+    confidence = float(assigned["confidence"] or 0.0)
+    detection_method = str(assigned["detection_method"] or "unknown")
+    source_document = _source_document_for_page(source_documents, page_number)
+    filename_type = _infer_document_type_from_filename(
+        str((source_document or {}).get("original_filename") or "")
+    )
+    if filename_type in {
+        "House Photo", "Workplace Photo", "Property Image", "KYC Card Photo",
+        "Ration Card Photo",
+    } and _source_filename_override_allowed(filename_type, document_type):
+        document_type = filename_type
+        confidence = 0.95
+        detection_method = "filename_override"
+    elif document_type == "Unknown" and filename_type and not _filename_type_contradicted_by_text(
+        filename_type, text
+    ):
+        document_type = filename_type
+        detection_method = "filename_inference"
+        confidence = max(confidence, 0.70)
+    elif (
+        document_type == "Unknown"
+        and old_type in {"House Photo", "Workplace Photo", "Property Image", "KYC Card Photo"}
+        and len(text.strip()) < 160
+    ):
+        document_type = old_type
+        detection_method = "cached_visual_evidence"
+        confidence = max(confidence, float(refreshed.get("classification_confidence") or 0.0))
+
+    fields = extract_fields(document_type, text)
+    fields = refine_field_assignments(
+        document_type=document_type,
+        ocr_text=text,
+        extracted_fields=fields,
+    )
+    if document_type == "Stamp Duty":
+        fields["_stamp_duty_validation"] = evaluate_stamp_duty(
+            fields,
+            {},
+            load_stamp_duty_rules(),
+        )
+    _mark_unanchored_inherited_identity(
+        fields,
+        detection_method=detection_method,
+        raw_document_type=assigned.get("raw_document_type"),
+    )
+    classification_meta = {
+        **classification_meta,
+        "assigned_type": document_type,
+        "detection_method": detection_method,
+        "raw_document_type": assigned.get("raw_document_type"),
+        "raw_confidence": assigned.get("raw_confidence"),
+        "detected_page_number": assigned.get("detected_page_number"),
+        "cached_ocr_revalidation": True,
+    }
+    if assigned.get("inheritance_warning"):
+        classification_meta["inheritance_warning"] = assigned["inheritance_warning"]
+    if assigned.get("abstain_reason"):
+        classification_meta["abstain_reason"] = assigned["abstain_reason"]
+    fields["_classification"] = classification_meta
+    fields = _ensure_page_has_json_details(
+        document_type=document_type,
+        text=text,
+        extracted_fields=fields,
+    )
+    language_profile = analyze_text_languages(text)
+    previous_language = (
+        (checkpoint.get("extracted_fields") or {}).get("_language")
+        if isinstance(checkpoint.get("extracted_fields"), dict)
+        else None
+    )
+    if language_profile["scripts"] or isinstance(previous_language, dict):
+        fields["_language"] = {
+            **language_profile,
+            "declared_languages": list((previous_language or {}).get("declared_languages") or []),
+            "provider_languages": list((previous_language or {}).get("provider_languages") or []),
+            "identified_languages": list((previous_language or {}).get("identified_languages") or []),
+        }
+
+    refreshed.update({
+        "document_type": document_type,
+        "classification_confidence": confidence,
+        "detection_method": detection_method,
+        "detected_page_number": assigned.get("detected_page_number"),
+        "extracted_fields": fields,
+    })
+    attach_field_provenance(refreshed, source_document=source_document)
+    return refreshed
+
+
 def _build_page_reuse_map(
     source_documents: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
@@ -1566,14 +1704,14 @@ def _looks_like_multi_page_continuation(document_type: str, text: str) -> bool:
             )
         )
     if document_type == "Bank Statement":
-        return any(
-            marker in lowered
-            for marker in (
-                "debit", "credit", "balance", "neft", "upi", "withdrawal",
-                "deposit", "opening balance", "closing balance", "transaction",
-                "brought forward", "end balance",
-            )
+        ledger_markers = (
+            "debit", "credit", "balance", "neft", "upi", "withdrawal",
+            "deposit", "opening balance", "closing balance", "transaction",
+            "brought forward", "end balance", "instrument no", "amount received",
+            "loan allocation amount", "receipt no", "txn date", "value date",
+            "installment amount due", "instalment amount due",
         )
+        return sum(1 for marker in ledger_markers if marker in lowered) >= 2
     if document_type in {"CIBIL Report", "CRIF Report"}:
         return any(
             marker in lowered
@@ -1939,7 +2077,21 @@ def _ensure_page_has_json_details(
     # misclassified as a bank statement or NACH form.
     from services.repayment_schedule import attach_repayment_fields
 
-    extracted_fields = attach_repayment_fields(extracted_fields, text)
+    # Six-column repayment rows are structural and safe to detect on any page.
+    # KFS summary labels are not: insurance premium calculators also contain a
+    # "sanctioned loan amount" input and their columnar OCR can bind that label
+    # to GST/premium values.  Only attach semantic loan-summary fields when the
+    # page has actually been classified into a loan-term document family.
+    summary_document_types = {
+        "cam", "facility agreement", "key fact statement", "kfs",
+        "loan agreement", "repayment schedule", "sanction letter",
+    }
+    extracted_fields = attach_repayment_fields(
+        extracted_fields,
+        text,
+        include_summary=str(document_type or "").strip().casefold()
+        in summary_document_types,
+    )
     if _has_informative_public_fields(extracted_fields):
         return extracted_fields
     if not str(text or "").strip():
@@ -2195,6 +2347,26 @@ def _assign_sequential_document_type(
             reason="application-form-run-context",
         )
 
+    # A statement transaction can mention NACH, ACH, cheque, insurance, or
+    # dozens of other payment modes. Those narration tokens are not standalone
+    # documents. Preserve the open ledger until an actual mandate/form title
+    # starts a new document.
+    if (
+        current_type == "Bank Statement"
+        and raw_type in {"Unknown", "Bank Statement", "NACH Form", "Cheque"}
+        and _looks_like_multi_page_continuation(current_type, text)
+        and not _looks_like_explicit_nach_start(text)
+        and not _looks_like_fresh_page_without_match(text)
+    ):
+        return _inherited_sequence_result(
+            current_type=current_type,
+            current_confidence=current_confidence,
+            current_detected_page=current_detected_page,
+            raw_type=raw_type,
+            raw_confidence=raw_confidence,
+            reason="statement-ledger-continuation",
+        )
+
     # Sanction conditions often mention the agreement, property/security, and
     # stamp duty. Those are clause references until a real next-document title
     # appears (for example FACILITY AGREEMENT or SALE DEED).
@@ -2216,8 +2388,8 @@ def _assign_sequential_document_type(
     # bank statement because they contain account/payment-history tables.
     if (
         current_type in {"CIBIL Report", "CRIF Report"}
-        and raw_type not in {"CIBIL Report", "CRIF Report"}
         and _looks_like_multi_page_continuation(current_type, text)
+        and not _looks_like_explicit_bureau_report_start(text)
         and not _looks_like_fresh_page_without_match(text)
     ):
         return _inherited_sequence_result(
@@ -2389,6 +2561,49 @@ def _looks_like_explicit_agreement_start(text: str, document_type: str) -> bool:
     )
 
 
+def _looks_like_explicit_nach_start(text: str) -> bool:
+    """Require mandate-form structure, not a NACH transaction narration."""
+    header = _normalize_fresh_document_text("\n".join(str(text or "").splitlines()[:20]))
+    if not header:
+        return False
+    has_title = bool(re.search(
+        r"\b(?:nach|ecs|national automated clearing house)\s+(?:debit\s+)?mandate\b|"
+        r"\b(?:debit|auto debit)\s+mandate\b",
+        header,
+    ))
+    form_signals = sum(
+        1
+        for marker in (
+            "umrn", "sponsor bank", "utility code", "authorize to debit",
+            "authorise to debit", "frequency", "maximum amount",
+        )
+        if marker in header
+    )
+    return has_title or form_signals >= 2
+
+
+def _looks_like_explicit_bureau_report_start(text: str) -> bool:
+    """Distinguish a new bureau report cover from its account appendices."""
+    header = _normalize_fresh_document_text("\n".join(str(text or "").splitlines()[:20]))
+    if not header:
+        return False
+    has_report_title = any(
+        title in header
+        for title in (
+            "cibil report", "crif report", "credit information report",
+            "consumer credit report",
+        )
+    )
+    has_new_subject = any(
+        marker in header
+        for marker in (
+            "consumer name", "applicant name", "subject name", "report id",
+            "control number", "member reference number",
+        )
+    )
+    return has_report_title and has_new_subject
+
+
 def _looks_like_kfs_start(text: str) -> bool:
     normalized = _normalize_fresh_document_text(text)
     if not re.search(r"\bkey facts? statement(?: kfs)?\b", normalized):
@@ -2505,7 +2720,10 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
     ):
         return True
 
-    strong_terms = (
+    # These phrases are document forms only when they look like a short title
+    # near the top. Searching the entire page made contractual obligations such
+    # as "submit an affidavit" appear to be new documents.
+    title_like_terms = (
         "affidavit",
         "notary",
         "notarised",
@@ -2527,11 +2745,29 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
         "घोषणा",
         "अभियान",
     )
-    if any(_normalize_fresh_document_text(term) in normalized_text for term in strong_terms):
+    extended_header_lines = [
+        _normalize_fresh_document_text(line)
+        for line in raw_text.splitlines()[:16]
+        if _normalize_fresh_document_text(line)
+    ]
+    if any(
+        line == normalized_term
+        or (
+            line.startswith(f"{normalized_term} ")
+            and len(line.split()) <= len(normalized_term.split()) + 8
+        )
+        for line in extended_header_lines
+        for term in title_like_terms
+        if (normalized_term := _normalize_fresh_document_text(term))
+    ):
         return True
 
     fuzzy_terms = ("शपथ", "हलफनामा", "पट्टा", "प्रपत्र", "नोटरी", "स्टाम्प", "न्यायिक", "घोषणा")
-    return any(_fuzzy_contains(normalized_text, _normalize_fresh_document_text(term)) for term in fuzzy_terms)
+    header_text = " ".join(extended_header_lines)
+    return any(
+        _fuzzy_contains(header_text, _normalize_fresh_document_text(term))
+        for term in fuzzy_terms
+    )
 
 
 def _normalize_fresh_document_text(value: str) -> str:

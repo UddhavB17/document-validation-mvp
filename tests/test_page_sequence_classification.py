@@ -334,6 +334,43 @@ def test_bureau_appendix_account_table_stays_with_crif_report() -> None:
     assert assigned[1]["detection_method"] == "inherited"
 
 
+def test_bureau_appendix_detected_as_crif_still_inherits_open_report() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "CRIF Report", "confidence": 1.0},
+            {"document_type": "CRIF Report", "confidence": 1.0},
+        ],
+        texts=[
+            "CRIF High Mark Credit Information Report Consumer Name Mosmee Meena Credit Score",
+            "Account Information Payment History Overdue High Mark Credit Member Asset Classification",
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "CRIF Report"
+    assert assigned[1]["detection_method"] == "inherited"
+    assert assigned[1]["detected_page_number"] == 1
+
+
+def test_statement_nach_transactions_do_not_start_a_nach_document() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Bank Statement", "confidence": 1.0},
+            {"document_type": "NACH Form", "confidence": 1.0},
+        ],
+        texts=[
+            "Customer's Statement of Account Date Particulars Debit Credit Balance",
+            (
+                "Amount Received Mode - NACH Instrument NO-NACH48041510022026 "
+                "Loan Allocation Amount 10195 Txn Date 2026-02-10 "
+                "Value Date 2026-02-10 Receipt No RV1"
+            ),
+        ],
+    )
+
+    assert assigned[1]["document_type"] == "Bank Statement"
+    assert assigned[1]["inheritance_warning"] == "statement-ledger-continuation"
+
+
 def test_disbursement_request_continuation_is_not_bank_statement() -> None:
     assigned = _apply_sequence(
         [
@@ -649,3 +686,24 @@ def test_agreement_body_affidavit_reference_does_not_switch_agreement_kind() -> 
 
     assert [page["document_type"] for page in assigned] == ["Facility Agreement"] * 2
     assert assigned[1]["inheritance_warning"] == "agreement-run-context"
+
+
+def test_agreement_body_misclassified_as_affidavit_does_not_split_facility_run() -> None:
+    assigned = _apply_sequence(
+        [
+            {"document_type": "Facility Agreement", "confidence": 1.0},
+            {"document_type": "Affidavit", "confidence": 1.0},
+            {"document_type": "Loan Agreement", "confidence": 1.0},
+        ],
+        texts=[
+            "FACILITY AGREEMENT\nThis agreement is made between Borrower and Lender.",
+            (
+                "11. Submit to the Lender a duly attested affidavit confirming the Borrower's "
+                "name. The Borrower and Guarantor shall comply with this Agreement and repay "
+                "the Facility. " * 5
+            ),
+            "The Borrower shall provide statements and comply with covenants under this Agreement. " * 6,
+        ],
+    )
+
+    assert [page["document_type"] for page in assigned] == ["Facility Agreement"] * 3
