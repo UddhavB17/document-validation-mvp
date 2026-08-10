@@ -35,9 +35,10 @@ def test_structured_llm_unavailable_returns_none(monkeypatch) -> None:
     monkeypatch.setattr("services.structured_llm_classifier._is_ollama_available", lambda *_args: False)
 
     result = classify_with_structured_llm(
-        deterministic_document_type="PAN",
-        structured_fields={"pan_number": "ABCDE1234F"},
-        ocr_text="PAN card",
+        deterministic_document_type="Unknown",
+        structured_fields={"generic_pan_numbers": ["ABCDE1234F"]},
+        ocr_text="PAN card ABCDE1234F",
+        ocr_confidence=0.95,
     )
 
     assert result is None
@@ -56,9 +57,29 @@ def test_structured_llm_successful_response(monkeypatch) -> None:
         deterministic_document_type="PAN",
         structured_fields={"pan_number": "ABCDE1234F"},
         ocr_text="Income Tax Department Permanent Account Number ABCDE1234F",
+        ocr_confidence=0.40,
     )
 
     assert result is not None
     assert result["document_type"] == "PAN Card"
     assert result["confidence"] == 0.87
     assert result["model"] == "qwen2.5:7b-instruct-q4_0"
+    assert result["trigger"] == "low_ocr_confidence"
+
+
+def test_structured_llm_skips_known_page_with_good_ocr(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_STRUCTURED_LLM_CLASSIFIER", "true")
+    monkeypatch.setenv("LLM_CLASSIFIER_OCR_THRESHOLD", "0.65")
+    monkeypatch.setattr(
+        "services.structured_llm_classifier._is_ollama_available",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("LLM availability must not be checked")),
+    )
+
+    result = classify_with_structured_llm(
+        deterministic_document_type="PAN Card",
+        structured_fields={"pan_number": "ABCDE1234F"},
+        ocr_text="Income Tax Department Permanent Account Number ABCDE1234F",
+        ocr_confidence=0.95,
+    )
+
+    assert result is None

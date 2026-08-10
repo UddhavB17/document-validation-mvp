@@ -92,33 +92,57 @@ def is_llm_page_classifier_enabled() -> bool:
     return get_bool("ENABLE_LLM_PAGE_CLASSIFIER", False)
 
 
-def llm_classifier_min_confidence() -> float:
-    return get_float("LLM_CLASSIFIER_MIN_CONFIDENCE", 0.75, minimum=0.0, maximum=1.0)
-
-
 def llm_classifier_max_pages_per_file() -> int:
     return get_int("LLM_CLASSIFIER_MAX_PAGES_PER_FILE", 300, minimum=0)
 
 
 def llm_classifier_ocr_threshold() -> float:
-    """Pages with OCR confidence below this may trigger LLM classification."""
+    """OCR confidence below which a known page may trigger LLM classification."""
     return get_float("LLM_CLASSIFIER_OCR_THRESHOLD", 0.65, minimum=0.0, maximum=1.0)
+
+
+def llm_classification_trigger(
+    document_type: object,
+    ocr_confidence: float | None,
+) -> str | None:
+    """Return why this page is eligible for LLM classification, if at all.
+
+    LLM classification is deliberately limited to pages the deterministic
+    classifier could not identify and scanned pages whose OCR confidence is
+    below the configured threshold.  Deterministic classification confidence
+    alone is not an eligibility signal.
+    """
+    normalized_type = str(document_type or "").strip().casefold()
+    if normalized_type in {"", "none", "unknown", "null"}:
+        return "unknown_document_type"
+
+    if ocr_confidence is None:
+        return None
+    try:
+        confidence = float(ocr_confidence)
+    except (TypeError, ValueError):
+        return None
+    if confidence < llm_classifier_ocr_threshold():
+        return "low_ocr_confidence"
+    return None
+
+
+def is_llm_classification_candidate(
+    document_type: object,
+    ocr_confidence: float | None,
+) -> bool:
+    """Return whether this page is allowed to reach an LLM classifier."""
+    return llm_classification_trigger(document_type, ocr_confidence) is not None
 
 
 def needs_llm_classification(
     rule_result: dict[str, Any],
     ocr_confidence: float | None,
 ) -> bool:
-    document_type = str(rule_result.get("document_type") or "")
-    confidence = float(rule_result.get("confidence") or 0.0)
-
-    if document_type in {"", "None"}:
-        return True
-    if confidence < llm_classifier_min_confidence():
-        return True
-    if ocr_confidence is not None and ocr_confidence < llm_classifier_ocr_threshold():
-        return True
-    return False
+    return is_llm_classification_candidate(
+        rule_result.get("document_type"),
+        ocr_confidence,
+    )
 
 
 def llm_prediction_has_evidence(document_type: str, text: str) -> bool:

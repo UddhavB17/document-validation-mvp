@@ -1,5 +1,32 @@
 import pytest
-from services.llm_page_classifier import _parse_classifier_response, normalize_llm_document_type
+from services.llm_page_classifier import (
+    _parse_classifier_response,
+    llm_classification_trigger,
+    needs_llm_classification,
+    normalize_llm_document_type,
+)
+
+
+@pytest.mark.parametrize("document_type", [None, "", "None", "Unknown", "unknown"])
+def test_unknown_document_types_trigger_llm_classification(document_type) -> None:
+    assert llm_classification_trigger(document_type, 0.99) == "unknown_document_type"
+
+
+def test_low_ocr_confidence_triggers_llm_classification(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_CLASSIFIER_OCR_THRESHOLD", "0.65")
+
+    assert llm_classification_trigger("PAN Card", 0.64) == "low_ocr_confidence"
+    assert llm_classification_trigger("PAN Card", 0.65) is None
+    assert llm_classification_trigger("PAN Card", None) is None
+
+
+def test_low_rule_confidence_alone_does_not_trigger_llm(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_CLASSIFIER_OCR_THRESHOLD", "0.65")
+
+    assert not needs_llm_classification(
+        {"document_type": "Application Form", "confidence": 0.10},
+        ocr_confidence=0.95,
+    )
 
 
 def test_parse_classifier_response_toon():

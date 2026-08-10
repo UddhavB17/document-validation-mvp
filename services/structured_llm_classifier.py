@@ -18,6 +18,7 @@ from toon import decode, encode
 from services.config import get_bool, get_float
 from services.document_classifier import registry_document_types
 from services.llm_client import call_llm_api, llm_endpoint_label, llm_model, llm_provider
+from services.llm_page_classifier import llm_classification_trigger
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ def classify_with_structured_llm(
     deterministic_document_type: str,
     structured_fields: dict[str, Any],
     ocr_text: str,
+    ocr_confidence: float | None = None,
 ) -> dict[str, Any] | None:
     """Ask the configured LLM to classify from extracted TOON.
 
@@ -54,6 +56,10 @@ def classify_with_structured_llm(
     Any error is swallowed so normal classification continues unchanged.
     """
     if not is_structured_llm_classifier_enabled():
+        return None
+
+    trigger = llm_classification_trigger(deterministic_document_type, ocr_confidence)
+    if trigger is None:
         return None
 
     base_url = _classifier_base_url()
@@ -100,6 +106,7 @@ def classify_with_structured_llm(
         "reason": str(parsed.get("reason") or "").strip() or None,
         "model": _classifier_model(),
         "endpoint": base_url,
+        "trigger": trigger,
     }
 
 

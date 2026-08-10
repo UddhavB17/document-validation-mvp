@@ -526,6 +526,7 @@ def test_cloned_duplicate_continuation_does_not_create_false_document_boundary()
 
 
 def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm_calls: list[dict] = []
     monkeypatch.setattr(
         "services.pipeline.run_ocr_on_page",
         lambda *_args, **_kwargs: {
@@ -540,6 +541,10 @@ def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest
             "text_density": 10.0,
         },
     )
+    monkeypatch.setattr(
+        "services.pipeline.classify_with_structured_llm",
+        lambda **kwargs: llm_calls.append(kwargs) or None,
+    )
 
     pages = _build_page_records(
         [{"page_number": 1, "page_type": "scanned", "image_path": "bill.png"}],
@@ -549,12 +554,17 @@ def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest
 
     assert pages[0]["document_type"] == "Unknown"
     assert pages[0]["extracted_fields"]["review_flag"] == "low_confidence_needs_review"
+    assert len(llm_calls) == 1
+    assert llm_calls[0]["deterministic_document_type"] == "Unknown"
+    assert llm_calls[0]["ocr_confidence"] == 0.45
 
 
 def test_build_page_records_marks_only_starting_json_as_db_data(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "services.pipeline.classify_with_structured_llm",
-        lambda **_kwargs: None,
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("known pages with good OCR must not reach the LLM")
+        ),
     )
 
     pages = _build_page_records(
@@ -583,7 +593,9 @@ def test_build_page_records_does_not_mark_normal_digital_document_as_db_data(
     )
     monkeypatch.setattr(
         "services.pipeline.classify_with_structured_llm",
-        lambda **_kwargs: None,
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("known pages with good OCR must not reach the LLM")
+        ),
     )
 
     pages = _build_page_records(
@@ -603,6 +615,42 @@ def test_build_page_records_does_not_mark_normal_digital_document_as_db_data(
     assert pages[0]["detection_method"] == "detected"
     assert pages[0]["extracted_fields"]["applicant_name"] == "Ramesh Kumar"
     assert "db_data_json" not in pages[0]["extracted_fields"]
+
+
+def test_unknown_page_reaches_structured_llm_after_generic_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        "services.pipeline.classify_page_text",
+        lambda *_args, **_kwargs: (
+            {"document_type": "Unknown", "confidence": 0.0},
+            {"source": "test_classifier"},
+        ),
+    )
+    monkeypatch.setattr("services.pipeline.extract_fields", lambda *_args, **_kwargs: {})
+
+    def fake_structured_llm(**kwargs):
+        captured.update(kwargs)
+        return {
+            "document_type": "PAN Card",
+            "confidence": 0.90,
+            "reason": "PAN structure found",
+            "trigger": "unknown_document_type",
+        }
+
+    monkeypatch.setattr("services.pipeline.classify_with_structured_llm", fake_structured_llm)
+
+    pages = _build_page_records(
+        [{"page_number": 4, "page_type": "digital", "image_path": None}],
+        {4: "Income Tax Department Permanent Account Number ABCDE1234F"},
+        application_id=None,
+    )
+
+    assert captured["deterministic_document_type"] == "Unknown"
+    assert captured["ocr_confidence"] is None
+    assert captured["structured_fields"]["generic_pan_numbers"] == ["ABCDE1234F"]
+    assert pages[0]["extracted_fields"]["_structured_llm_classification"]["document_type"] == "PAN Card"
 
 
 def test_stamp_page_records_rule_not_configured_instead_of_guessing_rate(

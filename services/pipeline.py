@@ -38,6 +38,7 @@ from services.input_classifier import classify_input_text
 from services.job_control import cooperate, mark_checkpoint
 from services.language_detection import analyze_text_languages, normalize_language_code
 from services.llm_service import generate_explanation, summarize_exceptions
+from services.llm_page_classifier import is_llm_classification_candidate
 from services.ocr_json_export import merge_public_extracted_fields, save_ocr_document_json
 from services.page_classification import classify_page_text, create_llm_classifier_budget
 from services.ocr_router import OCRResult, OCRRouter, get_ocr_router, run_fast_ocr_on_page
@@ -838,6 +839,7 @@ def _build_page_records(
                 message=f"Working on page {page_number}/{total_pages}",
             )
 
+        triage: dict[str, Any] = {}
         try:
             extracted_fields: dict[str, Any] = {}
             phase_name = "page load"
@@ -1152,35 +1154,6 @@ def _build_page_records(
                         **extracted_fields,
                         "_classification": classification_meta,
                     }
-                _mark_page_phase(application_id, page_number, total_pages, "checking Ollama classification")
-                structured_llm_result = classify_with_structured_llm(
-                    deterministic_document_type=document_type,
-                    structured_fields=extracted_fields,
-                    ocr_text=text,
-                )
-                if structured_llm_result:
-                    extracted_fields["_structured_llm_classification"] = structured_llm_result
-                    extracted_fields = _apply_llm_extraction_fallback(
-                        deterministic_document_type=document_type,
-                        structured_llm_result=structured_llm_result,
-                        text=text,
-                        extracted_fields=extracted_fields,
-                    )
-                    if structured_llm_result.get("document_type") != document_type:
-                        log_classification_review_event(
-                            application_id=application_id,
-                            page_number=page_number,
-                            predicted_type=document_type,
-                            confidence=float(classification.get("confidence") or 0.0),
-                            reason="structured_llm_disagreement",
-                            anchor_match_results={
-                                "deterministic_document_type": document_type,
-                                "structured_llm_document_type": structured_llm_result.get("document_type"),
-                                "structured_llm_confidence": structured_llm_result.get("confidence"),
-                                "structured_llm_reason": structured_llm_result.get("reason"),
-                            },
-                            llm_document_type=str(structured_llm_result.get("document_type") or ""),
-                        )
                 _log_classification_review_if_needed(
                     application_id=application_id,
                     page_number=page_number,
@@ -1228,6 +1201,50 @@ def _build_page_records(
             text=text,
             extracted_fields=extracted_fields,
         )
+        # Run the structured classifier only after deterministic and generic
+        # extraction has completed, and only for the two allowed fallback
+        # cases. Photo pages intentionally stay on the visual triage path.
+        if (
+            page_status != "error"
+            and triage.get("category") != "photo"
+            and is_llm_classification_candidate(document_type, ocr_confidence)
+        ):
+            _mark_page_phase(
+                application_id,
+                page_number,
+                total_pages,
+                "checking LLM classification",
+            )
+            structured_llm_result = classify_with_structured_llm(
+                deterministic_document_type=document_type,
+                structured_fields=extracted_fields,
+                ocr_text=text,
+                ocr_confidence=ocr_confidence,
+            )
+            if structured_llm_result:
+                extracted_fields["_structured_llm_classification"] = structured_llm_result
+                extracted_fields = _apply_llm_extraction_fallback(
+                    deterministic_document_type=document_type,
+                    structured_llm_result=structured_llm_result,
+                    text=text,
+                    extracted_fields=extracted_fields,
+                )
+                if structured_llm_result.get("document_type") != document_type:
+                    log_classification_review_event(
+                        application_id=application_id,
+                        page_number=page_number,
+                        predicted_type=document_type,
+                        confidence=float(classification.get("confidence") or 0.0),
+                        reason="structured_llm_disagreement",
+                        anchor_match_results={
+                            "deterministic_document_type": document_type,
+                            "structured_llm_document_type": structured_llm_result.get("document_type"),
+                            "structured_llm_confidence": structured_llm_result.get("confidence"),
+                            "structured_llm_reason": structured_llm_result.get("reason"),
+                            "structured_llm_trigger": structured_llm_result.get("trigger"),
+                        },
+                        llm_document_type=str(structured_llm_result.get("document_type") or ""),
+                    )
         language_profile = analyze_text_languages(text)
         provider_languages = ocr_metadata.get("ocr_languages")
         declared_languages = [
