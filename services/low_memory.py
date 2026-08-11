@@ -1,8 +1,10 @@
 """Apply laptop-friendly defaults so the MVP fits in ~8GB RAM.
 
-PP-StructureV3 + table models + Ollama are the main crash drivers on small
-MacBooks. When ``DMEF_LOW_MEMORY=true``, force the lighter OCR path and turn
-off optional LLM work unless the operator explicitly overrides a key.
+PP-StructureV3 + table models + broad Ollama workloads are the main crash
+drivers on small MacBooks. When ``DMEF_LOW_MEMORY=true``, force the lighter OCR
+path and disable optional LLM work by default. Explicit page-classifier
+overrides remain allowed so a small local model can handle only Unknown and
+low-OCR-confidence pages.
 """
 
 from __future__ import annotations
@@ -55,8 +57,6 @@ _LOW_MEMORY_FORCED = {
     "OCR_FORCE_FAST_PATH": "true",
     "PADDLE_STRUCTURE_USE_TABLE_RECOGNITION": "false",
     "PADDLE_OCR_DUAL_LANG": "false",
-    "ENABLE_LLM_PAGE_CLASSIFIER": "false",
-    "ENABLE_STRUCTURED_LLM_CLASSIFIER": "false",
     "ENABLE_LLM_SUMMARY": "false",
     "ENABLE_LLM_FIELD_VERIFIER": "false",
     "ENABLE_LLM_FIELD_ASSIGNMENT": "false",

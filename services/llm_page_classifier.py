@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from typing import Any
@@ -52,6 +53,13 @@ _EVIDENCE_REQUIRED: dict[str, tuple[str, ...]] = {
     "CIBIL Report": ("cibil", "transunion"),
     "CRIF Report": ("crif", "high mark"),
     "CERSAI Report": ("cersai", "central registry of securitisation", "debtor based search"),
+    "Income Tax Return": (
+        "income tax return",
+        "itr acknowledgement",
+        "assessment year",
+        "return of income",
+        "total income",
+    ),
     "Stamp Duty": (
         "stamp duty",
         "non judicial",
@@ -281,6 +289,9 @@ def _build_classifier_prompt(text: str) -> str:
         "Form 60 / declaration in lieu of PAN. Never use Form 97 for loan agreements, "
         "sanction letters, stamp papers, electricity bills, application forms, or bureau reports.\n"
         "If a PAN card image/text is present, choose \"PAN Card\", not Form 97.\n"
+        "Choose \"Income Tax Return\" only when the page contains return-specific evidence such as "
+        "Income Tax Return, ITR acknowledgement, assessment year, return of income, or total income. "
+        "A PAN heading and PAN number alone are \"PAN Card\".\n"
         "Electricity/water/gas invoices are \"Utility Bill\". Non-judicial stamp papers are \"Stamp Duty\".\n"
         "Do not merge credit bureaus: choose \"CIBIL Report\" only for TransUnion CIBIL/CIBIL pages, "
         "and choose \"CRIF Report\" only for CRIF High Mark/CRIF pages.\n"
@@ -332,5 +343,15 @@ def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
         if isinstance(parsed, dict) and parsed.get("document_type"):
             return parsed
     except Exception:
+        pass
+
+    # Small local models occasionally return valid JSON despite an explicit
+    # TOON-only instruction. Accept the equivalent object instead of discarding
+    # an otherwise usable classification.
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict) and parsed.get("document_type"):
+            return parsed
+    except (TypeError, ValueError, json.JSONDecodeError):
         pass
     return None

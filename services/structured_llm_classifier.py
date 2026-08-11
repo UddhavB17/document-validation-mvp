@@ -7,6 +7,7 @@ answer never replaces the deterministic document type.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -205,11 +206,18 @@ def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
     if not stripped:
         return None
 
-    fence_match = re.search(r"```(?:toon)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    fence_match = re.search(r"```(?:toon|json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
     candidate = fence_match.group(1).strip() if fence_match else stripped
     try:
         parsed = decode(candidate)
     except Exception:  # noqa: BLE001
+        parsed = None
+    if isinstance(parsed, dict) and parsed.get("document_type"):
+        return parsed
+
+    try:
+        parsed = json.loads(candidate)
+    except (TypeError, ValueError, json.JSONDecodeError):
         return None
     return parsed if isinstance(parsed, dict) and parsed.get("document_type") else None
 

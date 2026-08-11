@@ -1,4 +1,5 @@
 from services.structured_llm_classifier import (
+    _parse_classifier_response,
     build_structured_classifier_prompt,
     classify_with_structured_llm,
 )
@@ -16,6 +17,18 @@ def test_prompt_contains_structured_fields_and_deterministic_result() -> None:
     assert "ABCDE1234F" in prompt
     assert "_classification" not in prompt
     assert "Return only TOON" in prompt
+
+
+def test_structured_parser_accepts_fenced_json_from_small_local_model() -> None:
+    parsed = _parse_classifier_response(
+        '```json\n{"document_type":"PAN Card","confidence":0.88,"reason":"PAN found"}\n```'
+    )
+
+    assert parsed == {
+        "document_type": "PAN Card",
+        "confidence": 0.88,
+        "reason": "PAN found",
+    }
 
 
 def test_structured_llm_disabled_returns_none(monkeypatch) -> None:

@@ -9,6 +9,16 @@ DMEF runs as two local processes:
 
 ## One-Command Local Run
 
+On macOS, use the laptop-friendly launcher:
+
+```bash
+./scripts/start_mvp.sh
+```
+
+It starts Ollama when needed, verifies or pulls the configured model, and then
+starts the backend and frontend. Page-level LLM classification remains limited
+to Unknown pages and scanned pages below the configured OCR-confidence threshold.
+
 From PowerShell in the project root:
 
 ```powershell
@@ -75,6 +85,11 @@ Install Node.js 20+ and rerun:
 ```powershell
 .\setup.ps1
 ```
+
+### Ollama unavailable
+
+On macOS, rerun `./scripts/start_mvp.sh`. The launcher starts Ollama and refuses
+to start the application if the configured model cannot be made ready.
 
 ## Stopping Servers
 

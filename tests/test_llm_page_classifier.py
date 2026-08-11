@@ -56,6 +56,18 @@ reason: "UIDAI header detected."
     assert parsed.get("confidence") == 0.8
 
 
+def test_parse_classifier_response_accepts_json_from_small_local_model() -> None:
+    parsed = _parse_classifier_response(
+        '{"document_type":"PAN Card","confidence":0.91,"reason":"PAN heading found"}'
+    )
+
+    assert parsed == {
+        "document_type": "PAN Card",
+        "confidence": 0.91,
+        "reason": "PAN heading found",
+    }
+
+
 def test_normalize_llm_document_type():
     # Exact match case insensitivity
     assert normalize_llm_document_type("pan card") == "PAN Card"
@@ -104,4 +116,12 @@ def test_form_97_llm_prediction_requires_literal_evidence():
     assert llm_prediction_has_evidence(
         "Utility Bill",
         "Jaipur Vidyut Vitran Nigam Limited bill month due date",
+    )
+    assert not llm_prediction_has_evidence(
+        "Income Tax Return",
+        "INCOME TAX DEPARTMENT Permanent Account Number ABCDE1234F",
+    )
+    assert llm_prediction_has_evidence(
+        "Income Tax Return",
+        "Income Tax Return acknowledgement for assessment year 2025-26",
     )
