@@ -1044,6 +1044,21 @@ are subject to change. The rate of interest in the loan documents is final.
     assert result["roi"] is None
 
 
+def test_current_address_declaration_does_not_extract_aadhaar_fields() -> None:
+    result = extract_fields(
+        "Aadhaar",
+        """Self-Declaration for Current Address
+To,
+MS Fincap Private Limited
+I confirm that my address as per the OVD / Aadhar is different.
+I authorize the lender to use my Aadhar information to verify my details from UIDAI.
+Name & Signature
+Aarti""",
+    )
+
+    assert result == {}
+
+
 def test_facility_schedule_extracts_line_broken_borrower_name() -> None:
     result = extract_fields(
         "Facility Agreement",

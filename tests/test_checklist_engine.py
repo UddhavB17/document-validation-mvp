@@ -489,14 +489,17 @@ def test_negative_or_referred_fi_requires_approval_letter() -> None:
     )
 
 
-def test_utility_bill_older_than_two_months_is_rejected() -> None:
+def test_utility_bill_age_is_not_cross_checked() -> None:
     old_date = (datetime.now() - timedelta(days=75)).date().isoformat()
     pages = [
         _confident_page(1, "Utility Bill", extracted_fields={"bill_date": old_date}),
         _confident_page(2, "Application Form"),
     ]
     anomalies = run_checks(pages, {}, {}, "LAP")
-    assert any(item["rule_id"] == "DATE_CHECK_S6" for item in anomalies)
+    assert not any(
+        item["rule_id"] in {"DATE_CHECK_S6", "FIELD_VALUE_MISSING_S6"}
+        for item in anomalies
+    )
 
 
 def test_coapplicant_presence_and_match_verifies_against_correct_person() -> None:

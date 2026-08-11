@@ -59,7 +59,7 @@ def test_interest_only_pre_emi_is_not_counted_as_an_amortizing_installment() -> 
     )
 
 
-def test_schedule_sum_is_compared_with_kfs_total_and_json_terms() -> None:
+def test_schedule_totals_are_not_part_of_repayment_validation() -> None:
     summary = (
         "Illustration for computation of APR for Retail and MSME loans\n"
         "1. Sanctioned Loan Amount (in Rupees)\n100000.00\n"
@@ -86,8 +86,7 @@ def test_schedule_sum_is_compared_with_kfs_total_and_json_terms() -> None:
     rules = {item["rule_id"] for item in anomalies}
 
     assert extract_repayment_summary(summary)["total_repayment"] == 150000
-    assert "REPAYMENT_SCHEDULE_TOTAL_MISMATCH" in rules
-    assert "REPAYMENT_SUMMARY_TOTAL_MISMATCH" in rules
+    assert rules == set()
 
 
 def test_generic_repayment_schedule_reference_does_not_authorize_summary() -> None:
@@ -116,7 +115,19 @@ def test_blank_facility_amount_does_not_swallow_rate_of_interest() -> None:
     assert summary["total_repayment"] == 150000
 
 
-def test_row_arithmetic_and_balance_failures_are_reported_once() -> None:
+def test_kfs_boilerplate_clause_number_is_not_repayment_roi() -> None:
+    text = (
+        "5.\nIn case of collaborative lending, details may be furnished:\n"
+        "Blended rate of interest\n"
+        "6.\nIn case of digital loans, specific disclosures may be furnished.\n"
+        "The IRR and Repayment Schedule specified in this Key Facts Statement (KFS) "
+        "are subject to change."
+    )
+
+    assert extract_repayment_summary(text) == {}
+
+
+def test_row_arithmetic_and_balance_are_not_business_validation_rules() -> None:
     pages = [
         _page(
             4,
@@ -130,8 +141,31 @@ def test_row_arithmetic_and_balance_failures_are_reported_once() -> None:
     anomalies = validate_repayment_schedules(pages, {"loan_amount": 100000, "emi": 50000})
     rules = [item["rule_id"] for item in anomalies]
 
-    assert rules.count("REPAYMENT_SCHEDULE_EMI_COMPONENT_MISMATCH") == 1
-    assert rules.count("REPAYMENT_SCHEDULE_BALANCE_MISMATCH") == 1
+    assert "REPAYMENT_SCHEDULE_EMI_COMPONENT_MISMATCH" not in rules
+    assert "REPAYMENT_SCHEDULE_BALANCE_MISMATCH" not in rules
+
+
+def test_only_recurring_emi_and_installment_count_are_compared() -> None:
+    pages = [
+        _page(
+            1,
+            "Repayment Schedule EMI (In Rs.) Principal Interest Closing Balance\n"
+            "1 1000.00 550.00 500.00 50.00 500.00\n"
+            "2 500.00 525.00 500.00 25.00 0.00",
+            "Repayment Schedule",
+        )
+    ]
+
+    anomalies = validate_repayment_schedules(
+        pages,
+        {"emi": 600, "installment_count": 3, "total_repayment": 999999},
+    )
+    rules = {item["rule_id"] for item in anomalies}
+
+    assert rules == {
+        "REPAYMENT_SCHEDULE_EMI_MISMATCH",
+        "REPAYMENT_SCHEDULE_INSTALLMENT_COUNT_MISMATCH",
+    }
 
 
 def test_identical_schedule_copies_are_collapsed() -> None:

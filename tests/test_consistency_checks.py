@@ -913,10 +913,10 @@ def test_trusted_permanent_and_communication_addresses_are_valid_variants() -> N
         ],
         trusted,
     )
-    assert any("ADDRESS_MISMATCH" in item["rule_id"] for item in unrelated)
+    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in unrelated)
 
 
-def test_root_primary_address_is_not_a_coapplicant_address_variant() -> None:
+def test_utility_address_is_not_compared_for_coapplicant() -> None:
     trusted = {
         "communication_address": "B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445",
         "people": {
@@ -943,11 +943,7 @@ def test_root_primary_address_is_not_a_coapplicant_address_variant() -> None:
         trusted,
     )
 
-    assert any(
-        item["rule_id"] == "TRUSTED_ADDRESS_MISMATCH"
-        and item["person_id"] == "coapplicant_1"
-        for item in anomalies
-    )
+    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
 
 
 def test_relative_token_tolerance_applies_only_to_holder_name() -> None:
@@ -984,7 +980,7 @@ def test_relative_token_tolerance_applies_only_to_holder_name() -> None:
     )
 
 
-def test_conflicting_explicit_flat_number_defeats_locality_tolerance() -> None:
+def test_utility_flat_number_is_not_compared() -> None:
     trusted = {
         "people": {
             "primary": {
@@ -1007,10 +1003,7 @@ def test_conflicting_explicit_flat_number_defeats_locality_tolerance() -> None:
         trusted,
     )
 
-    assert any(
-        item["rule_id"] == "TRUSTED_ADDRESS_MISMATCH"
-        for item in anomalies
-    )
+    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
 
 
 def test_equivalent_explicit_flat_number_formats_still_match() -> None:

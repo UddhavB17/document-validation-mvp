@@ -19,6 +19,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from services.validation_gates import has_intrinsic_aadhaar_evidence
+
 try:  # pragma: no cover - exercised when rapidfuzz is installed
     from rapidfuzz import fuzz
 except Exception:  # pragma: no cover - tiny fallback for lean test envs
@@ -218,6 +220,13 @@ def classify_page_with_candidates(text: str) -> dict[str, Any]:
                 candidate["confidence"] = 0.0
                 candidate["matched_signals"] = [
                     {"kind": "suppressed", "value": "kyc_checklist_context"}
+                ]
+    if not has_intrinsic_aadhaar_evidence(text or ""):
+        for candidate in candidates:
+            if candidate["document_type"] == "Aadhaar" and candidate["confidence"]:
+                candidate["confidence"] = 0.0
+                candidate["matched_signals"] = [
+                    {"kind": "suppressed", "value": "intrinsic_aadhaar_evidence_missing"}
                 ]
     if is_insurance_application_context(text or ""):
         for candidate in candidates:

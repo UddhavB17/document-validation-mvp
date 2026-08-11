@@ -107,11 +107,9 @@ DOCUMENT_FIELDS = {
         "applicant_name", "aadhaar_number", "pan_number", "date_of_birth",
         "phone_number", "address", "pin_code", "loan_amount",
     },
-    # A utility connection can remain in a landlord/relative's name and many
-    # providers omit a postal PIN.  The proof-of-address comparison is the
-    # defensible mapped check; bill recency is enforced separately by checklist
-    # accuracy rule S6.
-    "utility bill": {"address"},
+    # Utility bills are presence/classification evidence only. Provider fields,
+    # service addresses, dates and account holders are not cross-checked.
+    "utility bill": set(),
     "voter id": {"applicant_name", "date_of_birth", "address"},
     "cibil report": {"applicant_name"},
     "crif report": {"applicant_name"},
@@ -930,9 +928,9 @@ def _safe_digital_text(page: Any) -> str:
 def _get_allowed_fields_for_type(document_type: str) -> set[str] | None:
     doc_lower = document_type.strip().lower()
     if doc_lower == "utility bill":
-        # Utility proof establishes the service address.  The account may be in
-        # a landlord/relative's name and the provider may omit the postal PIN.
-        return set(DOCUMENT_FIELDS[doc_lower])
+        # This explicit empty contract also overrides older persisted admin
+        # settings that required utility address/name/PIN comparisons.
+        return set()
     norm_key = doc_lower.replace(" ", "_")
     if norm_key == "pan_card":
         norm_key = "pan"

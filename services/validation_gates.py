@@ -202,6 +202,45 @@ def has_labeled_aadhaar_value(text: str, value: Any) -> bool:
     return False
 
 
+def has_intrinsic_aadhaar_evidence(text: str) -> bool:
+    """Return True only when the page itself is an Aadhaar credential.
+
+    Consent forms and address declarations often mention Aadhaar/UIDAI in body
+    prose. Those mentions are not evidence that the page is an Aadhaar card.
+    """
+    raw = str(text or "")
+    non_empty_lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    heading = " ".join(non_empty_lines[:6]).casefold()
+    if re.search(r"\bself[\s-]*declaration\b[\s\S]{0,80}\bcurrent\s+address\b", heading, re.I):
+        return False
+    authority_heading = any(
+        marker in heading
+        for marker in (
+            "unique identification authority",
+            "uidai",
+            "e-aadhaar",
+            "digilocker verified e-aadhaar",
+            "भारतीय विशिष्ट पहचान प्राधिकरण",
+            "मेरा आधार",
+        )
+    )
+    aadhaar_numbers = list(
+        re.finditer(r"(?<!\d)\d{4}[ \t]?\d{4}[ \t]?\d{4}(?!\d)", raw)
+    )
+    for match in aadhaar_numbers:
+        if has_labeled_aadhaar_value(raw, match.group(0)):
+            return True
+    government_heading = any(
+        marker in heading
+        for marker in ("government of india", "govt. of india", "भारत सरकार")
+    )
+    aadhaar_xml = bool(
+        re.search(r"<\s*PrintLetterBarcodeData\b", raw, re.I)
+        and re.search(r"\buid\s*=\s*['\"]\d{12}['\"]", raw, re.I)
+    )
+    return authority_heading or aadhaar_xml or bool(government_heading and aadhaar_numbers)
+
+
 def has_bank_statement_anchor(text: str, fields: dict[str, Any]) -> bool:
     lowered = text.lower()
     if is_amortization_schedule(text):

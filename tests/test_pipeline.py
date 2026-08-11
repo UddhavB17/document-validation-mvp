@@ -747,6 +747,29 @@ def test_filename_identity_type_contradicted_by_email_thread() -> None:
     assert _filename_type_contradicted_by_text("Aadhaar", email_text) is True
 
 
+def test_filename_insurance_and_pdc_types_are_contradicted_by_outlook_mail() -> None:
+    from services.pipeline import _filename_type_contradicted_by_text
+
+    outlook_text = (
+        "Outlook\nRe: Approval for case 30765\n"
+        "From Manoj Sharma\nDate Fri 7/31/2026\nTo Branch Ahmedabad\n"
+        "Cc Operations\nSubject: Approval request\n"
+        "Please approve the attached documents."
+    )
+
+    assert _filename_type_contradicted_by_text("Insurance Form", outlook_text) is True
+    assert _filename_type_contradicted_by_text("PDC", outlook_text) is True
+
+
+def test_guarantee_deed_filename_classifies_esign_cover() -> None:
+    from services.pipeline import _infer_document_type_from_filename
+
+    assert (
+        _infer_document_type_from_filename("LOAN/REPORT/e_signed_Deed of Guarantee.pdf")
+        == "Guarantee Deed"
+    )
+
+
 def test_filename_identity_type_not_contradicted_by_card_ocr() -> None:
     from services.pipeline import _filename_type_contradicted_by_text
 

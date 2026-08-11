@@ -7,6 +7,7 @@ from typing import Any
 
 from services.bureau_anchors import classify_credit_bureau_by_anchors
 from services.document_classifier import classify_page
+from services.validation_gates import has_intrinsic_aadhaar_evidence
 from services.llm_page_classifier import (
     classify_page_with_llm,
     is_llm_page_classifier_enabled,
@@ -153,24 +154,10 @@ def _llm_document_type_has_required_evidence(
     normalized_type = str(document_type or "").strip().casefold()
 
     if normalized_type in {"aadhaar", "aadhar"}:
-        strong_authority = any(
-            marker in normalized
-            for marker in (
-                "unique identification authority",
-                "uidai",
-                "e-aadhaar",
-                "digilocker verified e-aadhaar",
-                "भारतीय विशिष्ट पहचान प्राधिकरण",
-                "मेरा आधार",
-            )
-        )
-        aadhaar_number = bool(
-            re.search(r"(?<!\d)\d{4}[ \t]?\d{4}[ \t]?\d{4}(?!\d)", text or "")
-        )
         return (
             (True, None)
-            if strong_authority or aadhaar_number
-            else (False, "Aadhaar requires an authority heading or a 12-digit Aadhaar number")
+            if has_intrinsic_aadhaar_evidence(text)
+            else (False, "Aadhaar requires an authority heading or a labelled 12-digit Aadhaar number")
         )
 
     if normalized_type in {"pan", "pan card"}:

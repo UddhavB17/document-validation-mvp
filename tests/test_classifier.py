@@ -430,6 +430,18 @@ def test_loan_consent_clause_listing_uidai_is_not_aadhaar() -> None:
     assert _classify(text) == "KFS"
 
 
+def test_current_address_declaration_mentioning_uidai_is_not_aadhaar() -> None:
+    text = (
+        "Self-Declaration for Current Address\n"
+        "To,\nMS Fincap Private Limited\nDear Sir/Madam,\n"
+        "I further declare and confirm that my address as per the OVD / Aadhar is different.\n"
+        "I authorize the lender to use my Aadhar number and demographic information "
+        "to verify my details from UIDAI."
+    )
+
+    assert _classify(text) != "Aadhaar"
+
+
 def test_opening_guarantee_deed_title_outweighs_body_loan_agreement_reference() -> None:
     result = classify_page(
         "DEED OF GUARANTEE\n"

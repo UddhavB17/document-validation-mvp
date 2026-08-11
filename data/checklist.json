@@ -785,16 +785,6 @@
   ],
   "accuracy_check_items": [
     {
-      "s_no": 6,
-      "description": "A utility bill used as deemed OVD must not be more than 2 months old",
-      "document_type": "Utility Bill",
-      "check_type": "document_age_max_months",
-      "document_fields": ["bill_date", "issue_date"],
-      "max_months": 2,
-      "severity_if_fail": "HIGH",
-      "ai_checkable": true
-    },
-    {
       "s_no": 7,
       "description": "PAN number must match application form",
       "document_type": "PAN",

@@ -90,9 +90,9 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
     cam = _first_object(text, "camdetails")
     applicant_kyc = _first_object(text, "applicantkyc")
     applicant_address = _first_object(text, "applicantaddressdetails")
-    coapplicants = _array_objects(text, "coapplicantdetails")
-    coapplicant_kyc = _array_objects(text, "coapplicantkyc")
-    entity_addresses = _array_objects(text, "entityaddressdetails")
+    coapplicants = _collection_objects(text, "coapplicantdetails")
+    coapplicant_kyc = _collection_objects(text, "coapplicantkyc")
+    entity_addresses = _collection_objects(text, "entityaddressdetails")
     dbmaker = _first_object(text, "dbmaker")
 
     primary_name = (
@@ -144,24 +144,46 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
 
     people: dict[str, dict[str, Any]] = {"primary": primary}
     kyc_by_name = {
-        _name_key(_value(item, "entityName")): item
+        _name_key(_coapplicant_name(item)): item
         for item in coapplicant_kyc
-        if _value(item, "entityName")
+        if _coapplicant_name(item)
     }
-    for index, details in enumerate(coapplicants, start=1):
-        name = _value(details, "entityName")
-        if not name:
-            continue
+    details_by_name = {
+        _name_key(_coapplicant_name(item)): item
+        for item in coapplicants
+        if _coapplicant_name(item)
+    }
+    ordered_names: list[str] = []
+    seen_name_keys: set[str] = set()
+    for item in [*coapplicants, *coapplicant_kyc]:
+        name = _coapplicant_name(item)
+        name_key = _name_key(name)
+        if name and name_key not in seen_name_keys:
+            ordered_names.append(name)
+            seen_name_keys.add(name_key)
+    has_coapplicant_payload = any(
+        re.search(r'"[^"]+"\s*:', item)
+        for item in [*coapplicants, *coapplicant_kyc]
+    )
+    if has_coapplicant_payload and not ordered_names:
+        raise CompanyDumpConversionError(
+            "The company dump contains co-applicant sections but no identifiable co-applicant record."
+        )
+    for index, name in enumerate(ordered_names, start=1):
+        name_key = _name_key(name)
+        details = details_by_name.get(name_key, "")
+        kyc = kyc_by_name.get(name_key, "")
+        address = _best_address(entity_addresses, name, "co-applicant")
         person_id = f"coapplicant_{index}"
         person = _person(
             role="coapplicant",
             details=details,
-            kyc=kyc_by_name.get(_name_key(name), ""),
-            address=_best_address(entity_addresses, name, "co-applicant"),
+            kyc=kyc,
+            address=address,
             warnings=warnings,
         )
         person["applicant_name"] = name
-        _copy_known_person_fields(person, details, kyc_by_name.get(_name_key(name), ""), _best_address(entity_addresses, name, "co-applicant"))
+        _copy_known_person_fields(person, details, kyc, address)
         people[person_id] = person
 
     loan_id = _loan_id(text, applicant, cam)
@@ -339,6 +361,24 @@ def _array_objects(text: str, key: str) -> list[str]:
     if not section:
         return []
     return _balanced_children(section, "{", "}")
+
+
+def _collection_objects(text: str, key: str) -> list[str]:
+    """Return records whether a singleton section is an object or an array."""
+    items = _array_objects(text, key)
+    if items:
+        return items
+    singleton = _first_object(text, key)
+    return [singleton] if singleton else []
+
+
+def _coapplicant_name(section: str) -> str | None:
+    return (
+        _value(section, "entityName")
+        or _value(section, "applicantName")
+        or _value(section, "customerName")
+        or _value(section, "name")
+    )
 
 
 def _balanced_section(text: str, key: str, opening: str, closing: str) -> str | None:

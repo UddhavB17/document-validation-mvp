@@ -128,16 +128,7 @@ def extract_repayment_summary(text: Any) -> dict[str, Any]:
     )
     if not raw.strip():
         return {}
-    lowered = raw.casefold()
-    if not any(
-        marker in lowered
-        for marker in (
-            "illustration for computation of apr",
-            "key facts statement",
-            "sanctioned loan amount",
-            "total amount to be paid by the borrower",
-        )
-    ):
+    if not _has_repayment_summary_evidence(raw):
         return {}
 
     summary: dict[str, Any] = {}
@@ -158,13 +149,9 @@ def extract_repayment_summary(text: Any) -> dict[str, Any]:
     if tenure:
         summary["tenure"] = int(tenure.group(1))
 
-    roi = re.search(
-        rf"\brate\s+of\s+interest\b[\s\S]{{0,300}}?({_NUMBER})\s*%?",
-        raw,
-        re.IGNORECASE,
-    )
-    if roi:
-        summary["roi"] = _number(roi.group(1))
+    roi = _number_after_label(raw, "rate of interest")
+    if roi is not None:
+        summary["roi"] = roi
 
     for field, labels in _SUMMARY_LABELS.items():
         value = _amount_after_any_label(raw, labels)
@@ -191,7 +178,7 @@ def attach_repayment_fields(
 def validate_repayment_schedules(
     pages: list[dict[str, Any]], trusted: dict[str, Any] | None
 ) -> list[dict[str, Any]]:
-    """Validate schedule rows, totals, and trusted loan terms.
+    """Compare only recurring EMI and installment count with trusted terms.
 
     Findings are emitted once per distinct schedule.  Exact duplicates in a
     package are intentionally collapsed.
@@ -212,73 +199,6 @@ def validate_repayment_schedules(
             "person_id": None,
         }
 
-        bad_components = [
-            row["installment_number"] for row in rows if not row["component_valid"]
-        ]
-        if bad_components:
-            anomalies.append(
-                _anomaly(
-                    "REPAYMENT_SCHEDULE_EMI_COMPONENT_MISMATCH",
-                    "HIGH",
-                    "Every EMI equals principal plus interest",
-                    _row_list(bad_components),
-                    base,
-                    "Repayment schedule contains EMI rows whose principal and interest do not add up to the EMI.",
-                )
-            )
-
-        bad_balances = [
-            row["installment_number"] for row in rows if not row["balance_valid"]
-        ]
-        if bad_balances:
-            anomalies.append(
-                _anomaly(
-                    "REPAYMENT_SCHEDULE_BALANCE_MISMATCH",
-                    "HIGH",
-                    "Closing balance equals opening balance minus principal",
-                    _row_list(bad_balances),
-                    base,
-                    "Repayment schedule contains rows with inconsistent opening, principal, and closing balances.",
-                )
-            )
-
-        continuity_failures: list[str] = []
-        sequence_failures: list[str] = []
-        for previous, current in zip(rows, rows[1:]):
-            if current["installment_number"] != previous["installment_number"] + 1:
-                sequence_failures.append(
-                    f"{previous['installment_number']}→{current['installment_number']}"
-                )
-            if abs(previous["closing_balance"] - current["opening_balance"]) > _money_tolerance(
-                previous["closing_balance"]
-            ):
-                continuity_failures.append(
-                    f"{previous['installment_number']}→{current['installment_number']}"
-                )
-        if sequence_failures:
-            anomalies.append(
-                _anomaly(
-                    "REPAYMENT_SCHEDULE_SEQUENCE_MISMATCH",
-                    "HIGH",
-                    "Consecutive installment numbers",
-                    ", ".join(sequence_failures[:8]),
-                    base,
-                    "Repayment schedule has a missing, duplicate, or out-of-order installment row.",
-                )
-            )
-        if continuity_failures:
-            anomalies.append(
-                _anomaly(
-                    "REPAYMENT_SCHEDULE_CONTINUITY_MISMATCH",
-                    "HIGH",
-                    "Each opening balance equals the prior closing balance",
-                    ", ".join(continuity_failures[:8]),
-                    base,
-                    "Repayment schedule balances do not carry forward consistently between installments.",
-                )
-            )
-
-        complete = _schedule_is_complete(rows, sequence_failures)
         amortizing_rows = [row for row in rows if row["principal"] > _money_tolerance(row["emi"])]
         recurring_rows = amortizing_rows[:-1] if len(amortizing_rows) > 1 else amortizing_rows
         recurring_emi = _modal_money([row["emi"] for row in recurring_rows])
@@ -300,7 +220,11 @@ def validate_repayment_schedules(
         expected_count = _integer(
             expected.get("installment_count") or expected.get("tenure")
         )
-        if complete and expected_count is not None and len(amortizing_rows) != expected_count:
+        if (
+            _schedule_is_complete(rows)
+            and expected_count is not None
+            and len(amortizing_rows) != expected_count
+        ):
             anomalies.append(
                 _anomaly(
                     "REPAYMENT_SCHEDULE_INSTALLMENT_COUNT_MISMATCH",
@@ -312,70 +236,6 @@ def validate_repayment_schedules(
                 )
             )
 
-        if complete:
-            schedule_total = round(sum(row["emi"] for row in rows), 2)
-            trusted_total = _number(expected.get("total_repayment"))
-            summary_total = _number((schedule.get("summary") or {}).get("total_repayment"))
-            comparison_total = trusted_total if trusted_total is not None else summary_total
-            comparison_source = (
-                "trusted JSON/database dump" if trusted_total is not None else "KFS/facility summary"
-            )
-            if comparison_total is not None and not _close_money(
-                schedule_total, comparison_total, relative=0.001
-            ):
-                anomalies.append(
-                    _anomaly(
-                        "REPAYMENT_SCHEDULE_TOTAL_MISMATCH",
-                        "HIGH",
-                        f"{_money(comparison_total)} ({comparison_source})",
-                        f"{_money(schedule_total)} (sum of EMI column)",
-                        base,
-                        "Total of all repayment-schedule EMI rows does not match the stated total repayment.",
-                    )
-                )
-
-            principal_total = round(sum(row["principal"] for row in rows), 2)
-            trusted_principal = _number(
-                expected.get("loan_amount") or expected.get("sanction_amount")
-            )
-            if trusted_principal is not None and not _close_money(
-                principal_total, trusted_principal, relative=0.001
-            ):
-                anomalies.append(
-                    _anomaly(
-                        "REPAYMENT_SCHEDULE_PRINCIPAL_MISMATCH",
-                        "HIGH",
-                        _money(trusted_principal),
-                        _money(principal_total),
-                        base,
-                        "Principal repaid across the complete schedule does not equal the trusted loan amount.",
-                    )
-                )
-
-            summary = schedule.get("summary") or {}
-            summary_principal = _number(summary.get("loan_amount"))
-            summary_interest = _number(summary.get("total_interest"))
-            summary_repayment = _number(summary.get("total_repayment"))
-            if (
-                summary_principal is not None
-                and summary_interest is not None
-                and summary_repayment is not None
-                and not _close_money(
-                    summary_principal + summary_interest,
-                    summary_repayment,
-                    relative=0.001,
-                )
-            ):
-                anomalies.append(
-                    _anomaly(
-                        "REPAYMENT_SUMMARY_TOTAL_MISMATCH",
-                        "HIGH",
-                        f"Loan + interest = {_money(summary_principal + summary_interest)}",
-                        f"Stated total repayment = {_money(summary_repayment)}",
-                        base,
-                        "KFS/facility repayment summary is internally inconsistent before comparing it with JSON.",
-                    )
-                )
     return anomalies
 
 
@@ -472,12 +332,6 @@ def _schedule_fingerprint(rows: list[dict[str, Any]]) -> tuple[Any, ...]:
     )
 
 
-def _schedule_is_complete(rows: list[dict[str, Any]], sequence_failures: list[str]) -> bool:
-    if not rows or rows[0]["installment_number"] != 1 or sequence_failures:
-        return False
-    return abs(rows[-1]["closing_balance"]) <= _money_tolerance(rows[0]["opening_balance"])
-
-
 def _trusted_loan_values(trusted: dict[str, Any]) -> dict[str, Any]:
     values = {
         key: value
@@ -493,6 +347,62 @@ def _trusted_loan_values(trusted: dict[str, Any]) -> dict[str, Any]:
             if values.get(key) in (None, "") and value not in (None, ""):
                 values[key] = value
     return values
+
+
+def _schedule_is_complete(rows: list[dict[str, Any]]) -> bool:
+    """Gate month-count comparison on a complete, consecutively parsed table."""
+    if not rows or rows[0]["installment_number"] != 1:
+        return False
+    numbers = [int(row["installment_number"]) for row in rows]
+    if numbers != list(range(1, numbers[-1] + 1)):
+        return False
+    return abs(rows[-1]["closing_balance"]) <= _money_tolerance(
+        rows[0]["opening_balance"]
+    )
+
+
+def _has_repayment_summary_evidence(text: str) -> bool:
+    """Require actual KFS/APR table rows, not a prose reference to a KFS."""
+    if re.search(r"\billustration\s+for\s+computation\s+of\s+apr\b", text, re.I):
+        return True
+    row_patterns = (
+        r"(?:^|\n)\s*(?:\d+[.)]\s*)?(?:sanctioned\s+)?loan\s+amount\b",
+        r"(?:^|\n)\s*(?:\d+[.)]\s*)?loan\s+term\b",
+        r"(?:^|\n)\s*(?:[A-Z][.)]\s*)?type\s+of\s+emi\b",
+        r"(?:^|\n)\s*(?:\d+[.)]\s*)?rate\s+of\s+interest\b",
+        r"(?:^|\n)\s*(?:\d+[.)]\s*)?total\s+interest\b",
+        r"(?:^|\n)\s*(?:\d+[.)]\s*)?net\s+disburs(?:ed|ement)\b",
+        r"(?:^|\n)\s*(?:\d+[.)]\s*)?total\s+amount\s+to\s+be\s+paid\b",
+    )
+    return sum(bool(re.search(pattern, text, re.I)) for pattern in row_patterns) >= 2
+
+
+def _number_after_label(text: str, label: str) -> float | None:
+    """Read a table value without crossing into the next numbered clause/row."""
+    match = re.search(
+        rf"(?:^|\n)\s*(?:\d+[.)]\s*)?{re.escape(label)}\b",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    body = text[match.end() : match.end() + 260]
+    boundaries = [
+        boundary.start()
+        for boundary in (
+            re.search(r"(?:^|\n)\s*(?:[2-9]|1[0-2])[.)]\s", body),
+            _next_summary_label(body),
+        )
+        if boundary is not None
+    ]
+    if boundaries:
+        body = body[: min(boundaries)]
+    value = re.search(
+        rf"(?<![\w.])({_NUMBER})(?:\s*%)?(?![\w.])",
+        body,
+        re.IGNORECASE,
+    )
+    return _number(value.group(1)) if value else None
 
 
 def _amount_after_any_label(text: str, labels: tuple[str, ...]) -> float | None:
@@ -602,11 +512,6 @@ def _modal_money(values: list[float]) -> float | None:
 
 def _money(value: float) -> str:
     return f"INR {value:,.2f}"
-
-
-def _row_list(values: list[int]) -> str:
-    shown = ", ".join(str(value) for value in values[:12])
-    return f"Rows {shown}" + (f" (+{len(values) - 12} more)" if len(values) > 12 else "")
 
 
 def _anomaly(

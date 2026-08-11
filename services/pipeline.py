@@ -1750,7 +1750,10 @@ def _smooth_page_classifications(
         curr_page = sorted_pages[i]
         next_page = sorted_pages[i + 1]
 
-        if curr_page.get("document_type") == "Unknown":
+        if (
+            curr_page.get("document_type") == "Unknown"
+            and not _is_email_correspondence(str(curr_page.get("ocr_text") or ""))
+        ):
             prev_type = prev_page.get("document_type")
             next_type = next_page.get("document_type")
             if (
@@ -1796,6 +1799,8 @@ def _smooth_page_classifications(
             and left_type in _MULTI_PAGE_RUN_FILL_TYPES
             and mid_a.get("document_type") == "Unknown"
             and mid_b.get("document_type") == "Unknown"
+            and not _is_email_correspondence(str(mid_a.get("ocr_text") or ""))
+            and not _is_email_correspondence(str(mid_b.get("ocr_text") or ""))
             and _same_source_context(left, mid_a, mid_b, right)
         ):
             for mid in (mid_a, mid_b):
@@ -1814,6 +1819,8 @@ def _smooth_page_classifications(
         curr_type = str(curr_page.get("document_type") or "Unknown")
         text = str(curr_page.get("ocr_text") or "")
         if i == 0:
+            continue
+        if _is_email_correspondence(text):
             continue
         prev_type = str(sorted_pages[i - 1].get("document_type") or "Unknown")
         next_type = (
@@ -3294,6 +3301,8 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         return "Utility Bill"
     if "sanction" in scope or "loan_sanction" in scope:
         return "Sanction Letter"
+    if "deed of guarantee" in scope or "guarantee deed" in scope:
+        return "Guarantee Deed"
     if "agreement" in scope or "contract" in scope or "loan_agreement" in scope:
         return "Loan Agreement"
     if "salary" in scope or "pay slip" in scope or "payslip" in scope or "salary_slip" in scope:
@@ -3338,14 +3347,44 @@ _FILENAME_IDENTITY_TYPE_ANCHORS: dict[str, tuple[str, ...]] = {
     "Passport": ("passport", "पासपोर्ट"),
 }
 _EMAIL_ADDRESS_RE = re.compile(r"[\w.+-]+@[\w-]+\.\w+")
+_EMAIL_INFERRED_EVIDENCE_TYPES = frozenset({
+    "Cheque",
+    "PDC",
+    "Insurance Form",
+    "Life Insurance Form",
+    "Property Insurance Form",
+    "Insurance Consent Letter",
+})
+
+
+def _is_email_correspondence(text: str) -> bool:
+    """Recognize Outlook/Gmail exports and forwarded-message header blocks."""
+    raw = str(text or "")
+    header_hits = sum(
+        bool(re.search(rf"(?im)^\s*{label}\b\s*:?\s*\S", raw))
+        for label in ("from", "sent", "date", "to", "cc", "subject")
+    )
+    branded_export = bool(re.search(r"(?im)^\s*(?:outlook|gmail)\s*$", raw))
+    return bool(
+        (branded_export and header_hits >= 3)
+        or header_hits >= 4
+        or (header_hits >= 2 and len(_EMAIL_ADDRESS_RE.findall(raw)) >= 2)
+    )
 
 
 def _filename_type_contradicted_by_text(document_type: str, text: str) -> bool:
     """True when a filename-derived identity type conflicts with page content."""
+    raw = str(text or "")
+    if (
+        document_type in _EMAIL_INFERRED_EVIDENCE_TYPES
+        and _is_email_correspondence(raw)
+    ):
+        # An approval email about insurance/PDC/cheques is correspondence, not
+        # the underlying document named in its ZIP member filename.
+        return True
     anchors = _FILENAME_IDENTITY_TYPE_ANCHORS.get(str(document_type or ""))
     if not anchors:
         return False
-    raw = str(text or "")
     if len(_EMAIL_ADDRESS_RE.findall(raw)) >= 2:
         # Email correspondence about a document is not the document itself.
         return True

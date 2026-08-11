@@ -704,11 +704,11 @@ def test_mapped_verification_flags_missing_required_document_and_checks_utility_
     )
 
     assert result["mapped_pages_processed"] == 1
-    assert result["checked_fields"] == 1
-    assert result["matched_fields"] == 1
+    assert result["checked_fields"] == 0
+    assert result["matched_fields"] == 0
     assert [item["rule_id"] for item in result["anomalies"]] == ["DOCUMENT_MISSING"]
     assert result["anomalies"][0]["document_type"] == "PAN"
-    assert result["people_verification"]["primary"]["documents"]["Utility Bill"]["status"] == "MATCH"
+    assert result["people_verification"]["primary"]["documents"]["Utility Bill"]["status"] == "NOT_CHECKED"
     assert result["people_verification"]["primary"]["documents"]["PAN"]["status"] == "NEEDS_REVIEW"
 
 

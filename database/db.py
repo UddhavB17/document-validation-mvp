@@ -215,7 +215,7 @@ def seed_settings(connection: sqlite3.Connection) -> None:
         ("required_fields.insurance_consent", '["is_consent_given", "premium_amount"]', "json", "fields", "Insurance Consent Required Fields", "Fields required to validate Insurance Consent."),
         ("required_fields.clearance_report", '["search_result", "debtor_name", "pan_number"]', "json", "fields", "Clearance Report Required Fields", "Fields required to validate a Clearance/CERSAI Report."),
         ("required_fields.nach_form", '["account_number", "ifsc", "mandate_limit"]', "json", "fields", "NACH Form Required Fields", "Fields required to validate a NACH Mandate Form."),
-        ("required_fields.utility_bill", '["applicant_name", "address", "pin_code"]', "json", "fields", "Utility Bill Required Fields", "Fields required to validate a Utility Bill."),
+        ("required_fields.utility_bill", '[]', "json", "fields", "Utility Bill Required Fields", "Utility bills are classified for presence only; their contents are not cross-checked."),
         ("required_fields.application_form", '["applicant_name", "aadhaar_number", "pan_number", "date_of_birth", "phone_number", "address", "pin_code", "loan_amount"]', "json", "fields", "Application Form Required Fields", "Fields required to validate an Application Form."),
     ]
     for key, val, val_type, cat, lbl, desc in defaults:

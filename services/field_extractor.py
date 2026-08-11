@@ -28,7 +28,10 @@ from typing import Any
 
 from services.identifiers import plausible_aadhaar_digits
 from services.person_names import canonicalize_person_name, is_name_field
-from services.validation_gates import has_labeled_aadhaar_value, is_amortization_schedule
+from services.validation_gates import (
+    has_labeled_aadhaar_value,
+    is_amortization_schedule,
+)
 
 # python-dateutil – graceful import with informative error
 try:
@@ -1117,6 +1120,15 @@ def _extract_pan(text: str) -> dict[str, Any]:
 
 def _extract_aadhaar(text: str) -> dict[str, Any]:
     """Extract fields from an Aadhaar card."""
+    heading = " ".join(
+        line.strip() for line in str(text or "").splitlines()[:6] if line.strip()
+    )
+    if re.search(
+        r"\bself[\s-]*declaration\b[\s\S]{0,80}\bcurrent\s+address\b",
+        heading,
+        re.IGNORECASE,
+    ):
+        return {}
     xml_fields = _extract_aadhaar_xml(text)
     text = _xml_cleaner(text)
     digilocker_fields = _extract_digilocker_aadhaar_summary(text)

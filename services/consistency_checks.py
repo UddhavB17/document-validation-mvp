@@ -135,6 +135,10 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
             person_id = _infer_person(fields, people, str(page.get("document_type") or ""))
         person_records = fields.get("person_records")
         type_key = str(page.get("document_type") or "").strip().casefold()
+        if type_key == "utility bill":
+            # Business requirement: recognize presence only. Never turn noisy
+            # provider/date/address extraction into a consistency anomaly.
+            continue
         is_multi_person_type = type_key in {"application form", "cam"}
         section_role = "primary"
         if is_multi_person_type:

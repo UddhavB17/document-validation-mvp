@@ -84,3 +84,29 @@ def test_converts_valid_database_json_object() -> None:
     assert manifest["loan_id"] == "42"
     assert manifest["people"]["primary"]["applicant_name"] == "Ramesh Kumar"
     assert manifest["people"]["primary"]["loan_amount"] == "500000"
+
+
+def test_converts_single_object_coapplicant_sections() -> None:
+    manifest = convert_company_database_dump({
+        "applicantdetails": {
+            "loanId": 30765,
+            "entityName": "Suthar Anupkumar",
+        },
+        "coapplicantdetails": {
+            "entityName": "Aaratiben Anupkumar Suthar",
+            "mobileNo": "9876543210",
+        },
+        "coapplicantkyc": {
+            "entityName": "Aaratiben Anupkumar Suthar",
+            "panNumber": "SXPPS4453F",
+            "aadhaarNumber": "XXXXXXXX8196",
+        },
+    })
+
+    assert manifest["people"]["coapplicant_1"] == {
+        "role": "coapplicant",
+        "phone_number": "9876543210",
+        "pan_number": "SXPPS4453F",
+        "aadhaar_last4": "8196",
+        "applicant_name": "Aaratiben Anupkumar Suthar",
+    }
