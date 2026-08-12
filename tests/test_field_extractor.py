@@ -1171,6 +1171,64 @@ def test_application_form_supports_residential_address_aliases() -> None:
     assert result["permanent_address"] == "81 Modi Vas, Harniyav, Ahmedabad 382435"
 
 
+def test_application_form_never_uses_page_counter_as_address() -> None:
+    result = extract_fields(
+        "Application Form",
+        """PERMANENT ADDRESS
+ADDRESS
+YEARS AT CURRENT ADDRESS
+LANDMARK
+TEHSIL
+Page 2 of 128
+Signed by: Peeru Lal
+Reason: Applied For Loan
+Date: 2026-06-20
+""",
+    )
+
+    assert result["permanent_address"] is None
+
+
+def test_coapplicant_address_keeps_value_before_page_footer() -> None:
+    result = extract_fields(
+        "Application Form",
+        """CO-APPLICANT DETAILS
+Unkar Lal
+05-June-
+1961
+Kanha
+9509341692
+FATHER
+CO-APPLICANT ADDRESS
+COMMUNICATION ADDRESS
+NAME
+ADDRESS
+Unkar Lal
+S/O: Kanha, mehar basti, Semlibakta, Pachpahar, Sulia, Jhalawar,
+Page 4 of 128
+Signed by: Peeru Lal
+Reason: Applied For Loan
+Date: 2026-06-20
+""",
+    )
+
+    record = result["person_records"][0]
+    assert record["current_address"] == (
+        "S/O: Kanha, mehar basti, Semlibakta, Pachpahar, Sulia, Jhalawar"
+    )
+    assert "Page 4 of 128" not in str(result)
+
+
+def test_real_address_survives_when_page_counter_is_appended() -> None:
+    result = extract_fields(
+        "Application Form",
+        "Permanent Resi. Address: 12 Market Road Delhi 110001 Page 2 of 128\n"
+        "Signed by: Peeru Lal",
+    )
+
+    assert result["permanent_address"] == "12 Market Road Delhi 110001"
+
+
 def test_coapplicant_stacked_name_is_not_extracted_as_address() -> None:
     result = extract_fields(
         "Application Form",
@@ -1407,6 +1465,22 @@ class TestBankStatement:
         assert result["pan_number"] == "TSTAA0001T"
         assert result["statement_period_start"] == "2025-06-19"
         assert result["statement_period_end"] == "2026-06-19"
+
+    def test_transaction_dates_supply_period_when_statement_header_is_absent(self) -> None:
+        result = self._extract(
+            "Account Number: 123456789012\n"
+            "Transaction Date Narration Debit Credit Balance\n"
+            "15/05/2026 Opening balance 0 0 1000\n"
+            "11/06/2026 Cash deposit 0 500 1500\n"
+            "29/07/2026 Transfer 200 0 1300"
+        )
+
+        assert result["statement_period_start"] == "2026-05-15"
+        assert result["statement_period_end"] == "2026-07-29"
+        assert result["_statement_date_evidence"] == {
+            "source": "transaction_dates",
+            "transaction_dates": ["2026-05-15", "2026-06-11", "2026-07-29"],
+        }
 
 
 # ════════════════════════════════════════════

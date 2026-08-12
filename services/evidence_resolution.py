@@ -415,7 +415,11 @@ def _page_aadhaar_numbers(page: dict[str, Any]) -> set[str]:
 
 def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, Any]]) -> dict[str, Any]:
     pages = list(group.get("pages") or [])
-    text = "\n".join(str(page.get("ocr_text") or "") for page in pages if page.get("ocr_text"))
+    text = "\n".join(
+        cleaned
+        for page in pages
+        if (cleaned := _document_page_text(page.get("ocr_text")))
+    )
     document_type, type_confidence, type_evidence = _group_document_type(pages, text)
     document_id = str(group.get("document_id") or "document")
 
@@ -502,6 +506,33 @@ def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, An
         "multi_person_document": multi_person,
         "person_record_count": len(document_fields.get("person_records") or []),
     }
+
+
+_PAGE_COUNTER_LINE_RE = re.compile(
+    r"^\s*page\s*(?:no\.?\s*)?\d+\s*(?:of|/)\s*\d+\s*[.;:]?\s*$",
+    re.IGNORECASE,
+)
+_DIGITAL_SIGNATURE_FOOTER_RE = re.compile(
+    r"^\s*(?:signed\s+by|reason\s*:|e-?signed\s+using|date\s*:)",
+    re.IGNORECASE,
+)
+
+
+def _document_page_text(value: Any) -> str:
+    """Remove pagination/signature footers before document-level extraction."""
+    lines = str(value or "").splitlines()
+    for index, line in enumerate(lines):
+        if not _PAGE_COUNTER_LINE_RE.fullmatch(line):
+            continue
+        leading = [item for item in lines[:index] if item.strip()]
+        trailing = [item for item in lines[index + 1:] if item.strip()]
+        if not trailing or (
+            len(leading) >= 3
+            and any(_DIGITAL_SIGNATURE_FOOTER_RE.match(item) for item in trailing[:8])
+        ):
+            return "\n".join(lines[:index]).rstrip()
+        return "\n".join([*lines[:index], *lines[index + 1:]]).strip()
+    return "\n".join(lines).strip()
 
 
 def _group_document_type(

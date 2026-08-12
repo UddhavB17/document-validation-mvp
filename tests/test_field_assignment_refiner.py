@@ -46,6 +46,21 @@ def test_noisy_permanent_address_is_removed(monkeypatch) -> None:
     )
 
 
+def test_page_counter_address_is_removed(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_LLM_FIELD_ASSIGNMENT", "false")
+
+    result = refine_field_assignments(
+        document_type="Application Form",
+        ocr_text="PERMANENT ADDRESS\nPage 2 of 128",
+        extracted_fields={"permanent_address": "Page 2 of 128"},
+    )
+
+    assert result["permanent_address"] is None
+    assert result["_field_assignment"]["deterministic_changes"]["permanent_address"]["reason"] == (
+        "label_or_placeholder_value"
+    )
+
+
 def test_signed_aadhaar_xml_appendix_never_calls_llm_or_keeps_public_fields(monkeypatch) -> None:
     monkeypatch.setenv("ENABLE_LLM_FIELD_ASSIGNMENT", "true")
 

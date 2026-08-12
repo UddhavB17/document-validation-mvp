@@ -114,9 +114,7 @@ def extract_fields(
     fields = _sanitize_name_fields(extractor(text))
     if document_type == "Application Form":
         fields.update(_extract_application_layout_addresses(structured_content))
-    for field_name in ("address", "current_address", "permanent_address", "communication_address"):
-        if field_name in fields:
-            fields[field_name] = _sanitize_address_value(fields[field_name])
+    fields = _sanitize_address_fields(fields)
     for field_name, value in _extract_generic_labeled_fields(text).items():
         if field_name not in _generic_fields_allowed_for(document_type):
             continue
@@ -328,8 +326,43 @@ def _sanitize_generic_value(field_name: str, value: Any) -> Any:
     return compact
 
 
+_ADDRESS_FIELD_NAMES = {
+    "address",
+    "current_address",
+    "permanent_address",
+    "communication_address",
+}
+_PAGE_COUNTER_RE = re.compile(
+    r"\bpage\s*(?:no\.?\s*)?\d+\s*(?:of|/)\s*\d+\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_trailing_page_footer(value: Any) -> str:
+    """Remove a page counter and anything appended after it from an address."""
+    raw = str(value or "")
+    match = _PAGE_COUNTER_RE.search(raw)
+    return raw[:match.start()].rstrip(" ,.;:|-\n\r\t") if match else raw
+
+
+def _sanitize_address_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize addresses at both page level and inside person rows."""
+    cleaned = dict(fields)
+    for field_name, value in list(cleaned.items()):
+        if str(field_name).startswith("_"):
+            continue
+        if field_name in _ADDRESS_FIELD_NAMES:
+            cleaned[field_name] = _sanitize_address_value(value)
+        elif field_name == "person_records" and isinstance(value, list):
+            cleaned[field_name] = [
+                _sanitize_address_fields(record) if isinstance(record, dict) else record
+                for record in value
+            ]
+    return cleaned
+
+
 def _sanitize_address_value(value: Any) -> str | None:
-    compact = re.sub(r"\s+", " ", str(value or "")).strip()
+    compact = re.sub(r"\s+", " ", _strip_trailing_page_footer(value)).strip()
     if not compact:
         return None
     if _address_value_is_contaminated(compact):
@@ -1808,6 +1841,10 @@ def _extract_application_address_block(
                 if not allow_status and key in {"current", "permanent", "office"}:
                     continue
                 cleaned = candidate.strip(" ,.;")
+                if _PAGE_COUNTER_RE.search(cleaned):
+                    # A page counter marks the end of this page's table. Never
+                    # walk into the digital-signature footer looking for a value.
+                    break
                 if not prefer_address:
                     return cleaned
                 if _looks_like_postal_address(cleaned):
@@ -1848,7 +1885,7 @@ def _extract_application_address_block(
 
 
 def _looks_like_postal_address(value: str) -> bool:
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.sub(r"\s+", " ", _strip_trailing_page_footer(value)).strip()
     if not text:
         return False
     if re.search(r"\b[1-8]\d{5}\b", text):
@@ -2384,6 +2421,11 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
     )
     type_match = re.search(r"\baccount\s+type\s*[:\-–]?\s*([^\n\r]{2,30})", text, re.IGNORECASE)
     period_start, period_end = _extract_statement_period(text)
+    transaction_dates = _extract_bank_transaction_dates(text)
+    period_source = "statement_period" if period_start and period_end else None
+    if not period_source and transaction_dates:
+        period_start, period_end = transaction_dates[0], transaction_dates[-1]
+        period_source = "transaction_dates"
     pan_match = re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
     is_internal_approval = bool(re.search(
         r"request\s+for\s+approval|designation\s*:\s*|department\s*:\s*",
@@ -2433,6 +2475,13 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         ),
         "statement_period_start": period_start,
         "statement_period_end": period_end,
+        "_statement_date_evidence": (
+            {
+                "source": period_source,
+                "transaction_dates": transaction_dates,
+            }
+            if period_source or transaction_dates else {}
+        ),
     }
 
 
@@ -2657,6 +2706,31 @@ def _extract_statement_period(text: str) -> tuple[str | None, str | None]:
             return _parse_date(start.group(1)), _parse_date(end.group(1))
         return None, None
     return _parse_date(match.group(1)), _parse_date(match.group(2))
+
+
+def _extract_bank_transaction_dates(text: str) -> list[str]:
+    """Extract transaction-table dates without treating header identity dates as activity."""
+    table_anchor = re.search(
+        r"\b(?:txn|transaction|value)\s*date\b|"
+        r"\bdate\s+(?:narration|particulars|description|withdrawal|deposit|debit|credit)\b|"
+        r"\bdate\s*\n\s*(?:narration|particulars|description)\b",
+        str(text or ""),
+        re.IGNORECASE,
+    )
+    if not table_anchor:
+        return []
+
+    date_pattern = re.compile(
+        r"\b(?:\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}"
+        r"|\d{4}[/\-.]\d{2}[/\-.]\d{2}"
+        r"|\d{1,2}[-\s]+[A-Za-z]+[-\s]+\d{4})\b"
+    )
+    observed: list[str] = []
+    for match in date_pattern.finditer(str(text or "")[table_anchor.end():]):
+        parsed = _parse_date(match.group(0))
+        if parsed:
+            observed.append(parsed)
+    return sorted(set(observed))
 
 
 def _extract_salary_slip(text: str) -> dict[str, Any]:

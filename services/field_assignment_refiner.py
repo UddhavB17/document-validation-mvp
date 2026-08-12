@@ -357,6 +357,12 @@ def _looks_like_non_name(normalized: str) -> bool:
 
 
 def _looks_like_address_placeholder(normalized: str) -> bool:
+    if re.fullmatch(
+        r"page\s*(?:no\.?\s*)?\d+\s*(?:of|/)\s*\d+\s*[.;:]?",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return True
     placeholder_words = {"city", "code", "district", "landmark", "locality", "pin"}
     words = set(re.findall(r"[a-z]+", normalized))
     if len(words & placeholder_words) >= 4 and not re.search(r"\d", normalized):

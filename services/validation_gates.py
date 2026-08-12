@@ -31,6 +31,16 @@ BANKING_FIELDS = {
     "statement_period_start",
     "statement_period_end",
 }
+ADDRESS_FIELDS = {
+    "address",
+    "current_address",
+    "permanent_address",
+    "communication_address",
+}
+_PAGE_COUNTER_VALUE_RE = re.compile(
+    r"\s*page\s*(?:no\.?\s*)?\d+\s*(?:of|/)\s*\d+\s*[.;:]?\s*",
+    re.IGNORECASE,
+)
 WEAK_INHERITED_METHODS = {"inherited", "sandwich_smoothed", "agreement_context_smoothed"}
 
 
@@ -182,6 +192,10 @@ def field_reliable_for_validation(
         # the appendix marker was introduced.
         return False
     if field_key == "applicant_name" and not is_person_name_candidate(value):
+        return False
+    if field_key in ADDRESS_FIELDS and _PAGE_COUNTER_VALUE_RE.fullmatch(str(value)):
+        # Protect validation of cached runs produced before the extractor
+        # learned to reject pagination text as an address.
         return False
     if (
         str(expected_document_type or page.get("document_type") or "").strip().casefold()

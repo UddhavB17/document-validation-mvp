@@ -25,6 +25,38 @@ def _page(
     }
 
 
+def test_document_extraction_removes_page_counter_signature_footer() -> None:
+    pages = [
+        _page(
+            1,
+            """Customer Application Form
+PERMANENT ADDRESS
+ADDRESS
+LANDMARK
+TEHSIL
+Page 2 of 128
+Signed by: Peeru Lal
+Reason: Applied For Loan
+Date: 2026-06-20
+""",
+            document_type="Application Form",
+            confidence=0.99,
+        ),
+        _page(
+            2,
+            "APPLICANT KYC DETAILS\nPeeru Lal\nXXXXXXXX9108\nBCXPL9010K",
+            document_type="Application Form",
+            confidence=0.85,
+            detected=1,
+        ),
+    ]
+
+    resolve_trusted_evidence(pages, {})
+
+    observed = pages[0]["extracted_fields"]["_document_extraction"]["observed_fields"]
+    assert "Page 2 of 128" not in str(observed)
+
+
 def test_unknown_pan_page_is_promoted_and_owner_resolved_without_value_replacement() -> None:
     pages = [_page(
         1,

@@ -1,4 +1,8 @@
-from services.validation_gates import compatible_field_for_document, has_bank_statement_anchor
+from services.validation_gates import (
+    compatible_field_for_document,
+    field_reliable_for_validation,
+    has_bank_statement_anchor,
+)
 
 
 def test_statement_period_fields_alone_are_not_a_bank_statement_anchor() -> None:
@@ -83,4 +87,20 @@ def test_insurance_form_keeps_explicit_loan_account_id_as_validation_evidence() 
 
     assert compatible_field_for_document(
         "Insurance Form", "application_number", page
+    )
+
+
+def test_cached_page_counter_is_not_reliable_address_evidence() -> None:
+    page = {
+        "document_type": "Application Form",
+        "classification_confidence": 0.99,
+        "ocr_text": "PERMANENT ADDRESS\nPage 2 of 128",
+        "extracted_fields": {"permanent_address": "Page 2 of 128"},
+    }
+
+    assert not field_reliable_for_validation(
+        page,
+        "permanent_address",
+        "Page 2 of 128",
+        expected_document_type="Application Form",
     )
