@@ -245,12 +245,11 @@ known independently of OCR:
 }
 ```
 
-The application-form checklist accepts a recognized non-Hindi regional
-language from a printed declaration, trusted template metadata, OCR-provider
-metadata, or a distinct regional script. Unlabelled Devanagari produces
-`APPLICATION_REGIONAL_LANGUAGE_UNVERIFIED`, because it could be Hindi,
-Haryanvi, Bhojpuri, Maithili, Magahi, or another language. See
-`docs/multilingual_document_policy.md` for the evidence and decision model.
+The application-form second-language check runs only on digital pages. Hindi is
+accepted as a second language. Evidence may come from a printed declaration,
+trusted template metadata, provider metadata, or English plus another script in
+the selectable text. Scanned application forms do not produce this anomaly.
+See `docs/multilingual_document_policy.md` for the evidence and decision model.
 
 ## Optional Offline OCR Smoke Test
 

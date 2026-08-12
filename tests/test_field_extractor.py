@@ -470,6 +470,9 @@ Search Output Details
 No Match Found
 """
     result = extract_fields("CERSAI Report", text)
+    assert result["cersai_search_type"] == "debtor_based"
+    assert result["debtor_name"] == "PEERU LAL"
+    assert result["debtor_pan_number"] == "TSTAA0001T"
     assert result["applicant_name"] == "PEERU LAL"
     assert result["pan_number"] == "TSTAA0001T"
     assert result["date_of_birth"] == "1994-12-05"
@@ -480,7 +483,34 @@ def test_asset_cersai_does_not_expose_cersai_corporate_pan_as_borrower_pan() -> 
         "CERSAI Report",
         "Asset Based Search Report\nCERSAI Details\nPAN\nAAECC5770G\nSearch Criteria Entered\nAsset Category\nImmovable",
     )
+    assert result["cersai_search_type"] == "asset_based"
+    assert result["debtor_name"] is None
+    assert result["debtor_pan_number"] is None
     assert result["pan_number"] is None
+
+
+def test_cersai_debtor_extraction_ignores_people_in_search_output() -> None:
+    result = extract_fields(
+        "CERSAI Report",
+        """Debtor Based Search Report
+CERSAI Details
+PAN
+AAECC5770G
+Search Criteria Entered
+Name of the Debtor
+RADHA BAI
+PAN
+TSTCC0003T
+Search Output Details
+Applicant PEERU LAL PAN TSTAA0001T
+Co-Applicant UNKAR LAL PAN TSTBB0002T
+""",
+    )
+
+    assert result["debtor_name"] == "RADHA BAI"
+    assert result["debtor_pan_number"] == "TSTCC0003T"
+    assert result["applicant_name"] == "RADHA BAI"
+    assert result["pan_number"] == "TSTCC0003T"
 
 
 def test_pdc_counts_unique_cheque_numbers_from_repeated_ocr() -> None:
@@ -490,6 +520,22 @@ def test_pdc_counts_unique_cheque_numbers_from_repeated_ocr() -> None:
     )
     assert result["cheque_numbers"] == ["865981", "865982", "865983"]
     assert result["cheque_count"] == 3
+
+
+def test_cheque_extracts_printed_signature_holder_instead_of_bank_name() -> None:
+    result = extract_fields(
+        "Cheque",
+        """PAY
+State Bank Of India
+Alc No
+41249946368
+Mr. Kala Singh
+Please sign abovs
+""",
+    )
+
+    assert result["account_holder_name"] == "Kala Singh"
+    assert result["account_number"] == "41249946368"
 
 
 # ════════════════════════════════════════════
@@ -675,6 +721,59 @@ def test_crif_zero_score_is_extracted() -> None:
     assert result["credit_score"] == "0"
 
 
+def test_crif_blank_score_table_with_zero_accounts_is_normalized_to_no_score() -> None:
+    result = extract_fields(
+        "CRIF Report",
+        """CRIF HM Score(S):
+SCORE NAME
+RANGE
+SCORE
+Description
+Account Summary
+Number
+of
+Accounts
+Active Accounts Overdue Accounts Secured Accounts
+0 0 0 0
+Group Account Summary
+""",
+    )
+    assert result["credit_score"] == "0"
+    assert result["crif_score"] == "0"
+
+
+def test_crif_blank_score_table_with_accounts_remains_missing() -> None:
+    result = extract_fields(
+        "CRIF Report",
+        """CRIF HM Score(S):
+SCORE NAME RANGE SCORE Description
+Account Summary
+Number of Accounts Active Accounts Overdue Accounts
+2 1 0
+Group Account Summary
+""",
+    )
+    assert result["credit_score"] is None
+    assert result["crif_score"] is None
+
+
+def test_cibil_minus_one_insufficient_history_is_normalized_to_no_score() -> None:
+    result = extract_fields(
+        "CIBIL Report",
+        """CIBIL COMBO REPORT
+SCORE
+Score Name
+Score
+Scoring Factors
+CREDITVISION SCORE
+-1
+1. Insufficient history to score
+""",
+    )
+    assert result["credit_score"] == "0"
+    assert result["cibil_score"] == "0"
+
+
 def test_end_use_letter_extracts_purpose_for_json_comparison() -> None:
     result = extract_fields(
         "End-Use Letter",
@@ -809,6 +908,35 @@ class TestAadhaar:
         assert "DIGITAL INDIA" not in result["address"]
         assert result["related_person_name"] == "Unkar Lal"
 
+    def test_xml_back_without_poi_uses_poa_before_signature_metadata(self) -> None:
+        text = (
+            '<UidData uid="xxxxxxxx1641"><Poa co="W/O: Kala Singh" country="India" '
+            'dist="Ganganagar" loc="v p o 27 f kaminpura" pc="335027" '
+            'state="Rajasthan"/><LData co="W/O: Kala Singh" name="Seeta" pc="335027"/>'
+            '<X509SubjectName>postalCode=110003,O=DIGITAL INDIA</X509SubjectName>'
+        )
+
+        result = self._extract(text)
+
+        assert result["applicant_name"] == "Seeta"
+        assert result["pin_code"] == "335027"
+        assert result["relationship_qualifier"] == "W/O"
+        assert result["related_person_name"] == "Kala Singh"
+        assert "110003" not in result["address"]
+
+    def test_signed_xml_appendix_is_audit_evidence_not_a_field_source(self) -> None:
+        text = (
+            "Digitally signed e-Aadhaar XML\n"
+            '<UidData uid="xxxxxxxx1641"><Poa co="W/O: Kala Singh" country="India" '
+            'dist="Ganganagar" pc="335027" state="Rajasthan"/></UidData>\n'
+            "CN=DS DIGITAL INDIA CORPORATION 3,postalCode=110003,O=DIGITAL INDIA\n"
+            "<SignatureValue>signed-value</SignatureValue>"
+        )
+
+        result = self._extract(text)
+
+        assert result == {"_aadhaar_verification_appendix": True}
+
 
 # ════════════════════════════════════════════
 # VOTER ID
@@ -889,6 +1017,28 @@ class TestDrivingLicense:
     def test_dob_extracted(self) -> None:
         result = self._extract("DOB: 10/05/1990\nValid Till: 01/01/2030")
         assert result["dob"] == "1990-05-10"
+
+    def test_issue_date_is_not_used_as_dob(self) -> None:
+        result = self._extract(
+            "Driving Licence\nDate of Issue: 10/05/2020\n"
+            "Date of Birth: 10/05/1990\nValid Till: 01/01/2030"
+        )
+        assert result["date_of_issue"] == "2020-05-10"
+        assert result["dob"] == "1990-05-10"
+
+    def test_issue_date_alone_does_not_create_dob(self) -> None:
+        result = self._extract(
+            "Driving Licence\nDate of Issue: 10/05/2020\nValid Till: 01/01/2030"
+        )
+        assert result["date_of_issue"] == "2020-05-10"
+        assert result["dob"] is None
+
+    def test_address_stops_before_next_dl_field(self) -> None:
+        result = self._extract(
+            "Driving Licence\nAddress\n12 Main Street\nPune 411001\n"
+            "Date of Issue\n10/05/2020"
+        )
+        assert result["address"] == "12 Main Street Pune 411001"
 
     def test_applicant_name_extracted(self) -> None:
         text = "Name: Meera Singh\nValid Till: 31/12/2029"
@@ -1478,6 +1628,96 @@ Organisation Name
     assert fields["current_address"] is None
     assert fields["permanent_address"] is None
     assert fields["communication_address"] is None
+
+
+def test_application_form_rejects_flattened_address_label_soup() -> None:
+    fields = extract_fields(
+        "Application Form",
+        """Application Form
+Permanent Resi Address
+of afferent from above
+LJJPS7463 N if not available, please fill form 60/61
+Driving License No.
+Graduate Postgraduate
+2FF KAMINPURA
+RAJASTHAN
+Aadhaar No 641
+Professionally qualified (Doctors, CA, Engineers etc)
+Mobile 8690456870
+VANYANAMAR
+335027
+Business Constitution
+""",
+    )
+
+    assert fields["permanent_address"] is None
+
+
+def test_application_form_uses_layout_row_for_permanent_address() -> None:
+    noisy_text = """Application Form
+Permanent Resi Address
+of afferent from above
+LJJPS7463 N if not available, please fill form 60/61
+Driving License No.
+Graduate Postgraduate
+Aadhaar No 641
+Professionally qualified (Doctors, CA, Engineers etc)
+Mobile 8690456870
+335027
+Business Constitution
+"""
+    structured_content = {
+        "layout_regions": [
+            {
+                "text": "Permanent Resi Address",
+                "confidence": 0.78,
+                "bounding_box": {"vertices": [
+                    {"x": 39, "y": 457}, {"x": 114, "y": 457},
+                    {"x": 114, "y": 464}, {"x": 39, "y": 464},
+                ]},
+            },
+            {
+                "text": "OFF KAMINPURA",
+                "confidence": 0.70,
+                "bounding_box": {"vertices": [
+                    {"x": 133, "y": 453}, {"x": 308, "y": 453},
+                    {"x": 308, "y": 470}, {"x": 133, "y": 470},
+                ]},
+            },
+            {
+                "text": "VANWANAUAR",
+                "confidence": 0.63,
+                "bounding_box": {"vertices": [
+                    {"x": 322, "y": 451}, {"x": 457, "y": 451},
+                    {"x": 457, "y": 467}, {"x": 322, "y": 467},
+                ]},
+            },
+            {
+                "text": "PIN 335027 Tele",
+                "confidence": 0.84,
+                "bounding_box": {"vertices": [
+                    {"x": 221, "y": 497}, {"x": 343, "y": 497},
+                    {"x": 343, "y": 508}, {"x": 221, "y": 508},
+                ]},
+            },
+            {
+                "text": "Business Constitution",
+                "confidence": 0.88,
+                "bounding_box": {"vertices": [
+                    {"x": 37, "y": 539}, {"x": 108, "y": 539},
+                    {"x": 108, "y": 546}, {"x": 37, "y": 546},
+                ]},
+            },
+        ],
+    }
+
+    fields = extract_fields(
+        "Application Form",
+        noisy_text,
+        structured_content=structured_content,
+    )
+
+    assert fields["permanent_address"] == "OFF KAMINPURA VANWANAUAR 335027"
 
 
 def test_lender_statement_of_account_is_not_blocked_as_amortization() -> None:

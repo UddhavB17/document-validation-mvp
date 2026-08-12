@@ -32,24 +32,25 @@ jurisdiction.
 5. Apply localized keyword packs only as additional evidence. A missing
    translation must reduce confidence, not force `Unknown` when structural
    evidence is strong.
-6. Aggregate pages into a document before applying language requirements. One
-   page may be English and another regional-language content.
+6. Aggregate digital pages into a document before applying application-form
+   language requirements. One page may be English and another second-language
+   content. Do not apply this requirement to scanned application-form pages.
 7. For an exact language requirement, prefer the printed declaration or trusted
    template metadata. If only a shared script is available, emit an unverified
    finding for human review.
 
 ## Application-form rule
 
-The checklist asks for a second language other than Hindi.
+The checklist asks digital application forms to include a second language.
+Hindi is accepted. Scanned application forms are excluded from this check.
 
-- English plus Gujarati/Gurmukhi/Tamil/etc. script: requirement supported by a
-  distinct regional script.
-- `Second language: Haryanvi/Bhojpuri/Maithili/Magahi/Bihari`: requirement
-  supported by an explicit declaration.
-- Devanagari with no declaration/provider/template language: emit
-  `APPLICATION_REGIONAL_LANGUAGE_UNVERIFIED`.
-- English only, or an explicit Hindi/English declaration with no other evidence:
-  emit `APPLICATION_SECOND_LANGUAGE_MISSING`.
+- English plus Devanagari/Gujarati/Gurmukhi/Tamil/etc. selectable text:
+  requirement supported by a distinct script.
+- `Second language: Hindi/Haryanvi/Bhojpuri/Maithili/Magahi/Bihari`:
+  requirement supported by an explicit declaration.
+- English-only digital application form with no declaration, provider, or
+  trusted-template evidence: emit `APPLICATION_SECOND_LANGUAGE_MISSING`.
+- Scanned application form: do not run this check.
 
 ## Jurisdiction remains independent
 

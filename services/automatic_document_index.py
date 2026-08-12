@@ -6,9 +6,9 @@ import re
 from typing import Any
 
 from services.person_ownership import (
-    LOAN_LEVEL_DOCUMENT_TYPES,
     MULTI_PERSON_DOCUMENT_TYPES,
-    PERSON_SCOPED_DOCUMENT_TYPES,
+    document_is_loan_level,
+    document_requires_person_owner,
     resolve_person_owner,
 )
 
@@ -63,8 +63,8 @@ def build_automatic_document_index(
             )
             continue
         type_key = document_type.strip().lower()
-        is_loan_level = type_key in LOAN_LEVEL_DOCUMENT_TYPES
-        requires_person = type_key in PERSON_SCOPED_DOCUMENT_TYPES
+        is_loan_level = document_is_loan_level(document_type, group["pages_data"])
+        requires_person = document_requires_person_owner(document_type, group["pages_data"])
         is_multi_person = type_key in MULTI_PERSON_DOCUMENT_TYPES
         if is_multi_person and reference_data:
             default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
@@ -216,7 +216,7 @@ def _group_pages(
                 pending_unknown = []
             continue
         starts_document = page.get("detected_page_number") == page_number
-        is_loan_level = document_type.strip().lower() in LOAN_LEVEL_DOCUMENT_TYPES
+        is_loan_level = document_is_loan_level(document_type, [page])
         # Loan agreements / sanction letters often mis-detect every page as "page 1".
         # Do not fragment those within the same ZIP member.
         split_on_heading = (
@@ -444,6 +444,14 @@ def _mapping_anomaly(
     person_id: str | None = None,
     person_role: str | None = None,
 ) -> dict[str, Any]:
+    confidence = float(group.get("confidence") or 0.0)
+    if rule_id == "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE":
+        expected_value = "Document type confidence of at least 50%"
+        found_value = f"{confidence:.0%} confidence"
+    else:
+        expected_value = "Automatic person assignment"
+        found_value = None
+
     return {
         "rule_id": rule_id,
         "s_no": None,
@@ -457,8 +465,8 @@ def _mapping_anomaly(
         "matched_person_id": None,
         "field_name": None,
         "status": "MANUAL_REVIEW_REQUIRED",
-        "expected_value": "Automatic person assignment",
-        "found_value": None,
+        "expected_value": expected_value,
+        "found_value": found_value,
         "page_number": group["pages"][0],
         "reason": reason,
     }

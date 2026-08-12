@@ -26,10 +26,13 @@ import re
 from datetime import date, datetime
 from typing import Any
 
+from services.bureau_scores import has_explicit_no_score_evidence
+from services.cersai import DEBTOR_BASED, search_criteria_text, search_type
 from services.identifiers import plausible_aadhaar_digits
 from services.person_names import canonicalize_person_name, is_name_field
 from services.validation_gates import (
     has_labeled_aadhaar_value,
+    is_aadhaar_verification_appendix,
     is_amortization_schedule,
 )
 
@@ -52,17 +55,28 @@ def _xml_cleaner(text: str) -> str:
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────
 
-def extract_fields(document_type: str, text: str) -> dict[str, Any]:
+def extract_fields(
+    document_type: str,
+    text: str,
+    *,
+    structured_content: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Extract structured fields from *text* for *document_type*.
 
     Args:
         document_type: Classifier output (e.g. "Sanction Letter").
         text:          Raw OCR text of the page / document.
+        structured_content: Optional OCR layout regions. Application-form
+            address extraction uses these coordinates to avoid mixing values
+            from adjacent form columns.
 
     Returns:
         Dict of field_name → extracted value (str | int | float | None).
         Unknown document types return an empty dict.
     """
+    if document_type == "Aadhaar" and is_aadhaar_verification_appendix(text):
+        return {"_aadhaar_verification_appendix": True}
+
     _EXTRACTORS = {
         "CAM":              _extract_cam,
         "Sanction Letter":  _extract_sanction_letter,
@@ -98,6 +112,8 @@ def extract_fields(document_type: str, text: str) -> dict[str, Any]:
     if extractor is None:
         return {}
     fields = _sanitize_name_fields(extractor(text))
+    if document_type == "Application Form":
+        fields.update(_extract_application_layout_addresses(structured_content))
     for field_name in ("address", "current_address", "permanent_address", "communication_address"):
         if field_name in fields:
             fields[field_name] = _sanitize_address_value(fields[field_name])
@@ -316,6 +332,8 @@ def _sanitize_address_value(value: Any) -> str | None:
     compact = re.sub(r"\s+", " ", str(value or "")).strip()
     if not compact:
         return None
+    if _address_value_is_contaminated(compact):
+        return None
     normalized = re.sub(r"[^a-z0-9]+", " ", compact.casefold()).strip()
     if re.fullmatch(
         r"(?:guarantor|co applicant|applicant)?\s*"
@@ -337,6 +355,26 @@ def _sanitize_address_value(value: Any) -> str | None:
     if not re.search(r"\b\d{6}\b", compact) and len(latin_tokens) < 3:
         return None
     return compact
+
+
+_ADDRESS_FORM_NOISE_PATTERNS = (
+    r"\baadhaar\s+no\b",
+    r"\bdriving\s+licen[cs]e\b",
+    r"\bpan\s*/?\s*gir\b",
+    r"\bprofessionally\s+qualified\b",
+    r"\bbusiness\s+constitution\b",
+    r"\b(?:undergraduate|graduate|postgraduate|post\s+graduate)\b",
+    r"\b(?:mobile|telephone|whatsapp)(?:\s+(?:number|no|contact))?\b",
+    r"\b(?:nature|industry|sector)\s+of\s+business\b",
+)
+
+
+def _address_value_is_contaminated(value: str) -> bool:
+    """Reject form-label soup produced by flattened multi-column OCR."""
+    normalized = re.sub(r"\s+", " ", str(value or "")).casefold()
+    noise_hits = sum(bool(re.search(pattern, normalized)) for pattern in _ADDRESS_FORM_NOISE_PATTERNS)
+    tokens = re.findall(r"[A-Za-z0-9]+", normalized)
+    return noise_hits >= 2 or (noise_hits >= 1 and len(tokens) > 28) or len(tokens) > 55
 
 
 def _raw_value_after_label(text: str, *labels: str) -> str | None:
@@ -606,14 +644,30 @@ def _sanitize_name_fields(fields: dict[str, Any]) -> dict[str, Any]:
 def _lines_after_label(text: str, label: str, max_lines: int = 3) -> str | None:
     """Return up to *max_lines* lines following *label*, joined by spaces."""
     lines = text.splitlines()
+    stop_labels = {
+        "name", "applicant name", "father name", "date of birth", "dob",
+        "date of issue", "issue date", "issued on", "valid till", "valid upto",
+        "validity", "licence no", "license no", "dl no", "address", "pin code",
+        "gender", "sex", "date", "mobile", "phone", "blood group",
+    }
     for i, line in enumerate(lines):
-        if label in line.lower():
-            collected: list[str] = []
-            for j in range(i + 1, min(i + 1 + max_lines, len(lines))):
-                part = lines[j].strip()
-                if part:
-                    collected.append(part)
-            return " ".join(collected) if collected else None
+        if not re.search(rf"\b{re.escape(label)}\b", line, re.IGNORECASE):
+            continue
+        collected: list[str] = []
+        inline = re.split(r"[:\-–]", line, maxsplit=1)
+        if len(inline) == 2 and inline[1].strip():
+            return inline[1].strip()
+        for j in range(i + 1, min(i + 1 + max_lines, len(lines))):
+            part = lines[j].strip()
+            if not part:
+                continue
+            normalized = _normalize_label(part).split(":", 1)[0]
+            if normalized in stop_labels or any(
+                normalized.startswith(f"{stop} ") for stop in stop_labels
+            ):
+                break
+            collected.append(part)
+        return " ".join(collected) if collected else None
     return None
 
 
@@ -1120,6 +1174,8 @@ def _extract_pan(text: str) -> dict[str, Any]:
 
 def _extract_aadhaar(text: str) -> dict[str, Any]:
     """Extract fields from an Aadhaar card."""
+    if is_aadhaar_verification_appendix(text):
+        return {"_aadhaar_verification_appendix": True}
     heading = " ".join(
         line.strip() for line in str(text or "").splitlines()[:6] if line.strip()
     )
@@ -1272,13 +1328,19 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
     signing authority.  Regexing the word "address" therefore captured the
     certificate subject instead of the holder's Aadhaar address.
     """
-    if "<UidData" not in text or "<Poi" not in text or "<Poa" not in text:
+    # Aadhaar XML back pages can omit ``Poi`` while still carrying the holder
+    # name in ``LData`` and the authoritative address/relationship in ``Poa``.
+    # Requiring ``Poi`` made those pages fall through to generic/LLM extraction,
+    # which could mistake the signing certificate's postal code for the
+    # holder's PIN and the holder's own name for their related person's name.
+    if "<UidData" not in text or "<Poa" not in text:
         return {}
     try:
         uid_fragment = re.search(r"<UidData\b[^>]*", text, re.IGNORECASE)
         poi_fragment = re.search(r"<Poi\b[^>]*/?>", text, re.IGNORECASE)
+        ldata_fragment = re.search(r"<LData\b[^>]*/?>", text, re.IGNORECASE)
         poa_fragment = re.search(r"<Poa\b[^>]*/?>", text, re.IGNORECASE)
-        if not (uid_fragment and poi_fragment and poa_fragment):
+        if not (uid_fragment and poa_fragment):
             return {}
 
         def attributes(fragment: str) -> dict[str, str]:
@@ -1288,7 +1350,8 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
             }
 
         uid = attributes(uid_fragment.group(0)).get("uid", "")
-        poi = attributes(poi_fragment.group(0))
+        poi = attributes(poi_fragment.group(0)) if poi_fragment else {}
+        ldata = attributes(ldata_fragment.group(0)) if ldata_fragment else {}
         poa = attributes(poa_fragment.group(0))
         co_value = poa.get("co", "").strip()
         relation_match = re.match(r"\s*(S/O|D/O|W/O|C/O)\s*:\s*(.+)", co_value, re.IGNORECASE)
@@ -1299,7 +1362,7 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
         ]
         address = ", ".join(dict.fromkeys(part.strip() for part in address_parts if part and part.strip()))
         return {
-            "applicant_name": poi.get("name") or None,
+            "applicant_name": poi.get("name") or ldata.get("name") or None,
             "aadhaar_last4": _digits_only(uid)[-4:] if len(_digits_only(uid)) >= 4 else None,
             "dob": _parse_date(poi.get("dob")) if poi.get("dob") else None,
             "gender": {"M": "MALE", "F": "FEMALE", "T": "TRANSGENDER"}.get(poi.get("gender", "").upper()),
@@ -1307,7 +1370,7 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
             "pin_code": poa.get("pc") or None,
             "relationship_qualifier": relation_match.group(1).upper() if relation_match else None,
             "related_person_name": _clean_name_like_value(relation_match.group(2)) if relation_match else None,
-            "_aadhaar_xml_demographic_fields": sorted(set(poi) | set(poa)),
+            "_aadhaar_xml_demographic_fields": sorted(set(poi) | set(ldata) | set(poa)),
         }
     except (AttributeError, ValueError):
         return {}
@@ -1462,6 +1525,187 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         "person_records": person_records,
         "second_language": language_match.group(1).strip() if language_match else None,
     }
+
+
+_APPLICATION_LAYOUT_ADDRESS_LABELS = {
+    "current_address": (
+        "current res address",
+        "current resi address",
+        "current residential address",
+    ),
+    "permanent_address": (
+        "permanent res address",
+        "permanent resi address",
+        "permanent residential address",
+    ),
+    "communication_address": ("communication address",),
+}
+
+_LAYOUT_ADDRESS_REJECT_PREFIXES = (
+    "aadhaar no",
+    "business constitution",
+    "city",
+    "driving license",
+    "driving licence",
+    "email",
+    "e mail",
+    "mobile",
+    "name",
+    "owned rented",
+    "professionally qualified",
+    "telephone",
+    "whatsapp",
+    "years at",
+    "years in",
+)
+
+
+def _extract_application_layout_addresses(
+    structured_content: dict[str, Any] | None,
+) -> dict[str, str]:
+    """Extract application-form address rows from OCR bounding boxes.
+
+    Google Vision's flat text can interleave two form columns.  Region geometry
+    keeps values on the same visual row as their address label and prevents a
+    distant PAN, education, or contact field from entering the address.
+    """
+    if not isinstance(structured_content, dict):
+        return {}
+    raw_regions = structured_content.get("layout_regions")
+    if not isinstance(raw_regions, list):
+        return {}
+
+    regions: list[dict[str, Any]] = []
+    for raw_region in raw_regions:
+        if not isinstance(raw_region, dict):
+            continue
+        text = re.sub(r"\s+", " ", str(raw_region.get("text") or "")).strip()
+        geometry = _layout_region_geometry(raw_region)
+        if not text or geometry is None:
+            continue
+        try:
+            confidence = float(raw_region.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        x0, y0, x1, y1 = geometry
+        regions.append({
+            "text": text,
+            "normalized": _normalized_layout_text(text),
+            "confidence": confidence,
+            "x0": x0,
+            "y0": y0,
+            "x1": x1,
+            "y1": y1,
+        })
+
+    extracted: dict[str, str] = {}
+    for field_name, labels in _APPLICATION_LAYOUT_ADDRESS_LABELS.items():
+        anchors = [
+            region
+            for region in regions
+            if any(label in region["normalized"] for label in labels)
+        ]
+        for anchor in anchors:
+            value = _layout_address_value(regions, anchor)
+            if value:
+                extracted[field_name] = value
+                break
+    return extracted
+
+
+def _layout_region_geometry(region: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    bounding_box = region.get("bounding_box") or region.get("boundingBox") or {}
+    vertices = bounding_box.get("vertices") if isinstance(bounding_box, dict) else None
+    if not isinstance(vertices, list) or not vertices:
+        return None
+    try:
+        xs = [float(vertex.get("x") or 0.0) for vertex in vertices if isinstance(vertex, dict)]
+        ys = [float(vertex.get("y") or 0.0) for vertex in vertices if isinstance(vertex, dict)]
+    except (TypeError, ValueError):
+        return None
+    if not xs or not ys:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _normalized_layout_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+
+def _layout_address_value(regions: list[dict[str, Any]], anchor: dict[str, Any]) -> str | None:
+    label_right = float(anchor["x1"])
+    label_top = float(anchor["y0"])
+    label_bottom = float(anchor["y1"])
+
+    primary: list[dict[str, Any]] = []
+    continuation: list[dict[str, Any]] = []
+    pin_regions: list[dict[str, Any]] = []
+    for region in regions:
+        if region is anchor or float(region["x0"]) <= label_right + 4:
+            continue
+        if not _is_layout_address_piece(region["text"], region["normalized"]):
+            continue
+        y0 = float(region["y0"])
+        y1 = float(region["y1"])
+        if y0 <= label_bottom + 4 and y1 >= label_top - 8:
+            primary.append(region)
+            continue
+        if label_bottom < y0 <= label_bottom + 32:
+            continuation.append(region)
+            continue
+        if label_top - 4 <= y0 <= label_bottom + 55 and re.fullmatch(
+            r"(?:pin\s*)?[1-8]\d{5}(?:\s+tele)?",
+            region["normalized"],
+        ):
+            pin_regions.append(region)
+
+    continuation.sort(key=lambda region: (float(region["y0"]), float(region["x0"])))
+    pin_regions.sort(key=lambda region: (float(region["y0"]), float(region["x0"])))
+
+    selected: list[dict[str, Any]] = [*primary, *continuation]
+    if not any(re.search(r"\b[1-8]\d{5}\b", str(region["text"])) for region in selected):
+        selected.extend(pin_regions[:1])
+    if not selected:
+        return None
+
+    pieces: list[str] = []
+    for region in selected:
+        piece = re.sub(r"^PIN\s*", "", str(region["text"]), flags=re.IGNORECASE)
+        piece = re.sub(r"\s+Tele(?:phone)?\b.*$", "", piece, flags=re.IGNORECASE)
+        piece = piece.strip(" ,.;:-")
+        if piece and piece not in pieces:
+            pieces.append(piece)
+    value = " ".join(pieces)
+    if not _looks_like_postal_address(value) or _address_value_is_contaminated(value):
+        return None
+
+    confidences = [float(region["confidence"]) for region in selected if region["confidence"]]
+    if confidences and sum(confidences) / len(confidences) < 0.60:
+        return None
+    core_confidences = [
+        float(region["confidence"])
+        for region in selected
+        if region["confidence"]
+        and not re.fullmatch(r"(?:pin\s*)?[1-8]\d{5}(?:\s+tele)?", region["normalized"])
+    ]
+    if core_confidences and min(core_confidences) < 0.60:
+        return None
+    return value
+
+
+def _is_layout_address_piece(text: str, normalized: str) -> bool:
+    if not normalized or any(normalized.startswith(prefix) for prefix in _LAYOUT_ADDRESS_REJECT_PREFIXES):
+        return False
+    if any(re.search(pattern, normalized) for pattern in _ADDRESS_FORM_NOISE_PATTERNS):
+        return False
+    if normalized in {
+        "address", "current", "permanent", "office", "others", "pin",
+        "residence", "yes", "no",
+    }:
+        return False
+    if len(text) > 120 or not re.search(r"[A-Za-z0-9]", text):
+        return False
+    return True
 
 
 def _extract_application_address_block(
@@ -1903,15 +2147,24 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
     # (\b does not work between \d and \D reliably, so we anchor with lookahead/lookbehind)
     dl_match = re.search(r'(?<![A-Z0-9])([A-Z]{2}\d{2}\s?\d{11})(?![A-Z0-9])', text)
 
-    validity_date = _extract_date_near(t, "valid till", "valid upto", "validity")
+    # Read dates only from their own labels.  A proximity window is unsafe on
+    # DLs because Date of Issue, DOB and Valid Till are commonly printed beside
+    # each other and flattened OCR loses the original columns.
+    validity_date = _extract_date_after_label(
+        text, "valid till", "valid upto", "valid up to", "validity date", "validity"
+    )
     is_expired = _is_past_date(validity_date)
 
-    dob_raw = _extract_date_near(t, "dob", "date of birth")
+    dob_raw = _extract_date_after_label(text, "date of birth", "dob", "d.o.b")
+    date_of_issue = _extract_date_after_label(
+        text, "date of issue", "issue date", "issued on", "date issued"
+    )
 
     return {
         "applicant_name": _line_after_label(text, "name"),
         "dl_number": dl_match.group(1).replace(" ", "") if dl_match else None,
         "dob": dob_raw,
+        "date_of_issue": date_of_issue,
         "validity_date": validity_date,
         "is_expired": is_expired,
         "address": _lines_after_label(text, "address", max_lines=3),
@@ -1919,19 +2172,25 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
 
 
 def _extract_cersai_report(text: str) -> dict[str, Any]:
-    """Extract fields from a CERSAI debtor search report."""
+    """Extract CERSAI metadata and only the entered debtor identity.
+
+    The CERSAI corporate PAN and identities listed in search results are not the
+    report subject.  Keeping extraction inside ``Search Criteria Entered`` is
+    what makes applicant/co-applicant ownership deterministic.
+    """
     t = text.lower()
-    search_section = re.split(r"search\s+criteria\s+entered", text, maxsplit=1, flags=re.IGNORECASE)
-    criteria_text = search_section[1] if len(search_section) == 2 else ""
-    debtor_pan = _value_after_label(criteria_text, "pan") if criteria_text else None
+    criteria_text = search_criteria_text(text)
+    cersai_search_type = search_type(text)
+    debtor_based = cersai_search_type == DEBTOR_BASED
+    debtor_pan = _value_after_label(criteria_text, "pan") if debtor_based else None
     if debtor_pan and not re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", debtor_pan.upper()):
         debtor_pan = None
     transaction_id = _value_after_label(
         text, "transaction id", "transaction id / qrf", "transaction id / qrf no"
     )
     search_reference = _value_after_label(text, "search reference number")
-    debtor_name = _value_after_label(criteria_text or text, "name of the debtor")
-    debtor_dob = _extract_date_after_label(criteria_text, "date of birth") if criteria_text else None
+    debtor_name = _value_after_label(criteria_text, "name of the debtor") if debtor_based else None
+    debtor_dob = _extract_date_after_label(criteria_text, "date of birth") if debtor_based else None
     search_result = None
     if "no match found" in t:
         search_result = "No Match Found"
@@ -1939,6 +2198,12 @@ def _extract_cersai_report(text: str) -> dict[str, Any]:
         search_result = "Match Found"
 
     return {
+        "cersai_search_type": cersai_search_type,
+        "debtor_name": debtor_name,
+        "debtor_pan_number": debtor_pan.upper() if debtor_pan else None,
+        "debtor_date_of_birth": debtor_dob,
+        # Backward-compatible person-field aliases. They always refer to the
+        # entered debtor, never to a party found in the result section.
         "applicant_name": debtor_name,
         "pan_number": debtor_pan.upper() if debtor_pan else None,
         "date_of_birth": debtor_dob,
@@ -1993,6 +2258,8 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
             fb = re.search(r'\b(0|[3-9]\d{2})\b', window)
             if fb:
                 score = fb.group(1)
+    if score is None and has_explicit_no_score_evidence(text):
+        score = "0"
 
     # Report date
     report_date = _extract_date_near(t, "report generated", "as on", "date of report")
@@ -2187,14 +2454,20 @@ def _extract_cheque(text: str) -> dict[str, Any]:
     """Extract fields from a cheque or cancelled cheque page."""
     cheque_number = _extract_cheque_number(text)
     account_match = re.search(
-        r"(?:account\s*(?:number|no\.?)|a/c\s*(?:no\.?|number)?)\s*[:\-\u2013]?\s*([0-9Xx* ]{6,24})",
+        r"(?:account\s*(?:number|no\.?|#)|"
+        r"a\s*[/\\lI|]?\s*c\s*(?:number|no\.)?|"
+        r"a[lI]?[ct]\s*(?:number|no\.?))"
+        r"\s*[:\-\u2013]?\s*(?:\r?\n\s*)?([0-9Xx*][0-9Xx* \t]{5,23})",
         text,
         re.IGNORECASE,
     )
     ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
     amount = _extract_amount(text.lower(), "rupees", "amount")
     return {
-        "account_holder_name": _line_after_label(text, "account holder", "name", "pay"),
+        "account_holder_name": (
+            _extract_cheque_signature_holder(text)
+            or _line_after_label(text, "account holder", "name")
+        ),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
         "cheque_number": cheque_number,
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
@@ -2202,6 +2475,27 @@ def _extract_cheque(text: str) -> dict[str, Any]:
         "amount": amount,
         "is_cancelled": "cancelled" in text.lower() or "canceled" in text.lower(),
     }
+
+
+def _extract_cheque_signature_holder(text: str) -> str | None:
+    """Extract the printed holder name associated with the signature box."""
+    for match in re.finditer(
+        r"\b(?:mr|mrs|ms|miss|shri|smt|sri)\.?\s+"
+        r"([A-Za-z][A-Za-z .'-]{2,60}?)(?=\s*(?:\r?\n|$))",
+        str(text or ""),
+        re.IGNORECASE,
+    ):
+        signature_window = str(text or "")[match.end() : match.end() + 240]
+        if not re.search(
+            r"\b(?:please\s+sign\s+abov[es]|authori[sz]ed\s+signatory)\b",
+            signature_window,
+            re.IGNORECASE,
+        ):
+            continue
+        candidate = _clean_name_like_value(match.group(1))
+        if canonicalize_person_name(candidate).valid:
+            return candidate
+    return None
 
 
 def _extract_cheque_number(text: str) -> str | None:

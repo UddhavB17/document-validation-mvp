@@ -7,6 +7,7 @@ from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Any
 
+from services.bureau_scores import has_explicit_no_score_evidence
 from services.person_names import (
     canonicalize_person_name,
     comparable_name,
@@ -21,7 +22,6 @@ from services.document_classifier import (
 from services.validation_gates import field_reliable_for_validation
 from services.language_detection import (
     analyze_text_languages,
-    is_regional_language_other_than_hindi,
     normalize_language_code,
 )
 
@@ -954,7 +954,11 @@ def _bureau_checks(pages: list[dict], observations: list[dict]) -> list[dict]:
             value for value, _page in score_values
             if (score := _number(value)) is not None and (score == 0 or 300 <= score <= 900)
         ]
-        if valid_scores:
+        explicit_no_score = any(
+            has_explicit_no_score_evidence(str(page.get("ocr_text") or ""))
+            for page in group_pages
+        )
+        if valid_scores or explicit_no_score:
             continue
         score_page = next((_page for _value, _page in score_values), None)
         if score_page is None:
@@ -969,7 +973,7 @@ def _bureau_checks(pages: list[dict], observations: list[dict]) -> list[dict]:
         }
         anomalies.append(_anomaly(
             "BUREAU_SCORE_MISSING", "HIGH", "Bureau score of 0 (no score) or 300 to 900",
-            found or "Blank score table", obs,
+            found if found not in (None, "") else "Blank score table", obs,
             "Credit bureau report does not expose a valid score on its score page.",
         ))
     return anomalies
@@ -1200,15 +1204,18 @@ def _is_identity_declaration(page: dict, person_id: str, person: dict) -> bool:
 
 
 def _application_language_checks(pages: list[dict], trusted: dict | None = None) -> list[dict]:
-    """Verify regional-language evidence without equating script to language.
+    """Verify that a digital application form contains a second language.
 
-    Devanagari alone cannot distinguish Hindi from Haryanvi, Bhojpuri,
-    Maithili, Magahi, and related languages.  Exact resolution therefore uses
-    a printed declaration, provider language metadata, or trusted template
-    configuration before falling back to script-level evidence.
+    Scanned application forms are excluded because OCR is not reliable enough
+    for this checklist rule. Hindi is a valid second language.
     """
     anomalies: list[dict] = []
-    app_pages = [page for page in pages if page.get("document_type") == "Application Form"]
+    app_pages = [
+        page
+        for page in pages
+        if page.get("document_type") == "Application Form"
+        and str(page.get("page_type") or "").strip().casefold() == "digital"
+    ]
     if not app_pages:
         return anomalies
 
@@ -1216,55 +1223,43 @@ def _application_language_checks(pages: list[dict], trusted: dict | None = None)
     for page in app_pages:
         fields = page.get("extracted_fields") or {}
         declared_language = fields.get("second_language")
-        if is_regional_language_other_than_hindi(declared_language):
+        if _is_second_application_language(declared_language):
             return []
-        if any(is_regional_language_other_than_hindi(value) for value in configured_languages):
+        if any(_is_second_application_language(value) for value in configured_languages):
             return []
 
         language_metadata = fields.get("_language") if isinstance(fields.get("_language"), dict) else {}
         provider_languages = language_metadata.get("provider_languages") or []
-        if any(is_regional_language_other_than_hindi(value) for value in provider_languages):
+        if any(_is_second_application_language(value) for value in provider_languages):
             return []
 
         text = str(page.get("ocr_text") or "")
         scripts = set(analyze_text_languages(text)["scripts"])
-        # A distinct regional script is sufficient evidence for this checklist
-        # rule, but it still does not semantically identify the language.
-        if "latin" in scripts and scripts.difference({"latin", "devanagari"}):
+        if "latin" in scripts and scripts.difference({"latin"}):
             return []
 
-    page = app_pages[0]
     all_scripts = {
         script
         for app_page in app_pages
         for script in analyze_text_languages(str(app_page.get("ocr_text") or ""))["scripts"]
     }
-    if "latin" in all_scripts and all_scripts.difference({"latin", "devanagari"}):
+    if "latin" in all_scripts and all_scripts.difference({"latin"}):
         return []
-    declared_codes = [
-        normalize_language_code((app_page.get("extracted_fields") or {}).get("second_language"))
-        for app_page in app_pages
-    ]
-    if "devanagari" in all_scripts and not any(code in {"en", "hi"} for code in declared_codes if code):
-        anomalies.append({
-            "rule_id": "APPLICATION_REGIONAL_LANGUAGE_UNVERIFIED", "s_no": 10, "severity": "MEDIUM",
-            "document_type": "Application Form", "expected_value": "Second language other than Hindi",
-            "found_value": "Devanagari script; exact language is ambiguous",
-            "page_number": page.get("page_number"), "person_id": None,
-            "reason": (
-                "Devanagari may be Hindi, Haryanvi, Bhojpuri, Maithili, Magahi, or another language. "
-                "Verify the printed language declaration or configure application_form_languages."
-            ),
-        })
-        return anomalies
 
+    page = app_pages[0]
     anomalies.append({
         "rule_id": "APPLICATION_SECOND_LANGUAGE_MISSING", "s_no": 10, "severity": "MEDIUM",
-        "document_type": "Application Form", "expected_value": "Second language other than Hindi",
+        "document_type": "Application Form", "expected_value": "Second language (Hindi accepted)",
         "found_value": "Not found", "page_number": page.get("page_number"), "person_id": None,
-        "reason": "Verify that the application form includes a second language other than Hindi.",
+        "reason": "Verify that the digital application form includes a second language; Hindi is accepted.",
     })
     return anomalies
+
+
+def _is_second_application_language(value: Any) -> bool:
+    """Return true for a recognized language other than English, including Hindi."""
+    code = normalize_language_code(value)
+    return bool(code and code != "en")
 
 
 def _configured_application_languages(trusted: dict) -> list[Any]:

@@ -57,6 +57,28 @@ def test_form_97_not_inferred_from_unrelated_loan_pages() -> None:
         assert result["document_type"] != "Form 97", text
 
 
+def test_form_60_instruction_inside_application_form_is_not_form_97() -> None:
+    text = (
+        "Individual / Sole Proprietor\n"
+        "Applicant Personal Details\n"
+        "PAN/GIR Number (if not available, please fill up Form 60/61 as applicable)\n"
+        "Contact Details\n"
+        "Current Residence Address\n"
+        "Preferred Mailing Address\n"
+    )
+
+    result = classify_page(text)
+
+    assert result["document_type"] != "Form 97"
+
+
+@pytest.mark.parametrize("title", ["FORM 97", "FORM NO. 60"])
+def test_form_97_or_form_60_opening_title_remains_classifiable(title: str) -> None:
+    result = classify_page(f"{title}\nDeclaration in lieu of PAN")
+
+    assert result["document_type"] == "Form 97"
+
+
 def test_stamp_and_utility_pages_classify_correctly() -> None:
     from services.document_classifier import load_document_type_registry
 

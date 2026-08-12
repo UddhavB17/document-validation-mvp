@@ -1,6 +1,7 @@
 from services.checklist_engine import run_checks
 from services.consistency_checks import _matches, run_consistency_checks
 from services.field_verification import verify_address
+from services.field_extractor import extract_fields
 from services.page_quality import is_confident_document_match
 
 
@@ -54,6 +55,47 @@ def test_address_consistency_tolerates_minor_ocr_spellings_with_same_pin() -> No
         item for item in run_consistency_checks(pages, trusted)
         if "ADDRESS_MISMATCH" in item["rule_id"]
     ]
+
+
+def test_aadhaar_xml_appendix_is_excluded_but_primary_page_still_validates() -> None:
+    trusted = {
+        "people": {
+            "coapplicant_1": {
+                "applicant_name": "Seeta",
+                "pin_code": "335027",
+            }
+        }
+    }
+    appendix = page(
+        14,
+        "Aadhaar",
+        "coapplicant_1",
+        pin_code="'110003'",
+        related_person_name="'Seeta'",
+    )
+    appendix["ocr_text"] = (
+        "Digitally signed e-Aadhaar XML\n"
+        '<UidData uid="xxxxxxxx1641"><Poa pc="335027"/></UidData>\n'
+        "CN=DS DIGITAL INDIA CORPORATION 3,postalCode=110003"
+    )
+
+    anomalies = run_consistency_checks(
+        [
+            page(13, "Aadhaar", "coapplicant_1", applicant_name="Seeta", pin_code="335027"),
+            appendix,
+        ],
+        trusted,
+    )
+    assert not any(item["rule_id"] == "TRUSTED_PIN_CODE_MISMATCH" for item in anomalies)
+
+    primary_page_anomalies = run_consistency_checks(
+        [page(13, "Aadhaar", "coapplicant_1", applicant_name="Seeta", pin_code="999999")],
+        trusted,
+    )
+    assert any(
+        item["rule_id"] == "TRUSTED_PIN_CODE_MISMATCH" and item["page_number"] == 13
+        for item in primary_page_anomalies
+    )
 
 
 def test_short_trusted_relationship_address_matches_ocr_variant() -> None:
@@ -143,6 +185,7 @@ def test_regional_bilingual_application_form_skips_second_language_anomaly() -> 
             {
                 "page_number": 1,
                 "document_type": "Application Form",
+                "page_type": "digital",
                 "ocr_text": "Loan Application Form અરજદારનું નામ Peeru Lal",
                 "extracted_fields": {"applicant_name": "Peeru Lal"},
             }
@@ -152,20 +195,97 @@ def test_regional_bilingual_application_form_skips_second_language_anomaly() -> 
     assert not any(item["rule_id"] == "APPLICATION_SECOND_LANGUAGE_MISSING" for item in anomalies)
 
 
-def test_unlabelled_devanagari_application_is_ambiguous_not_assumed_hindi() -> None:
+def test_digital_english_hindi_application_satisfies_second_language_rule() -> None:
     anomalies = run_consistency_checks(
         [
             {
                 "page_number": 1,
                 "document_type": "Application Form",
+                "page_type": "digital",
                 "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
                 "extracted_fields": {"applicant_name": "Peeru Lal"},
             }
         ],
         {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
     )
-    assert any(item["rule_id"] == "APPLICATION_REGIONAL_LANGUAGE_UNVERIFIED" for item in anomalies)
-    assert not any(item["rule_id"] == "APPLICATION_SECOND_LANGUAGE_MISSING" for item in anomalies)
+    assert not any(item["s_no"] == 10 for item in anomalies)
+
+
+def test_declared_hindi_satisfies_digital_second_language_rule() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 1,
+                "document_type": "Application Form",
+                "page_type": "digital",
+                "ocr_text": "Loan Application Form applicant name Peeru Lal",
+                "extracted_fields": {
+                    "applicant_name": "Peeru Lal",
+                    "second_language": "Hindi",
+                },
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["s_no"] == 10 for item in anomalies)
+
+
+def test_digital_application_language_evidence_can_span_pages() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 1,
+                "document_type": "Application Form",
+                "page_type": "digital",
+                "ocr_text": "Loan Application Form applicant name Peeru Lal",
+                "extracted_fields": {"applicant_name": "Peeru Lal"},
+            },
+            {
+                "page_number": 2,
+                "document_type": "Application Form",
+                "page_type": "digital",
+                "ocr_text": "ऋण आवेदन आवेदक का नाम पीरू लाल",
+                "extracted_fields": {},
+            },
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["s_no"] == 10 for item in anomalies)
+
+
+def test_scanned_application_form_skips_second_language_check() -> None:
+    trusted = {"people": {"primary": {"applicant_name": "Peeru Lal"}}}
+    anomalies = run_checks(
+        [
+            {
+                "page_number": 79,
+                "document_type": "Application Form",
+                "page_type": "scanned",
+                "ocr_text": "Loan Application Form applicant name Peeru Lal",
+                "extracted_fields": {"applicant_name": "Peeru Lal"},
+            }
+        ],
+        trusted,
+        trusted,
+        "LAP",
+    )
+    assert not any(item["s_no"] == 10 for item in anomalies)
+
+
+def test_english_only_digital_application_reports_missing_second_language() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                "page_number": 79,
+                "document_type": "Application Form",
+                "page_type": "digital",
+                "ocr_text": "Loan Application Form applicant name Peeru Lal",
+                "extracted_fields": {"applicant_name": "Peeru Lal"},
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert any(item["rule_id"] == "APPLICATION_SECOND_LANGUAGE_MISSING" for item in anomalies)
 
 
 def test_declared_haryanvi_application_satisfies_regional_language_rule() -> None:
@@ -174,6 +294,7 @@ def test_declared_haryanvi_application_satisfies_regional_language_rule() -> Non
             {
                 "page_number": 1,
                 "document_type": "Application Form",
+                "page_type": "digital",
                 "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
                 "extracted_fields": {
                     "applicant_name": "Peeru Lal",
@@ -192,6 +313,7 @@ def test_bhojpuri_provider_metadata_resolves_devanagari_ambiguity() -> None:
             {
                 "page_number": 1,
                 "document_type": "Application Form",
+                "page_type": "digital",
                 "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
                 "extracted_fields": {
                     "applicant_name": "Peeru Lal",
@@ -210,6 +332,7 @@ def test_trusted_template_language_resolves_devanagari_ambiguity() -> None:
             {
                 "page_number": 1,
                 "document_type": "Application Form",
+                "page_type": "digital",
                 "ocr_text": "Loan Application Form आवेदक का नाम Peeru Lal",
                 "extracted_fields": {"applicant_name": "Peeru Lal"},
             }
@@ -278,6 +401,38 @@ def test_bureau_zero_score_is_valid_no_score_exemption() -> None:
             {
                 **page(1, "CRIF Report", "primary", applicant_name="Peeru Lal", credit_score="0"),
                 "ocr_text": "CRIF Credit Information Report CRIF HM Score 0",
+                "detected_page_number": 1,
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["rule_id"].startswith("BUREAU_SCORE") for item in anomalies)
+
+
+def test_cibil_minus_one_insufficient_history_is_valid_no_score_exemption() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                **page(1, "CIBIL Report", "primary", applicant_name="Peeru Lal", credit_score="-1"),
+                "ocr_text": "CIBIL SCORE -1 1. Insufficient history to score",
+                "detected_page_number": 1,
+            }
+        ],
+        {"people": {"primary": {"applicant_name": "Peeru Lal"}}},
+    )
+    assert not any(item["rule_id"].startswith("BUREAU_SCORE") for item in anomalies)
+
+
+def test_crif_blank_score_table_with_zero_accounts_is_valid_no_score_exemption() -> None:
+    anomalies = run_consistency_checks(
+        [
+            {
+                **page(1, "CRIF Report", "primary", applicant_name="Peeru Lal"),
+                "ocr_text": (
+                    "CRIF HM Score(S): SCORE NAME RANGE SCORE Description "
+                    "Account Summary Number of Accounts Active Accounts Overdue Accounts "
+                    "0 0 0 Group Account Summary"
+                ),
                 "detected_page_number": 1,
             }
         ],
@@ -565,6 +720,34 @@ def test_cersai_dob_noise_is_not_a_trusted_mismatch() -> None:
         trusted,
     )
     assert not any("DATE_OF_BIRTH" in item["rule_id"] for item in anomalies)
+
+
+def test_cersai_consistency_compares_debtor_to_matching_coapplicant() -> None:
+    trusted = {
+        "people": {
+            "primary": {"applicant_name": "Peeru Lal", "pan_number": "TSTAA0001T"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal", "pan_number": "TSTBB0002T"},
+        }
+    }
+    text = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+UNKAR LAL
+PAN
+TSTBB0002T
+Search Output Details
+Applicant PEERU LAL PAN TSTAA0001T
+"""
+    cersai_page = page(1, "CERSAI Report", None, **extract_fields("CERSAI Report", text))
+    cersai_page["ocr_text"] = text
+
+    anomalies = run_consistency_checks([cersai_page], trusted)
+
+    assert cersai_page["person_id"] == "coapplicant_1"
+    assert not any(
+        item["rule_id"].startswith("TRUSTED_") and "MISMATCH" in item["rule_id"]
+        for item in anomalies
+    )
 
 
 def test_bureau_apr_month_and_branch_id_are_not_compared_to_loan_data() -> None:

@@ -2,7 +2,7 @@
 
 Cross-person TRUSTED_* anomalies happen when co-applicant OCR (Unkar / Radha)
 is compared against primary.  Ownership is resolved from identity evidence
-(PAN, Aadhaar, phone, DOB, name) — not from a family tree.
+(PAN, Aadhaar, bank account, phone, DOB, name) — not from a family tree.
 """
 
 from __future__ import annotations
@@ -12,6 +12,11 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+from services.cersai import (
+    DEBTOR_BASED as CERSAI_DEBTOR_BASED,
+    UNKNOWN as CERSAI_UNKNOWN,
+    search_type as detect_cersai_search_type,
+)
 from services.identifiers import plausible_aadhaar_digits
 from services.person_names import is_person_name_candidate, name_similarity
 from services.validation_gates import (
@@ -100,6 +105,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "date_of_birth": ("date_of_birth", "dob"),
     "pan_number": ("pan_number", "pan"),
     "aadhaar_number": ("aadhaar_number", "aadhaar_last4", "aadhaar", "aadhar"),
+    "account_number": ("account_number", "bank_account_number", "bank_account_no", "account_no"),
     "phone_number": ("phone_number", "phone", "mobile_number"),
     "pin_code": ("pin_code", "pincode"),
     "address": ("address",),
@@ -108,6 +114,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 FIELD_WEIGHTS = {
     "aadhaar_number": 8.0,
     "pan_number": 8.0,
+    "account_number": 8.0,
     "phone_number": 5.0,
     "date_of_birth": 5.0,
     "applicant_name": 6.0,
@@ -117,7 +124,15 @@ FIELD_WEIGHTS = {
 
 RELATIONSHIP_OWNER_WEIGHT = 4.0
 
-STRONG_ID_FIELDS = frozenset({"pan_number", "aadhaar_number", "phone_number"})
+STRONG_ID_FIELDS = frozenset(
+    {"pan_number", "aadhaar_number", "account_number", "phone_number"}
+)
+
+_MASKED_AADHAAR_LAST4_RE = re.compile(
+    r"\b(?:aadhaar|aadhar)(?:\s+(?:number|no\.?))?\s*[:#\-]?\s*"
+    r"(?:[x*\u2022\u25cf]{2,4}[\s\-]*){1,3}(\d{4})\b",
+    re.IGNORECASE,
+)
 
 
 def people_from_trusted(trusted: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -125,6 +140,200 @@ def people_from_trusted(trusted: dict[str, Any] | None) -> dict[str, dict[str, A
     if not isinstance(raw, dict):
         return {}
     return {str(key): value for key, value in raw.items() if isinstance(value, dict)}
+
+
+def document_requires_person_owner(
+    document_type: str,
+    pages: list[dict[str, Any]] | dict[str, Any] | None = None,
+) -> bool:
+    """Return whether this document must resolve to a trusted person."""
+    type_key = str(document_type or "").strip().casefold()
+    if type_key == "cersai report":
+        return _cersai_search_type(_as_page_list(pages)) == CERSAI_DEBTOR_BASED
+    return type_key in PERSON_SCOPED_DOCUMENT_TYPES
+
+
+def document_is_loan_level(
+    document_type: str,
+    pages: list[dict[str, Any]] | dict[str, Any] | None = None,
+) -> bool:
+    """Return whether ownership is loan/property-level rather than person-level."""
+    type_key = str(document_type or "").strip().casefold()
+    if type_key == "cersai report":
+        return _cersai_search_type(_as_page_list(pages)) != CERSAI_DEBTOR_BASED
+    return type_key in LOAN_LEVEL_DOCUMENT_TYPES
+
+
+def _as_page_list(
+    pages: list[dict[str, Any]] | dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if isinstance(pages, dict):
+        return [pages]
+    return [page for page in (pages or []) if isinstance(page, dict)]
+
+
+def _cersai_search_type(pages: list[dict[str, Any]]) -> str:
+    """Read subtype from extraction metadata first, then intrinsic OCR text."""
+    for page in pages:
+        fields = page.get("extracted_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        ownership = fields.get("_ownership")
+        if isinstance(ownership, dict) and ownership.get("cersai_search_type"):
+            nested_fields = {"cersai_search_type": ownership["cersai_search_type"]}
+            detected = detect_cersai_search_type("", nested_fields)
+            if detected != CERSAI_UNKNOWN:
+                return detected
+        detected = detect_cersai_search_type(page.get("ocr_text"), fields)
+        if detected != CERSAI_UNKNOWN:
+            return detected
+    return CERSAI_UNKNOWN
+
+
+def _cersai_debtor_identity_page(pages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build one identity record containing only CERSAI search-subject fields."""
+    combined_text = "\n".join(str(page.get("ocr_text") or "") for page in pages)
+    extracted: dict[str, Any] = {}
+    if combined_text.strip():
+        # Lazy import avoids making the general extractor depend on ownership.
+        from services.field_extractor import extract_fields
+
+        extracted = extract_fields("CERSAI Report", combined_text)
+
+    debtor_name = extracted.get("debtor_name")
+    debtor_pan = extracted.get("debtor_pan_number")
+    debtor_dob = extracted.get("debtor_date_of_birth")
+    for page in pages:
+        fields = page.get("extracted_fields")
+        if not isinstance(fields, dict):
+            continue
+        if detect_cersai_search_type(page.get("ocr_text"), fields) != CERSAI_DEBTOR_BASED:
+            continue
+        debtor_name = debtor_name or fields.get("debtor_name") or fields.get("applicant_name")
+        debtor_pan = debtor_pan or fields.get("debtor_pan_number") or fields.get("pan_number")
+        debtor_dob = (
+            debtor_dob
+            or fields.get("debtor_date_of_birth")
+            or fields.get("date_of_birth")
+            or fields.get("dob")
+        )
+
+    subject_fields = {
+        "cersai_search_type": CERSAI_DEBTOR_BASED,
+        "debtor_name": debtor_name,
+        "debtor_pan_number": debtor_pan,
+        "debtor_date_of_birth": debtor_dob,
+        "applicant_name": debtor_name,
+        "pan_number": debtor_pan,
+        "date_of_birth": debtor_dob,
+    }
+    return {
+        "document_type": "CERSAI Report",
+        "ocr_text": "",
+        "extracted_fields": subject_fields,
+    }
+
+
+def _resolve_cersai_debtor_owner(
+    pages: list[dict[str, Any]],
+    people: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Resolve a debtor-based report by debtor PAN, then debtor identity."""
+    subject_page = _cersai_debtor_identity_page(pages)
+    observations = identity_observations([subject_page])
+    observed_pans = {
+        re.sub(r"\s+", "", str(value or "")).upper()
+        for value in observations.get("pan_number") or []
+        if re.fullmatch(
+            r"[A-Z]{5}\d{4}[A-Z]",
+            re.sub(r"\s+", "", str(value or "")).upper(),
+        )
+    }
+    if observed_pans:
+        pan_matches = {
+            person_id
+            for person_id, person in people.items()
+            if re.sub(
+                r"\s+",
+                "",
+                str(first_value(person, FIELD_ALIASES["pan_number"]) or ""),
+            ).upper() in observed_pans
+        }
+        if len(pan_matches) == 1:
+            return {
+                "person_id": next(iter(pan_matches)),
+                "confidence": 1.0,
+                "evidence": ["cersai_debtor_pan_number", "pan_number"],
+            }
+        return {
+            "person_id": None,
+            "confidence": 0.0,
+            "evidence": [
+                "cersai_debtor_pan_ambiguous"
+                if pan_matches
+                else "cersai_debtor_pan_not_in_trusted_data"
+            ],
+        }
+
+    identity = _score_people([subject_page], people)
+    if identity.get("best_id"):
+        return {
+            "person_id": identity["best_id"],
+            "confidence": identity["confidence"],
+            "evidence": sorted(set([
+                *(identity.get("evidence") or []),
+                "cersai_debtor_identity",
+            ])),
+        }
+    return {
+        "person_id": None,
+        "confidence": 0.0,
+        "evidence": ["cersai_debtor_identity_unresolved"],
+    }
+
+
+def _cersai_document_groups(pages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group contiguous CERSAI pages so result pages inherit the debtor owner."""
+    groups: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_source: str | None = None
+    current_has_search = False
+
+    for page in sorted(pages, key=lambda item: int(item.get("page_number") or 0)):
+        if str(page.get("document_type") or "").strip().casefold() != "cersai report":
+            if current:
+                groups.append(current)
+            current = []
+            current_source = None
+            current_has_search = False
+            continue
+
+        source = str(
+            page.get("source_document_id")
+            or page.get("document_instance_id")
+            or page.get("report_id")
+            or ""
+        ).strip() or None
+        fields = page.get("extracted_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        page_has_search = bool(
+            re.search(r"\bsearch\s+criteria\s+entered\b", str(page.get("ocr_text") or ""), re.I)
+            or fields.get("debtor_name")
+            or fields.get("debtor_pan_number")
+        )
+        source_changed = bool(current and current_source and source and current_source != source)
+        starts_next_report = bool(current and current_has_search and page_has_search)
+        if source_changed or starts_next_report:
+            groups.append(current)
+            current = []
+            current_has_search = False
+
+        current.append(page)
+        current_source = source or current_source
+        current_has_search = current_has_search or page_has_search
+
+    if current:
+        groups.append(current)
+    return groups
 
 
 def resolve_person_owner(
@@ -154,7 +363,21 @@ def resolve_person_owner(
     if not type_key and page_list:
         type_key = str(page_list[0].get("document_type") or "").strip().lower()
 
-    identity = _score_people(page_list, people)
+    cersai_type = (
+        _cersai_search_type(page_list)
+        if type_key == "cersai report"
+        else CERSAI_UNKNOWN
+    )
+    if cersai_type == CERSAI_DEBTOR_BASED:
+        # A debtor-based result may list the other applicant/co-applicants in
+        # its output. Ownership is determined only by the debtor entered in the
+        # search criteria, with the debtor PAN taking precedence over names.
+        return _resolve_cersai_debtor_owner(page_list, people)
+
+    identity = _score_people(
+        [] if type_key == "cersai report" else page_list,
+        people,
+    )
     provided = str(provided_person_id or "").strip() or None
     source_role = source_role_from_filename(
         source_filename
@@ -326,6 +549,14 @@ def assign_page_owners(
                 page["person_id"] = "unassigned"
         return pages
 
+    cersai_group_owners: dict[int, dict[str, Any]] = {}
+    for group in _cersai_document_groups(pages):
+        if _cersai_search_type(group) != CERSAI_DEBTOR_BASED:
+            continue
+        group_owner = resolve_person_owner(group, people, "CERSAI Report")
+        for grouped_page in group:
+            cersai_group_owners[id(grouped_page)] = group_owner
+
     for page in pages:
         existing = str(page.get("person_id") or page.get("applicant_role") or "").strip()
         provided = existing if existing and existing not in {"unassigned", "unknown"} else None
@@ -346,19 +577,26 @@ def assign_page_owners(
             provided = provided or str(zip_cls.get("predicted_person_id"))
 
         document_type = str(page.get("document_type") or "")
-        owner = resolve_person_owner(
-            [page],
-            people,
-            document_type,
-            provided_person_id=provided,
-            provided_person_is_document_scope=provided_person_is_document_scope,
-            source_filename=str(page.get("source_filename") or "") or None,
-        )
+        if id(page) in cersai_group_owners:
+            owner = dict(cersai_group_owners[id(page)])
+        else:
+            owner = resolve_person_owner(
+                [page],
+                people,
+                document_type,
+                provided_person_id=provided,
+                provided_person_is_document_scope=provided_person_is_document_scope,
+                source_filename=str(page.get("source_filename") or "") or None,
+            )
         type_key = document_type.strip().lower()
         person_id = owner.get("person_id")
+        requires_person = (
+            id(page) in cersai_group_owners
+            or document_requires_person_owner(document_type, [page])
+        )
 
         if person_id is None:
-            if type_key in PERSON_SCOPED_DOCUMENT_TYPES or len(people) > 1:
+            if requires_person or type_key in PERSON_SCOPED_DOCUMENT_TYPES or len(people) > 1:
                 person_id = "unassigned"
             elif "primary" in people:
                 person_id = "primary"
@@ -378,6 +616,8 @@ def assign_page_owners(
             "evidence": owner.get("evidence", []),
             "source_role": owner.get("source_role"),
         }
+        if id(page) in cersai_group_owners:
+            ownership_meta["cersai_search_type"] = CERSAI_DEBTOR_BASED
         if provided_person_is_document_scope:
             # Keep the provenance durable across the checklist's intentional
             # second ownership pass inside consistency checks.
@@ -468,7 +708,7 @@ def ownership_anomalies_for_unassigned(
         document_type = str(page.get("document_type") or "Unknown")
         if person_id != "unassigned":
             continue
-        if document_type.strip().lower() not in PERSON_SCOPED_DOCUMENT_TYPES:
+        if not document_requires_person_owner(document_type, page):
             continue
         fields = page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
         ownership = fields.get("_ownership") if isinstance(fields, dict) else {}
@@ -586,7 +826,18 @@ def _score_people(
             expected = first_value(trusted, FIELD_ALIASES[field])
             if expected in (None, ""):
                 continue
-            if any(identity_matches(field, found, expected) for found in found_values):
+            if field == "applicant_name":
+                matched = any(
+                    name_matches_trusted_person(found, trusted)
+                    or identity_matches(field, found, expected)
+                    for found in found_values
+                )
+            else:
+                matched = any(
+                    identity_matches(field, found, expected)
+                    for found in found_values
+                )
+            if matched:
                 scores[person_id] += FIELD_WEIGHTS[field]
                 evidence[person_id].append(field)
 
@@ -906,6 +1157,12 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
                     str(page.get("document_type") or ""),
                 )
             )
+            observations["account_number"].extend(
+                _explicit_bank_account_observations(
+                    ocr_text,
+                    str(page.get("document_type") or ""),
+                )
+            )
             for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper()):
                 observations["pan_number"].append(match.group(0))
             for match in re.finditer(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", ocr_text):
@@ -914,6 +1171,8 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
                     and has_labeled_aadhaar_value(ocr_text, match.group(1))
                 ):
                     observations["aadhaar_number"].append(match.group(1))
+            for match in _MASKED_AADHAAR_LAST4_RE.finditer(ocr_text):
+                observations["aadhaar_number"].append(match.group(1))
             for match in re.finditer(r"\b[6-9]\d{9}\b", ocr_text):
                 observations["phone_number"].append(match.group(0))
     return observations
@@ -922,6 +1181,8 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
 def _explicit_name_observations(text: str, document_type: str) -> list[str]:
     """Return subject-name evidence while excluding relationship-only names."""
     type_key = str(document_type or "").strip().casefold()
+    if type_key == "cheque":
+        return _cheque_signature_name_observations(text)
     if type_key in {"bank statement", "passbook"}:
         # These pages often omit a clean label but retain a unique account-holder
         # name in a short header.  Existing haystack matching remains useful.
@@ -941,6 +1202,49 @@ def _explicit_name_observations(text: str, document_type: str) -> list[str]:
                 continue
             candidates.append(candidate)
     return candidates
+
+
+def _cheque_signature_name_observations(text: str) -> list[str]:
+    """Read the printed holder beside a cheque's signature instruction."""
+    candidates: list[str] = []
+    for match in re.finditer(
+        r"\b(?:mr|mrs|ms|miss|shri|smt|sri)\.?\s+"
+        r"([A-Za-z][A-Za-z .'-]{2,60}?)(?=\s*(?:\r?\n|$))",
+        str(text or ""),
+        re.IGNORECASE,
+    ):
+        signature_window = str(text or "")[match.end() : match.end() + 240]
+        if not re.search(
+            r"\b(?:please\s+sign\s+abov[es]|authori[sz]ed\s+signatory)\b",
+            signature_window,
+            re.IGNORECASE,
+        ):
+            continue
+        candidate = match.group(1).strip(" .'-\t")
+        if is_person_name_candidate(candidate):
+            candidates.append(candidate)
+    return candidates
+
+
+def _explicit_bank_account_observations(text: str, document_type: str) -> list[str]:
+    """Return full, labelled bank-account values from person-scoped bank docs."""
+    type_key = str(document_type or "").strip().casefold()
+    if type_key not in {"bank statement", "passbook", "cheque"}:
+        return []
+
+    values: list[str] = []
+    pattern = re.compile(
+        r"(?:account\s*(?:number|no\.?|#)|"
+        r"a\s*[/\\lI|]?\s*c\s*(?:number|no\.)?|"
+        r"a[lI]?[ct]\s*(?:number|no\.?))"
+        r"\s*[:\-\u2013]?\s*(?:\r?\n\s*)?([0-9][0-9 \t]{7,24})(?!\d)",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(str(text or "")):
+        digits = _digits(match.group(1))
+        if 8 <= len(digits) <= 20:
+            values.append(digits)
+    return list(dict.fromkeys(values))
 
 
 def first_value(values: dict[str, Any], aliases: tuple[str, ...]) -> Any:
@@ -987,6 +1291,16 @@ def identity_matches(field: str, found: Any, expected: Any) -> bool:
         return left_digits == right_digits and bool(left_digits)
     if field == "pan_number":
         return re.sub(r"\s+", "", left).upper() == re.sub(r"\s+", "", right).upper()
+    if field == "account_number":
+        left_digits = _digits(left)
+        right_digits = _digits(right)
+        # Masked suffixes are useful for field review but are not unique enough
+        # to establish person ownership.
+        return (
+            len(left_digits) >= 8
+            and len(right_digits) >= 8
+            and left_digits == right_digits
+        )
     return _words(left) == _words(right)
 
 

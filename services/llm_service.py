@@ -107,6 +107,7 @@ def build_default_summary(anomalies: list[dict], ground_truth: dict) -> dict:
         page_summaries.append({
             "page_number": page_num,
             "document_type": doc_type,
+            "rule_id": anomaly.get("rule_id"),
             "summary_points": summary_points,
             "problem_description": reason
         })
@@ -155,12 +156,11 @@ def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
         "Use the following structure for the TOON output:\n"
         "overall_summary: A concise summary of the loan file review results.\n"
         "final_recommendation: APPROVE / SEND BACK TO BRANCH / MANUAL REVIEW\n\n"
-        "page_summaries[1]{page_number,document_type,summary_points,problem_description}:\n"
-        "  3,Bank Statement,[\"Statement is for State Bank of India account\",\"Covers April to June 2026\"],Applicant name does not match the application.\n\n"
+        "page_summaries[1]{page_number,document_type,rule_id,summary_points,problem_description}:\n"
+        "  3,Bank Statement,TRUSTED_NAME_MISMATCH,[\"Statement is for State Bank of India account\",\"Covers April to June 2026\"],Applicant name does not match the application.\n\n"
         f"Loan file {loan_id} for {applicant_name}.\n"
         "Ground truth from application form (TOON):\n"
         f"{encode(ground_truth)}\n"
         "Anomalies detected (TOON):\n"
         f"{encode(anomalies)}\n"
     )
-

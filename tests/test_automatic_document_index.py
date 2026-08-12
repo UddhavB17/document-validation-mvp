@@ -1,4 +1,5 @@
 from services.automatic_document_index import build_automatic_document_index
+from services.field_extractor import extract_fields
 
 
 def _page(number: int, document_type: str, fields: dict, *, detected: int | None = None) -> dict:
@@ -65,7 +66,57 @@ def test_does_not_guess_kyc_owner_when_multiple_people_have_no_matching_identity
 
     assert result["documents"] == []
     assert result["anomalies"][0]["rule_id"] == "AUTO_OWNER_UNRESOLVED"
+    assert result["anomalies"][0]["expected_value"] == "Automatic person assignment"
     assert result["unclassified_pages"] == [4]
+
+
+def test_low_document_type_confidence_is_not_reported_as_person_assignment_failure() -> None:
+    page = _page(
+        127,
+        "Loan Agreement",
+        {
+            "applicant_name": "Kala Singh",
+            "_classification": {
+                "assigned_type": "Loan Agreement",
+                "detection_method": "filename_inference",
+                "raw_document_type": "Unknown",
+                "raw_confidence": 0.0,
+            },
+        },
+    )
+    page["classification_confidence"] = 0.0
+    page["detection_method"] = "filename_inference"
+
+    result = build_automatic_document_index(
+        [page],
+        {
+            "primary": {"applicant_name": "Kala Singh"},
+            "coapplicant_1": {"applicant_name": "Seeta Seeta"},
+        },
+        source_documents=[{
+            "source_document_id": "file-0021",
+            "original_filename": "loan Agreement.pdf",
+            "internal_page_start": 127,
+            "internal_page_end": 127,
+        }],
+    )
+
+    assert result["documents"] == []
+    assert result["anomalies"] == [{
+        "rule_id": "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
+        "s_no": None,
+        "severity": "LOW",
+        "document_type": "Loan Agreement",
+        "person_id": None,
+        "person_role": None,
+        "matched_person_id": None,
+        "field_name": None,
+        "status": "MANUAL_REVIEW_REQUIRED",
+        "expected_value": "Document type confidence of at least 50%",
+        "found_value": "0% confidence",
+        "page_number": 127,
+        "reason": "Document type confidence was too low for trusted JSON field comparison.",
+    }]
 
 
 def test_loan_level_docs_skip_owner_noise_and_still_index() -> None:
@@ -85,6 +136,30 @@ def test_loan_level_docs_skip_owner_noise_and_still_index() -> None:
     assert result["anomalies"] == []
     assert len(result["documents"]) == 2
     assert all(item["applicant_role"] == "primary" for item in result["documents"])
+
+
+def test_debtor_based_cersai_index_uses_debtor_pan_as_person_scope() -> None:
+    text = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+SITA KUMAR
+PAN
+FGHIJ5678K
+Search Output Details
+Applicant RAMESH KUMAR PAN ABCDE1234F
+"""
+    cersai_page = _page(1, "CERSAI Report", extract_fields("CERSAI Report", text))
+    cersai_page["ocr_text"] = text
+    result = build_automatic_document_index(
+        [cersai_page],
+        {
+            "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+        },
+    )
+
+    assert result["anomalies"] == []
+    assert result["documents"][0]["applicant_role"] == "coapplicant_1"
 
 
 def test_strong_deterministic_type_wins_over_disagreeing_llm_advice() -> None:

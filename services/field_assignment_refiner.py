@@ -13,6 +13,7 @@ from toon import decode, encode
 from services.config import get_bool
 from services.llm_client import llm_provider
 from services.person_names import canonicalize_person_name, is_name_field
+from services.validation_gates import is_aadhaar_verification_appendix
 from services.structured_llm_classifier import (
     DEFAULT_MODEL,
     _call_ollama_generate,
@@ -63,7 +64,7 @@ _EXPECTED_FIELDS = {
     "Cheque": ("account_holder_name", "account_number", "cheque_number", "ifsc", "cheque_date", "amount", "is_cancelled"),
     "CIBIL Report": ("applicant_name", "credit_score", "report_date"),
     "CRIF Report": ("applicant_name", "credit_score", "report_date"),
-    "Driving License": ("applicant_name", "dl_number", "dob", "validity_date", "address"),
+    "Driving License": ("applicant_name", "dl_number", "dob", "date_of_issue", "validity_date", "address"),
     "Loan Agreement": ("borrower_name", "loan_amount", "tenure", "emi", "roi", "agreement_date"),
     "PAN": ("applicant_name", "father_name", "dob", "pan_number"),
     "PAN Card": ("applicant_name", "father_name", "dob", "pan_number"),
@@ -94,6 +95,19 @@ def refine_field_assignments(
     extracted_fields: dict[str, Any],
 ) -> dict[str, Any]:
     """Clean impossible field values and ask the LLM only when assignment is weak."""
+    if document_type == "Aadhaar" and (
+        extracted_fields.get("_aadhaar_verification_appendix") is True
+        or is_aadhaar_verification_appendix(ocr_text)
+    ):
+        # The certificate subject contains the signer's postal code.  Asking
+        # the LLM to fill missing Aadhaar fields can misassign it to the holder.
+        private_fields = {
+            key: value
+            for key, value in extracted_fields.items()
+            if str(key).startswith("_")
+        }
+        return {**private_fields, "_aadhaar_verification_appendix": True}
+
     cleaned_fields, deterministic_changes = _remove_suspicious_values(extracted_fields)
     if not _should_call_llm(document_type, cleaned_fields, deterministic_changes):
         return _with_assignment_metadata(cleaned_fields, deterministic_changes, llm_metadata=None)
@@ -124,7 +138,7 @@ def is_suspicious_assignment(field_name: str, value: Any) -> bool:
         return True
     if is_name_field(field_name):
         return not canonicalize_person_name(text).valid or _looks_like_non_name(normalized)
-    if field_name == "address":
+    if field_name in {"address", "current_address", "permanent_address", "communication_address"}:
         return _looks_like_address_placeholder(normalized)
     return False
 
@@ -147,6 +161,11 @@ def _should_call_llm(
     if not get_bool("ENABLE_LLM_FIELD_ASSIGNMENT", False):
         return False
     if not document_type or document_type in {"Unknown", "Property Image", "OCR Skipped"}:
+        return False
+    if document_type == "CERSAI Report":
+        # CERSAI result pages can contain every loan party plus the registry's
+        # corporate PAN.  A generic field model must not choose one of those as
+        # the debtor when deterministic Search Criteria extraction is missing.
         return False
     if deterministic_changes:
         return True
@@ -340,7 +359,17 @@ def _looks_like_non_name(normalized: str) -> bool:
 def _looks_like_address_placeholder(normalized: str) -> bool:
     placeholder_words = {"city", "code", "district", "landmark", "locality", "pin"}
     words = set(re.findall(r"[a-z]+", normalized))
-    return len(words & placeholder_words) >= 4 and not re.search(r"\d", normalized)
+    if len(words & placeholder_words) >= 4 and not re.search(r"\d", normalized):
+        return True
+    form_label_patterns = (
+        r"\baadhaar\s+no\b",
+        r"\bdriving\s+licen[cs]e\b",
+        r"\bprofessionally\s+qualified\b",
+        r"\bbusiness\s+constitution\b",
+        r"\b(?:graduate|postgraduate|post\s+graduate)\b",
+        r"\b(?:mobile|telephone|whatsapp)(?:\s+(?:number|no|contact))?\b",
+    )
+    return sum(bool(re.search(pattern, normalized)) for pattern in form_label_patterns) >= 2
 
 
 def _coerce_confidence(value: Any) -> float | None:

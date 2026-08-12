@@ -375,6 +375,7 @@ function AiAuditInsights({
   interface PageSummary {
     page_number?: number | null;
     document_type?: string | null;
+    rule_id?: string | null;
     summary_points?: string[];
     problem_description?: string;
   }
@@ -448,10 +449,14 @@ function AiAuditInsights({
             <div className="grid gap-4 md:grid-cols-1">
               {parsed.page_summaries.map((item, index) => {
                 const hasPage = typeof item.page_number === "number" || (typeof item.page_number === "string" && item.page_number);
-                const correspondingAnomaly = data.anomalies.find(a => 
+                const pageAnomalies = data.anomalies.filter(a =>
                   a.page_number === Number(item.page_number) || 
                   a.collapsed_page_numbers?.includes(Number(item.page_number))
                 );
+                const correspondingAnomaly =
+                  pageAnomalies.find(a => item.rule_id && a.rule_id === item.rule_id) ??
+                  pageAnomalies.find(a => item.problem_description && a.reason === item.problem_description) ??
+                  (pageAnomalies.length === 1 ? pageAnomalies[0] : undefined);
                 return (
                   <div key={index} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden flex flex-col hover:border-violet-300 transition-colors duration-200">
                     <div className="bg-slate-50/50 border-b border-slate-150 px-4 py-2.5 flex items-center justify-between">

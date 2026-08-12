@@ -6,8 +6,10 @@ from services.consistency_checks import run_consistency_checks
 from services.person_ownership import (
     assign_page_owners,
     name_matches_trusted_person,
+    ownership_anomalies_for_unassigned,
     resolve_person_owner,
 )
+from services.field_extractor import extract_fields
 
 
 PEERU_FAMILY = {
@@ -98,6 +100,193 @@ def test_cibil_does_not_default_to_primary_when_unmatched() -> None:
         "CIBIL Report",
     )
     assert owner["person_id"] is None
+
+
+def test_cheque_owner_resolves_from_exact_full_account_number() -> None:
+    owner = resolve_person_owner(
+        {
+            "document_type": "Cheque",
+            "ocr_text": "CHEQUE\nA/c No.\n41249946368",
+            "extracted_fields": {"account_number": "41249946368"},
+        },
+        {
+            "primary": {
+                "applicant_name": "Kala Singh",
+                "account_number": "41249946368",
+            },
+            "coapplicant_1": {
+                "applicant_name": "Seeta Seeta",
+                "account_number": "99999999999",
+            },
+        },
+        "Cheque",
+    )
+
+    assert owner["person_id"] == "primary"
+    assert owner["confidence"] == 1.0
+    assert owner["evidence"] == ["account_number"]
+
+
+def test_cheque_owner_resolves_from_printed_signature_holder_name() -> None:
+    owner = resolve_person_owner(
+        {
+            "document_type": "Cheque",
+            "ocr_text": (
+                "State Bank Of India\nA/c No.\n41249946368\n"
+                "Mr. Kala Singh\nPlease sign above"
+            ),
+            # Reproduce the old extractor mistake from application 93.
+            "extracted_fields": {"account_holder_name": "State Bank Of India"},
+        },
+        {
+            "primary": {"applicant_name": "Kala Singh"},
+            "coapplicant_1": {"applicant_name": "Seeta Seeta"},
+        },
+        "Cheque",
+    )
+
+    assert owner["person_id"] == "primary"
+    assert owner["evidence"] == ["applicant_name"]
+
+
+def test_cersai_debtor_pan_assigns_report_to_coapplicant_only() -> None:
+    text = """Debtor Based Search Report
+CERSAI Details
+PAN
+AAECC5770G
+Search Criteria Entered
+Name of the Debtor
+RADHA BAI
+PAN
+TSTCC0003T
+Search Output Details
+Applicant PEERU LAL PAN TSTAA0001T
+Co-Applicant UNKAR LAL PAN TSTBB0002T
+"""
+    owner = resolve_person_owner(
+        {
+            "document_type": "CERSAI Report",
+            "ocr_text": text,
+            "extracted_fields": extract_fields("CERSAI Report", text),
+        },
+        PEERU_FAMILY,
+        "CERSAI Report",
+    )
+
+    assert owner["person_id"] == "coapplicant_2"
+    assert owner["confidence"] == 1.0
+    assert "cersai_debtor_pan_number" in owner["evidence"]
+
+
+def test_cersai_primary_debtor_assigns_only_to_primary() -> None:
+    text = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+PEERU LAL
+PAN
+TSTAA0001T
+Search Output Details
+No Match Found
+"""
+    owner = resolve_person_owner(
+        {
+            "document_type": "CERSAI Report",
+            "ocr_text": text,
+            "extracted_fields": extract_fields("CERSAI Report", text),
+        },
+        PEERU_FAMILY,
+        "CERSAI Report",
+    )
+
+    assert owner["person_id"] == "primary"
+    assert owner["evidence"] == ["cersai_debtor_pan_number", "pan_number"]
+
+
+def test_cersai_result_pages_inherit_debtor_owner_not_people_in_output() -> None:
+    cover_text = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+UNKAR LAL
+PAN
+TSTBB0002T
+Search Output Details
+"""
+    pages = [
+        {
+            "page_number": 1,
+            "document_type": "CERSAI Report",
+            "ocr_text": cover_text,
+            "extracted_fields": extract_fields("CERSAI Report", cover_text),
+        },
+        {
+            "page_number": 2,
+            "document_type": "CERSAI Report",
+            "ocr_text": "Applicant PEERU LAL PAN TSTAA0001T; Co-Applicant RADHA BAI PAN TSTCC0003T",
+            # Simulate stale/generic extraction from a result page. It must not
+            # take ownership away from the debtor on the cover/search page.
+            "extracted_fields": {
+                "applicant_name": "PEERU LAL",
+                "pan_number": "TSTAA0001T",
+            },
+        },
+    ]
+
+    assign_page_owners(pages, {"people": PEERU_FAMILY})
+
+    assert [page["person_id"] for page in pages] == ["coapplicant_1", "coapplicant_1"]
+    assert all(
+        page["extracted_fields"]["_ownership"]["cersai_search_type"] == "debtor_based"
+        for page in pages
+    )
+
+
+def test_unmatched_cersai_debtor_is_unassigned_instead_of_primary() -> None:
+    text = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+OUTSIDE PERSON
+PAN
+ZZZZZ9999Z
+Search Output Details
+No Match Found
+"""
+    page = {
+        "page_number": 1,
+        "document_type": "CERSAI Report",
+        "ocr_text": text,
+        "extracted_fields": extract_fields("CERSAI Report", text),
+    }
+
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+
+    assert page["person_id"] == "unassigned"
+    anomalies = ownership_anomalies_for_unassigned([page])
+    assert [item["rule_id"] for item in anomalies] == ["AUTO_OWNER_UNRESOLVED"]
+
+
+def test_asset_based_cersai_remains_loan_level_and_ignores_result_pans() -> None:
+    text = """Asset Based Search Report
+CERSAI Details
+PAN
+AAECC5770G
+Search Criteria Entered
+Asset Category
+Immovable
+Search Output Details
+Co-Applicant RADHA BAI PAN TSTCC0003T
+"""
+    owner = resolve_person_owner(
+        {
+            "document_type": "CERSAI Report",
+            "ocr_text": text,
+            "extracted_fields": extract_fields("CERSAI Report", text),
+        },
+        PEERU_FAMILY,
+        "CERSAI Report",
+    )
+
+    assert owner["person_id"] == "primary"
+    assert owner["evidence"] == ["loan_level_document"]
 
 
 def test_assign_page_owners_stamps_coapplicant_pages() -> None:
@@ -248,6 +437,70 @@ def test_duplicated_trusted_name_tokens_still_match() -> None:
     assert name_matches_trusted_person(
         "Kuldeep", {"applicant_name": "Kuldeep KULDEEP"}
     )
+
+
+def test_passbook_owner_uses_duplicate_aware_name_matching() -> None:
+    people = {
+        "primary": {
+            "role": "primary",
+            "applicant_name": "Kala Singh",
+        },
+        "coapplicant_1": {
+            "role": "coapplicant",
+            "applicant_name": "Seeta Seeta",
+        },
+        "coapplicant_2": {
+            "role": "coapplicant",
+            "applicant_name": "Kuldeep Singh",
+        },
+    }
+
+    owner = resolve_person_owner(
+        {
+            "document_type": "Passbook",
+            "extracted_fields": {"account_holder_name": "'SEETA'"},
+        },
+        people,
+        "Passbook",
+        source_filename="Co-Applicant/BANK/passbook-front.jpg",
+    )
+
+    assert owner["person_id"] == "coapplicant_1"
+    assert "applicant_name" in owner["evidence"]
+
+
+def test_passbook_owner_uses_labeled_masked_aadhaar_last_four() -> None:
+    people = {
+        "primary": {
+            "role": "primary",
+            "applicant_name": "Kala Singh",
+            "aadhaar_last4": "3436",
+        },
+        "coapplicant_1": {
+            "role": "coapplicant",
+            "applicant_name": "Seeta Seeta",
+            "aadhaar_last4": "1641",
+        },
+        "coapplicant_2": {
+            "role": "coapplicant",
+            "applicant_name": "Kuldeep Singh",
+            "aadhaar_last4": "8671",
+        },
+    }
+
+    owner = resolve_person_owner(
+        {
+            "document_type": "Passbook",
+            "ocr_text": "Punjab National Bank Passbook\nAadhaar XX1641",
+            "extracted_fields": {},
+        },
+        people,
+        "Passbook",
+        source_filename="Co-Applicant/BANK/passbook-front.jpg",
+    )
+
+    assert owner["person_id"] == "coapplicant_1"
+    assert "aadhaar_number" in owner["evidence"]
 
 
 def test_strong_pan_overrides_wrong_provided_mapping() -> None:

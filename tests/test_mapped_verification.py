@@ -4,6 +4,7 @@ import database.db as db
 from services.automatic_document_index import build_automatic_document_index
 from database.db import get_connection, init_db
 from services.mapped_verification import compare_processed_pages, run_mapped_verification
+from services.field_extractor import extract_fields
 from services.field_verification import verify_name
 from services.reviewer import build_reviewer_summary, load_reviewer_summary
 from services.verification_manifest import VerificationManifest
@@ -99,6 +100,87 @@ def test_shared_pipeline_comparison_matches_case_insensitive_name_and_classifies
         "predicted_document_type": "PAN",
         "document_type_votes": {"PAN": 1},
     }]
+
+
+def test_mapped_cersai_uses_debtor_pan_over_wrong_provided_person() -> None:
+    text = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+SITA KUMAR
+PAN
+FGHIJ5678K
+Search Output Details
+Applicant RAMESH KUMAR PAN ABCDE1234F
+"""
+    pages = [{
+        "page_number": 1,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": text,
+        "ocr_confidence": 1.0,
+        "document_type": "CERSAI Report",
+        "classification_confidence": 0.98,
+        "extracted_fields": extract_fields("CERSAI Report", text),
+    }]
+    manifest = {
+        "reference_data": {
+            "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+        },
+        "documents": [{
+            "source_document_id": "cersai-1",
+            # Deliberately wrong: debtor evidence must override this mapping.
+            "applicant_role": "primary",
+            "document_type": "CERSAI Report",
+            "pages": [1],
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert pages[0]["person_id"] == "coapplicant_1"
+    assert pages[0]["extracted_fields"]["_provided_mapping"]["provided_person_id"] == "primary"
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 2
+    assert result["matched_fields"] == 2
+
+
+def test_multipage_bank_statement_does_not_require_name_on_continuation_pages() -> None:
+    pages = [
+        {
+            "page_number": 47,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Bank Statement\nTransaction Date Narration Debit Credit Balance",
+            "document_type": "Bank Statement",
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 48,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": "Bank Statement continuation\nTransaction Date Narration Debit Credit Balance",
+            "document_type": "Bank Statement",
+            "extracted_fields": {},
+        },
+    ]
+    result = compare_processed_pages(
+        pages,
+        {
+            "reference_data": {"primary": {"applicant_name": "Ramesh Kumar"}},
+            "documents": [{
+                "source_document_id": "statement-1",
+                "applicant_role": "primary",
+                "document_type": "Bank Statement",
+                "pages": [47, 48],
+            }],
+        },
+    )
+
+    assert not any(
+        item["rule_id"] == "APPLICANT_NAME_NOT_FOUND"
+        for item in result["anomalies"]
+    )
 
 
 def test_mapped_verification_rejects_address_like_applicant_name_candidate() -> None:

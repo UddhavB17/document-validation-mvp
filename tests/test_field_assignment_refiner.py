@@ -1,3 +1,4 @@
+import services.field_assignment_refiner as field_assignment_refiner
 from services.field_assignment_refiner import _parse_toon_object, refine_field_assignments
 
 
@@ -24,6 +25,65 @@ def test_table_column_headings_are_not_accepted_as_names(monkeypatch) -> None:
             extracted_fields={"applicant_name": value},
         )
         assert result["applicant_name"] is None
+
+
+def test_noisy_permanent_address_is_removed(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_LLM_FIELD_ASSIGNMENT", "false")
+    noisy_address = (
+        "Driving License No Graduate Postgraduate Aadhaar No 641 "
+        "Professionally qualified Mobile 8690456870 Business Constitution 335027"
+    )
+
+    result = refine_field_assignments(
+        document_type="Application Form",
+        ocr_text=noisy_address,
+        extracted_fields={"permanent_address": noisy_address},
+    )
+
+    assert result["permanent_address"] is None
+    assert result["_field_assignment"]["deterministic_changes"]["permanent_address"]["reason"] == (
+        "label_or_placeholder_value"
+    )
+
+
+def test_signed_aadhaar_xml_appendix_never_calls_llm_or_keeps_public_fields(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_LLM_FIELD_ASSIGNMENT", "true")
+
+    def unexpected_llm_call(**_kwargs):
+        raise AssertionError("verification appendix must not be sent to the LLM")
+
+    monkeypatch.setattr(field_assignment_refiner, "_assign_with_llm", unexpected_llm_call)
+    result = refine_field_assignments(
+        document_type="Aadhaar",
+        ocr_text=(
+            "Digitally signed e-Aadhaar XML\n"
+            '<UidData uid="xxxxxxxx1641"><Poa pc="335027"/></UidData>\n'
+            "CN=DS DIGITAL INDIA CORPORATION 3,postalCode=110003"
+        ),
+        extracted_fields={"pin_code": "'110003'", "related_person_name": "'Seeta'"},
+    )
+
+    assert result == {"_aadhaar_verification_appendix": True}
+
+
+def test_cersai_never_uses_generic_llm_to_choose_a_debtor(monkeypatch) -> None:
+    monkeypatch.setenv("ENABLE_LLM_FIELD_ASSIGNMENT", "true")
+
+    def unexpected_llm_call(**_kwargs):
+        raise AssertionError("CERSAI debtor identity must come from Search Criteria")
+
+    monkeypatch.setattr(field_assignment_refiner, "_assign_with_llm", unexpected_llm_call)
+    result = refine_field_assignments(
+        document_type="CERSAI Report",
+        ocr_text=(
+            "Asset Based Search Report\nSearch Criteria Entered\n"
+            "Asset Category\nImmovable\nSearch Output Details\n"
+            "Co-Applicant RADHA BAI PAN TSTCC0003T"
+        ),
+        extracted_fields={"cersai_search_type": "asset_based", "applicant_name": None},
+    )
+
+    assert result["applicant_name"] is None
 
 
 def test_parse_field_assignment_accepts_json_and_fenced_json() -> None:

@@ -70,6 +70,7 @@ def test_build_default_summary():
     assert len(result["page_summaries"]) == 1
     assert result["page_summaries"][0]["page_number"] == 2
     assert result["page_summaries"][0]["document_type"] == "PAN Card"
+    assert result["page_summaries"][0]["rule_id"] == "PAN_NUMBER_MISMATCH"
     assert "Expected value was: ABCDE1234F." in result["page_summaries"][0]["summary_points"]
     assert result["page_summaries"][0]["problem_description"] == "PAN number does not match ground truth."
 

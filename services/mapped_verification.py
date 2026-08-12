@@ -113,6 +113,7 @@ DOCUMENT_FIELDS = {
     "voter id": {"applicant_name", "date_of_birth", "address"},
     "cibil report": {"applicant_name"},
     "crif report": {"applicant_name"},
+    "cersai report": {"applicant_name", "pan_number"},
     "bank statement": {"applicant_name", "account_number", "ifsc"},
     "passbook": {"applicant_name", "account_number", "ifsc"},
     "cheque": {"applicant_name", "account_number", "ifsc"},
@@ -153,6 +154,25 @@ _AGGREGATED_FIELD_DOC_TYPES = frozenset(
 
 # Below this OCR confidence on a scanned page we cannot trust field extraction.
 _LOW_OCR_CONFIDENCE_THRESHOLD = 0.55
+
+# Account statements and similar banking documents commonly print the holder
+# name only on the cover/first page.  The document-level comparison should
+# still validate a name when one is observed, but must not report a missing
+# name merely because a multi-page statement has no name-bearing page in the
+# mapped fragment.
+_OPTIONAL_ON_MULTIPAGE_BANKING_DOC_TYPES = frozenset(
+    {"bank statement", "passbook", "cheque"}
+)
+
+
+def _name_optional_for_multipage_document(
+    field: str, document_type: str, readable_pages: list[int]
+) -> bool:
+    return (
+        field == "applicant_name"
+        and document_type.strip().casefold() in _OPTIONAL_ON_MULTIPAGE_BANKING_DOC_TYPES
+        and len(set(readable_pages)) > 1
+    )
 
 
 def _mapped_ocr_router() -> OCRRouter:
@@ -200,7 +220,10 @@ def run_mapped_verification(
         )
         for mapping in manifest.get("documents") or []:
             document_type = str(mapping.get("document_type") or "Unknown")
-            person_id = str(mapping.get("applicant_role") or mapping.get("person_id") or "primary")
+            provided_person_id = str(
+                mapping.get("applicant_role") or mapping.get("person_id") or "primary"
+            )
+            person_id = provided_person_id
             expected = _expected_fields(reference_data, mapping, document_type)
             mapped_pages = [int(number) for number in mapping.get("pages") or []]
             if not mapped_pages:
@@ -214,6 +237,7 @@ def run_mapped_verification(
             unreliable_fields: dict[str, list[dict[str, Any]]] = {}
             readable_pages: list[int] = []
             inherited_ocr_route = None
+            mapping_page_start = len(pages)
             for page_number in mapped_pages:
                 if page_number < 1 or page_number > total_pages:
                     anomalies.append(_anomaly("PAGE_OUT_OF_RANGE", "HIGH", page_number, document_type, None,
@@ -330,6 +354,43 @@ def run_mapped_verification(
                     ),
                 )
 
+            mapping_page_records = pages[mapping_page_start:]
+            person_id, debtor_scoped, owner = _resolved_mapping_person(
+                document_type,
+                mapping_page_records,
+                reference_data,
+                provided_person_id,
+            )
+            expected = _resolved_mapping_expected_fields(
+                reference_data,
+                mapping,
+                document_type,
+                person_id,
+                debtor_scoped=debtor_scoped,
+            )
+            if debtor_scoped:
+                for page_record in mapping_page_records:
+                    page_record["person_id"] = person_id
+                    page_record["applicant_role"] = person_id
+                    fields = page_record.get("extracted_fields")
+                    if isinstance(fields, dict):
+                        fields["_ownership"] = {
+                            "person_id": person_id,
+                            "confidence": owner.get("confidence", 0.0),
+                            "evidence": owner.get("evidence", []),
+                            "cersai_search_type": "debtor_based",
+                        }
+                for field_observations in document_observations.values():
+                    for observation in field_observations:
+                        observation["person_id"] = person_id
+                if person_id == "unassigned" and mapped_pages:
+                    anomalies.append(_anomaly(
+                        "AUTO_OWNER_UNRESOLVED", "LOW", mapped_pages[0], document_type,
+                        "Debtor PAN matching a trusted applicant/co-applicant", None,
+                        "CERSAI debtor identity did not match any trusted person.",
+                        person_id=None,
+                    ))
+
             if not readable_pages:
                 anomalies.append(_anomaly("DOCUMENT_NOT_READABLE", "HIGH", mapped_pages[0], document_type,
                                           None, None, "Text extraction could not read the mapped document pages.",
@@ -344,6 +405,10 @@ def run_mapped_verification(
                 page_number = readable_pages[0]
                 if not field_observations:
                     if field == "applicant_name" and unreliable_fields.get(field):
+                        continue
+                    if _name_optional_for_multipage_document(
+                        field, document_type, readable_pages
+                    ):
                         continue
                     if unreliable_fields.get(field):
                         anomalies.append(_anomaly(
@@ -450,10 +515,29 @@ def compare_processed_pages(
 
     for mapping in documents:
         provided_type = str(mapping.get("document_type") or "Unknown")
-        person_id = str(mapping.get("applicant_role") or mapping.get("person_id") or "primary")
+        provided_person_id = str(
+            mapping.get("applicant_role") or mapping.get("person_id") or "primary"
+        )
         source_document_id = mapping.get("source_document_id")
         mapped_numbers = [int(number) for number in mapping.get("pages") or []]
-        expected = _expected_fields(reference_data, mapping, provided_type)
+        mapped_page_records = [
+            pages_by_number[number]
+            for number in mapped_numbers
+            if number in pages_by_number
+        ]
+        person_id, debtor_scoped, owner = _resolved_mapping_person(
+            provided_type,
+            mapped_page_records,
+            reference_data,
+            provided_person_id,
+        )
+        expected = _resolved_mapping_expected_fields(
+            reference_data,
+            mapping,
+            provided_type,
+            person_id,
+            debtor_scoped=debtor_scoped,
+        )
         document_observations: dict[str, list[dict[str, Any]]] = {}
         document_unreliable_fields: dict[str, list[dict[str, Any]]] = {}
         readable_pages: list[int] = []
@@ -467,6 +551,13 @@ def compare_processed_pages(
                     "No page was mapped for this required document.", person_id=person_id,
                 ))
             continue
+        if debtor_scoped and person_id == "unassigned":
+            anomalies.append(_anomaly(
+                "AUTO_OWNER_UNRESOLVED", "LOW", mapped_numbers[0], provided_type,
+                "Debtor PAN matching a trusted applicant/co-applicant", None,
+                "CERSAI debtor identity did not match any trusted person.",
+                person_id=None,
+            ))
 
         for page_number in mapped_numbers:
             page = pages_by_number.get(page_number)
@@ -486,12 +577,21 @@ def compare_processed_pages(
             _suppress_invalid_name_fields(fields)
             mapping_metadata = {
                 "person_id": person_id,
+                "provided_person_id": provided_person_id,
                 "provided_document_type": provided_type,
                 "source_document_id": source_document_id,
                 "pages": mapped_numbers,
             }
             fields["_provided_mapping"] = mapping_metadata
             page["person_id"] = person_id
+            page["applicant_role"] = person_id
+            if debtor_scoped:
+                fields["_ownership"] = {
+                    "person_id": person_id,
+                    "confidence": owner.get("confidence", 0.0),
+                    "evidence": owner.get("evidence", []),
+                    "cersai_search_type": "debtor_based",
+                }
             page["source_document_id"] = source_document_id
             page["provided_document_type"] = provided_type
 
@@ -655,6 +755,10 @@ def _verify_document_fields(
         field_observations = document_observations.get(field) or []
         if not field_observations:
             if field == "applicant_name" and (unreliable_fields or {}).get(field):
+                continue
+            if _name_optional_for_multipage_document(
+                field, provided_type, readable_pages
+            ):
                 continue
             if (unreliable_fields or {}).get(field):
                 page_number = ((unreliable_fields or {}).get(field) or [{}])[0].get("page_number")
@@ -947,6 +1051,55 @@ def _get_allowed_fields_for_type(document_type: str) -> set[str] | None:
         return set(db_fields) | set(DOCUMENT_FIELDS.get(doc_lower) or set())
 
     return DOCUMENT_FIELDS.get(doc_lower)
+
+
+def _resolved_mapping_person(
+    document_type: str,
+    pages: list[dict[str, Any]],
+    reference_data: dict[str, Any],
+    provided_person_id: str,
+) -> tuple[str, bool, dict[str, Any]]:
+    """Override a CERSAI mapping only when its entered debtor establishes scope."""
+    from services.person_ownership import (
+        document_requires_person_owner,
+        resolve_person_owner,
+    )
+
+    if str(document_type or "").strip().casefold() != "cersai report":
+        return provided_person_id, False, {
+            "person_id": provided_person_id,
+            "confidence": 0.7,
+            "evidence": ["provided_mapping"],
+        }
+    debtor_scoped = document_requires_person_owner(document_type, pages)
+    if not debtor_scoped:
+        return provided_person_id, False, {
+            "person_id": provided_person_id,
+            "confidence": 0.7,
+            "evidence": ["provided_mapping"],
+        }
+    owner = resolve_person_owner(pages, reference_data, document_type)
+    resolved = str(owner.get("person_id") or "unassigned")
+    return resolved, True, owner
+
+
+def _resolved_mapping_expected_fields(
+    reference_data: dict[str, Any],
+    mapping: dict[str, Any],
+    document_type: str,
+    person_id: str,
+    *,
+    debtor_scoped: bool,
+) -> dict[str, Any]:
+    if debtor_scoped and person_id == "unassigned":
+        return {}
+    effective_mapping = dict(mapping)
+    effective_mapping["applicant_role"] = person_id
+    if debtor_scoped:
+        # Explicit fields attached to the original page/person mapping can be
+        # stale. Rebuild expectations from the debtor's trusted person record.
+        effective_mapping.pop("expected_fields", None)
+    return _expected_fields(reference_data, effective_mapping, document_type)
 
 
 def _expected_fields(

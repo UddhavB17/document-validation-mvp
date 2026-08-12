@@ -164,7 +164,7 @@
     {
       "s_no": 10,
       "category": "Application Form / KYC",
-      "description": "Application form includes a second language other than Hindi",
+      "description": "Digital application form includes a second language (Hindi accepted)",
       "document_type": "Application Form",
       "check_type": "consistency_only",
       "required": true,

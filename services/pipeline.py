@@ -1129,7 +1129,14 @@ def _build_page_records(
                 phase_name = "field extraction"
                 _mark_page_phase(application_id, page_number, total_pages, "extracting fields")
                 phase_started_at = _log_page_phase_start(page_number, total_pages, phase_name)
-                extracted_fields = {**extracted_fields, **extract_fields(document_type, text)}
+                extracted_fields = {
+                    **extracted_fields,
+                    **_extract_fields_with_layout(
+                        document_type,
+                        text,
+                        ocr_metadata.get("structured_content"),
+                    ),
+                }
                 extracted_fields = refine_field_assignments(
                     document_type=document_type,
                     ocr_text=text,
@@ -1408,7 +1415,11 @@ def _refresh_page_from_cached_ocr(
         detection_method = "cached_visual_evidence"
         confidence = max(confidence, float(refreshed.get("classification_confidence") or 0.0))
 
-    fields = extract_fields(document_type, text)
+    fields = _extract_fields_with_layout(
+        document_type,
+        text,
+        refreshed.get("structured_content") or refreshed.get("ocr_structure"),
+    )
     fields = refine_field_assignments(
         document_type=document_type,
         ocr_text=text,
@@ -1574,6 +1585,20 @@ def _clone_reused_page(
     return cloned
 
 
+def _extract_fields_with_layout(
+    document_type: str,
+    text: str,
+    structured_content: Any,
+) -> dict[str, Any]:
+    if isinstance(structured_content, dict) and structured_content.get("layout_regions"):
+        return extract_fields(
+            document_type,
+            text,
+            structured_content=structured_content,
+        )
+    return extract_fields(document_type, text)
+
+
 def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
     """Select structured OCR fields that should be persisted and exported."""
     keys = (
@@ -1634,7 +1659,11 @@ def _apply_smoothed_document_type(
     from services.field_extractor import extract_fields
     from services.field_assignment_refiner import refine_field_assignments
 
-    extracted_fields = extract_fields(document_type, text)
+    extracted_fields = _extract_fields_with_layout(
+        document_type,
+        text,
+        page.get("structured_content") or page.get("ocr_structure"),
+    )
     extracted_fields = refine_field_assignments(
         document_type=document_type,
         ocr_text=text,

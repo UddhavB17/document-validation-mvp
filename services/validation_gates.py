@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from services.cersai import is_debtor_based, search_criteria_text
 from services.person_names import has_independent_identity_anchor, is_person_name_candidate
 
 
@@ -31,6 +32,30 @@ BANKING_FIELDS = {
     "statement_period_end",
 }
 WEAK_INHERITED_METHODS = {"inherited", "sandwich_smoothed", "agreement_context_smoothed"}
+
+
+def is_aadhaar_verification_appendix(text: Any) -> bool:
+    """Return True for the signed-XML appendix bundled with some e-Aadhaar PDFs.
+
+    The appendix contains both the holder's signed ``Poa`` data and the signing
+    certificate's address.  It is verification evidence, not a second source
+    of demographic fields.
+    """
+    raw = str(text or "")
+    non_empty_lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    heading = " ".join(non_empty_lines[:8])
+    if not re.search(
+        r"\bdigitally\s+signed\s+e[\s-]*aadhaar\s+xml\b",
+        heading,
+        re.IGNORECASE,
+    ):
+        return False
+    return bool(re.search(
+        r"<\s*(?:Certificate|KycRes|UidData)\b|"
+        r"\b(?:X509Certificate|SignatureValue|DigestValue)\b",
+        raw,
+        re.IGNORECASE,
+    ))
 
 
 def canonical_field(field: Any) -> str:
@@ -123,6 +148,17 @@ def field_reliable_for_validation(
         return False
     field_key = canonical_field(field)
     fields = page.get("extracted_fields") or {}
+    if (
+        str(expected_document_type or page.get("document_type") or "").strip().casefold()
+        == "aadhaar"
+        and (
+            (isinstance(fields, dict) and fields.get("_aadhaar_verification_appendix") is True)
+            or is_aadhaar_verification_appendix(page.get("ocr_text"))
+        )
+    ):
+        # Also protects cached runs that still contain fields extracted before
+        # the appendix marker was introduced.
+        return False
     if field_key == "applicant_name" and not is_person_name_candidate(value):
         return False
     if (
@@ -179,7 +215,33 @@ def compatible_field_for_document(document_type: str, field: str, page: dict[str
         return has_cheque_anchor(text, fields)
     if doc_key in {"crif report", "cibil report"} and field in BUREAU_SCORE_FIELDS | {"applicant_name"}:
         return has_bureau_anchor(text, fields, field)
+    if doc_key == "cersai report" and field in {
+        "applicant_name", "date_of_birth", "pan_number"
+    }:
+        return _has_cersai_debtor_anchor(text, fields, field)
     return True
+
+
+def _has_cersai_debtor_anchor(text: str, fields: dict[str, Any], field: str) -> bool:
+    """Accept CERSAI identity only when it belongs to the entered debtor."""
+    if not is_debtor_based(text, fields):
+        return False
+    debtor_alias = {
+        "applicant_name": "debtor_name",
+        "pan_number": "debtor_pan_number",
+        "date_of_birth": "debtor_date_of_birth",
+    }[field]
+    value = fields.get(field)
+    debtor_value = fields.get(debtor_alias)
+    if value not in (None, "") and debtor_value not in (None, ""):
+        left = re.sub(r"[^a-z0-9]+", "", str(value).casefold())
+        right = re.sub(r"[^a-z0-9]+", "", str(debtor_value).casefold())
+        if left and left == right:
+            return True
+    criteria = search_criteria_text(text)
+    compact_value = re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+    compact_criteria = re.sub(r"[^a-z0-9]+", "", criteria.casefold())
+    return bool(compact_value and compact_value in compact_criteria)
 
 
 def has_pan_anchor(text: str, fields: dict[str, Any]) -> bool:
