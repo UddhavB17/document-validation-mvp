@@ -40,6 +40,12 @@ export default function ApplicationReviewPage() {
   const review = useApplicationReview(Number.isFinite(applicationId) ? applicationId : null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [selectedEvidence, setSelectedEvidence] = useState<{ anomaly: Anomaly; pageNumber: number; allPageNumbers?: number[] } | null>(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("sidebar_collapsed") === "true";
+    }
+    return false;
+  });
 
   if (!Number.isFinite(applicationId)) {
     return <ErrorMessage message="Invalid application ID." />;
@@ -180,56 +186,98 @@ export default function ApplicationReviewPage() {
 
       {/* 3. Decision status banner */}
       <Verdict data={review.data} />
-
+      
       {/* 4. Three-Column Shell */}
-      <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-6 items-start min-h-[calc(100vh-220px)]">
+      <div className={`grid grid-cols-1 gap-6 items-start min-h-[calc(100vh-220px)] transition-all duration-300 ${isSidebarCollapsed ? "lg:grid-cols-[64px_1fr]" : "lg:grid-cols-[220px_1fr]"}`}>
         {/* Navigation Sidebar with custom vector symbols */}
-        <aside className="bg-white border border-[#E1E5EB] rounded-xl p-2.5 space-y-1 sticky top-4 shadow-2xs">
+        <aside className={`bg-white border border-[#E1E5EB] rounded-xl p-2 sticky top-4 shadow-2xs transition-all duration-300 flex flex-col ${isSidebarCollapsed ? "w-16 items-center" : "w-[220px]"}`}>
+          {/* Toggle Button */}
+          <div className={`flex w-full mb-1 border-b border-slate-100 pb-1.5 ${isSidebarCollapsed ? "justify-center" : "justify-end"}`}>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !isSidebarCollapsed;
+                setIsSidebarCollapsed(next);
+                sessionStorage.setItem("sidebar_collapsed", String(next));
+              }}
+              className="p-1 rounded hover:bg-[#EAF0F8] text-[#5C6B7A] hover:text-[#2B4C7E] cursor-pointer border-none bg-transparent"
+              title={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                {isSidebarCollapsed ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 4.5l7.5 7.5-7.5 7.5M4.5 4.5l7.5 7.5-7.5 7.5" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18.75 19.5l-7.5-7.5 7.5-7.5M12 19.5l-7.5-7.5 7.5-7.5" />
+                )}
+              </svg>
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => setActiveTab("overview")}
-            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+            className={`flex items-center transition-all font-semibold rounded-lg select-none border-none cursor-pointer ${
+              isSidebarCollapsed 
+                ? "justify-center w-11 h-11 p-0 shrink-0" 
+                : "gap-2.5 w-full px-3 py-2 text-[13.5px]"
+            } ${
               activeTab === "overview"
                 ? "bg-[#EAF0F8] text-[#2B4C7E]"
                 : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
             }`}
+            title={isSidebarCollapsed ? "Overview" : undefined}
           >
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg className="w-4.5 h-4.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
             </svg>
-            <span>Overview</span>
+            {!isSidebarCollapsed && <span>Overview</span>}
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab("extracted")}
-            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+            className={`flex items-center transition-all font-semibold rounded-lg select-none border-none cursor-pointer ${
+              isSidebarCollapsed 
+                ? "justify-center w-11 h-11 p-0 shrink-0" 
+                : "gap-2.5 w-full px-3 py-2 text-[13.5px]"
+            } ${
               activeTab === "extracted"
                 ? "bg-[#EAF0F8] text-[#2B4C7E]"
                 : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
             }`}
+            title={isSidebarCollapsed ? "Extracted Data" : undefined}
           >
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg className="w-4.5 h-4.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25A2.25 2.25 0 0113.5 8.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
             </svg>
-            <span>Extracted Data</span>
+            {!isSidebarCollapsed && <span>Extracted Data</span>}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("anomalies")}
-            className={`flex items-center justify-between w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+            className={`flex items-center transition-all font-semibold rounded-lg select-none border-none cursor-pointer ${
+              isSidebarCollapsed 
+                ? "justify-center w-11 h-11 p-0 shrink-0" 
+                : "gap-2.5 w-full px-3 py-2 text-[13.5px] justify-between"
+            } ${
               activeTab === "anomalies"
                 ? "bg-[#EAF0F8] text-[#2B4C7E]"
                 : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
             }`}
+            title={isSidebarCollapsed ? "Anomalies & Flags" : undefined}
           >
-            <div className="flex items-center gap-2.5">
-              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z" />
-              </svg>
-              <span>Anomalies &amp; Flags</span>
+            <div className={`flex items-center ${isSidebarCollapsed ? "justify-center" : "gap-2.5"}`}>
+              <div className="relative">
+                <svg className="w-4.5 h-4.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z" />
+                </svg>
+                {isSidebarCollapsed && anomCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-[#AF3B2E] border border-white rounded-full" />
+                )}
+              </div>
+              {!isSidebarCollapsed && <span>Anomalies &amp; Flags</span>}
             </div>
-            {anomCount > 0 && (
+            {!isSidebarCollapsed && anomCount > 0 && (
               <span className={`font-mono text-[11px] px-1.5 py-0.5 rounded-md ${
                 activeTab === "anomalies" ? "bg-[#2B4C7E] text-white" : "bg-[#FBEBE8] text-[#AF3B2E]"
               }`}>
@@ -240,44 +288,59 @@ export default function ApplicationReviewPage() {
           <button
             type="button"
             onClick={() => setActiveTab("checklist")}
-            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+            className={`flex items-center transition-all font-semibold rounded-lg select-none border-none cursor-pointer ${
+              isSidebarCollapsed 
+                ? "justify-center w-11 h-11 p-0 shrink-0" 
+                : "gap-2.5 w-full px-3 py-2 text-[13.5px]"
+            } ${
               activeTab === "checklist"
                 ? "bg-[#EAF0F8] text-[#2B4C7E]"
                 : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
             }`}
+            title={isSidebarCollapsed ? "Checklist & Decisions" : undefined}
           >
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg className="w-4.5 h-4.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z" />
             </svg>
-            <span>Checklist &amp; Decisions</span>
+            {!isSidebarCollapsed && <span>Checklist &amp; Decisions</span>}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("logs")}
-            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+            className={`flex items-center transition-all font-semibold rounded-lg select-none border-none cursor-pointer ${
+              isSidebarCollapsed 
+                ? "justify-center w-11 h-11 p-0 shrink-0" 
+                : "gap-2.5 w-full px-3 py-2 text-[13.5px]"
+            } ${
               activeTab === "logs"
                 ? "bg-[#EAF0F8] text-[#2B4C7E]"
                 : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
             }`}
+            title={isSidebarCollapsed ? "Processing Logs" : undefined}
           >
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg className="w-4.5 h-4.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span>Processing Logs</span>
+            {!isSidebarCollapsed && <span>Processing Logs</span>}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("downloads")}
-            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+            className={`flex items-center transition-all font-semibold rounded-lg select-none border-none cursor-pointer ${
+              isSidebarCollapsed 
+                ? "justify-center w-11 h-11 p-0 shrink-0" 
+                : "gap-2.5 w-full px-3 py-2 text-[13.5px]"
+            } ${
               activeTab === "downloads"
                 ? "bg-[#EAF0F8] text-[#2B4C7E]"
                 : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
             }`}
+            title={isSidebarCollapsed ? "Downloads" : undefined}
           >
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <svg className="w-4.5 h-4.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
             </svg>
-            <span>Downloads</span>
+            {!isSidebarCollapsed && <span>Downloads</span>}
           </button>
         </aside>
 
