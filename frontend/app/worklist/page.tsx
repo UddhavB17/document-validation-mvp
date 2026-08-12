@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 
 import { ErrorMessage, InfoMessage, LoadingMessage } from "@/components/Message";
 import { Metric } from "@/components/Metric";
@@ -19,6 +19,41 @@ export default function WorklistPage() {
   const [filter, setFilter] = useState<Filter>("All");
   const [queue, setQueue] = useState<number[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
+
+  // 1. Session Storage Caching for Scroll and Filter
+  useEffect(() => {
+    const cachedFilter = sessionStorage.getItem("worklist_filter");
+    if (cachedFilter && filters.includes(cachedFilter as any)) {
+      setFilter(cachedFilter as Filter);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (worklist.data) {
+      const cachedScrollY = sessionStorage.getItem("worklist_scroll_y");
+      if (cachedScrollY) {
+        setTimeout(() => {
+          window.scrollTo(0, Number(cachedScrollY));
+        }, 100);
+      }
+    }
+  }, [worklist.data]);
+
+  // Listener to capture scroll position changes
+  useEffect(() => {
+    const handleScroll = () => {
+      sessionStorage.setItem("worklist_scroll_y", String(window.scrollY));
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const handleFilterChange = (newFilter: Filter) => {
+    setFilter(newFilter);
+    sessionStorage.setItem("worklist_filter", newFilter);
+    sessionStorage.setItem("worklist_scroll_y", "0");
+    window.scrollTo(0, 0);
+  };
 
   const stats = useMemo(() => {
     const items = worklist.data?.items ?? [];
@@ -39,7 +74,7 @@ export default function WorklistPage() {
   const queueApplicationId = queue[queueIndex];
 
   return (
-    <>
+    <div className="space-y-6 max-w-[1600px] mx-auto">
       <PageHeader title="Reviewer Worklist" description="Manage incoming loan application validations and audit exceptions." />
       {worklist.isLoading ? <LoadingMessage /> : null}
       {worklist.isError ? <ErrorMessage message="Unable to load worklist." /> : null}
@@ -57,7 +92,7 @@ export default function WorklistPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-2">
             <button
               type="button"
-              className="px-4 py-2.5 text-sm font-semibold rounded-lg bg-blue-700 hover:bg-blue-600 text-white transition-colors duration-150 shadow-sm active:scale-[0.98] select-none"
+              className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-[#2B4C7E] hover:bg-[#1E3559] text-white transition-all duration-150 shadow-3xs active:scale-[0.98] select-none cursor-pointer border-none"
               onClick={() => {
                 const pending = queueCandidates(worklist.data.items);
                 setQueue(pending.map((item) => item.id));
@@ -71,11 +106,11 @@ export default function WorklistPage() {
                 <button
                   type="button"
                   key={item}
-                  onClick={() => setFilter(item)}
-                  className={`rounded-lg border px-4 py-2 text-sm font-semibold transition-all duration-150 ${
+                  onClick={() => handleFilterChange(item)}
+                  className={`rounded-lg border px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${
                     filter === item
-                      ? "border-blue-600 bg-blue-50 text-blue-700 shadow-sm"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-800"
+                      ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E] shadow-3xs"
+                      : "border-[#E1E5EB] bg-white text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
                   }`}
                 >
                   {item}
@@ -84,15 +119,17 @@ export default function WorklistPage() {
             </div>
           </div>
           {queue.length > 0 ? (
-            <InfoMessage message={`Review queue: file ${queueIndex + 1} of ${queue.length}.`} />
+            <div className="animate-fade-in">
+              <InfoMessage message={`Review queue: file ${queueIndex + 1} of ${queue.length}.`} />
+            </div>
           ) : null}
           {queueApplicationId ? (
-            <Link className="inline-block rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 px-4 py-2 text-sm font-bold text-blue-750 shadow-sm transition-all duration-150" href={`/applications/${queueApplicationId}`}>
+            <Link className="inline-block rounded-lg bg-[#EAF0F8] border border-[#E1E5EB] hover:bg-[#2B4C7E] hover:text-white px-4 py-2 text-sm font-bold text-[#2B4C7E] shadow-3xs transition-all duration-150" href={`/applications/${queueApplicationId}`}>
               Open queue item
             </Link>
           ) : null}
           {filtered.length === 0 ? (
-            <InfoMessage message="No applications found." />
+            <InfoMessage message="No applications found matching the selected filter status." />
           ) : (
             <SortableTable
               rows={filtered}
@@ -100,11 +137,28 @@ export default function WorklistPage() {
                 {
                   key: "loan",
                   header: "Loan ID",
-                  value: (row) => <Link className="font-bold text-blue-700 hover:text-blue-600 transition-colors duration-150 hover:underline" href={`/applications/${row.id}`}>{row.loan_id}</Link>,
+                  value: (row) => (
+                    <Link
+                      className="font-mono font-bold text-[#2B4C7E] hover:text-[#1E3559] transition-colors duration-150 hover:underline text-[13.5px]"
+                      href={`/applications/${row.id}`}
+                    >
+                      {row.loan_id}
+                    </Link>
+                  ),
                   sortValue: (row) => row.loan_id,
                 },
-                { key: "applicant", header: "Applicant", value: (row) => row.applicant_name ?? "-", sortValue: (row) => row.applicant_name },
-                { key: "product", header: "Product", value: (row) => row.product_type ?? "-", sortValue: (row) => row.product_type },
+                {
+                  key: "applicant",
+                  header: "Applicant Name",
+                  value: (row) => <span className="font-serif font-bold text-slate-800">{row.applicant_name ?? "—"}</span>,
+                  sortValue: (row) => row.applicant_name ?? "",
+                },
+                {
+                  key: "product",
+                  header: "Product Type",
+                  value: (row) => <span className="font-semibold text-slate-650">{row.product_type ?? "—"}</span>,
+                  sortValue: (row) => row.product_type ?? "",
+                },
                 {
                   key: "status",
                   header: "Decision",
@@ -113,19 +167,48 @@ export default function WorklistPage() {
                 },
                 {
                   key: "pipeline",
-                  header: "Pipeline",
+                  header: "Pipeline Status",
                   value: (row) => <StatusBadge status={row.pipeline_status} />,
                   sortValue: (row) => row.pipeline_status,
                 },
-                { key: "business", header: "Business", value: (row) => row.business_issues, sortValue: (row) => row.business_issues },
-                { key: "quality", header: "Quality", value: (row) => row.processing_warnings, sortValue: (row) => row.processing_warnings },
-                { key: "uploaded", header: "Uploaded", value: (row) => row.created_at, sortValue: (row) => row.created_at },
+                {
+                  key: "anomalies_density",
+                  header: "Anomalies Density (Exempt / Warnings)",
+                  value: (row) => {
+                    const hasBusiness = row.business_issues > 0;
+                    const hasWarnings = row.processing_warnings > 0;
+                    if (!hasBusiness && !hasWarnings) {
+                      return <span className="stamp match text-[9px] py-0 px-1.5 rotate-0">CLEAN</span>;
+                    }
+                    return (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {hasBusiness && (
+                          <span className="stamp mismatch text-[9.5px] py-0.5 px-2 rotate-0">
+                            {row.business_issues} EXC
+                          </span>
+                        )}
+                        {hasWarnings && (
+                          <span className="stamp attention text-[9.5px] py-0.5 px-2 rotate-0">
+                            {row.processing_warnings} WARN
+                          </span>
+                        )}
+                      </div>
+                    );
+                  },
+                  sortValue: (row) => row.business_issues * 100 + row.processing_warnings,
+                },
+                {
+                  key: "uploaded",
+                  header: "Uploaded Date",
+                  value: (row) => <span className="font-mono text-slate-600 text-[11.5px]">{row.created_at}</span>,
+                  sortValue: (row) => row.created_at,
+                },
               ]}
             />
           )}
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 

@@ -214,6 +214,9 @@ export const applicationReviewSchema = z.object({
   }),
   latest_decision: decisionSchema.nullable(),
   progress: progressSchema.nullable(),
+  comparison_matrix: z.any().optional(),
+  relationships: z.any().optional(),
+  documents: z.any().optional(),
 });
 
 export const reprocessResponseSchema = z.object({

@@ -2,16 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --paper: #F6F7FA;
+  --surface: #FFFFFF;
+  --ink: #16202E;
+  --ink-soft: #5C6B7A;
+  --line: #E1E5EB;
+  --ledger: #2B4C7E;
+  --ledger-soft: #EAF0F8;
+  --match: #1F7A5C;
+  --match-soft: #E7F3EE;
+  --mismatch: #AF3B2E;
+  --mismatch-soft: #FBEBE8;
+  --attention: #A0701C;
+  --attention-soft: #FBF2E1;
+}
+
 html,
 body {
   min-height: 100%;
-  background-color: #f8fafc;
+  background-color: var(--paper);
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "SF Pro", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background: #f8fafc;
-  color: #111827;
+  font-family: var(--font-sans), sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.font-serif {
+  font-family: var(--font-sans), sans-serif;
+}
+
+.font-mono {
+  font-family: var(--font-mono), monospace;
+}
+
+/* stamp badge — signature element */
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1.5px solid currentColor;
+  transform: rotate(-1.5deg);
+  white-space: nowrap;
+}
+.stamp.match {
+  color: var(--match);
+  background: var(--match-soft);
+}
+.stamp.mismatch {
+  color: var(--mismatch);
+  background: var(--mismatch-soft);
+}
+.stamp.attention {
+  color: var(--attention);
+  background: var(--attention-soft);
 }
 
 /* Custom Scrollbar */

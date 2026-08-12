@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useState } from "react";
+import Link from "next/link";
 
 import { ErrorMessage, InfoMessage, LoadingMessage } from "@/components/Message";
 import { Metric } from "@/components/Metric";
@@ -13,6 +14,8 @@ import { api, Anomaly, ApplicationReview } from "@/lib/api";
 import { decisionNoteSchema } from "@/lib/forms";
 import { asText, formatSeconds } from "@/lib/format";
 import { useApplicationReview, useCreateDecision, useUndoDecision } from "@/lib/queries";
+import ComparisonTable from "@/components/applications/ComparisonTable";
+import RelationshipGraph from "@/components/applications/RelationshipGraph";
 
 const rejectionReasons = {
   "Document missing": "Please resubmit with the missing document(s) listed above.",
@@ -23,25 +26,19 @@ const rejectionReasons = {
   "Signature missing": "Required signature is missing. Please upload a signed copy.",
 };
 
-const severityBadgeColors = {
-  HIGH: "bg-red-100 text-red-800 border border-red-200",
-  MEDIUM: "bg-amber-100 text-amber-800 border border-amber-200",
-  LOW: "bg-blue-50 text-blue-700 border border-blue-200",
-  INFO: "bg-slate-100 text-slate-700 border border-slate-200",
+type ActiveTab = "overview" | "extracted" | "anomalies" | "checklist" | "logs" | "downloads";
+
+const statusLabels = {
+  match: "Match",
+  mismatch: "Mismatch",
+  attention: "Attention",
 };
-
-function getSeverityBadgeColor(severity: string | null | undefined) {
-  const clean = String(severity ?? "INFO").toUpperCase();
-  return severityBadgeColors[clean as keyof typeof severityBadgeColors] ?? severityBadgeColors.INFO;
-}
-
-type ActiveTab = "checklist" | "anomalies" | "logs" | "all_items" | "downloads";
 
 export default function ApplicationReviewPage() {
   const params = useParams<{ id: string }>();
   const applicationId = Number(params.id);
   const review = useApplicationReview(Number.isFinite(applicationId) ? applicationId : null);
-  const [activeTab, setActiveTab] = useState<ActiveTab>("checklist");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [selectedEvidence, setSelectedEvidence] = useState<{ anomaly: Anomaly; pageNumber: number; allPageNumbers?: number[] } | null>(null);
 
   if (!Number.isFinite(applicationId)) {
@@ -57,9 +54,6 @@ export default function ApplicationReviewPage() {
   if (!review.data) {
     return null;
   }
-
-  const loanId = asText(review.data.application.loan_id);
-  const reviewerCount = review.data.summary.reviewer_count;
 
   const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => {
     setSelectedEvidence({ anomaly, pageNumber, allPageNumbers });
@@ -83,65 +77,289 @@ export default function ApplicationReviewPage() {
     handleSelectEvidence(mockAnomaly, pageNumber);
   };
 
+  const coreParamsList = review.data.comparison_matrix?.core_parameters || [];
+  const getParamVal = (fieldName: string, fallback: string) => {
+    const item = coreParamsList.find((p: any) => p.field_name === fieldName);
+    return item?.expected_value || item?.extracted_value || fallback;
+  };
+
+  const loanAmount = getParamVal("loan_amount", asText(review.data.ground_truth?.loan_amount || review.data.application?.loan_amount));
+  const roi = getParamVal("roi", asText(review.data.ground_truth?.roi || review.data.application?.roi));
+  const tenure = getParamVal("tenure", asText(review.data.ground_truth?.tenure || review.data.application?.tenure));
+  const emi = getParamVal("emi", getParamVal("emi_amount", "—"));
+
+  const coreParams = review.data.comparison_matrix?.core_parameters || [];
+  const applicantsRaw = review.data.comparison_matrix?.applicants;
+  const applicantList: any[] = Array.isArray(applicantsRaw)
+    ? applicantsRaw
+    : (applicantsRaw && typeof applicantsRaw === "object" ? Object.values(applicantsRaw) : []);
+  const allFields = [...coreParams, ...applicantList.flatMap((a: any) => a.fields || [])];
+  const anomCount = allFields.filter((f: any) => f.status === "mismatch" || f.status === "attention").length;
+
+  // Group raw extracted fields by document type dynamically
+  const extractedByDoc: Record<string, Record<string, any>> = {};
+  review.data.pages.forEach((p: any) => {
+    const docType = p.document_type || "Unknown Document";
+    const fields = p.extracted_fields || {};
+    const cleanFields: Record<string, any> = {};
+    Object.entries(fields).forEach(([k, v]) => {
+      if (!k.startsWith("_") && v !== null && v !== undefined && String(v).trim()) {
+        cleanFields[k] = v;
+      }
+    });
+    
+    if (Object.keys(cleanFields).length > 0) {
+      if (!extractedByDoc[docType]) {
+        extractedByDoc[docType] = {};
+      }
+      extractedByDoc[docType] = {
+        ...extractedByDoc[docType],
+        ...cleanFields,
+      };
+    }
+  });
+
+  const pagesToRender = selectedEvidence?.allPageNumbers && selectedEvidence.allPageNumbers.length > 0
+    ? selectedEvidence.allPageNumbers
+    : (selectedEvidence ? [selectedEvidence.pageNumber] : []);
+
+  const firstPage = selectedEvidence ? review.data.pages.find((item: any) => Number(item.page_number) === selectedEvidence.pageNumber) : null;
+
+  const combinedOcrText = pagesToRender
+    .map((pageNo) => {
+      const p = review.data.pages.find((item: any) => Number(item.page_number) === pageNo);
+      return typeof p?.ocr_text === "string" && p.ocr_text.trim()
+        ? `--- PAGE ${pageNo} ---\n${p.ocr_text.trim()}`
+        : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
   return (
-    <>
-      <PageHeader
-        title={`Loan File Review - ${loanId}`}
-        description={`Application ID: ${applicationId} | ${asText(review.data.application.product_type)} | ${asText(review.data.application.branch)}`}
-      />
-      <div className="space-y-6">
-        <Verdict data={review.data} />
-        
-        {/* Consolidated Overview Header */}
-        <Overview data={review.data} />
+    <div className="space-y-6 max-w-[1600px] mx-auto">
+      {/* 1. Crumbs and Back Nav */}
+      <div className="crumb text-xs text-[#5C6B7A] flex items-center gap-2 mb-1.5 font-semibold">
+        <Link href="/worklist" className="hover:text-[#2B4C7E] transition-colors">← Applications</Link>
+      </div>
 
-        {[
-          "uploaded",
-          "processing",
-          "ocr_completed",
-        ].includes(String(review.data.application.status)) || review.data.progress?.retryable ? (
-          <ProgressPanel applicationId={applicationId} />
-        ) : null}
-
-        <div className="flex flex-wrap gap-1 border-b border-slate-200 mt-6 bg-slate-100/50 p-1 rounded-xl">
-          <TabButton
-            active={activeTab === "checklist"}
-            onClick={() => setActiveTab("checklist")}
-          >
-            Checklist & Decisions
-          </TabButton>
-          <TabButton
-            active={activeTab === "anomalies"}
-            onClick={() => setActiveTab("anomalies")}
-          >
-            Anomalies & Flags ({reviewerCount})
-          </TabButton>
-          <TabButton
-            active={activeTab === "logs"}
-            onClick={() => setActiveTab("logs")}
-          >
-            Page Processing Logs
-          </TabButton>
-          <TabButton
-            active={activeTab === "all_items"}
-            onClick={() => setActiveTab("all_items")}
-          >
-            Full Verification List
-          </TabButton>
-          <TabButton
-            active={activeTab === "downloads"}
-            onClick={() => setActiveTab("downloads")}
-          >
-            Downloads
-          </TabButton>
+      {/* 2. Headline & Metrics Topbar */}
+      <div className="bg-white border border-[#E1E5EB] rounded-2xl p-5 shadow-2xs space-y-4">
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <h1 className="font-serif font-semibold text-2xl text-[#16202E] m-0">
+            {asText(review.data.ground_truth.applicant_name ?? review.data.application.applicant_name)}
+          </h1>
+          <span className="font-mono text-[#5C6B7A] text-[13px]">
+            APP-{String(applicationId).padStart(4, "0")} · {asText(review.data.application.product_type)}
+          </span>
+          <div className="ml-auto bg-[#EAF0F8] text-[#2B4C7E] rounded-full px-3 py-1 text-xs font-semibold flex items-center gap-1.5 animate-pulse">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#2B4C7E]" />
+            In review
+          </div>
         </div>
 
-        {/* Dynamic Global Side-by-Side Viewport */}
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(580px,1.3fr)] items-start">
-          {/* Active Tab Card */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm min-h-[300px]">
-            {activeTab === "checklist" ? (
-              <div className="space-y-6">
+        {/* Metrics Row */}
+        <div className="flex flex-wrap gap-12 pt-4 border-t border-[#E1E5EB]">
+          <div className="metric">
+            <div className="text-[#5C6B7A] text-[11px] uppercase tracking-wider font-semibold font-medium">Loan Amount</div>
+            <div className="font-mono text-[16px] font-semibold mt-1 text-[#16202E]">{loanAmount}</div>
+          </div>
+          <div className="metric">
+            <div className="text-[#5C6B7A] text-[11px] uppercase tracking-wider font-semibold font-medium">ROI</div>
+            <div className="font-mono text-[16px] font-semibold mt-1 text-[#16202E]">{roi}</div>
+          </div>
+          <div className="metric">
+            <div className="text-[#5C6B7A] text-[11px] uppercase tracking-wider font-semibold font-medium">Tenure</div>
+            <div className="font-mono text-[16px] font-semibold mt-1 text-[#16202E]">{tenure}</div>
+          </div>
+          <div className="metric">
+            <div className="text-[#5C6B7A] text-[11px] uppercase tracking-wider font-semibold font-medium">EMI</div>
+            <div className="font-mono text-[16px] font-semibold mt-1 text-[#16202E]">{emi}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Decision status banner */}
+      <Verdict data={review.data} />
+
+      {/* 4. Three-Column Shell */}
+      <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-6 items-start min-h-[calc(100vh-220px)]">
+        {/* Navigation Sidebar with custom vector symbols */}
+        <aside className="bg-white border border-[#E1E5EB] rounded-xl p-2.5 space-y-1 sticky top-4 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setActiveTab("overview")}
+            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+              activeTab === "overview"
+                ? "bg-[#EAF0F8] text-[#2B4C7E]"
+                : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
+            }`}
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
+            </svg>
+            <span>Overview</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("extracted")}
+            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+              activeTab === "extracted"
+                ? "bg-[#EAF0F8] text-[#2B4C7E]"
+                : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
+            }`}
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25A2.25 2.25 0 0113.5 8.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+            </svg>
+            <span>Extracted Data</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("anomalies")}
+            className={`flex items-center justify-between w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+              activeTab === "anomalies"
+                ? "bg-[#EAF0F8] text-[#2B4C7E]"
+                : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z" />
+              </svg>
+              <span>Anomalies &amp; Flags</span>
+            </div>
+            {anomCount > 0 && (
+              <span className={`font-mono text-[11px] px-1.5 py-0.5 rounded-md ${
+                activeTab === "anomalies" ? "bg-[#2B4C7E] text-white" : "bg-[#FBEBE8] text-[#AF3B2E]"
+              }`}>
+                {anomCount}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("checklist")}
+            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+              activeTab === "checklist"
+                ? "bg-[#EAF0F8] text-[#2B4C7E]"
+                : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
+            }`}
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z" />
+            </svg>
+            <span>Checklist &amp; Decisions</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("logs")}
+            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+              activeTab === "logs"
+                ? "bg-[#EAF0F8] text-[#2B4C7E]"
+                : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
+            }`}
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>Processing Logs</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("downloads")}
+            className={`flex items-center gap-2.5 w-full text-left px-3 py-2 rounded-lg text-[13.5px] transition-all font-semibold ${
+              activeTab === "downloads"
+                ? "bg-[#EAF0F8] text-[#2B4C7E]"
+                : "text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
+            }`}
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            <span>Downloads</span>
+          </button>
+        </aside>
+
+        {/* Center content active tab pane */}
+        <div className="bg-white border border-[#E1E5EB] rounded-2xl p-6 shadow-2xs space-y-6 min-h-[500px]">
+          
+          {/* TAB: OVERVIEW */}
+          {activeTab === "overview" && (
+            <div className="space-y-6">
+              <h2 className="font-serif text-[16px] font-semibold mb-3">Application summary</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">
+                  <div className="text-[#5C6B7A] text-[12.5px] font-medium">Purpose of Loan</div>
+                  <div className="mt-1 font-bold text-sm text-[#16202E]">
+                    {asText(review.data.application.purpose) || "Business expansion — LAP"}
+                  </div>
+                </div>
+                <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">
+                  <div className="text-[#5C6B7A] text-[12.5px] font-medium">Property Details</div>
+                  <div className="mt-1 font-bold text-sm text-[#16202E]">
+                    {asText(review.data.application.property_address) || "Residential, Jaipur (Malviya Nagar)"}
+                  </div>
+                </div>
+                <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">
+                  <div className="text-[#5C6B7A] text-[12.5px] font-medium">Documents received</div>
+                  <div className="mt-1 font-mono font-bold text-sm text-[#16202E]">
+                    {review.data.pages.length} pages processed
+                  </div>
+                </div>
+                <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">
+                  <div className="text-[#5C6B7A] text-[12.5px] font-medium">Extraction status</div>
+                  <div className="mt-1 font-bold text-sm text-[#A0701C]">
+                    {anomCount} fields need attention
+                  </div>
+                </div>
+              </div>
+
+              <h2 className="font-serif text-[16px] font-semibold mb-3 mt-6">Applicant roster</h2>
+              <div className="border border-[#E1E5EB] rounded-xl overflow-hidden shadow-3xs">
+                <table className="w-full border-collapse text-left text-[13px]">
+                  <thead>
+                    <tr className="bg-[#F6F7FA] border-b border-[#E1E5EB]">
+                      <th className="text-[#5C6B7A] font-semibold text-[11px] uppercase tracking-wider px-3.5 py-2.5">Name</th>
+                      <th className="text-[#5C6B7A] font-semibold text-[11px] uppercase tracking-wider px-3.5 py-2.5">Role</th>
+                      <th className="text-[#5C6B7A] font-semibold text-[11px] uppercase tracking-wider px-3.5 py-2.5">KYC Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E1E5EB] text-[#16202E]">
+                    {applicantList.map((a: any) => {
+                      const hasMismatch = a.fields.some((f: any) => f.status === "mismatch");
+                      const hasAttention = a.fields.some((f: any) => f.status === "attention");
+                      const status = hasMismatch ? "mismatch" : (hasAttention ? "attention" : "match");
+                      const label = hasMismatch ? "Failed" : (hasAttention ? "Needs Review" : "Verified");
+                      
+                      return (
+                        <tr key={a.person_name} className="hover:bg-slate-50/50 transition-colors duration-150">
+                          <td className="px-3.5 py-3 font-bold text-[#16202E]">{a.person_name}</td>
+                          <td className="px-3.5 py-3 text-[#5C6B7A] font-semibold">{a.applicant_label}</td>
+                          <td className="px-3.5 py-3">
+                            <span className={`stamp ${status} mr-2`}>
+                              {statusLabels[status]}
+                            </span>
+                            <span className="font-bold text-sm" style={{ color: `var(--${status})` }}>
+                              {label}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {[
+                "uploaded",
+                "processing",
+                "ocr_completed",
+              ].includes(String(review.data.application.status)) || review.data.progress?.retryable ? (
+                <ProgressPanel applicationId={applicationId} />
+              ) : null}
+
+              <div className="pt-6 border-t border-[#E1E5EB] space-y-6">
                 <ReviewerSummary
                   data={review.data}
                   onSelectPage={(pageNo) => handleSelectPageOnly(pageNo, "Manual Review Page", "Requested check by reviewer")}
@@ -152,74 +370,191 @@ export default function ApplicationReviewPage() {
                   onSelectPage={(pageNo) => handleSelectPageOnly(pageNo, "Manual Check", "Manual item verification review")}
                 />
               </div>
-            ) : null}
+            </div>
+          )}
 
-            {activeTab === "anomalies" ? (
-              <div className="space-y-6">
-                <ResultExplanation data={review.data} />
-                <Anomalies
-                  applicationId={applicationId}
-                  data={review.data}
-                  onSelectEvidence={handleSelectEvidence}
-                />
+
+          {/* TAB: EXTRACTED DATA */}
+          {activeTab === "extracted" && (
+            <div className="space-y-6">
+              <h2 className="font-serif text-[16px] font-semibold mb-1">Extracted fields — raw output</h2>
+              <p className="text-[#5C6B7A] text-[12.5px] mb-4 font-medium">What DMEF read off each document. No expected-value comparison here — see Anomalies &amp; Flags for that.</p>
+              
+              {Object.keys(extractedByDoc).length === 0 ? (
+                <div className="bg-slate-50 border border-[#E1E5EB] rounded-xl p-6 text-center text-[#5C6B7A] italic">
+                  No raw extracted parameters found in processed pages.
+                </div>
+              ) : (
+                Object.entries(extractedByDoc).map(([docType, fields]) => (
+                  <div key={docType} className="bg-white border border-[#E1E5EB] rounded-xl p-4.5 shadow-3xs mb-4 last:mb-0">
+                    <h3 className="text-[13.5px] font-bold text-[#16202E] border-b border-slate-100 pb-2 mb-3 font-serif uppercase tracking-wider">{docType}</h3>
+                    <table className="w-full text-[13px] border-collapse">
+                      <tbody className="divide-y divide-slate-100 font-semibold text-[#16202E]">
+                        {Object.entries(fields).map(([k, v]) => (
+                          <tr key={k}>
+                            <td className="py-2.5 text-[#5C6B7A] font-medium w-1/3 truncate">{k.replace(/_/g, " ")}</td>
+                            <td className="py-2.5 font-mono text-[12px] select-all break-all">{String(v)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* TAB: ANOMALIES & FLAGS */}
+          {activeTab === "anomalies" && (
+            <div className="space-y-6">
+              <ComparisonTable
+                coreParameters={review.data.comparison_matrix?.core_parameters}
+                applicants={applicantList}
+                onSelectPage={handleSelectPageOnly}
+              />
+              
+              <h2 className="font-serif text-[16px] font-semibold mb-3">Borrower relationship graph</h2>
+              <div className="border border-[#E1E5EB] rounded-xl p-2 shadow-2xs overflow-x-auto bg-[#F6F7FA]/30">
+                <RelationshipGraph relationships={review.data.relationships} />
               </div>
-            ) : null}
 
-            {activeTab === "logs" ? (
-              <PageProcessing
+              <h2 className="font-serif text-[16px] font-semibold mb-3 pt-4 border-t border-slate-100">Exceptions &amp; Warnings Details</h2>
+              <Anomalies
+                applicationId={applicationId}
                 data={review.data}
-                onSelectPage={(pageNo, docType) => handleSelectPageOnly(pageNo, docType || "Processing Page", "Processing log validation review")}
+                onSelectEvidence={handleSelectEvidence}
               />
-            ) : null}
+            </div>
+          )}
 
-            {activeTab === "all_items" ? (
-              <Checklist
-                data={review.data}
-                onSelectPage={(row, pageNo, allPages) => {
-                  const mockAnomaly: Anomaly = {
-                    rule_id: row.s_no ? `CHECK_${row.s_no}` : "CHECKLIST_PREVIEW",
-                    severity: "INFO",
-                    reason: row.description || "Verification List Preview",
-                    document_type: row.looked || row.description || "Document Preview",
-                    expected_value: "-",
-                    found_value: allPages ? `Combined pages: ${allPages.join(", ")}` : `Page ${pageNo}`
-                  };
-                  handleSelectEvidence(mockAnomaly, pageNo, allPages);
-                }}
-              />
-            ) : null}
+          {/* TAB: CHECKLIST */}
+          {activeTab === "checklist" && (
+            <Checklist
+              data={review.data}
+              onSelectPage={(row, pageNo, allPages) => {
+                const mockAnomaly: Anomaly = {
+                  rule_id: row.s_no ? `CHECK_${row.s_no}` : "CHECKLIST_PREVIEW",
+                  severity: "INFO",
+                  reason: row.description || "Verification List Preview",
+                  document_type: row.looked || row.description || "Document Preview",
+                  expected_value: "-",
+                  found_value: allPages ? `Combined pages: ${allPages.join(", ")}` : `Page ${pageNo}`
+                };
+                handleSelectEvidence(mockAnomaly, pageNo, allPages);
+              }}
+            />
+          )}
 
-            {activeTab === "downloads" ? (
-              <Downloads applicationId={applicationId} />
-            ) : null}
-          </div>
-          <EvidenceViewer applicationId={applicationId} data={review.data} selection={selectedEvidence} />
+          {/* TAB: LOGS */}
+          {activeTab === "logs" && (
+            <PageProcessing
+              data={review.data}
+              onSelectPage={(pageNo, docType) => handleSelectPageOnly(pageNo, docType || "Processing Page", "Processing log validation review")}
+            />
+          )}
+
+          {/* TAB: DOWNLOADS */}
+          {activeTab === "downloads" && (
+            <Downloads applicationId={applicationId} />
+          )}
+
         </div>
-      </div>
-    </>
-  );
-}
 
-function TabButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2.5 text-sm font-semibold transition-all rounded-lg select-none ${
-        active
-          ? "bg-white text-blue-700 shadow-sm border border-slate-200/50"
-          : "text-slate-500 hover:text-slate-800 hover:bg-slate-200/50"
-      }`}
-    >
-      {children}
-    </button>
+      </div>
+
+      {/* Evidence Viewer Modal Popup */}
+      {selectedEvidence && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl border border-[#E1E5EB] shadow-2xl w-full max-w-[850px] max-h-[90vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="border-b border-[#E1E5EB] bg-[#F6F7FA] px-6 py-4 flex items-center justify-between shrink-0">
+              <div>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-[#5C6B7A]">Evidence viewer</div>
+                <div className="font-semibold text-[15px] text-[#16202E] mt-0.5">
+                  {selectedEvidence.allPageNumbers && selectedEvidence.allPageNumbers.length > 1
+                    ? `Pages ${selectedEvidence.allPageNumbers.join(", ")} (Combined)`
+                    : `Page ${selectedEvidence.pageNumber}`}
+                  {" — "}
+                  {asText(firstPage?.document_type ?? selectedEvidence.anomaly.document_type)}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {selectedEvidence.allPageNumbers && selectedEvidence.allPageNumbers.length > 1 ? (
+                  <span className="text-[10px] font-extrabold text-[#2B4C7E] uppercase bg-[#EAF0F8] px-2.5 py-1 rounded border border-[#E1E5EB]">
+                    Combined Stack
+                  </span>
+                ) : (
+                  <a
+                    href={api.sourcePdfUrl(applicationId, selectedEvidence.pageNumber)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-bold text-[#2B4C7E] hover:underline"
+                  >
+                    Open Full PDF
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedEvidence(null)}
+                  className="rounded-lg border border-[#E1E5EB] bg-white px-3 py-1.5 text-xs font-bold text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E] cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            
+            {/* Modal Body: Side-by-side Image preview and text block */}
+            <div className="flex-1 overflow-hidden grid grid-cols-1 md:grid-cols-[1fr_300px] divide-y md:divide-y-0 md:divide-x divide-[#E1E5EB] min-h-0">
+              {/* Left Side: Page Image scroll */}
+              <div className="overflow-y-auto bg-slate-800/10 p-4 flex flex-col gap-4 items-center min-h-0">
+                {pagesToRender.map((pageNo) => (
+                  <div key={pageNo} className="relative w-full flex flex-col items-center max-w-[500px]">
+                    <div className="absolute top-2 left-2 rounded bg-black/75 px-2 py-0.5 text-[9px] font-mono text-white z-10">
+                      Pg {pageNo}
+                    </div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={api.sourcePageImageUrl(applicationId, pageNo)}
+                      alt={`Original source PDF page ${pageNo}`}
+                      className="h-auto w-full bg-white shadow border border-slate-200 rounded-sm"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Right Side: Expected, Extracted, and OCR text */}
+              <div className="p-5 overflow-y-auto text-xs space-y-4 shrink-0 bg-white">
+                <div className="grid grid-cols-2 gap-3 border-b border-slate-100 pb-4">
+                  <EvidenceValue label="Expected" value={selectedEvidence.anomaly.expected_value} />
+                  <EvidenceValue label="Extracted / Found" value={selectedEvidence.anomaly.found_value} />
+                </div>
+                <div className="space-y-2">
+                  <div className="font-bold uppercase tracking-wider text-slate-500 text-[10px]">Extracted page text</div>
+                  <div className="whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono leading-relaxed text-slate-100 text-[11px] max-h-[350px] overflow-y-auto select-all">
+                    {combinedOcrText ? (
+                      <HighlightedEvidenceText text={combinedOcrText.slice(0, 5000)} needle={selectedEvidence.anomaly.found_value ?? ""} />
+                    ) : (
+                      "No OCR text was extracted for this page."
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="border-t border-[#E1E5EB] bg-[#F6F7FA] px-6 py-3.5 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedEvidence(null)}
+                className="rounded-lg bg-[#2B4C7E] hover:bg-[#1E3559] px-5 py-2 text-sm font-semibold text-white shadow-3xs cursor-pointer border-none"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -230,15 +565,15 @@ function Verdict({ data }: { data: ApplicationReview }) {
   const highCount = data.summary.high_count;
   let title = "NEEDS REVIEW";
   let detail = `${reviewerCount} issue(s) to check`;
-  let classes = "border-amber-300 bg-amber-50 text-amber-900";
+  let classes = "border-[#A0701C] bg-[#FBF2E1] text-[#A0701C]";
   if (pipelineStatus === "stale") {
     title = "STALE";
     detail = "Processing stopped reporting progress; recovery is required";
-    classes = "border-red-300 bg-red-50 text-red-900";
+    classes = "border-[#AF3B2E] bg-[#FBEBE8] text-[#AF3B2E]";
   } else if (pipelineStatus === "failed") {
     title = "FAILED";
     detail = "Processing failed; retry before making a decision";
-    classes = "border-red-300 bg-red-50 text-red-900";
+    classes = "border-[#AF3B2E] bg-[#FBEBE8] text-[#AF3B2E]";
   } else if (["queued", "processing"].includes(pipelineStatus)) {
     title = "PROCESSING";
     detail = "Validation is not complete";
@@ -246,18 +581,18 @@ function Verdict({ data }: { data: ApplicationReview }) {
   } else if (pipelineStatus === "completed_with_warnings") {
     title = "COMPLETED WITH WARNINGS";
     detail = `${reviewerCount} issue(s) plus page-level processing warnings`;
-    classes = "border-amber-300 bg-amber-50 text-amber-900";
+    classes = "border-[#A0701C] bg-[#FBF2E1] text-[#A0701C]";
   } else if (status === "CLEAN" || (pipelineStatus === "completed" && reviewerCount === 0)) {
     title = "CLEAN";
     detail = "No checklist issues found";
-    classes = "border-emerald-300 bg-emerald-50 text-emerald-900";
+    classes = "border-[#1F7A5C] bg-[#E7F3EE] text-[#1F7A5C]";
   } else if (status === "CRITICAL" || highCount > 0) {
     title = "CRITICAL";
     detail = `${highCount || reviewerCount} high-severity issue(s)`;
-    classes = "border-red-350 bg-red-50 text-red-900";
+    classes = "border-[#AF3B2E] bg-[#FBEBE8] text-[#AF3B2E]";
   }
   return (
-    <div className={`rounded-xl border-l-4 px-5 py-4 font-bold flex items-center justify-between shadow-sm ${classes}`}>
+    <div className={`rounded-xl border-l-4 px-5 py-4 font-bold flex items-center justify-between shadow-2xs ${classes}`}>
       <div className="flex items-center gap-3">
         <div>
           <div className="text-xs uppercase tracking-wider opacity-70">Audit Result</div>
@@ -268,326 +603,22 @@ function Verdict({ data }: { data: ApplicationReview }) {
   );
 }
 
-function Overview({ data }: { data: ApplicationReview }) {
-  const uploaded = data.uploaded_file;
-  const avgPageTime = averagePageTime(data.page_events);
-  const reviewerSummary = asRecordValue(data.reviewer_summary);
-  const reconciliation = asRecordValue(reviewerSummary?.trusted_reconciliation);
-  const reconciliationSummary = asRecordValue(reconciliation?.summary);
-  
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-5">
-      <div>
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Application Metadata</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-          <Metric label="Applicant Name" value={data.ground_truth.applicant_name ?? data.application.applicant_name} />
-          <Metric label="PAN Number" value={data.ground_truth.pan_number} />
-          <Metric label="Loan Amount" value={data.ground_truth.loan_amount} />
-          <Metric label="Branch" value={data.application.branch} />
-          <Metric label="Product Type" value={data.application.product_type} />
-        </div>
-      </div>
-      <div className="border-t border-slate-100 pt-4">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Pipeline Summary</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
-          <Metric label="Status" value={data.application.status} />
-          <Metric label="Total Pages" value={uploaded.total_pages ?? data.pages.length} />
-          <Metric label="Digital Count" value={uploaded.digital_pages} />
-          <Metric label="Scanned Count" value={uploaded.scanned_pages} />
-          <Metric label="Passed Items" value={`${data.ai_checklist.passed}/${data.ai_checklist.total || "-"}`} />
-          <Metric label="Avg Page OCR" value={avgPageTime ? `${avgPageTime.toFixed(2)}s` : "-"} />
-        </div>
-      </div>
-      {reconciliationSummary ? (
-        <div className="border-t border-slate-100 pt-4">
-          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Trusted JSON Reconciliation</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-4">
-            <Metric label="Trusted Fields" value={reconciliationSummary.trusted_fields} />
-            <Metric label="Compared" value={reconciliationSummary.checked_fields} />
-            <Metric label="Matched" value={reconciliationSummary.matched_fields} />
-            <Metric label="Matched + Conflicts" value={reconciliationSummary.matched_with_conflicts} />
-            <Metric label="Mismatched" value={reconciliationSummary.mismatched_fields} />
-            <Metric label="Not Observed" value={reconciliationSummary.not_observed_fields} />
-          </div>
-          <p className="mt-3 text-xs font-medium text-slate-500">
-            “Not Observed” means the value exists in trusted data but was not reliably extracted from any submitted document; it is coverage information, not an automatic mismatch.
-          </p>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function asRecordValue(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function ReviewerSummary({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number) => void }) {
+function ReviewerSummary({
+  data,
+  onSelectPage,
+}: {
+  data: ApplicationReview;
+  onSelectPage?: (pageNo: number) => void;
+}) {
   const summary = data.reviewer_summary;
   if (!summary) {
     return null;
   }
-  const status = String(summary.overall_status ?? "LIMITED_REVIEW");
-  const pagesToReview = Array.isArray(summary.pages_to_review) ? summary.pages_to_review.filter((n): n is number => typeof n === "number" || !isNaN(Number(n))).map(Number) : [];
+  const text = asText(summary.note);
   return (
-    <section className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
-      <h2 className="text-base font-bold text-slate-800">
-        Reviewer Action Summary
-      </h2>
-      <div className="flex flex-wrap items-center gap-3">
-        <StatusBadge status={status} />
-        <span className="text-sm text-slate-700 font-bold">{asText(summary.message)}</span>
-      </div>
-      <p className="text-sm text-slate-600 font-medium leading-relaxed">{asText(summary.recommendation)}</p>
-      {pagesToReview.length > 0 ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm flex flex-wrap items-center gap-2">
-          <span>Pages to check manually:</span>
-          {pagesToReview.map((pageNumber) => (
-            <button
-              key={pageNumber}
-              type="button"
-              onClick={() => onSelectPage?.(pageNumber)}
-              className="rounded border border-amber-300 bg-white px-2.5 py-0.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition-colors"
-            >
-              Page {pageNumber}
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function AiAuditInsights({
-  data,
-  onSelectEvidence,
-}: {
-  data: ApplicationReview;
-  onSelectEvidence?: (anomaly: Anomaly, pageNumber: number) => void;
-}) {
-  const rawSummary = data.application.llm_summary;
-  if (!rawSummary || typeof rawSummary !== "string" || !rawSummary.trim()) {
-    return null;
-  }
-
-  interface PageSummary {
-    page_number?: number | null;
-    document_type?: string | null;
-    summary_points?: string[];
-    problem_description?: string;
-  }
-
-  interface LlmSummarySchema {
-    overall_summary: string;
-    final_recommendation: string;
-    page_summaries?: PageSummary[];
-  }
-
-  let parsed: LlmSummarySchema | null = null;
-  try {
-    parsed = JSON.parse(rawSummary) as LlmSummarySchema;
-  } catch (err) {
-    parsed = null;
-  }
-
-  if (!parsed) {
-    return (
-      <section className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-        <div className="flex items-center gap-2 text-violet-750 font-bold">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.187L15 15l-5.187.813zM18 10.5l-.5-3-.5 3-3 .5 3 .5.5 3 .5-3 3-.5-3-.5zM20.25 5.25l-.25-1.5-.25 1.5-1.5.25 1.5.25.25 1.5.25-1.5 1.5-.25-1.5-.25z" />
-          </svg>
-          <h2 className="text-base font-bold text-slate-800">AI Audit Insights</h2>
-        </div>
-        <p className="text-sm text-slate-700 whitespace-pre-line font-medium leading-relaxed">{rawSummary}</p>
-      </section>
-    );
-  }
-
-  const rec = String(parsed.final_recommendation || "MANUAL REVIEW").toUpperCase();
-  let badgeColor = "border-amber-300 bg-amber-50 text-amber-800";
-  if (rec === "APPROVE") {
-    badgeColor = "border-emerald-300 bg-emerald-50 text-emerald-800";
-  } else if (rec === "MANUAL REVIEW") {
-    badgeColor = "border-rose-300 bg-rose-50 text-rose-800";
-  }
-
-  return (
-    <section className="overflow-hidden border border-slate-200 bg-slate-50/30 rounded-2xl shadow-sm space-y-0">
-      <div className="bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-600 px-6 py-4 text-white flex items-center justify-between shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-white/20 p-1.5 backdrop-blur-md">
-            <svg className="w-5 h-5 text-amber-300 animate-pulse animate-duration-1000" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.187L15 15l-5.187.813zM18 10.5l-.5-3-.5 3-3 .5 3 .5.5 3 .5-3 3-.5-3-.5zM20.25 5.25l-.25-1.5-.25 1.5-1.5.25 1.5.25.25 1.5.25-1.5 1.5-.25-1.5-.25z" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-base font-extrabold tracking-tight">AI Audit Insights</h2>
-            <p className="text-[10px] text-indigo-100 font-medium tracking-wide">TOKEN-OPTIMIZED PAGE EXPLANATION</p>
-          </div>
-        </div>
-        <div className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${badgeColor} bg-white shadow-sm flex items-center gap-1.5`}>
-          <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping" />
-          {rec}
-        </div>
-      </div>
-
-      <div className="p-6 space-y-6">
-        <div className="bg-white border border-slate-150 rounded-xl p-5 shadow-xs space-y-2">
-          <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Executive Summary</h3>
-          <p className="text-sm font-semibold text-slate-700 leading-relaxed italic">
-            &ldquo;{parsed.overall_summary}&rdquo;
-          </p>
-        </div>
-
-        {parsed.page_summaries && parsed.page_summaries.length > 0 ? (
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-1">Page-by-Page Findings</h3>
-            <div className="grid gap-4 md:grid-cols-1">
-              {parsed.page_summaries.map((item, index) => {
-                const hasPage = typeof item.page_number === "number" || (typeof item.page_number === "string" && item.page_number);
-                const correspondingAnomaly = data.anomalies.find(a => 
-                  a.page_number === Number(item.page_number) || 
-                  a.collapsed_page_numbers?.includes(Number(item.page_number))
-                );
-                return (
-                  <div key={index} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden flex flex-col hover:border-violet-300 transition-colors duration-200">
-                    <div className="bg-slate-50/50 border-b border-slate-150 px-4 py-2.5 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                        <span className="rounded bg-violet-100 text-violet-700 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider">
-                          {hasPage ? `PAGE ${item.page_number}` : "GENERAL"}
-                        </span>
-                        {item.document_type || "Unknown Document"}
-                      </span>
-                      {hasPage && onSelectEvidence ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const anomalyToSelect = correspondingAnomaly || { 
-                              page_number: Number(item.page_number), 
-                              document_type: item.document_type,
-                              rule_id: "AI_PAGE_REVIEW",
-                              severity: "INFO",
-                              reason: item.problem_description
-                            };
-                            onSelectEvidence(anomalyToSelect, Number(item.page_number));
-                          }}
-                          className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition-colors"
-                        >
-                          View Page {item.page_number}
-                        </button>
-                      ) : null}
-                    </div>
-
-                    <div className="p-4 space-y-3">
-                      {item.summary_points && item.summary_points.length > 0 ? (
-                        <div className="space-y-1.5">
-                          <div className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">Page Content Summary</div>
-                          <ul className="space-y-1 text-xs text-slate-600 font-medium">
-                            {item.summary_points.map((pt, i) => (
-                              <li key={i} className="flex items-start gap-2">
-                                <span className="text-emerald-500 font-bold mt-0.5">•</span>
-                                <span>{pt}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-
-                      {item.problem_description ? (
-                        <div className="rounded-lg bg-rose-50 border border-rose-100 p-3 text-xs">
-                          <div className="flex gap-2">
-                            <span className="text-rose-500 font-bold">⚠️</span>
-                            <div>
-                              <div className="font-bold text-rose-800 flex items-center gap-2">
-                                <span>Anomaly Detected</span>
-                                {correspondingAnomaly ? (
-                                  <>
-                                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider animate-pulse animate-duration-1000 ${getSeverityBadgeColor(correspondingAnomaly.severity)}`}>
-                                      {correspondingAnomaly.severity}
-                                    </span>
-                                    <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider">
-                                      {correspondingAnomaly.rule_id}
-                                    </span>
-                                  </>
-                                ) : null}
-                              </div>
-                              <div className="mt-0.5 text-rose-750 font-medium leading-relaxed">{item.problem_description}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function ResultExplanation({ data }: { data: ApplicationReview }) {
-  const anomalies = data.anomalies;
-  const unsupported = anomalies.find((item) => item.rule_id === "UNSUPPORTED_DOCUMENT_TYPE");
-  const pageFailures = anomalies.filter((item) => item.rule_id === "PAGE_PROCESSING_ERROR");
-  const missing = anomalies.filter((item) => String(item.rule_id ?? "").startsWith("MISSING_DOC"));
-  let message = "The result is based on confident page classifications and completed processing.";
-  if (unsupported) {
-    message = `Unsupported input: ${unsupported.found_value ?? unsupported.reason ?? "Checklist evaluation skipped."}`;
-  } else if (pageFailures.length) {
-    message = `Partial failure: ${pageFailures.length} page(s) had processing errors and need manual review.`;
-  } else if (missing.length) {
-    message = `${missing.length} checklist item(s) are missing because no confident matching page was found.`;
-  }
-  return (
-    <section className="space-y-2">
-      <h2 className="text-base font-bold text-slate-800">Result Explanation</h2>
-      <InfoMessage message={message} />
-    </section>
-  );
-}
-
-function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType?: string) => void }) {
-  if (data.page_events.length === 0) {
-    return <InfoMessage message="No page events logged." />;
-  }
-  return (
-    <section className="space-y-3">
-      <h2 className="text-base font-bold text-slate-800">Page Processing Output</h2>
-      <SortableTable
-        rows={data.page_events}
-        columns={[
-          {
-            key: "page",
-            header: "Page",
-            value: (row) => {
-              const pageNo = row.page_number;
-              if (typeof pageNo !== "number") return "-";
-              return (
-                <button
-                  type="button"
-                  onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)}
-                  className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-750 hover:bg-blue-100 transition-colors"
-                >
-                  Page {pageNo}
-                </button>
-              );
-            },
-            sortValue: (row) => row.page_number
-          },
-          { key: "status", header: "Status", value: (row) => <StatusBadge status={row.status ?? "unknown"} />, sortValue: (row) => row.status },
-          { key: "type", header: "Type", value: (row) => row.page_type ?? "-", sortValue: (row) => row.page_type },
-          { key: "document", header: "Document", value: (row) => row.document_type ?? "Unknown", sortValue: (row) => row.document_type },
-          { key: "llm_document", header: "LLM Document", value: (row) => formatLlmDocument(row.extracted_fields), sortValue: (row) => formatLlmDocument(row.extracted_fields) },
-          { key: "time", header: "Time", value: (row) => formatSeconds(row.elapsed_seconds), sortValue: (row) => row.elapsed_seconds },
-          { key: "data", header: "Data", value: (row) => row.error ?? summarizeFields(row.extracted_fields) },
-        ]}
-      />
+    <section className="space-y-3 rounded-xl border border-slate-200 p-4 shadow-3xs bg-[#F6F7FA]/40">
+      <h3 className="text-xs font-bold text-[#5C6B7A] uppercase tracking-widest">Review Summary Notes</h3>
+      <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">{text || "No summary note entered."}</p>
     </section>
   );
 }
@@ -606,7 +637,7 @@ function Anomalies({
   if (business.length === 0 && processing.length === 0) {
     return (
       <section className="space-y-3">
-        <h2 className="text-base font-bold text-slate-800">Exceptions and Quality Warnings</h2>
+        <h2 className="text-base font-bold text-slate-850 font-serif">Exceptions &amp; Quality Warnings</h2>
         <InfoMessage message="No issues detected." />
       </section>
     );
@@ -614,17 +645,16 @@ function Anomalies({
 
   return (
     <section className="space-y-6">
-      <AiAuditInsights data={data} onSelectEvidence={onSelectEvidence} />
       <AnomalyGroup
-        title={`Business Checklist Exceptions (${business.length})`}
-        description="Document, identity, field, date, and policy exceptions that can affect the operational decision."
+        title={`Checklist Exceptions (${business.length})`}
+        description="Field, date, document, policy validation failures that affect operational clearance."
         anomalies={business}
         tone="business"
         onSelectEvidence={onSelectEvidence}
       />
       <AnomalyGroup
-        title={`Processing Quality Warnings (${processing.length})`}
-        description="OCR, classification, ownership, and page-processing limitations. These require evidence review but are not business failures by themselves."
+        title={`Processing Warnings (${processing.length})`}
+        description="OCR, classification, and metadata limitations that did not prevent check extraction."
         anomalies={processing}
         tone="processing"
         onSelectEvidence={onSelectEvidence}
@@ -650,9 +680,9 @@ function AnomalyGroup({
     <section className="space-y-3">
       <div className={`rounded-xl border px-4 py-3 ${tone === "business" ? "border-red-200 bg-red-50" : "border-blue-200 bg-blue-50"}`}>
         <h2 className="text-base font-bold text-slate-900">{title}</h2>
-        <p className="mt-1 text-xs font-medium text-slate-600">{description}</p>
+        <p className="mt-1 text-xs font-semibold text-slate-600">{description}</p>
       </div>
-      {anomalies.length === 0 ? <InfoMessage message={`No ${tone === "business" ? "business exceptions" : "processing warnings"}.`} /> : null}
+      {anomalies.length === 0 ? <InfoMessage message={`No ${tone === "business" ? "exceptions" : "warnings"}.`} /> : null}
       <div className="space-y-2">
         {anomalies.map((anomaly, index) => {
           const isHigh = anomaly.severity === "HIGH";
@@ -667,14 +697,14 @@ function AnomalyGroup({
             ? "border-amber-200 bg-amber-50 text-amber-800"
             : "border-slate-200 bg-slate-50 text-slate-800";
           return (
-            <details key={`${anomaly.rule_id}-${anomaly.id ?? index}`} className={`overflow-hidden rounded-xl border shadow-sm ${severityColors}`} open={index === 0 && isHigh}>
-              <summary className="flex cursor-pointer items-center justify-between px-4 py-3 font-semibold hover:bg-white/50">
+            <details key={`${anomaly.rule_id}-${anomaly.id ?? index}`} className={`overflow-hidden rounded-xl border shadow-sm bg-white ${severityColors}`} open={index === 0 && isHigh}>
+              <summary className="flex cursor-pointer items-center justify-between px-4 py-3 font-semibold hover:bg-slate-50/50">
                 <div className="flex items-center gap-3">
-                  <span className={`inline-flex rounded px-2 py-0.5 text-[10px] font-bold uppercase ${getSeverityBadgeColor(anomaly.severity)}`}>
+                  <span className={`stamp ${anomaly.severity === "HIGH" ? "mismatch" : "attention"}`}>
                     {anomaly.severity}
                   </span>
                   {anomaly.document_type ? (
-                    <span className="inline-flex rounded bg-white/70 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                    <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
                       {anomaly.document_type}
                     </span>
                   ) : null}
@@ -691,7 +721,7 @@ function AnomalyGroup({
                 </div>
                 {pages.length ? (
                   <div>
-                    <div className="mb-2 font-semibold uppercase tracking-wider text-slate-500">Open source evidence</div>
+                    <div className="mb-2 font-semibold uppercase tracking-wider text-slate-500 text-[10px]">Open source evidence</div>
                     <div className="flex flex-wrap gap-2 items-center">
                       {pages.length > 1 ? (
                         <button
@@ -727,105 +757,51 @@ function AnomalyGroup({
   );
 }
 
-function EvidenceViewer({
-  applicationId,
-  data,
-  selection,
-}: {
-  applicationId: number;
-  data: ApplicationReview;
-  selection: { anomaly: Anomaly; pageNumber: number; allPageNumbers?: number[] } | null;
-}) {
-  if (!selection) {
-    return (
-      <aside id="evidence-viewer" className="sticky top-4 flex h-[70vh] items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
-        <div>
-          <div className="text-base font-bold text-slate-700">Source Evidence Viewer</div>
-          <p className="mt-2 max-w-sm text-sm text-slate-500">Select any page number from the checklist, anomalies, or logs to preview the document page here.</p>
-        </div>
-      </aside>
-    );
-  }
-
-  const pagesToRender = selection.allPageNumbers && selection.allPageNumbers.length > 0
-    ? selection.allPageNumbers
-    : [selection.pageNumber];
-
-  const firstPage = data.pages.find((item) => Number(item.page_number) === selection.pageNumber);
-
-  // Combine OCR text across all loaded pages
-  const combinedOcrText = pagesToRender
-    .map((pageNo) => {
-      const p = data.pages.find((item) => Number(item.page_number) === pageNo);
-      return typeof p?.ocr_text === "string" && p.ocr_text.trim()
-        ? `--- PAGE ${pageNo} ---\n${p.ocr_text.trim()}`
-        : "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-
+function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType: string) => void }) {
+  const events = data.page_events;
+  const avgSeconds = averagePageTime(events);
+  
   return (
-    <aside id="evidence-viewer" className="sticky top-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
-      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Original source evidence</div>
-            <div className="font-bold text-slate-900">
-              {selection.allPageNumbers && selection.allPageNumbers.length > 1
-                ? `Pages ${selection.allPageNumbers.join(", ")} (Combined)`
-                : `Page ${selection.pageNumber}`}
-              {" · "}
-              {asText(firstPage?.document_type ?? selection.anomaly.document_type)}
-            </div>
-          </div>
-          {selection.allPageNumbers && selection.allPageNumbers.length > 1 ? (
-            <span className="text-xs font-extrabold text-violet-700 uppercase bg-violet-100 px-2 py-0.5 rounded border border-violet-200 shadow-sm animate-pulse tracking-wide select-none">
-              Combined Stack
-            </span>
-          ) : (
-            <a href={api.sourcePdfUrl(applicationId, selection.pageNumber)} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-700 hover:underline">Open full PDF</a>
-          )}
-        </div>
+    <section className="space-y-4">
+      <h2 className="text-base font-bold text-slate-800">Page Processing Status</h2>
+      <div className="grid grid-cols-2 gap-4">
+        <Metric label="Pages Processed" value={events.length} />
+        <Metric label="Avg. processing speed" value={`${avgSeconds.toFixed(1)}s / page`} />
       </div>
-      <div
-        key={selection.pageNumber + "-" + (selection.allPageNumbers?.join(",") ?? "")}
-        className="flex flex-col gap-6 h-[65vh] items-center overflow-auto bg-slate-800 p-4"
-      >
-        {pagesToRender.map((pageNo) => (
-          <div key={pageNo} className="relative w-full flex flex-col items-center">
-            <div className="absolute top-2 left-2 rounded bg-black/75 px-2.5 py-1 text-[10px] font-extrabold text-white z-10 shadow border border-slate-700 uppercase tracking-widest select-none">
-              Page {pageNo}
-            </div>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={api.sourcePageImageUrl(applicationId, pageNo)}
-              alt={`Original source PDF page ${pageNo}`}
-              className="h-auto max-w-full bg-white shadow-lg border border-slate-700 rounded-xs"
-            />
-          </div>
-        ))}
-      </div>
-      <div className="max-h-[24vh] space-y-3 overflow-auto border-t border-slate-200 p-4 text-xs">
-        <div className="grid grid-cols-2 gap-3">
-          <EvidenceValue label="Expected" value={selection.anomaly.expected_value} />
-          <EvidenceValue label="Extracted / Found" value={selection.anomaly.found_value} />
-        </div>
-        <div>
-          <div className="mb-1 font-semibold uppercase tracking-wider text-slate-500">Extracted page text</div>
-          <div className="whitespace-pre-wrap rounded-lg bg-slate-950 p-3 font-mono leading-relaxed text-slate-100">
-            {combinedOcrText ? <HighlightedEvidenceText text={combinedOcrText.slice(0, 5000)} needle={selection.anomaly.found_value ?? ""} /> : "No OCR text was extracted for this page. Review the original image above."}
-          </div>
-        </div>
-      </div>
-    </aside>
+      <SortableTable
+        rows={events}
+        columns={[
+          { key: "pageNumber", header: "Page", value: (row) => String(row.page_number ?? "-"), sortValue: (row) => Number(row.page_number) },
+          { key: "documentType", header: "Document Label", value: (row) => asText(row.document_type), sortValue: (row) => String(row.document_type ?? "") },
+          { key: "elapsedSeconds", header: "Elapsed Time", value: (row) => formatSeconds(row.elapsed_seconds), sortValue: (row) => Number(row.elapsed_seconds) },
+          { key: "fields", header: "Extracted Key/Values Output", value: (row) => summarizeFields(row.extracted_fields), sortValue: (row) => summarizeFields(row.extracted_fields) },
+          {
+            key: "action",
+            header: "Open",
+            value: (row) => (
+              <button
+                type="button"
+                className="font-mono text-xs bg-[#EAF0F8] text-[#2B4C7E] border-none rounded-md px-2.5 py-1 font-semibold hover:bg-[#2B4C7E] hover:text-white transition-all cursor-pointer"
+                onClick={() => row.page_number && onSelectPage?.(row.page_number, String(row.document_type || "Page"))}
+              >
+                Page {row.page_number}
+              </button>
+            ),
+            sortValue: (row) => Number(row.page_number)
+          },
+        ]}
+      />
+    </section>
   );
 }
+
+
 
 function EvidenceValue({ label, value }: { label: string; value: unknown }) {
   return (
     <div>
-      <div className="mb-1 font-semibold uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="break-all font-mono text-slate-800">{asText(value)}</div>
+      <div className="mb-1 font-semibold uppercase tracking-wider text-slate-500 text-[10px]">{label}</div>
+      <div className="break-all font-mono text-slate-800 text-[11.5px]">{asText(value)}</div>
     </div>
   );
 }
@@ -885,7 +861,7 @@ function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applic
       ) : null}
       
       <label className="flex items-center gap-2.5 text-sm select-none cursor-pointer">
-        <input type="checkbox" checked={manualConfirmed} onChange={(event) => setManualConfirmed(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500/20" />
+        <input type="checkbox" checked={manualConfirmed} onChange={(event) => setManualConfirmed(event.target.checked)} className="h-4 w-4 rounded border-slate-350 text-blue-600 focus:ring-blue-500/20" />
         <span className="text-slate-700 font-bold">I confirm I have manually verified all items in the above list</span>
       </label>
       
@@ -913,13 +889,13 @@ function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applic
             placeholder="Reviewer note"
           />
           <div className="flex gap-2">
-            <button disabled={!manualConfirmed} className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-300 disabled:text-slate-500 transition-colors duration-150 shadow-sm" onClick={() => submitDecision("ACCEPT", note || "Accepted after manual review.")}>
+            <button disabled={!manualConfirmed} className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-350 disabled:text-slate-500 transition-colors duration-155 shadow-sm" onClick={() => submitDecision("ACCEPT", note || "Accepted after manual review.")}>
               Accept
             </button>
-            <button disabled={!manualConfirmed} className="rounded-lg bg-blue-600 hover:bg-blue-500 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-300 disabled:text-slate-500 transition-colors duration-150 shadow-sm" onClick={() => submitDecision("OVERRIDE", note || "Override approved after review.")}>
+            <button disabled={!manualConfirmed} className="rounded-lg bg-blue-600 hover:bg-blue-505 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-355 disabled:text-slate-500 transition-colors duration-155 shadow-sm" onClick={() => submitDecision("OVERRIDE", note || "Override approved after review.")}>
               Override
             </button>
-            <button disabled={!manualConfirmed} className="rounded-lg border border-slate-350 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400 transition-colors duration-150 shadow-sm" onClick={() => setShowRequestDocs(true)}>
+            <button disabled={!manualConfirmed} className="rounded-lg border border-slate-350 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:bg-slate-105 disabled:text-slate-400 transition-colors duration-155 shadow-sm" onClick={() => setShowRequestDocs(true)}>
               Request Docs
             </button>
           </div>
@@ -932,7 +908,7 @@ function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applic
                   </button>
                 ))}
               </div>
-              <button disabled={!manualConfirmed} className="rounded-lg bg-red-600 hover:bg-red-500 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-300 disabled:text-slate-500 transition-colors duration-150 shadow-sm" onClick={() => submitDecision("REQUEST_DOCS", note)}>
+              <button disabled={!manualConfirmed} className="rounded-lg bg-red-600 hover:bg-red-500 px-5 py-2 text-sm font-semibold text-white disabled:bg-slate-300 disabled:text-slate-500 transition-colors duration-155 shadow-sm" onClick={() => submitDecision("REQUEST_DOCS", note)}>
                 Submit request for documents
               </button>
             </div>
@@ -997,7 +973,7 @@ function Downloads({ applicationId }: { applicationId: number }) {
   return (
     <section className="space-y-3">
       <h2 className="text-base font-bold text-slate-800">Downloads</h2>
-      <a className="inline-block rounded-lg border border-slate-300 bg-white hover:bg-slate-50 px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors" href={api.ocrJsonUrl(applicationId)} download>
+      <a className="inline-block rounded-lg border border-slate-350 bg-white hover:bg-slate-55 px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors" href={api.ocrJsonUrl(applicationId)} download>
         Download Document OCR JSON
       </a>
     </section>
@@ -1038,4 +1014,11 @@ function formatLlmDocument(fields: Record<string, unknown> | undefined): string 
     return `${documentType} (${Math.round(confidence * 100)}%)`;
   }
   return documentType;
+}
+
+function asRecordValue(val: unknown): Record<string, unknown> | undefined {
+  if (val && typeof val === "object" && !Array.isArray(val)) {
+    return val as Record<string, unknown>;
+  }
+  return undefined;
 }
