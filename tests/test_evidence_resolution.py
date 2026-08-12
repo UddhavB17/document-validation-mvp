@@ -174,6 +174,56 @@ def test_zip_application_form_builds_individual_records_across_all_pages() -> No
     assert index["documents"][0]["auto_mapping"]["multi_person_document"] is True
 
 
+def test_zip_cersai_continuation_pages_resolve_as_one_debtor_report() -> None:
+    cover = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+SITA KUMAR
+PAN
+FGHIJ5678K
+Search Output Details
+"""
+    pages = [
+        _page(147, cover, document_type="CERSAI Report", confidence=1.0),
+        _page(
+            148,
+            "Security Interest ID 1001 Applicant RAMESH KUMAR",
+            document_type="CERSAI Report",
+            confidence=1.0,
+        ),
+        _page(
+            149,
+            "Borrower and charge holder details",
+            document_type="CERSAI Report",
+            confidence=1.0,
+        ),
+        _page(
+            150,
+            "--- End Of Report --- CERSAI",
+            document_type="CERSAI Report",
+            confidence=1.0,
+        ),
+    ]
+    result = resolve_trusted_evidence(
+        pages,
+        {
+            "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+        },
+        source_documents=[{
+            "source_document_id": "file-0023",
+            "original_filename": "CERSAI_For_Debtor_Based_Search.pdf",
+            "internal_page_start": 147,
+            "internal_page_end": 150,
+        }],
+    )
+
+    assert len(result["groups"]) == 1
+    assert result["groups"][0]["pages"] == [147, 148, 149, 150]
+    assert result["groups"][0]["resolved_person_id"] == "coapplicant_1"
+    assert all(page["person_id"] == "coapplicant_1" for page in pages)
+
+
 def test_merged_application_form_aggregates_contiguous_pages() -> None:
     pages = [
         _page(

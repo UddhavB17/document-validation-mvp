@@ -107,6 +107,9 @@ def attach_field_provenance(
     method = str(page.get("detection_method") or classification.get("detection_method") or "")
     raw_type = str(classification.get("raw_document_type") or page.get("document_type") or "Unknown")
     smoothed = method in WEAK_INHERITED_METHODS
+    recovery_metadata = fields.get("_trusted_candidate_recovery")
+    if not isinstance(recovery_metadata, dict):
+        recovery_metadata = {}
 
     provenance: dict[str, Any] = {}
     for field_name, value in list(fields.items()):
@@ -118,20 +121,39 @@ def attach_field_provenance(
             confidence = min(confidence, 0.45)
         if field_key == "applicant_name" and not is_person_name_candidate(value):
             confidence = 0.0
-        provenance[field_name] = {
+        recovery = recovery_metadata.get(field_key)
+        if not isinstance(recovery, dict):
+            recovery = None
+        if recovery is not None:
+            confidence = min(
+                text_confidence,
+                _float(recovery.get("confidence"), confidence),
+            )
+        item = {
             "source_pages": [page.get("page_number")],
             "source_file": page.get("source_filename"),
             "source_document_id": page.get("source_document_id"),
             "source_segment": page.get("source_segment") or source_segment,
             "extractor": str(page.get("document_type") or "Unknown"),
             "schema": str(page.get("provided_document_type") or page.get("document_type") or "Unknown"),
-            "anchor_evidence": _anchor_evidence(page, field_key),
+            "anchor_evidence": (
+                [recovery.get("anchor"), "trusted_value_present_in_ocr"]
+                if recovery is not None
+                else _anchor_evidence(page, field_key)
+            ),
             "field_confidence": round(confidence, 3),
             "type_confidence": round(type_confidence, 3),
             "raw_document_type": raw_type,
             "smoothed_classification": smoothed,
             "detection_method": method,
         }
+        if recovery is not None:
+            item.update({
+                "resolution_method": "trusted_candidate_match",
+                "match_method": recovery.get("match_method"),
+                "ocr_line": recovery.get("ocr_line"),
+            })
+        provenance[field_name] = item
     if provenance:
         fields["_field_provenance"] = provenance
 

@@ -102,6 +102,176 @@ def test_shared_pipeline_comparison_matches_case_insensitive_name_and_classifies
     }]
 
 
+def test_shared_comparison_recovers_labeled_dob_from_raw_ocr(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.mapped_verification.extract_fields",
+        lambda _document_type, _text: {"dob": None},
+    )
+    pages = [{
+        "page_number": 67,
+        "page_type": "scanned",
+        "is_readable": True,
+        "ocr_text": (
+            "UNION OF INDIA Driving Licence\n"
+            "Date of Birth\nBlood Group\nUnknown\n28/11/1994\n"
+            "Name\nKULDEEP SINGH"
+        ),
+        "ocr_confidence": 0.93,
+        "document_type": "Driving License",
+        "classification_confidence": 1.0,
+        "extracted_fields": {"dob": None},
+    }]
+    manifest = {
+        "reference_data": {
+            "coapplicant_2": {"date_of_birth": "28-November-1994"},
+        },
+        "documents": [{
+            "source_document_id": "dl-1",
+            "applicant_role": "coapplicant_2",
+            "document_type": "Driving License",
+            "pages": [67],
+            "expected_fields": {"date_of_birth": "28-November-1994"},
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 1
+    assert result["matched_fields"] == 1
+    assert pages[0]["extracted_fields"]["dob"] == "28/11/1994"
+    recovery = pages[0]["extracted_fields"]["_trusted_candidate_recovery"]["date_of_birth"]
+    assert recovery["resolution_method"] == "trusted_candidate_match"
+    assert recovery["anchor"] == "date_of_birth_label"
+    assert recovery["original_values"] == []
+
+
+def test_shared_comparison_replaces_noisy_name_and_address_when_ocr_has_trusted_values(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.mapped_verification.extract_fields",
+        lambda _document_type, _text: {
+            "applicant_name": "APPLICATION DETAILS",
+            "address": "DATE OF BIRTH BLOOD GROUP UNKNOWN",
+        },
+    )
+    pages = [{
+        "page_number": 3,
+        "page_type": "scanned",
+        "is_readable": True,
+        "ocr_text": (
+            "Application Form\nApplicant Name\nRAMESH KUMAR\n"
+            "Permanent Address\n12 Market Road\nDelhi 110001\n"
+            "Mobile Number\n9876543210"
+        ),
+        "ocr_confidence": 0.96,
+        "document_type": "Application Form",
+        "classification_confidence": 0.98,
+        "extracted_fields": {
+            "applicant_name": "APPLICATION DETAILS",
+            "address": "DATE OF BIRTH BLOOD GROUP UNKNOWN",
+        },
+    }]
+    expected = {
+        "applicant_name": "Ramesh Kumar",
+        "address": "12 Market Road Delhi 110001",
+    }
+    manifest = {
+        "reference_data": {"primary": expected},
+        "documents": [{
+            "source_document_id": "form-1",
+            "applicant_role": "primary",
+            "document_type": "Application Form",
+            "pages": [3],
+            "expected_fields": expected,
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 2
+    assert result["matched_fields"] == 2
+    fields = pages[0]["extracted_fields"]
+    assert fields["applicant_name"] == "RAMESH KUMAR"
+    assert fields["address"] == "12 Market Road Delhi 110001"
+    assert fields["_trusted_candidate_recovery"]["address"]["original_values"] == [
+        "DATE OF BIRTH BLOOD GROUP UNKNOWN"
+    ]
+
+
+def test_shared_comparison_does_not_hide_wrong_owner_with_trusted_recovery(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.mapped_verification.extract_fields",
+        lambda _document_type, _text: {"applicant_name": "SITA KUMAR"},
+    )
+    pages = [{
+        "page_number": 4,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": "Application Form\nApplicant Name\nRAMESH KUMAR\nCo-applicant SITA KUMAR",
+        "ocr_confidence": 1.0,
+        "document_type": "Application Form",
+        "classification_confidence": 0.99,
+        "extracted_fields": {"applicant_name": "SITA KUMAR"},
+    }]
+    manifest = {
+        "reference_data": {
+            "primary": {"applicant_name": "Ramesh Kumar"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar"},
+        },
+        "documents": [{
+            "source_document_id": "form-2",
+            "applicant_role": "primary",
+            "document_type": "Application Form",
+            "pages": [4],
+            "expected_fields": {"applicant_name": "Ramesh Kumar"},
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert pages[0]["extracted_fields"]["applicant_name"] == "SITA KUMAR"
+    assert "_trusted_candidate_recovery" not in pages[0]["extracted_fields"]
+    assert [item["rule_id"] for item in result["anomalies"]] == ["INDEX_MAPPING_SUSPECTED"]
+
+
+def test_shared_comparison_requires_a_field_label_before_trusted_recovery(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "services.mapped_verification.extract_fields",
+        lambda _document_type, _text: {"applicant_name": None},
+    )
+    pages = [{
+        "page_number": 5,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": "This declaration was witnessed by Ramesh Kumar and signed below.",
+        "ocr_confidence": 1.0,
+        "document_type": "Application Form",
+        "classification_confidence": 0.99,
+        "extracted_fields": {"applicant_name": None},
+    }]
+    manifest = {
+        "reference_data": {"primary": {"applicant_name": "Ramesh Kumar"}},
+        "documents": [{
+            "source_document_id": "form-3",
+            "applicant_role": "primary",
+            "document_type": "Application Form",
+            "pages": [5],
+            "expected_fields": {"applicant_name": "Ramesh Kumar"},
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert pages[0]["extracted_fields"]["applicant_name"] is None
+    assert "_trusted_candidate_recovery" not in pages[0]["extracted_fields"]
+    assert [item["rule_id"] for item in result["anomalies"]] == [
+        "APPLICANT_NAME_NOT_FOUND"
+    ]
+
+
 def test_mapped_cersai_uses_debtor_pan_over_wrong_provided_person() -> None:
     text = """Debtor Based Search Report
 Search Criteria Entered
@@ -143,6 +313,75 @@ Applicant RAMESH KUMAR PAN ABCDE1234F
     assert result["anomalies"] == []
     assert result["checked_fields"] == 2
     assert result["matched_fields"] == 2
+
+
+def test_asset_based_cersai_has_no_applicant_or_pan_contract() -> None:
+    text = """Asset Based Search Report
+Search Criteria Entered
+Asset Category
+Immovable
+Survey Number
+42
+Search Output Details
+Co-Applicant SITA KUMAR PAN FGHIJ5678K
+"""
+    pages = [{
+        "page_number": 145,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": text,
+        "ocr_confidence": 1.0,
+        "document_type": "CERSAI Report",
+        "classification_confidence": 1.0,
+        "extracted_fields": extract_fields("CERSAI Report", text),
+    }, {
+        "page_number": 146,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": "--- End Of Report --- CERSAI",
+        "ocr_confidence": 1.0,
+        "document_type": "CERSAI Report",
+        "classification_confidence": 1.0,
+        "extracted_fields": {},
+    }]
+    manifest = {
+        "reference_data": {
+            "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+        },
+        "documents": [{
+            "source_document_id": "file-0022",
+            # A stale/default mapping must not turn an asset search into a
+            # primary-applicant identity document.
+            "applicant_role": "primary",
+            "document_type": "CERSAI Report",
+            "pages": [145, 146],
+        }],
+    }
+
+    result = compare_processed_pages(
+        pages,
+        manifest,
+        source_documents=[{
+            "source_document_id": "file-0022",
+            "original_filename": "CERSAI_For_Asset_Based_Search.pdf",
+            "internal_page_start": 145,
+            "internal_page_end": 146,
+        }],
+    )
+
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 0
+    assert result["matched_fields"] == 0
+    assert all(page["person_id"] is None for page in pages)
+    assert all(page["applicant_role"] is None for page in pages)
+    assert all(
+        page["extracted_fields"]["_ownership"]["document_scope"] == "loan_level"
+        for page in pages
+    )
+    assert result["source_classifications"][0]["provided_person_ids"] == []
+    assert result["source_classifications"][0]["predicted_person_id"] is None
+    assert "CERSAI Report" not in result["people_verification"]["primary"]["documents"]
 
 
 def test_multipage_bank_statement_does_not_require_name_on_continuation_pages() -> None:
@@ -323,6 +562,141 @@ def test_zip_source_application_form_is_verified_as_one_merged_document() -> Non
     name_not_found = next(item for item in result["anomalies"] if item["rule_id"] == "APPLICANT_NAME_NOT_FOUND")
     assert name_not_found["source_filename"] == "Applicant/application-form.pdf"
     assert name_not_found["source_segment"] == "1-3"
+
+
+def test_passbook_unique_account_match_makes_missing_name_non_blocking() -> None:
+    pages = [{
+        "page_number": 61,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": (
+            "PASSBOOK\nAccount Number: 222233334444\n"
+            "IFSC: PUNB0001234\nAccount particulars"
+        ),
+        "document_type": "Passbook",
+        "classification_confidence": 0.98,
+        "extracted_fields": {
+            "account_number": "222233334444",
+            "ifsc": "PUNB0001234",
+        },
+    }]
+    reference_data = {
+        "primary": {
+            "applicant_name": "Kala Singh",
+            "account_number": "111122223333",
+        },
+        "coapplicant_1": {
+            "applicant_name": "Seeta Seeta",
+            "account_number": "222233334444",
+            "ifsc": "PUNB0001234",
+        },
+    }
+
+    result = compare_processed_pages(
+        pages,
+        {
+            "reference_data": reference_data,
+            "documents": [{
+                "source_document_id": "passbook-1",
+                "applicant_role": "coapplicant_1",
+                "document_type": "Passbook",
+                "pages": [61],
+            }],
+        },
+    )
+
+    assert result["checked_fields"] == 2
+    assert result["matched_fields"] == 2
+    assert not any(
+        item["rule_id"] == "APPLICANT_NAME_NOT_FOUND"
+        for item in result["anomalies"]
+    )
+
+
+def test_passbook_account_match_does_not_hide_conflicting_holder_name() -> None:
+    pages = [{
+        "page_number": 61,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": (
+            "PASSBOOK\nAccount Number: 222233334444\n"
+            "IFSC: PUNB0001234\nAccount Holder: Another Person"
+        ),
+        "document_type": "Passbook",
+        "classification_confidence": 0.98,
+        "extracted_fields": {
+            "account_holder_name": "Another Person",
+            "account_number": "222233334444",
+            "ifsc": "PUNB0001234",
+        },
+    }]
+
+    result = compare_processed_pages(
+        pages,
+        {
+            "reference_data": {
+                "coapplicant_1": {
+                    "applicant_name": "Seeta Seeta",
+                    "account_number": "222233334444",
+                    "ifsc": "PUNB0001234",
+                },
+            },
+            "documents": [{
+                "source_document_id": "passbook-1",
+                "applicant_role": "coapplicant_1",
+                "document_type": "Passbook",
+                "pages": [61],
+            }],
+        },
+    )
+
+    assert any(
+        item["rule_id"] == "APPLICANT_NAME_MISMATCH"
+        for item in result["anomalies"]
+    )
+
+
+def test_passbook_shared_account_does_not_replace_holder_identity() -> None:
+    pages = [{
+        "page_number": 61,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": "PASSBOOK\nAccount Number: 222233334444\nIFSC: PUNB0001234",
+        "document_type": "Passbook",
+        "classification_confidence": 0.98,
+        "extracted_fields": {
+            "account_number": "222233334444",
+            "ifsc": "PUNB0001234",
+        },
+    }]
+
+    result = compare_processed_pages(
+        pages,
+        {
+            "reference_data": {
+                "primary": {
+                    "applicant_name": "Kala Singh",
+                    "account_number": "222233334444",
+                },
+                "coapplicant_1": {
+                    "applicant_name": "Seeta Seeta",
+                    "account_number": "222233334444",
+                    "ifsc": "PUNB0001234",
+                },
+            },
+            "documents": [{
+                "source_document_id": "joint-passbook-1",
+                "applicant_role": "coapplicant_1",
+                "document_type": "Passbook",
+                "pages": [61],
+            }],
+        },
+    )
+
+    assert any(
+        item["rule_id"] == "APPLICANT_NAME_NOT_FOUND"
+        for item in result["anomalies"]
+    )
 
 
 def test_loan_level_field_checks_run_once_across_fragments() -> None:

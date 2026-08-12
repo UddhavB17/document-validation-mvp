@@ -50,6 +50,97 @@ def test_bank_statement_owner_resolves_from_ocr_name() -> None:
     assert pages[0]["person_id"] == "primary"
 
 
+def test_bank_statement_holder_beats_related_primary_and_clears_anomaly() -> None:
+    people = {
+        "primary": {"role": "primary", "applicant_name": "Kala Singh"},
+        "coapplicant_1": {"role": "coapplicant", "applicant_name": "Seeta Seeta"},
+        "coapplicant_2": {"role": "coapplicant", "applicant_name": "Kuldeep Singh"},
+    }
+    page = {
+        "page_number": 19,
+        "document_type": "Bank Statement",
+        "source_filename": "Case/Co-Applicant/BANK/statement.pdf",
+        "ocr_text": (
+            "Account Summary\nWelcome:\nMr. Kuldeep Singh\nMr. Kuldeep Singh\n"
+            "Not Available\nS/O: Kala Singh, Ward No 11\n"
+            "Date of Statement: 31-07-2026\nSTATEMENT OF ACCOUNT\n"
+            "Balance\n01/01/2026\nWDL TFR\n"
+        ),
+        # Reproduce the historical extractor error. Raw header evidence must
+        # recover the holder instead of trusting this transaction description.
+        "extracted_fields": {"account_holder_name": "WDL TFR"},
+    }
+
+    assign_page_owners([page], {"people": people})
+
+    assert page["person_id"] == "coapplicant_2"
+    assert "applicant_name" in page["extracted_fields"]["_ownership"]["evidence"]
+    assert ownership_anomalies_for_unassigned([page]) == []
+
+
+def test_banking_holder_layouts_generalize_across_names_and_labels() -> None:
+    people = {
+        "primary": {"role": "primary", "applicant_name": "Rajesh Verma"},
+        "coapplicant_1": {"role": "coapplicant", "applicant_name": "Asha Verma"},
+        "coapplicant_2": {"role": "coapplicant", "applicant_name": "Nitin Rao"},
+    }
+    cases = (
+        ("Account Summary\nWelcome:\nMrs. Asha Verma\nW/O: Rajesh Verma", "coapplicant_1"),
+        ("Account Holder Name: Nitin Rao\nS/O: Rajesh Verma", "coapplicant_2"),
+        ("STATEMENT OF ACCOUNT OF Mr. Nitin Rao AT CITY BRANCH", "coapplicant_2"),
+    )
+
+    for text, expected_person_id in cases:
+        owner = resolve_person_owner(
+            {
+                "document_type": "Bank Statement",
+                "ocr_text": text,
+                "extracted_fields": {},
+            },
+            people,
+            "Bank Statement",
+            source_filename="Case/Co-Applicant/BANK/statement.pdf",
+        )
+        assert owner["person_id"] == expected_person_id
+
+
+def test_relationship_name_alone_never_becomes_bank_statement_holder() -> None:
+    owner = resolve_person_owner(
+        {
+            "document_type": "Bank Statement",
+            "ocr_text": "Account Summary\nS/O: Kala Singh, Ward No 11\nBalance",
+            "extracted_fields": {},
+        },
+        {
+            "primary": {"role": "primary", "applicant_name": "Kala Singh"},
+            "coapplicant_1": {"role": "coapplicant", "applicant_name": "Seeta Singh"},
+            "coapplicant_2": {"role": "coapplicant", "applicant_name": "Nitin Singh"},
+        },
+        "Bank Statement",
+        source_filename="Case/Co-Applicant/BANK/statement.pdf",
+    )
+
+    assert owner["person_id"] is None
+    assert "source_role_ambiguous" in owner["evidence"]
+
+
+def test_equal_holder_evidence_never_defaults_to_primary() -> None:
+    owner = resolve_person_owner(
+        {
+            "document_type": "Bank Statement",
+            "ocr_text": "Account Holder Name: Kala Singh\nCustomer Name: Kuldeep Singh",
+            "extracted_fields": {},
+        },
+        {
+            "primary": {"role": "primary", "applicant_name": "Kala Singh"},
+            "coapplicant_1": {"role": "coapplicant", "applicant_name": "Kuldeep Singh"},
+        },
+        "Bank Statement",
+    )
+
+    assert owner["person_id"] is None
+
+
 def test_passbook_owner_resolves_from_ocr_name() -> None:
     pages = [
         {
@@ -125,6 +216,32 @@ def test_cheque_owner_resolves_from_exact_full_account_number() -> None:
     assert owner["person_id"] == "primary"
     assert owner["confidence"] == 1.0
     assert owner["evidence"] == ["account_number"]
+
+
+def test_unique_full_account_number_overrides_wrong_source_role() -> None:
+    owner = resolve_person_owner(
+        {
+            "document_type": "Passbook",
+            "ocr_text": "PASSBOOK\nAccount No. 41249946368\nIFSC SBIN0031538",
+            "extracted_fields": {"account_number": "41249946368"},
+        },
+        {
+            "primary": {
+                "applicant_name": "Kala Singh",
+                "account_number": "41249946368",
+            },
+            "coapplicant_1": {
+                "applicant_name": "Seeta Seeta",
+                "account_number": "99999999999",
+            },
+        },
+        "Passbook",
+        source_filename="Co-Applicant/BANK/passbook.pdf",
+    )
+
+    assert owner["person_id"] == "primary"
+    assert "account_number" in owner["evidence"]
+    assert "overrode_source_role:coapplicant" in owner["evidence"]
 
 
 def test_cheque_owner_resolves_from_printed_signature_holder_name() -> None:
@@ -275,18 +392,34 @@ Immovable
 Search Output Details
 Co-Applicant RADHA BAI PAN TSTCC0003T
 """
+    page = {
+        "document_type": "CERSAI Report",
+        "ocr_text": text,
+        "extracted_fields": extract_fields("CERSAI Report", text),
+    }
     owner = resolve_person_owner(
-        {
-            "document_type": "CERSAI Report",
-            "ocr_text": text,
-            "extracted_fields": extract_fields("CERSAI Report", text),
-        },
+        page,
         PEERU_FAMILY,
         "CERSAI Report",
     )
 
-    assert owner["person_id"] == "primary"
-    assert owner["evidence"] == ["loan_level_document"]
+    assert owner["person_id"] is None
+    assert owner["evidence"] == ["cersai_asset_based"]
+    assert owner["document_scope"] == "loan_level"
+
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+
+    assert page["person_id"] is None
+    assert page["applicant_role"] is None
+    assert page["extracted_fields"]["_ownership"] == {
+        "person_id": None,
+        "confidence": 1.0,
+        "evidence": ["cersai_asset_based"],
+        "source_role": None,
+        "cersai_search_type": "asset_based",
+        "document_scope": "loan_level",
+    }
+    assert ownership_anomalies_for_unassigned([page]) == []
 
 
 def test_assign_page_owners_stamps_coapplicant_pages() -> None:

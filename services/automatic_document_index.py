@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from services.cersai import starts_new_report as cersai_starts_new_report
 from services.person_ownership import (
     MULTI_PERSON_DOCUMENT_TYPES,
     document_is_loan_level,
@@ -81,6 +82,7 @@ def build_automatic_document_index(
                 source_filename=str(group.get("original_filename") or "") or None,
             )
 
+        explicit_personless_scope = person.get("document_scope") == "loan_level"
         if person["person_id"] is None:
             # Person-scoped docs (PAN/Aadhaar/CIBIL/…) must not fall back to primary.
             if requires_person:
@@ -103,20 +105,21 @@ def build_automatic_document_index(
                     )
                 )
                 continue
-            if is_loan_level and reference_data:
-                default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
-                person = {
-                    "person_id": default_id,
-                    "confidence": 0.35,
-                    "evidence": ["loan_level_document_default"],
-                }
-            elif reference_data:
-                default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
-                person = {
-                    "person_id": default_id,
-                    "confidence": 1.0,
-                    "evidence": ["document_not_person_scoped"],
-                }
+            if not explicit_personless_scope:
+                if is_loan_level and reference_data:
+                    default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+                    person = {
+                        "person_id": default_id,
+                        "confidence": 0.35,
+                        "evidence": ["loan_level_document_default"],
+                    }
+                elif reference_data:
+                    default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+                    person = {
+                        "person_id": default_id,
+                        "confidence": 1.0,
+                        "evidence": ["document_not_person_scoped"],
+                    }
 
         # Loan-level docs are intentionally assigned to primary with modest confidence.
         # Do not emit per-fragment LOW_CONFIDENCE noise for that default.
@@ -143,6 +146,7 @@ def build_automatic_document_index(
                 "source_document_id": group["source_document_id"],
                 "document_type": document_type,
                 "applicant_role": person["person_id"],
+                "document_scope": person.get("document_scope"),
                 "pages": group["pages"],
                 "required": False,
                 "auto_mapping": {
@@ -232,6 +236,13 @@ def _group_pages(
                 document_type in {"Aadhaar", "Voter ID", "Driving License", "Passport"}
                 and (current or {}).get("document_type") == document_type
                 and not _identity_page_starts_new_subject(
+                    (current or {}).get("pages_data") or [], page
+                )
+            )
+            and not (
+                document_type == "CERSAI Report"
+                and (current or {}).get("document_type") == document_type
+                and not cersai_starts_new_report(
                     (current or {}).get("pages_data") or [], page
                 )
             )

@@ -1033,6 +1033,34 @@ class TestDrivingLicense:
         assert result["date_of_issue"] == "2020-05-10"
         assert result["dob"] is None
 
+    def test_dob_survives_interleaved_blood_group_column(self) -> None:
+        result = self._extract(
+            """UNION OF INDIA Driving Licence
+RJ13 20240001114
+Date of Issue
+er/Validity
+27/11/2034
+21/02/2024
+Date of Birth
+Blood Group
+Unknown
+28/11/1994
+नाम / Name
+KULDEEP SINGH
+"""
+        )
+
+        assert result["dob"] == "1994-11-28"
+        assert result["validity_date"] == "2034-11-27"
+
+    def test_dob_block_stops_before_next_identity_field(self) -> None:
+        result = self._extract(
+            "Driving Licence\nDate of Birth\nBlood Group\nUnknown\n"
+            "Name\nRahul Joshi\nDate of Issue\n21/02/2024"
+        )
+
+        assert result["dob"] is None
+
     def test_address_stops_before_next_dl_field(self) -> None:
         result = self._extract(
             "Driving Licence\nAddress\n12 Main Street\nPune 411001\n"
@@ -1307,6 +1335,28 @@ def test_bank_statement_profile_extracts_title_case_holder_after_ckyc() -> None:
     assert result["account_holder_name"] == "Kala Singh"
     assert result["account_holder_name"] != "Holding Nature"
     assert result["account_number"] == "6368"
+
+
+def test_bank_statement_welcome_header_beats_relation_and_transaction_text() -> None:
+    result = extract_fields(
+        "Bank Statement",
+        """Account Summary
+Welcome:
+Mr. Kuldeep Singh
+Mr. Kuldeep Singh
+Not Available
+S/O: Kala Singh, Ward No 11
+Date of Statement: 31-07-2026
+Account Number: 42833598283
+STATEMENT OF ACCOUNT
+State Bank of India
+Balance
+01/01/2026 WDL TFR 10.00 11,538.16
+""",
+    )
+
+    assert result["account_holder_name"] == "Kuldeep Singh"
+    assert result["account_holder_name"] != "WDL TFR"
 
 
 def test_nach_status_screen_extracts_holder_and_register_success() -> None:

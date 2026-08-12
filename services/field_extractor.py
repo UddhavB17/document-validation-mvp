@@ -795,6 +795,49 @@ def _extract_date_after_label(text: str, *labels: str) -> str | None:
     return None
 
 
+def _extract_date_below_label(
+    text: str,
+    *labels: str,
+    max_lines: int = 6,
+    stop_labels: tuple[str, ...] = (),
+) -> str | None:
+    """Extract a date from the short visual block below a field label.
+
+    Structured cards often flatten adjacent columns into intervening OCR lines.
+    For example, a driving licence may emit ``Date of Birth``, ``Blood Group``,
+    ``Unknown``, then the DOB.  This bounded scan tolerates those non-date lines
+    but stops before the next identity field so a different date is not used.
+    """
+    date_pattern = re.compile(
+        r"\b(?:\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}"
+        r"|\d{4}[/\-\.]\d{2}[/\-\.]\d{2}"
+        r"|\d{1,2}[-\s]+[A-Za-z]+[-\s]+\d{4})\b"
+    )
+    normalized_labels = {_normalize_label(label) for label in labels}
+    normalized_stops = tuple(_normalize_label(label) for label in stop_labels)
+    lines = [line.strip() for line in str(text or "").splitlines()]
+    for index, line in enumerate(lines):
+        normalized_line = _normalize_label(line)
+        if not any(
+            normalized_line == label or normalized_line.endswith(f" {label}")
+            for label in normalized_labels
+        ):
+            continue
+        for candidate in lines[index + 1:index + 1 + max_lines]:
+            normalized_candidate = _normalize_label(candidate)
+            if normalized_candidate and any(
+                normalized_candidate == stop
+                or normalized_candidate.endswith(f" {stop}")
+                or normalized_candidate.startswith(f"{stop} ")
+                for stop in normalized_stops
+            ):
+                break
+            match = date_pattern.search(candidate)
+            if match:
+                return _parse_date(match.group(0))
+    return None
+
+
 def _is_past_date(iso_date: str | None) -> bool:
     """Return True if *iso_date* is before today."""
     if iso_date is None:
@@ -2155,7 +2198,27 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
     )
     is_expired = _is_past_date(validity_date)
 
-    dob_raw = _extract_date_after_label(text, "date of birth", "dob", "d.o.b")
+    dob_raw = (
+        _extract_date_after_label(text, "date of birth", "dob", "d.o.b")
+        or _extract_date_below_label(
+            text,
+            "date of birth",
+            "dob",
+            "d.o.b",
+            max_lines=6,
+            stop_labels=(
+                "name",
+                "address",
+                "permanent address",
+                "date of issue",
+                "validity",
+                "valid till",
+                "licence no",
+                "license no",
+                "dl no",
+            ),
+        )
+    )
     date_of_issue = _extract_date_after_label(
         text, "date of issue", "issue date", "issued on", "date issued"
     )
@@ -2344,6 +2407,7 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         r"\s*\n\s*\d{4}-\d{2}-\d{2}",
         text,
     )
+    header_name = _bank_statement_header_holder_name(text)
     statement_title_name = _statement_holder_after_title(text)
     fallback_name = _line_after_label(text, "account holder", "customer name", "name")
     if fallback_name and fallback_name.casefold() in {
@@ -2354,7 +2418,7 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
     return {
         "account_holder_name": (
             _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1))).title()
-            if profile_name else statement_title_name or fallback_name
+            if profile_name else header_name or statement_title_name or fallback_name
         ),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
@@ -2370,6 +2434,69 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         "statement_period_start": period_start,
         "statement_period_end": period_end,
     }
+
+
+def _bank_statement_header_holder_name(text: str) -> str | None:
+    """Extract the statement subject without confusing relatives or transactions.
+
+    Bank layouts commonly print the holder after ``Welcome`` or as a standalone
+    honorific line.  Relationship rows such as ``S/O: Kala Singh`` identify a
+    relative, while transaction descriptions such as ``WDL TFR`` are not names.
+    Keep this scan inside the statement header so neither can become the holder.
+    """
+    header = re.split(
+        r"(?:^|\n)\s*(?:transactions?|transaction\s+details|date\s+particulars|"
+        r"opening\s+balance|statement\s+of\s+account)\s*(?:\n|$)",
+        str(text or ""),
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    lines = [re.sub(r"\s+", " ", line).strip(" ,.;") for line in header.splitlines()]
+
+    label_pattern = re.compile(
+        r"^(?:welcome|account\s+holder(?:\s+name)?|customer(?:'s)?\s+name|"
+        r"name\s+of\s+(?:the\s+)?(?:account\s+holder|customer))\s*[:\-–]?\s*(.*)$",
+        re.IGNORECASE,
+    )
+    for index, line in enumerate(lines[:40]):
+        match = label_pattern.match(line)
+        if not match:
+            continue
+        candidates = [match.group(1), *lines[index + 1:index + 4]]
+        for raw_candidate in candidates:
+            candidate = _clean_name_like_value(raw_candidate)
+            if candidate:
+                return candidate
+
+    titled = re.search(
+        r"\bof\s+(?:mr|mrs|ms|miss|shri|smt|sri|dr)\.?\s+"
+        r"([A-Za-z][A-Za-z .'-]{2,60}?)\s+(?=at\b|a/?c\b|account\b|$)",
+        header,
+        re.IGNORECASE,
+    )
+    if titled:
+        candidate = _clean_name_like_value(titled.group(1))
+        if candidate:
+            return candidate
+
+    for line in lines[:30]:
+        if re.match(
+            r"^(?:[wsdcf]\s*/?\s*o|wife\s+of|son\s+of|daughter\s+of|"
+            r"care\s+of)\b",
+            line,
+            re.IGNORECASE,
+        ):
+            continue
+        if not re.match(
+            r"^(?:mr|mrs|ms|miss|shri|smt|sri|dr)\.?[\s:\-–]+",
+            line,
+            re.IGNORECASE,
+        ):
+            continue
+        candidate = _clean_name_like_value(line)
+        if candidate:
+            return candidate
+    return None
 
 
 def _statement_holder_after_title(text: str) -> str | None:
@@ -2395,7 +2522,13 @@ def _statement_holder_after_title(text: str) -> str | None:
     )
     if title_index is None:
         return None
-    for line in lines[title_index + 1 : title_index + 10]:
+    for line in lines[title_index + 1 : title_index + 6]:
+        if re.search(
+            r"\b(?:balance|transactions?|particulars|withdrawal|deposit|debit|credit)\b",
+            line,
+            re.IGNORECASE,
+        ):
+            break
         candidate = canonicalize_person_name(line)
         if not candidate.valid:
             continue

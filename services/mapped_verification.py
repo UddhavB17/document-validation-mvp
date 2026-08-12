@@ -7,6 +7,12 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
+from services.cersai import (
+    ASSET_BASED as CERSAI_ASSET_BASED,
+    DEBTOR_BASED as CERSAI_DEBTOR_BASED,
+    UNKNOWN as CERSAI_UNKNOWN,
+    report_search_type as cersai_report_search_type,
+)
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.field_verification import (
@@ -25,6 +31,10 @@ from services.person_names import is_person_name_candidate
 from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
 from services.text_extractor import extract_digital_text
+from services.trusted_candidate_resolver import (
+    RECOVERABLE_TRUSTED_FIELDS,
+    resolve_trusted_candidate,
+)
 from services.validation_gates import attach_field_provenance, canonical_field, field_reliable_for_validation
 from database.models import FieldVerificationResult
 
@@ -113,7 +123,6 @@ DOCUMENT_FIELDS = {
     "voter id": {"applicant_name", "date_of_birth", "address"},
     "cibil report": {"applicant_name"},
     "crif report": {"applicant_name"},
-    "cersai report": {"applicant_name", "pan_number"},
     "bank statement": {"applicant_name", "account_number", "ifsc"},
     "passbook": {"applicant_name", "account_number", "ifsc"},
     "cheque": {"applicant_name", "account_number", "ifsc"},
@@ -175,6 +184,66 @@ def _name_optional_for_multipage_document(
     )
 
 
+def _passbook_has_unique_account_identity(
+    document_type: str,
+    person_id: str,
+    document_observations: dict[str, list[dict[str, Any]]],
+    reference_data: dict[str, Any],
+) -> bool:
+    """Return whether a full account number uniquely identifies this holder.
+
+    A unique exact match makes a missing passbook name non-blocking.  An
+    observed holder name is still compared so joint/wrong-holder evidence is
+    not silently discarded.
+    """
+    if document_type.strip().casefold() != "passbook":
+        return False
+    person = reference_data.get(person_id)
+    if not isinstance(person, dict):
+        return False
+
+    expected_values = [
+        value
+        for key, value in person.items()
+        if _canonical(key) == "account_number" and value not in (None, "")
+    ]
+    if not expected_values:
+        return False
+    expected_digits = "".join(
+        character for character in str(expected_values[0]) if character.isdigit()
+    )
+    if len(expected_digits) < 8:
+        return False
+
+    owners = []
+    for candidate_id, candidate in reference_data.items():
+        if not isinstance(candidate, dict):
+            continue
+        candidate_accounts = [
+            value
+            for key, value in candidate.items()
+            if _canonical(key) == "account_number" and value not in (None, "")
+        ]
+        if any(
+            "".join(character for character in str(value) if character.isdigit())
+            == expected_digits
+            for value in candidate_accounts
+        ):
+            owners.append(str(candidate_id))
+    if owners != [person_id]:
+        return False
+
+    return any(
+        _mapped_field_matches(
+            "account_number",
+            observation.get("value"),
+            expected_values[0],
+            person,
+        )
+        for observation in document_observations.get("account_number") or []
+    )
+
+
 def _mapped_ocr_router() -> OCRRouter:
     """Build a router while retaining the historical monkeypatch seam."""
     kwargs: dict[str, Any] = {}
@@ -202,6 +271,7 @@ def run_mapped_verification(
     pages: list[dict[str, Any]] = []
     anomalies: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
+    resolved_documents: list[dict[str, Any]] = []
     checked_fields = 0
     matched_fields = 0
     total_mapped_pages = len(
@@ -227,6 +297,7 @@ def run_mapped_verification(
             expected = _expected_fields(reference_data, mapping, document_type)
             mapped_pages = [int(number) for number in mapping.get("pages") or []]
             if not mapped_pages:
+                resolved_documents.append(dict(mapping))
                 if mapping.get("required", True):
                     anomalies.append(_anomaly("DOCUMENT_MISSING", "HIGH", None, document_type, None, None,
                                               "No page was mapped for this required document.",
@@ -286,11 +357,21 @@ def run_mapped_verification(
                     "ocr_confidence": confidence,
                     "document_type": document_type,
                     "person_id": person_id,
+                    "source_document_id": mapping.get("source_document_id"),
                     "classification_confidence": 1.0,
                     "detection_method": f"provided_mapping_{text_source}",
                     "detected_page_number": page_number,
                     "extracted_fields": extracted,
                 }
+                _recover_trusted_fields_from_ocr(
+                    page=page_record,
+                    fields=extracted,
+                    mapped_fields={},
+                    expected=expected,
+                    reference_data=reference_data,
+                    person_id=person_id,
+                    document_type=document_type,
+                )
                 for key, value in extracted.items():
                     if (
                         not str(key).startswith("_")
@@ -355,7 +436,7 @@ def run_mapped_verification(
                 )
 
             mapping_page_records = pages[mapping_page_start:]
-            person_id, debtor_scoped, owner = _resolved_mapping_person(
+            person_id, cersai_scope, owner = _resolved_mapping_person(
                 document_type,
                 mapping_page_records,
                 reference_data,
@@ -366,9 +447,14 @@ def run_mapped_verification(
                 mapping,
                 document_type,
                 person_id,
-                debtor_scoped=debtor_scoped,
+                cersai_scope=cersai_scope,
             )
-            if debtor_scoped:
+            resolved_mapping = dict(mapping)
+            resolved_mapping["applicant_role"] = person_id
+            if owner.get("document_scope"):
+                resolved_mapping["document_scope"] = owner["document_scope"]
+            resolved_documents.append(resolved_mapping)
+            if cersai_scope in {CERSAI_DEBTOR_BASED, CERSAI_ASSET_BASED}:
                 for page_record in mapping_page_records:
                     page_record["person_id"] = person_id
                     page_record["applicant_role"] = person_id
@@ -378,12 +464,13 @@ def run_mapped_verification(
                             "person_id": person_id,
                             "confidence": owner.get("confidence", 0.0),
                             "evidence": owner.get("evidence", []),
-                            "cersai_search_type": "debtor_based",
+                            "cersai_search_type": cersai_scope,
+                            "document_scope": owner.get("document_scope"),
                         }
                 for field_observations in document_observations.values():
                     for observation in field_observations:
                         observation["person_id"] = person_id
-                if person_id == "unassigned" and mapped_pages:
+                if cersai_scope == CERSAI_DEBTOR_BASED and person_id == "unassigned" and mapped_pages:
                     anomalies.append(_anomaly(
                         "AUTO_OWNER_UNRESOLVED", "LOW", mapped_pages[0], document_type,
                         "Debtor PAN matching a trusted applicant/co-applicant", None,
@@ -397,6 +484,12 @@ def run_mapped_verification(
                                           person_id=person_id))
                 continue
 
+            account_identity_match = _passbook_has_unique_account_identity(
+                document_type,
+                person_id,
+                document_observations,
+                reference_data,
+            )
             for raw_field, expected_value in expected.items():
                 field = _canonical(raw_field)
                 if field not in VERIFY or expected_value in (None, ""):
@@ -404,6 +497,8 @@ def run_mapped_verification(
                 field_observations = document_observations.get(field) or []
                 page_number = readable_pages[0]
                 if not field_observations:
+                    if field == "applicant_name" and account_identity_match:
+                        continue
                     if field == "applicant_name" and unreliable_fields.get(field):
                         continue
                     if _name_optional_for_multipage_document(
@@ -478,7 +573,7 @@ def run_mapped_verification(
     result["ocr_pages_processed"] = len(ocr_page_numbers)
     result["observations"] = observations
     result["people_verification"] = _build_people_verification(
-        reference_data, manifest.get("documents") or [], observations, result["anomalies"]
+        reference_data, resolved_documents, observations, result["anomalies"]
     )
     result["reviewer_summary"]["people_verification"] = result["people_verification"]
     save_reviewer_summary(application_id, result["reviewer_summary"])
@@ -508,10 +603,11 @@ def compare_processed_pages(
     }
     anomalies: list[dict[str, Any]] = []
     observations: list[dict[str, Any]] = []
+    resolved_documents: list[dict[str, Any]] = []
     checked_fields = 0
     matched_fields = 0
     # For loan-level / multi-fragment types: collect once, verify once.
-    aggregated: dict[tuple[str, str], dict[str, Any]] = {}
+    aggregated: dict[tuple[str | None, str], dict[str, Any]] = {}
 
     for mapping in documents:
         provided_type = str(mapping.get("document_type") or "Unknown")
@@ -525,7 +621,7 @@ def compare_processed_pages(
             for number in mapped_numbers
             if number in pages_by_number
         ]
-        person_id, debtor_scoped, owner = _resolved_mapping_person(
+        person_id, cersai_scope, owner = _resolved_mapping_person(
             provided_type,
             mapped_page_records,
             reference_data,
@@ -536,8 +632,13 @@ def compare_processed_pages(
             mapping,
             provided_type,
             person_id,
-            debtor_scoped=debtor_scoped,
+            cersai_scope=cersai_scope,
         )
+        resolved_mapping = dict(mapping)
+        resolved_mapping["applicant_role"] = person_id
+        if owner.get("document_scope"):
+            resolved_mapping["document_scope"] = owner["document_scope"]
+        resolved_documents.append(resolved_mapping)
         document_observations: dict[str, list[dict[str, Any]]] = {}
         document_unreliable_fields: dict[str, list[dict[str, Any]]] = {}
         readable_pages: list[int] = []
@@ -551,7 +652,7 @@ def compare_processed_pages(
                     "No page was mapped for this required document.", person_id=person_id,
                 ))
             continue
-        if debtor_scoped and person_id == "unassigned":
+        if cersai_scope == CERSAI_DEBTOR_BASED and person_id == "unassigned":
             anomalies.append(_anomaly(
                 "AUTO_OWNER_UNRESOLVED", "LOW", mapped_numbers[0], provided_type,
                 "Debtor PAN matching a trusted applicant/co-applicant", None,
@@ -585,18 +686,30 @@ def compare_processed_pages(
             fields["_provided_mapping"] = mapping_metadata
             page["person_id"] = person_id
             page["applicant_role"] = person_id
-            if debtor_scoped:
+            if cersai_scope in {CERSAI_DEBTOR_BASED, CERSAI_ASSET_BASED}:
                 fields["_ownership"] = {
                     "person_id": person_id,
                     "confidence": owner.get("confidence", 0.0),
                     "evidence": owner.get("evidence", []),
-                    "cersai_search_type": "debtor_based",
+                    "cersai_search_type": cersai_scope,
+                    "document_scope": owner.get("document_scope"),
                 }
             page["source_document_id"] = source_document_id
             page["provided_document_type"] = provided_type
 
             text = str(page.get("ocr_text") or "")
             mapped_fields = extract_fields(provided_type, text) if text else {}
+            source_document = source_lookup.get(str(source_document_id), {})
+            _recover_trusted_fields_from_ocr(
+                page=page,
+                fields=fields,
+                mapped_fields=mapped_fields,
+                expected=expected,
+                reference_data=reference_data,
+                person_id=person_id,
+                document_type=provided_type,
+                source_document=source_document,
+            )
             fields["_mapped_extraction"] = mapped_fields
             comparison_fields = {
                 **{key: value for key, value in fields.items() if not str(key).startswith("_")},
@@ -708,13 +821,13 @@ def compare_processed_pages(
 
     source_classifications = _classify_source_documents(
         pages,
-        documents,
+        resolved_documents,
         reference_data,
         source_documents or [],
     )
     _attach_source_provenance(anomalies, source_documents or [])
     people_verification = _build_people_verification(
-        reference_data, documents, observations, anomalies
+        reference_data, resolved_documents, observations, anomalies
     )
     return {
         "anomalies": anomalies,
@@ -745,6 +858,12 @@ def _verify_document_fields(
     # Determine which readable pages have low OCR confidence so we can suppress
     # spurious NOT_FOUND / MISMATCH anomalies for genuinely unreadable pages.
     low_confidence_pages_emitted: set[int] = set()
+    account_identity_match = _passbook_has_unique_account_identity(
+        provided_type,
+        person_id,
+        document_observations,
+        reference_data,
+    )
 
     for raw_field, expected_value in expected.items():
         field = _canonical(raw_field)
@@ -754,6 +873,8 @@ def _verify_document_fields(
             continue
         field_observations = document_observations.get(field) or []
         if not field_observations:
+            if field == "applicant_name" and account_identity_match:
+                continue
             if field == "applicant_name" and (unreliable_fields or {}).get(field):
                 continue
             if _name_optional_for_multipage_document(
@@ -957,8 +1078,9 @@ def _classify_source_documents(
                             owner_votes[str(person_id)] += 1
 
         provided_owners = sorted({
-            str(item.get("applicant_role") or item.get("person_id") or "primary")
+            str(owner)
             for item in group["mappings"]
+            if (owner := item.get("applicant_role") or item.get("person_id"))
         })
         predicted_owner = owner_votes.most_common(1)[0][0] if owner_votes else (
             provided_owners[0] if len(provided_owners) == 1 else None
@@ -971,7 +1093,13 @@ def _classify_source_documents(
             "pages": sorted(group["pages"]),
             "provided_person_ids": provided_owners,
             "predicted_person_id": predicted_owner,
-            "owner_detection_method": "extracted_identity" if owner_votes else "provided_mapping",
+            "owner_detection_method": (
+                "extracted_identity"
+                if owner_votes
+                else "provided_mapping"
+                if provided_owners
+                else "not_person_scoped"
+            ),
             "provided_document_types": sorted({str(entry.get("document_type") or "Unknown") for entry in group["mappings"]}),
             "predicted_document_type": predicted_type,
             "document_type_votes": dict(type_votes),
@@ -982,6 +1110,208 @@ def _classify_source_documents(
             if isinstance(fields, dict):
                 fields["_zip_source_classification"] = classification
     return results
+
+
+_OWNER_UNIQUE_RECOVERY_FIELDS = frozenset(
+    {"aadhaar_number", "pan_number", "phone_number", "date_of_birth", "applicant_name"}
+)
+
+
+def _recover_trusted_fields_from_ocr(
+    *,
+    page: dict[str, Any],
+    fields: dict[str, Any],
+    mapped_fields: dict[str, Any],
+    expected: dict[str, Any],
+    reference_data: dict[str, Any],
+    person_id: str | None,
+    document_type: str,
+    source_document: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Recover missing/misbound values only from strongly anchored OCR evidence."""
+    if document_type.strip().casefold() == "cersai report":
+        # CERSAI ownership must be resolved from debtor evidence before any
+        # person-scoped trusted value can safely influence field assignment.
+        return {}
+    text = str(page.get("ocr_text") or "")
+    if not text.strip() or page.get("is_readable") is False:
+        return {}
+
+    recovered: dict[str, dict[str, Any]] = {}
+    person = reference_data.get(str(person_id))
+    trusted_person = person if isinstance(person, dict) else {}
+    for raw_field, expected_value in expected.items():
+        field = _canonical(raw_field)
+        if field not in RECOVERABLE_TRUSTED_FIELDS or expected_value in (None, ""):
+            continue
+
+        entries = _public_field_entries(fields, field) + _public_field_entries(mapped_fields, field)
+        current_values = [
+            value for _, value in entries if value not in (None, "", [], {})
+        ]
+        if any(
+            _mapped_field_matches(field, value, expected_value, trusted_person)
+            for value in current_values
+        ):
+            continue
+        if person_id is not None and any(
+            _find_other_owner(reference_data, str(person_id), field, value)
+            for value in current_values
+        ):
+            # Preserve genuine wrong-owner evidence rather than replacing it
+            # with the expected value and hiding an index/person mapping error.
+            continue
+        if field in _OWNER_UNIQUE_RECOVERY_FIELDS and not _trusted_value_is_unique_to_person(
+            reference_data,
+            person_id,
+            field,
+            expected_value,
+        ):
+            continue
+
+        candidate = resolve_trusted_candidate(field, expected_value, text)
+        if candidate is None:
+            continue
+        observed = candidate["observed_value"]
+        ocr_confidence = page.get("ocr_confidence")
+        text_confidence = 1.0 if ocr_confidence in (None, "") else float(ocr_confidence)
+        confidence = round(min(float(candidate["confidence"]), text_confidence), 3)
+        if confidence < 0.65:
+            continue
+
+        keys = _recovery_storage_keys(field, document_type, fields, mapped_fields)
+        original_values = list(dict.fromkeys(str(value) for value in current_values))
+        record = {
+            "field_name": field,
+            "observed_value": observed,
+            "original_values": original_values,
+            "resolution_method": "trusted_candidate_match",
+            "match_method": candidate["match_method"],
+            "anchor": candidate["anchor"],
+            "ocr_line": candidate["line_number"],
+            "confidence": confidence,
+            "person_id": person_id,
+            "document_type": document_type,
+            "page_number": page.get("page_number"),
+        }
+        provenance = {
+            "source_pages": [page.get("page_number")],
+            "source_file": (
+                (source_document or {}).get("original_filename")
+                or page.get("source_filename")
+            ),
+            "source_document_id": (
+                (source_document or {}).get("source_document_id")
+                or page.get("source_document_id")
+            ),
+            "source_segment": _source_segment(source_document or {}) or page.get("source_segment"),
+            "extractor": str(page.get("document_type") or document_type),
+            "schema": document_type,
+            "anchor_evidence": [candidate["anchor"], "trusted_value_present_in_ocr"],
+            "field_confidence": confidence,
+            "type_confidence": float(page.get("classification_confidence") or 0.0),
+            "raw_document_type": str(page.get("document_type") or "Unknown"),
+            "smoothed_classification": False,
+            "detection_method": str(page.get("detection_method") or "provided_mapping"),
+            "resolution_method": "trusted_candidate_match",
+            "ocr_line": candidate["line_number"],
+            "match_method": candidate["match_method"],
+        }
+
+        # Run the normal document/type/reliability gates against the proposed
+        # observation before mutating persisted extraction output.
+        trial_fields = dict(fields)
+        trial_provenance = dict(trial_fields.get("_field_provenance") or {})
+        for key in keys:
+            trial_fields[key] = observed
+            trial_provenance[key] = provenance
+        trial_fields["_field_provenance"] = trial_provenance
+        trial_page = {**page, "extracted_fields": trial_fields}
+        if not field_reliable_for_validation(
+            trial_page,
+            field,
+            observed,
+            expected_document_type=document_type,
+        ):
+            continue
+
+        for container in (fields, mapped_fields):
+            container_keys = [
+                key
+                for key in container
+                if not str(key).startswith("_") and _canonical(key) == field
+            ]
+            for key in container_keys or [keys[0]]:
+                container[key] = observed
+        recovery_metadata = fields.get("_trusted_candidate_recovery")
+        if not isinstance(recovery_metadata, dict):
+            recovery_metadata = {}
+        recovery_metadata[field] = record
+        fields["_trusted_candidate_recovery"] = recovery_metadata
+        field_provenance = fields.get("_field_provenance")
+        if not isinstance(field_provenance, dict):
+            field_provenance = {}
+        for key in keys:
+            field_provenance[key] = provenance
+        fields["_field_provenance"] = field_provenance
+        recovered[field] = record
+    return recovered
+
+
+def _public_field_entries(container: dict[str, Any], field: str) -> list[tuple[str, Any]]:
+    return [
+        (str(key), value)
+        for key, value in container.items()
+        if not str(key).startswith("_") and _canonical(key) == field
+    ]
+
+
+def _recovery_storage_keys(
+    field: str,
+    document_type: str,
+    fields: dict[str, Any],
+    mapped_fields: dict[str, Any],
+) -> list[str]:
+    existing = [
+        key
+        for container in (fields, mapped_fields)
+        for key, _ in _public_field_entries(container, field)
+    ]
+    if existing:
+        return list(dict.fromkeys(existing))
+    if field == "date_of_birth" and document_type.strip().casefold() in {
+        "aadhaar", "pan", "pan card", "voter id", "driving license"
+    }:
+        return ["dob"]
+    return [field]
+
+
+def _trusted_value_is_unique_to_person(
+    reference_data: dict[str, Any],
+    person_id: str | None,
+    field: str,
+    expected_value: Any,
+) -> bool:
+    if person_id is None:
+        return False
+    validator = VERIFY.get(field)
+    if validator is None:
+        return False
+    owners: set[str] = set()
+    for candidate_id, person in reference_data.items():
+        if not isinstance(person, dict):
+            continue
+        for key, value in person.items():
+            if _canonical(key) != field or value in (None, ""):
+                continue
+            try:
+                result = validator(str(value), str(expected_value))
+            except Exception:
+                continue
+            if result.match and float(result.confidence) >= 0.95:
+                owners.add(str(candidate_id))
+                break
+    return not owners or owners == {str(person_id)}
 
 
 def _source_lookup(source_documents: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -1058,47 +1388,61 @@ def _resolved_mapping_person(
     pages: list[dict[str, Any]],
     reference_data: dict[str, Any],
     provided_person_id: str,
-) -> tuple[str, bool, dict[str, Any]]:
-    """Override a CERSAI mapping only when its entered debtor establishes scope."""
+) -> tuple[str | None, str | None, dict[str, Any]]:
+    """Resolve CERSAI debtor ownership or its explicit property-only scope."""
     from services.person_ownership import (
-        document_requires_person_owner,
         resolve_person_owner,
     )
 
     if str(document_type or "").strip().casefold() != "cersai report":
-        return provided_person_id, False, {
+        return provided_person_id, None, {
             "person_id": provided_person_id,
             "confidence": 0.7,
             "evidence": ["provided_mapping"],
         }
-    debtor_scoped = document_requires_person_owner(document_type, pages)
-    if not debtor_scoped:
-        return provided_person_id, False, {
+    cersai_scope = cersai_report_search_type(pages)
+    if cersai_scope == CERSAI_ASSET_BASED:
+        return None, cersai_scope, {
+            "person_id": None,
+            "confidence": 1.0,
+            "evidence": ["cersai_asset_based"],
+            "document_scope": "loan_level",
+        }
+    if cersai_scope != CERSAI_DEBTOR_BASED:
+        return provided_person_id, CERSAI_UNKNOWN, {
             "person_id": provided_person_id,
             "confidence": 0.7,
             "evidence": ["provided_mapping"],
         }
     owner = resolve_person_owner(pages, reference_data, document_type)
     resolved = str(owner.get("person_id") or "unassigned")
-    return resolved, True, owner
+    return resolved, cersai_scope, owner
 
 
 def _resolved_mapping_expected_fields(
     reference_data: dict[str, Any],
     mapping: dict[str, Any],
     document_type: str,
-    person_id: str,
+    person_id: str | None,
     *,
-    debtor_scoped: bool,
+    cersai_scope: str | None,
 ) -> dict[str, Any]:
-    if debtor_scoped and person_id == "unassigned":
+    if cersai_scope == CERSAI_ASSET_BASED:
+        return {}
+    if cersai_scope == CERSAI_DEBTOR_BASED and person_id == "unassigned":
         return {}
     effective_mapping = dict(mapping)
     effective_mapping["applicant_role"] = person_id
-    if debtor_scoped:
+    if cersai_scope == CERSAI_DEBTOR_BASED:
         # Explicit fields attached to the original page/person mapping can be
         # stale. Rebuild expectations from the debtor's trusted person record.
-        effective_mapping.pop("expected_fields", None)
+        trusted = reference_data.get(str(person_id))
+        effective_mapping["expected_fields"] = {
+            key: value
+            for key, value in (trusted.items() if isinstance(trusted, dict) else [])
+            if _canonical(key) in {"applicant_name", "pan_number"}
+            and value not in (None, "")
+        }
     return _expected_fields(reference_data, effective_mapping, document_type)
 
 
@@ -1309,7 +1653,11 @@ def _build_people_verification(
 ) -> dict[str, Any]:
     matrix: dict[str, Any] = {}
     person_ids = set(reference_data)
-    person_ids.update(str(item.get("applicant_role") or "primary") for item in documents)
+    person_ids.update(
+        str(person_id)
+        for item in documents
+        if (person_id := item.get("applicant_role") or item.get("person_id"))
+    )
     for person_id in sorted(person_ids):
         trusted = reference_data.get(person_id)
         person_name = trusted.get("applicant_name") if isinstance(trusted, dict) else None
@@ -1317,12 +1665,12 @@ def _build_people_verification(
         document_types = sorted({
             str(mapping.get("document_type") or "Unknown")
             for mapping in documents
-            if str(mapping.get("applicant_role") or "primary") == person_id
+            if str(mapping.get("applicant_role") or mapping.get("person_id") or "") == person_id
         })
         for document_type in document_types:
             mappings = [
                 mapping for mapping in documents
-                if str(mapping.get("applicant_role") or "primary") == person_id
+                if str(mapping.get("applicant_role") or mapping.get("person_id") or "") == person_id
                 and str(mapping.get("document_type") or "Unknown") == document_type
             ]
             relevant_observations = [

@@ -13,8 +13,10 @@ from datetime import datetime
 from typing import Any
 
 from services.cersai import (
+    ASSET_BASED as CERSAI_ASSET_BASED,
     DEBTOR_BASED as CERSAI_DEBTOR_BASED,
     UNKNOWN as CERSAI_UNKNOWN,
+    report_search_type as detect_cersai_report_search_type,
     search_type as detect_cersai_search_type,
 )
 from services.identifiers import plausible_aadhaar_digits
@@ -174,19 +176,7 @@ def _as_page_list(
 
 def _cersai_search_type(pages: list[dict[str, Any]]) -> str:
     """Read subtype from extraction metadata first, then intrinsic OCR text."""
-    for page in pages:
-        fields = page.get("extracted_fields")
-        fields = fields if isinstance(fields, dict) else {}
-        ownership = fields.get("_ownership")
-        if isinstance(ownership, dict) and ownership.get("cersai_search_type"):
-            nested_fields = {"cersai_search_type": ownership["cersai_search_type"]}
-            detected = detect_cersai_search_type("", nested_fields)
-            if detected != CERSAI_UNKNOWN:
-                return detected
-        detected = detect_cersai_search_type(page.get("ocr_text"), fields)
-        if detected != CERSAI_UNKNOWN:
-            return detected
-    return CERSAI_UNKNOWN
+    return detect_cersai_report_search_type(pages)
 
 
 def _cersai_debtor_identity_page(pages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -356,9 +346,6 @@ def resolve_person_owner(
         for key, value in (reference_data or {}).items()
         if isinstance(value, dict)
     }
-    if not people:
-        return {"person_id": None, "confidence": 0.0, "evidence": []}
-
     type_key = str(document_type or "").strip().lower()
     if not type_key and page_list:
         type_key = str(page_list[0].get("document_type") or "").strip().lower()
@@ -368,6 +355,17 @@ def resolve_person_owner(
         if type_key == "cersai report"
         else CERSAI_UNKNOWN
     )
+    if cersai_type == CERSAI_ASSET_BASED:
+        # An asset-based search is property-scoped. Any people printed in the
+        # results are returned registry parties, not the report's applicant.
+        return {
+            "person_id": None,
+            "confidence": 1.0,
+            "evidence": ["cersai_asset_based"],
+            "document_scope": "loan_level",
+        }
+    if not people:
+        return {"person_id": None, "confidence": 0.0, "evidence": []}
     if cersai_type == CERSAI_DEBTOR_BASED:
         # A debtor-based result may list the other applicant/co-applicants in
         # its output. Ownership is determined only by the debtor entered in the
@@ -544,18 +542,41 @@ def assign_page_owners(
     """
     people = people_from_trusted(trusted)
     if not people:
+        asset_pages = {
+            id(page)
+            for group in _cersai_document_groups(pages)
+            if _cersai_search_type(group) == CERSAI_ASSET_BASED
+            for page in group
+        }
         for page in pages:
+            if id(page) in asset_pages:
+                page["person_id"] = None
+                page["applicant_role"] = None
+                fields = page.get("extracted_fields")
+                fields = dict(fields) if isinstance(fields, dict) else {}
+                fields["_ownership"] = {
+                    "person_id": None,
+                    "confidence": 1.0,
+                    "evidence": ["cersai_asset_based"],
+                    "cersai_search_type": CERSAI_ASSET_BASED,
+                    "document_scope": "loan_level",
+                }
+                page["extracted_fields"] = fields
+                continue
             if not page.get("person_id") and not page.get("applicant_role"):
                 page["person_id"] = "unassigned"
         return pages
 
     cersai_group_owners: dict[int, dict[str, Any]] = {}
+    cersai_group_types: dict[int, str] = {}
     for group in _cersai_document_groups(pages):
-        if _cersai_search_type(group) != CERSAI_DEBTOR_BASED:
+        group_type = _cersai_search_type(group)
+        if group_type not in {CERSAI_DEBTOR_BASED, CERSAI_ASSET_BASED}:
             continue
         group_owner = resolve_person_owner(group, people, "CERSAI Report")
         for grouped_page in group:
             cersai_group_owners[id(grouped_page)] = group_owner
+            cersai_group_types[id(grouped_page)] = group_type
 
     for page in pages:
         existing = str(page.get("person_id") or page.get("applicant_role") or "").strip()
@@ -590,12 +611,14 @@ def assign_page_owners(
             )
         type_key = document_type.strip().lower()
         person_id = owner.get("person_id")
+        cersai_group_type = cersai_group_types.get(id(page))
+        is_asset_based_cersai = cersai_group_type == CERSAI_ASSET_BASED
         requires_person = (
-            id(page) in cersai_group_owners
+            cersai_group_type == CERSAI_DEBTOR_BASED
             or document_requires_person_owner(document_type, [page])
         )
 
-        if person_id is None:
+        if person_id is None and not is_asset_based_cersai:
             if requires_person or type_key in PERSON_SCOPED_DOCUMENT_TYPES or len(people) > 1:
                 person_id = "unassigned"
             elif "primary" in people:
@@ -616,8 +639,10 @@ def assign_page_owners(
             "evidence": owner.get("evidence", []),
             "source_role": owner.get("source_role"),
         }
-        if id(page) in cersai_group_owners:
-            ownership_meta["cersai_search_type"] = CERSAI_DEBTOR_BASED
+        if cersai_group_type:
+            ownership_meta["cersai_search_type"] = cersai_group_type
+        if owner.get("document_scope"):
+            ownership_meta["document_scope"] = owner["document_scope"]
         if provided_person_is_document_scope:
             # Keep the provenance durable across the checklist's intentional
             # second ownership pass inside consistency checks.
@@ -671,8 +696,8 @@ def _identity_is_decisive(identity: dict[str, Any], person_id: str) -> bool:
     Folder roles are participant-level provenance.  Names, phones and Aadhaar
     last-four values are useful for choosing among candidates, but are too
     collision-prone to move a document from one participant role to another.
-    Only a format-valid full PAN or a full Aadhaar printed next to an Aadhaar
-    label may override that source role.
+    A format-valid full PAN, a full Aadhaar printed next to an Aadhaar label,
+    or a unique full bank-account number may override that source role.
     """
     return bool(
         identity.get("source_override_evidence_by_person", {}).get(person_id)
@@ -862,15 +887,8 @@ def _score_people(
     ranked = scores.most_common()
     if ranked:
         best_id, best_score = ranked[0]
-        tied = [person_id for person_id, score in ranked if score == best_score]
-        if len(tied) > 1 and "primary" in tied:
-            # Shared family OCR (passbook front pages) often mentions father + applicant.
-            # Prefer primary when scores are otherwise tied.
-            best_id = "primary"
-            second_score = 0.0
-        else:
-            second_score = ranked[1][1] if len(ranked) > 1 else 0.0
-        if best_score > second_score or (len(tied) > 1 and best_id == "primary"):
+        second_score = ranked[1][1] if len(ranked) > 1 else 0.0
+        if best_score > second_score:
             confidence = min(1.0, 0.45 + (best_score / 12.0))
             return {
                 "best_id": best_id,
@@ -908,9 +926,14 @@ def _source_override_evidence(
             candidates.append(mapped)
         generic = fields.get("_generic_evidence")
         ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
+        account_identity_document = (
+            str(page.get("document_type") or "").strip().casefold()
+            in {"bank statement", "passbook", "cheque"}
+        )
 
         pan_values: list[Any] = []
         aadhaar_values: list[Any] = []
+        account_values: list[Any] = []
         for candidate in candidates:
             pan_values.extend(
                 candidate.get(alias)
@@ -920,6 +943,11 @@ def _source_override_evidence(
             aadhaar_values.extend(
                 candidate.get(alias)
                 for alias in FIELD_ALIASES["aadhaar_number"]
+                if candidate.get(alias) not in (None, "", [], {})
+            )
+            account_values.extend(
+                candidate.get(alias)
+                for alias in FIELD_ALIASES["account_number"]
                 if candidate.get(alias) not in (None, "", [], {})
             )
         if isinstance(generic, dict):
@@ -934,6 +962,12 @@ def _source_override_evidence(
             for match in re.finditer(
                 r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)",
                 ocr_text,
+            )
+        )
+        account_values.extend(
+            _explicit_bank_account_observations(
+                ocr_text,
+                str(page.get("document_type") or ""),
             )
         )
 
@@ -963,6 +997,29 @@ def _source_override_evidence(
                 expected_document_type=str(page.get("document_type") or "Unknown"),
             )
         }
+        valid_accounts = (
+            {
+                digits
+                for value in account_values
+                if 8 <= len(digits := _digits(str(value))) <= 20
+                and field_reliable_for_validation(
+                    page,
+                    "account_number",
+                    value,
+                    expected_document_type=str(page.get("document_type") or "Unknown"),
+                )
+            }
+            if account_identity_document
+            else set()
+        )
+
+        trusted_account_owners: dict[str, list[str]] = {}
+        for candidate_id, trusted in people.items():
+            trusted_digits = _digits(str(
+                first_value(trusted, FIELD_ALIASES["account_number"]) or ""
+            ))
+            if len(trusted_digits) >= 8:
+                trusted_account_owners.setdefault(trusted_digits, []).append(candidate_id)
 
         for person_id, trusted in people.items():
             expected_pan = re.sub(
@@ -975,6 +1032,14 @@ def _source_override_evidence(
             )
             if expected_aadhaar and expected_aadhaar in valid_aadhaars:
                 evidence[person_id].add("full_labeled_aadhaar_number")
+            expected_account = _digits(str(
+                first_value(trusted, FIELD_ALIASES["account_number"]) or ""
+            ))
+            if (
+                expected_account in valid_accounts
+                and trusted_account_owners.get(expected_account) == [person_id]
+            ):
+                evidence[person_id].add("full_account_number")
     return {
         person_id: sorted(values)
         for person_id, values in evidence.items()
@@ -1147,9 +1212,9 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             for value in generic.get("phone_numbers") or []:
                 observations["phone_number"].append(value)
 
-        # Fall back to raw OCR for exact identifiers.  For names, whole-page
-        # haystack matching is restricted to banking documents; on Aadhaar and
-        # other KYC backs, a W/O or S/O name is a relation, not the cardholder.
+        # Fall back to raw OCR for exact identifiers. Banking names are limited
+        # to holder/header candidates; on all documents, W/O or S/O names are
+        # relations and must not be treated as the cardholder.
         if ocr_text:
             observations["applicant_name"].extend(
                 _explicit_name_observations(
@@ -1184,9 +1249,7 @@ def _explicit_name_observations(text: str, document_type: str) -> list[str]:
     if type_key == "cheque":
         return _cheque_signature_name_observations(text)
     if type_key in {"bank statement", "passbook"}:
-        # These pages often omit a clean label but retain a unique account-holder
-        # name in a short header.  Existing haystack matching remains useful.
-        return [text]
+        return _banking_holder_name_observations(text)
 
     candidates: list[str] = []
     patterns = (
@@ -1202,6 +1265,87 @@ def _explicit_name_observations(text: str, document_type: str) -> list[str]:
                 continue
             candidates.append(candidate)
     return candidates
+
+
+def _banking_holder_name_observations(text: str) -> list[str]:
+    """Return holder candidates from a banking header, never relation rows.
+
+    Whole-page name matching is unsafe because transaction descriptions,
+    nominees and ``S/O``/``W/O`` relatives can all contain trusted names.  This
+    parser is layout-tolerant but deliberately bounded to subject-bearing header
+    patterns and short standalone name rows before transaction data begins.
+    """
+    raw_header = re.split(
+        r"(?:^|\n)\s*(?:transactions?|transaction\s+details|date\s+particulars|"
+        r"opening\s+balance)\s*(?:\n|$)",
+        str(text or ""),
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    lines = [re.sub(r"\s+", " ", line).strip(" ,.;") for line in raw_header.splitlines()]
+    candidates: list[str] = []
+
+    label_pattern = re.compile(
+        r"^(?:welcome|account\s+holder(?:\s+name)?|customer(?:'s)?\s+name|"
+        r"name\s+of\s+(?:the\s+)?(?:account\s+holder|customer)|name)"
+        r"\s*[:\-–]?\s*(.*)$",
+        re.IGNORECASE,
+    )
+    for index, line in enumerate(lines[:50]):
+        match = label_pattern.match(line)
+        if not match:
+            continue
+        for candidate in [match.group(1), *lines[index + 1:index + 4]]:
+            if _banking_name_candidate(candidate):
+                candidates.append(candidate)
+                break
+
+    for match in re.finditer(
+        r"\b(?:account\s+holder(?:\s+name)?|customer(?:'s)?\s+name|"
+        r"name\s+of\s+(?:the\s+)?(?:account\s+holder|customer))"
+        r"\s*[:\-–]?\s+([^\n\r]{3,100})",
+        raw_header,
+        re.IGNORECASE,
+    ):
+        candidate = match.group(1).strip(" ,.;")
+        # Inline passbook headers sometimes append a locality after the holder
+        # ("Account Holder PEERU LAL SEMLI BAKHTA").  Preserve the short tail
+        # as a bounded haystack; matching still requires a trusted full name.
+        if (
+            any(character.isalpha() for character in candidate)
+            and not re.search(r"\d", candidate)
+            and len(candidate.split()) <= 12
+        ):
+            candidates.append(candidate)
+
+    for match in re.finditer(
+        r"\bof\s+(?:mr|mrs|ms|miss|shri|smt|sri|dr)\.?\s+"
+        r"([A-Za-z][A-Za-z .'-]{2,60}?)\s+(?=at\b|a/?c\b|account\b|$)",
+        raw_header,
+        re.IGNORECASE,
+    ):
+        if _banking_name_candidate(match.group(1)):
+            candidates.append(match.group(1))
+
+    for line in lines[:35]:
+        if _banking_name_candidate(line):
+            candidates.append(line)
+    return list(dict.fromkeys(candidates))
+
+
+def _banking_name_candidate(value: Any) -> bool:
+    candidate = str(value or "").strip()
+    if not candidate or re.match(
+        r"^(?:[wsdcf]\s*/?\s*o|wife\s+of|son\s+of|daughter\s+of|"
+        r"husband\s+of|father\s+of|care\s+of)\b",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return False
+    if not is_person_name_candidate(candidate):
+        return False
+    tokens = re.findall(r"[A-Za-z]+", candidate)
+    return 1 <= len(tokens) <= 6
 
 
 def _cheque_signature_name_observations(text: str) -> list[str]:

@@ -13,6 +13,7 @@ from collections import Counter
 from typing import Any
 
 from services.bureau_anchors import classify_credit_bureau_by_anchors
+from services.cersai import starts_new_report as cersai_starts_new_report
 from services.document_classifier import is_kyc_checklist_context
 from services.field_extractor import extract_fields
 from services.identifiers import plausible_aadhaar_digits
@@ -293,6 +294,12 @@ def _build_groups(
             and (
                 type_key in MULTI_PERSON_DOCUMENT_TYPES
                 or (
+                    type_key == "cersai report"
+                    and not cersai_starts_new_report(
+                        list(current.get("pages") or []), page
+                    )
+                )
+                or (
                     type_key == "aadhaar"
                     and _aadhaar_pages_belong_together(list(current.get("pages") or []), page)
                 )
@@ -341,6 +348,13 @@ def _looks_like_continuation(page: dict[str, Any], document_type: str) -> bool:
         return bool(re.search(r"\b(?:address|pin\s*code|vid|w\s*/\s*o|s\s*/\s*o|d\s*/\s*o)\b", text))
     if document_type.casefold() == "application form":
         return bool(re.search(r"\b(?:applicant|co-applicant|kyc\s+details|declaration|signature)\b", text))
+    if document_type.casefold() == "cersai report":
+        return bool(
+            re.search(
+                r"\b(?:cersai|security\s+interest|search\s+output|end\s+of\s+report)\b",
+                text,
+            )
+        )
     return False
 
 

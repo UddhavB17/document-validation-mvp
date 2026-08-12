@@ -162,6 +162,89 @@ Applicant RAMESH KUMAR PAN ABCDE1234F
     assert result["documents"][0]["applicant_role"] == "coapplicant_1"
 
 
+def test_asset_based_cersai_index_is_property_scoped_without_applicant() -> None:
+    text = """Asset Based Search Report
+Search Criteria Entered
+Asset Category
+Immovable
+Survey Number
+42
+Search Output Details
+Applicant RAMESH KUMAR PAN ABCDE1234F
+"""
+    pages = [
+        _page(145, "CERSAI Report", extract_fields("CERSAI Report", text)),
+        _page(146, "CERSAI Report", {}, detected=146),
+    ]
+    pages[0]["ocr_text"] = text
+    pages[1]["ocr_text"] = "--- End Of Report --- CERSAI"
+
+    result = build_automatic_document_index(
+        pages,
+        {
+            "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+        },
+        source_documents=[{
+            "source_document_id": "file-0022",
+            "original_filename": "CERSAI_For_Asset_Based_Search.pdf",
+            "internal_page_start": 145,
+            "internal_page_end": 146,
+        }],
+    )
+
+    assert result["anomalies"] == []
+    assert result["unclassified_pages"] == []
+    assert len(result["documents"]) == 1
+    assert result["documents"][0]["pages"] == [145, 146]
+    assert result["documents"][0]["applicant_role"] is None
+    assert result["documents"][0]["document_scope"] == "loan_level"
+    assert result["documents"][0]["auto_mapping"]["owner_evidence"] == [
+        "cersai_asset_based"
+    ]
+
+
+def test_debtor_based_cersai_continuations_inherit_search_debtor() -> None:
+    cover = """Debtor Based Search Report
+Search Criteria Entered
+Name of the Debtor
+SITA KUMAR
+PAN
+FGHIJ5678K
+Search Output Details
+"""
+    pages = [
+        _page(147, "CERSAI Report", extract_fields("CERSAI Report", cover)),
+        _page(148, "CERSAI Report", {}, detected=148),
+        _page(149, "CERSAI Report", {}, detected=149),
+        _page(150, "CERSAI Report", {}, detected=150),
+    ]
+    pages[0]["ocr_text"] = cover
+    pages[1]["ocr_text"] = "Security Interest ID 1001 Applicant RAMESH KUMAR"
+    pages[2]["ocr_text"] = "Borrower details and charge holder details"
+    pages[3]["ocr_text"] = "--- End Of Report --- CERSAI"
+
+    result = build_automatic_document_index(
+        pages,
+        {
+            "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+        },
+        source_documents=[{
+            "source_document_id": "file-0023",
+            "original_filename": "CERSAI_For_Debtor_Based_Search.pdf",
+            "internal_page_start": 147,
+            "internal_page_end": 150,
+        }],
+    )
+
+    assert result["anomalies"] == []
+    assert result["unclassified_pages"] == []
+    assert len(result["documents"]) == 1
+    assert result["documents"][0]["pages"] == [147, 148, 149, 150]
+    assert result["documents"][0]["applicant_role"] == "coapplicant_1"
+
+
 def test_strong_deterministic_type_wins_over_disagreeing_llm_advice() -> None:
     page = _page(
         10,
