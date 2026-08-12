@@ -827,6 +827,16 @@
       "document_type": "Bank Statement",
       "check_type": "period_minimum_months",
       "min_months": 3,
+      "coverage_mode": "completed_calendar_months",
+      "anchor_fields": [
+        "application_date",
+        "application_opened_at",
+        "application_open_date",
+        "case_opened_at",
+        "case_open_date",
+        "case_login_date",
+        "login_date"
+      ],
       "severity_if_fail": "MEDIUM",
       "ai_checkable": true
     },
@@ -951,7 +961,8 @@
       "people": "Person map with role, income_earner, repayment_contributor, and gender; used for per-person KYC/banking/PDC scopes.",
       "kyc_verified_in_graviton": "When true, physical KYC OSV evidence is not applicable.",
       "kyc_details_checked": "System completion flag for checklist row 11.",
-    "case_type": "User-selected Normal Case or BT Case. BT-only rows 25, 26 and 36 run only for BT Case.",
+      "case_type": "User-selected Normal Case or BT Case. BT-only rows 25, 26 and 36 run only for BT Case.",
+      "application_date": "Company case-open date used to require the three most recently completed bank-statement months.",
       "business_proof_required": "Controls Udyam/GST/shop-establishment proof.",
       "nach_registered": "Controls BSV, PDC counts, and ACH-not-registered documents.",
       "assessed_income_documents_required": "Controls assessed-income documents.",

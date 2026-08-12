@@ -53,6 +53,7 @@ class VerificationManifest(BaseModel):
     product_type: str = "LAP"
     branch: str | None = None
     case_type: str = "Normal Case"
+    application_date: str | None = None
     people: dict[str, PersonReference]
     # Empty means the shared OCR/classification pipeline must build the page
     # index automatically. Explicit entries remain supported as overrides.
@@ -129,6 +130,7 @@ class VerificationManifest(BaseModel):
             "product_type": self.product_type,
             "branch": self.branch,
             "case_type": self.case_type,
+            "application_date": self.application_date,
             "source": self.source,
             "reference_data": self.trusted_people(),
             "documents": [

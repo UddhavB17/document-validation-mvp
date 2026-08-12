@@ -90,6 +90,44 @@ def test_llm_fallback_source_is_tagged_from_page_fields() -> None:
     assert pan_item.extraction_source == "llm_fallback"
 
 
+def test_bank_statement_row_lists_dynamic_months_and_collective_page_count() -> None:
+    pages = [
+        {
+            "page_number": page_number,
+            "document_type": "Bank Statement",
+            "classification_confidence": 0.99,
+            "extracted_fields": {
+                "account_number": "123456789012",
+                "statement_period_start": f"2026-0{month}-01",
+                "statement_period_end": f"2026-0{month}-{last_day}",
+            },
+        }
+        for page_number, month, last_day in (
+            (1, 7, 31),
+            (2, 8, 31),
+            (3, 9, 30),
+        )
+    ]
+    system_data = {"application_date": "2026-10-12"}
+    anomalies = run_checks(pages, {}, system_data, "LAP")
+
+    result = build_checklist_verification_response(
+        loan_file_id="LAP-1",
+        pages=pages,
+        anomalies=anomalies,
+        product_type="LAP",
+        system_data=system_data,
+    )
+
+    bank_item = next(item for item in result.items if item.item_number == 17)
+    assert bank_item.status == "verified"
+    assert bank_item.extracted_fields["required_statement_months"] == (
+        "July 2026, August 2026, September 2026"
+    )
+    assert bank_item.extracted_fields["statement_pages_evaluated_together"] == "3"
+    assert bank_item.extracted_fields["coverage_scope"] == "Collective, per bank account"
+
+
 def test_false_condition_is_reported_as_not_applicable() -> None:
     result = build_checklist_verification_response(
         loan_file_id="LAP-1",

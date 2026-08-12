@@ -70,6 +70,37 @@ def test_does_not_guess_kyc_owner_when_multiple_people_have_no_matching_identity
     assert result["unclassified_pages"] == [4]
 
 
+def test_nameless_bank_statement_skips_person_comparison_without_owner_anomaly() -> None:
+    result = build_automatic_document_index(
+        [
+            _page(
+                5,
+                "Bank Statement",
+                {
+                    "account_number": "123456789012",
+                    "statement_period_start": "2026-05-01",
+                    "statement_period_end": "2026-07-31",
+                },
+            )
+        ],
+        {
+            "primary": {"applicant_name": "Ramesh Kumar"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar"},
+        },
+    )
+
+    assert [
+        (
+            item["document_type"],
+            item["applicant_role"],
+            item["document_scope"],
+        )
+        for item in result["documents"]
+    ] == [("Bank Statement", "unassigned", "account_history")]
+    assert result["anomalies"] == []
+    assert result["unclassified_pages"] == []
+
+
 def test_low_document_type_confidence_is_not_reported_as_person_assignment_failure() -> None:
     page = _page(
         127,

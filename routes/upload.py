@@ -56,6 +56,7 @@ class PartnerPayload(BaseModel):
     coapplicant_name: str | None = None
     product_type: str = "LAP"
     branch: str | None = None
+    application_date: str | None = None
     digital_text: dict
     scanned_docs: dict
 
@@ -130,6 +131,7 @@ async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
             "coapplicant_name": payload.coapplicant_name,
             "product_type": payload.product_type,
             "branch": payload.branch,
+            "application_date": payload.application_date,
         },
         product_type=payload.product_type,
     )
@@ -489,6 +491,7 @@ def _queue_mapped_verification(
         "loan_id": manifest_payload.get("loan_id"),
         "product_type": manifest_payload.get("product_type") or "LAP",
         "branch": manifest_payload.get("branch"),
+        "application_date": manifest_payload.get("application_date"),
         "reference_data": reference_data,
         "people": reference_data,
         "case_type": manifest_payload.get("case_type") or "Normal Case",
@@ -898,6 +901,7 @@ async def upload_file(
     product_type: str = Form(...),
     branch: str = Form(...),
     case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
+    application_date: str | None = Form(None),
     file: UploadFile = File(...),
 ) -> dict[str, object]:
     init_db()
@@ -967,6 +971,7 @@ async def upload_file(
         "product_type": product_type,
         "branch": branch,
         "case_type": case_type,
+        "application_date": application_date,
         "people": {
             "primary": {"role": "primary", "applicant_name": applicant_name},
             **(
@@ -1085,6 +1090,7 @@ def _run_mapped_pipeline_task(
             "loan_id": manifest.get("loan_id"),
             "product_type": manifest.get("product_type") or "LAP",
             "branch": manifest.get("branch"),
+            "application_date": manifest.get("application_date"),
             "reference_data": reference_data,
             "people": reference_data,
             "case_type": manifest.get("case_type") or "Normal Case",

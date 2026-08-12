@@ -8,6 +8,7 @@ from services.checklist_engine import (
     run_checks,
 )
 from services.checklist_service import get_ai_checkable_items, get_human_review_items
+from services.field_extractor import extract_fields
 
 
 def test_evaluate_checklist_flags_missing_documents() -> None:
@@ -137,6 +138,178 @@ def test_date_range_bank_stmt_recent() -> None:
 def test_date_range_bank_stmt_old() -> None:
     old = (datetime.now() - timedelta(days=180)).date().isoformat()
     assert check_date_range({"statement_period_end": old}, 3)["passed"] is False
+
+
+def test_bank_period_accepts_long_statement_covering_latest_completed_months() -> None:
+    pages = [
+        _confident_page(
+            1,
+            "Bank Statement",
+            extracted_fields={
+                "account_number": "123456789012",
+                "statement_period_start": "2026-01-01",
+                "statement_period_end": "2026-07-31",
+            },
+        )
+    ]
+
+    anomalies = run_checks(pages, {}, {"application_date": "2026-08-17"}, "LAP")
+
+    assert not any(anomaly.get("s_no") == 17 for anomaly in anomalies)
+
+
+def test_bank_period_rejects_three_old_months_that_do_not_reach_application() -> None:
+    pages = [
+        _confident_page(
+            1,
+            "Bank Statement",
+            extracted_fields={
+                "account_number": "123456789012",
+                "statement_period_start": "2026-01-01",
+                "statement_period_end": "2026-03-31",
+            },
+        )
+    ]
+
+    anomalies = run_checks(pages, {}, {"application_date": "2026-08-17"}, "LAP")
+    period = next(anomaly for anomaly in anomalies if anomaly.get("s_no") == 17)
+
+    assert period["rule_id"] == "PERIOD_CHECK_S17"
+    assert period["expected_value"] == "Required months: May 2026, June 2026, July 2026"
+
+
+def test_bank_period_month_list_moves_with_application_date() -> None:
+    page = _confident_page(
+        1,
+        "Bank Statement",
+        extracted_fields={
+            "account_number": "123456789012",
+            "statement_period_start": "2026-06-01",
+            "statement_period_end": "2026-08-31",
+        },
+    )
+
+    anomalies = run_checks([page], {}, {"application_date": "2026-10-12"}, "LAP")
+    period = next(anomaly for anomaly in anomalies if anomaly.get("s_no") == 17)
+
+    assert period["expected_value"] == "Required months: July 2026, August 2026, September 2026"
+    assert period["found_value"] == (
+        "Covered months: July 2026, August 2026; missing months: September 2026"
+    )
+
+    page["extracted_fields"]["statement_period_end"] = "2026-09-30"
+    passing = run_checks([page], {}, {"application_date": "2026-10-12"}, "LAP")
+    assert not any(anomaly.get("s_no") == 17 for anomaly in passing)
+
+
+def test_bank_period_combines_adjacent_monthly_pages_for_same_account() -> None:
+    pages = [
+        _confident_page(
+            1,
+            "Bank Statement",
+            extracted_fields={
+                "account_number": "123456789012",
+                "statement_period_start": "2026-05-01",
+                "statement_period_end": "2026-05-31",
+            },
+        ),
+        _confident_page(
+            2,
+            "Bank Statement",
+            extracted_fields={
+                "account_number": "123456789012",
+                "statement_period_start": "2026-06-01",
+                "statement_period_end": "2026-06-30",
+            },
+        ),
+        _confident_page(
+            3,
+            "Bank Statement",
+            extracted_fields={
+                "account_number": "123456789012",
+                "statement_period_start": "2026-07-01",
+                "statement_period_end": "2026-07-31",
+            },
+        ),
+    ]
+
+    anomalies = run_checks(pages, {}, {"application_date": "2026-08-17"}, "LAP")
+
+    assert not any(anomaly.get("s_no") == 17 for anomaly in anomalies)
+
+
+def test_bank_period_never_combines_different_accounts_to_create_coverage() -> None:
+    pages = [
+        _confident_page(
+            1,
+            "Bank Statement",
+            extracted_fields={
+                "account_number": "111111111111",
+                "statement_period_start": "2026-05-01",
+                "statement_period_end": "2026-06-30",
+            },
+        ),
+        _confident_page(
+            2,
+            "Bank Statement",
+            extracted_fields={
+                "account_number": "222222222222",
+                "statement_period_start": "2026-07-01",
+                "statement_period_end": "2026-07-31",
+            },
+        ),
+    ]
+
+    anomalies = run_checks(pages, {}, {"application_date": "2026-08-17"}, "LAP")
+
+    assert any(anomaly["rule_id"] == "PERIOD_CHECK_S17" for anomaly in anomalies)
+
+
+def test_bank_period_accepts_transaction_evidence_in_each_required_month() -> None:
+    text = (
+        "Account Number: 123456789012\n"
+        "Transaction Date Narration Debit Credit Balance\n"
+        "15/05/2026 Opening balance 0 0 1000\n"
+        "11/06/2026 Cash deposit 0 500 1500\n"
+        "29/07/2026 Transfer 200 0 1300"
+    )
+    page = _confident_page(
+        1,
+        "Bank Statement",
+        ocr_text=text,
+        extracted_fields=extract_fields("Bank Statement", text),
+    )
+
+    anomalies = run_checks([page], {}, {"application_date": "2026-08-17"}, "LAP")
+
+    assert not any(anomaly.get("s_no") == 17 for anomaly in anomalies)
+
+
+def test_bank_period_requires_valid_application_and_statement_dates() -> None:
+    page = _confident_page(
+        1,
+        "Bank Statement",
+        extracted_fields={"account_number": "123456789012"},
+    )
+
+    missing_application = run_checks([page], {}, {}, "LAP")
+    missing_statement_dates = run_checks(
+        [page],
+        {},
+        {"application_date": "2026-08-17"},
+        "LAP",
+    )
+
+    assert any(
+        anomaly["rule_id"] == "PERIOD_DATE_UNVERIFIABLE_S17"
+        and anomaly["found_value"] == "Application date not available"
+        for anomaly in missing_application
+    )
+    assert any(
+        anomaly["rule_id"] == "PERIOD_DATE_UNVERIFIABLE_S17"
+        and "No required-month coverage" in anomaly["found_value"]
+        for anomaly in missing_statement_dates
+    )
 
 
 def test_disbursal_continuation_dates_do_not_trigger_bank_period_check() -> None:

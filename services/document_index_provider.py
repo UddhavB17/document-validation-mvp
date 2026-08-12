@@ -47,8 +47,8 @@ def compose_verification_manifest(
         loan_id=reference.loan_id,
         product_type=reference.product_type,
         branch=reference.branch,
+        application_date=reference.application_date,
         people=reference.people,
         document_index=document_index,
         source=reference.source,
     )
-

@@ -284,6 +284,11 @@ def _copy_known_person_fields(target: dict[str, Any], *sections: str) -> None:
 def _copy_known_loan_fields(target: dict[str, Any], *sections: str) -> None:
     aliases = {
         "application_number": ("applicationId", "applicationNumber", "loanAccountNumber"),
+        "application_date": (
+            "applicationDate", "applicationOpenedAt", "applicationOpenDate",
+            "caseOpenedAt", "caseOpenDate", "caseLoginDate", "loginDate",
+            "createdDate", "createdOn",
+        ),
         "loan_purpose": ("loanPurpose", "purpose"), "product_type": ("productType", "product"),
         "requested_amount": ("requestedAmount",), "recommended_amount": ("recommendedAmount",),
         "sanction_amount": ("sanctionAmount", "approvedPrincipalAmount"),

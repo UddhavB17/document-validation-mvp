@@ -15,6 +15,7 @@ from services.checklist_service import get_all_checklist_items
 from services.checklist_engine import (
     _document_derived_system_data,
     _document_evidence_count,
+    bank_statement_required_month_labels,
     condition_applies,
     system_flag_state,
 )
@@ -112,6 +113,15 @@ def _build_item(
         system_data=system_data,
     )
     extracted_fields = _merge_extracted_fields(matched_pages)
+    if item_number == 17:
+        bank_statement_pages = confident_pages_for_types(pages, ["Bank Statement"])
+        required_months = bank_statement_required_month_labels(system_data)
+        if bank_statement_pages and required_months:
+            extracted_fields["required_statement_months"] = ", ".join(required_months)
+            extracted_fields["statement_pages_evaluated_together"] = str(
+                len(bank_statement_pages)
+            )
+            extracted_fields["coverage_scope"] = "Collective, per bank account"
     if checklist_item.get("check_type") == "system_flag":
         field = str(checklist_item.get("system_field") or "system_status")
         value = system_data.get(field)

@@ -14,11 +14,12 @@ from services.verification_manifest import PersonReference
 class CompanyReferenceData(BaseModel):
     """Trusted company values before they are combined with a PDF index."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
 
     loan_id: str = Field(min_length=1)
     product_type: str = "LAP"
     branch: str | None = None
+    application_date: str | None = None
     people: dict[str, PersonReference]
     source: str = "manual_json"
 
@@ -62,4 +63,3 @@ class GoogleCompanyDataProvider:
             "Google company API is not configured. Inject an authenticated client and map its "
             f"response to CompanyReferenceData for loan {loan_id}."
         )
-

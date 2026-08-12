@@ -78,10 +78,15 @@ def test_converts_valid_database_json_object() -> None:
             "entityName": "Ramesh Kumar",
             "dob": "01-January-1990",
         },
-        "camdetails": {"loanId": 42, "loanamount": "500000"},
+        "camdetails": {
+            "loanId": 42,
+            "loanamount": "500000",
+            "loginDate": "17-August-2026",
+        },
     })
 
     assert manifest["loan_id"] == "42"
+    assert manifest["application_date"] == "17-August-2026"
     assert manifest["people"]["primary"]["applicant_name"] == "Ramesh Kumar"
     assert manifest["people"]["primary"]["loan_amount"] == "500000"
 

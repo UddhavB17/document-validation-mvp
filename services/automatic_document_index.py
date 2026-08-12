@@ -8,6 +8,7 @@ from typing import Any
 from services.cersai import starts_new_report as cersai_starts_new_report
 from services.person_ownership import (
     MULTI_PERSON_DOCUMENT_TYPES,
+    bank_statement_has_holder_evidence,
     document_is_loan_level,
     document_requires_person_owner,
     resolve_person_owner,
@@ -86,25 +87,41 @@ def build_automatic_document_index(
         if person["person_id"] is None:
             # Person-scoped docs (PAN/Aadhaar/CIBIL/…) must not fall back to primary.
             if requires_person:
-                missing_role = (
-                    person.get("source_role")
-                    if "source_role_not_in_trusted_data" in set(person.get("evidence") or [])
-                    else None
-                )
-                anomalies.append(
-                    _mapping_anomaly(
-                        "TRUSTED_PERSON_SCOPE_MISSING" if missing_role else "AUTO_OWNER_UNRESOLVED",
-                        group,
-                        (
-                            f"The ZIP contains {missing_role} documents, but trusted JSON has no "
-                            f"{missing_role} person record. Their values were not compared to primary."
-                            if missing_role
-                            else "The document type was identified, but no applicant identity matched trusted data."
-                        ),
-                        person_role=str(missing_role) if missing_role else None,
+                if type_key == "bank statement" and not any(
+                    bank_statement_has_holder_evidence(page)
+                    for page in group["pages_data"]
+                ):
+                    # Nameless bank statements are still valid checklist date
+                    # evidence, but there is no identity basis for trusted
+                    # person comparison. Keep the classified document available
+                    # to the checklist without creating an ownership exception.
+                    person = {
+                        "person_id": "unassigned",
+                        "confidence": 1.0,
+                        "evidence": ["bank_statement_holder_not_present"],
+                        "document_scope": "account_history",
+                    }
+                    explicit_personless_scope = True
+                else:
+                    missing_role = (
+                        person.get("source_role")
+                        if "source_role_not_in_trusted_data" in set(person.get("evidence") or [])
+                        else None
                     )
-                )
-                continue
+                    anomalies.append(
+                        _mapping_anomaly(
+                            "TRUSTED_PERSON_SCOPE_MISSING" if missing_role else "AUTO_OWNER_UNRESOLVED",
+                            group,
+                            (
+                                f"The ZIP contains {missing_role} documents, but trusted JSON has no "
+                                f"{missing_role} person record. Their values were not compared to primary."
+                                if missing_role
+                                else "The document type was identified, but no applicant identity matched trusted data."
+                            ),
+                            person_role=str(missing_role) if missing_role else None,
+                        )
+                    )
+                    continue
             if not explicit_personless_scope:
                 if is_loan_level and reference_data:
                     default_id = "primary" if "primary" in reference_data else next(iter(reference_data))

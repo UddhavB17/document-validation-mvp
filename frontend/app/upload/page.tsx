@@ -84,6 +84,7 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
         productType: form.get("productType"),
         branch: form.get("branch"),
         caseType: form.get("caseType"),
+        applicationDate: form.get("applicationDate"),
         file: form.get("file"),
       });
       setSubmitting(true);
@@ -110,6 +111,7 @@ function PdfUploadForm({ onUploaded }: { onUploaded: (result: UploadResponse) =>
         <TextField name="applicantName" label="Applicant Name" required />
         <TextField name="coapplicantName" label="Co-applicant Name" />
         <TextField name="branch" label="Branch" required />
+        <TextField name="applicationDate" label="Application Date" type="date" required />
       </section>
       <section className="space-y-4 flex flex-col justify-between">
         <div className="space-y-4">
@@ -337,11 +339,21 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
   );
 }
 
-function TextField({ name, label, required = false }: { name: string; label: string; required?: boolean }) {
+function TextField({
+  name,
+  label,
+  required = false,
+  type = "text",
+}: {
+  name: string;
+  label: string;
+  required?: boolean;
+  type?: string;
+}) {
   return (
     <label className="block text-sm font-medium">
       <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">{label}</span>
-      <input className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 shadow-sm" name={name} required={required} />
+      <input className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-950 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600 shadow-sm" name={name} type={type} required={required} />
     </label>
   );
 }

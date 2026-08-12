@@ -50,6 +50,36 @@ def test_bank_statement_owner_resolves_from_ocr_name() -> None:
     assert pages[0]["person_id"] == "primary"
 
 
+def test_nameless_bank_statement_does_not_emit_ownership_warning() -> None:
+    page = {
+        "page_number": 1,
+        "document_type": "Bank Statement",
+        "ocr_text": "Account Number: 123456789012\nTransaction Date Narration Debit Credit Balance",
+        "extracted_fields": {"account_number": "123456789012"},
+    }
+
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+
+    assert page["person_id"] == "unassigned"
+    assert ownership_anomalies_for_unassigned([page]) == []
+
+
+def test_unmatched_bank_holder_still_emits_ownership_warning() -> None:
+    page = {
+        "page_number": 1,
+        "document_type": "Bank Statement",
+        "ocr_text": "Account Holder Name: Outside Person\nAccount Number: 123456789012",
+        "extracted_fields": {"account_holder_name": "Outside Person"},
+    }
+
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+
+    assert page["person_id"] == "unassigned"
+    assert [item["rule_id"] for item in ownership_anomalies_for_unassigned([page])] == [
+        "AUTO_OWNER_UNRESOLVED"
+    ]
+
+
 def test_bank_statement_holder_beats_related_primary_and_clears_anomaly() -> None:
     people = {
         "primary": {"role": "primary", "applicant_name": "Kala Singh"},

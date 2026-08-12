@@ -735,6 +735,14 @@ def ownership_anomalies_for_unassigned(
             continue
         if not document_requires_person_owner(document_type, page):
             continue
+        if (
+            document_type.strip().casefold() == "bank statement"
+            and not bank_statement_has_holder_evidence(page)
+        ):
+            # Checklist item 17 validates recent account history. A statement
+            # that genuinely omits the holder name must not fail that rule via
+            # an unrelated automatic-ownership warning.
+            continue
         fields = page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
         ownership = fields.get("_ownership") if isinstance(fields, dict) else {}
         if (
@@ -764,6 +772,19 @@ def ownership_anomalies_for_unassigned(
             }
         )
     return anomalies
+
+
+def bank_statement_has_holder_evidence(page: dict[str, Any]) -> bool:
+    """Return whether a bank statement contains an actual holder-name candidate."""
+    fields = page.get("extracted_fields")
+    fields = fields if isinstance(fields, dict) else {}
+    holder = first_value(fields, FIELD_ALIASES["applicant_name"])
+    if holder not in (None, "") and is_person_name_candidate(holder):
+        return True
+    return any(
+        is_person_name_candidate(candidate)
+        for candidate in _banking_holder_name_observations(str(page.get("ocr_text") or ""))
+    )
 
 
 def name_matches_trusted_person(observed: Any, person: dict[str, Any]) -> bool:

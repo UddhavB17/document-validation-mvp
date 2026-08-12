@@ -7,6 +7,7 @@ export const uploadFormSchema = z.object({
   productType: z.enum(["LAP", "MSME", "Personal Loan"]),
   branch: z.string().trim().min(1, "Branch is required"),
   caseType: z.enum(["Normal Case", "BT Case"]),
+  applicationDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Application date is required"),
   file: z.instanceof(File, { message: "PDF file is required" }).refine((file) => file.type === "application/pdf", {
     message: "Only PDF files are accepted",
   }),

@@ -285,6 +285,7 @@ export const api = {
     productType: string;
     branch: string;
     caseType: "Normal Case" | "BT Case";
+    applicationDate: string;
     file: File;
   }) => {
     const formData = new FormData();
@@ -294,6 +295,7 @@ export const api = {
     formData.append("product_type", payload.productType);
     formData.append("branch", payload.branch);
     formData.append("case_type", payload.caseType);
+    formData.append("application_date", payload.applicationDate);
     formData.append("file", payload.file);
     const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", body: formData });
     return parseResponse(response, uploadResponseSchema);
