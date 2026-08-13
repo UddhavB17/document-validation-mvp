@@ -101,6 +101,29 @@ def test_nameless_bank_statement_skips_person_comparison_without_owner_anomaly()
     assert result["unclassified_pages"] == []
 
 
+def test_bank_statement_uses_unique_person_name_in_source_filename() -> None:
+    result = build_automatic_document_index(
+        [_page(33, "Bank Statement", {"account_holder_name": "RADHA"})],
+        {
+            "primary": {"applicant_name": "Peeru Lal"},
+            "coapplicant_1": {"applicant_name": "Unkar Lal"},
+            "coapplicant_2": {"applicant_name": "Radha Bai"},
+        },
+        source_documents=[{
+            "source_document_id": "file-0016",
+            "original_filename": "LOAN/TASK/Radha bai 6 month banking.pdf",
+            "internal_page_start": 33,
+            "internal_page_end": 33,
+        }],
+    )
+
+    assert result["anomalies"] == []
+    assert result["documents"][0]["applicant_role"] == "coapplicant_2"
+    assert result["documents"][0]["auto_mapping"]["owner_evidence"] == [
+        "source_filename_name"
+    ]
+
+
 def test_low_document_type_confidence_is_not_reported_as_person_assignment_failure() -> None:
     page = _page(
         127,

@@ -939,8 +939,7 @@ def _extract_cam_decision_fields(text: str) -> dict[str, Any]:
     CAM page from being mistaken for current sanction terms.
     """
     decision = re.search(
-        r"(?:^|\n)\s*DECISION\s*\n"
-        r"\s*Sanction\s+Loan\s+Amount\s*\n"
+        r"(?:^|\n)\s*(?:DECISION\s*\n\s*)?Sanction\s+Loan\s+Amount\s*\n"
         r"\s*Sanction\s+Tenure\s*\n"
         r"\s*Advance\s+EMI\s*\n"
         r"\s*Sanction\s+Rate\s*\n"
@@ -2412,6 +2411,9 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         text,
         re.IGNORECASE,
     )
+    stacked_account_number = (
+        _stacked_bank_statement_account_number(text) if account_match is None else None
+    )
     ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
     branch_match = re.search(r"\bbranch[ \t]*[:\-–][ \t]*([^\n\r]{2,70})", text, re.IGNORECASE)
     bank_match = re.search(
@@ -2462,7 +2464,10 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
             _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1))).title()
             if profile_name else header_name or statement_title_name or fallback_name
         ),
-        "account_number": _digits_only(account_match.group(1)) if account_match else None,
+        "account_number": (
+            _digits_only(account_match.group(1))
+            if account_match else stacked_account_number
+        ),
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
         "bank_name": bank_match.group(1).strip() if bank_match else None,
         "branch": branch_match.group(1).strip() if branch_match else None,
@@ -2483,6 +2488,51 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
             if period_source or transaction_dates else {}
         ),
     }
+
+
+def _stacked_bank_statement_account_number(text: str) -> str | None:
+    """Map an account value when OCR emits bank labels before their values.
+
+    SBI statement headers commonly flatten as CIF, account, type and address
+    labels followed by the corresponding values. Requiring that complete label
+    sequence keeps unrelated long numbers out of account extraction.
+    """
+    lines = [re.sub(r"\s+", " ", line).strip() for line in str(text or "").splitlines()]
+    for cif_index, line in enumerate(lines):
+        if not re.fullmatch(r"CIF\s+(?:Number|No\.?)\s*:?\s*", line, re.I):
+            continue
+        window = lines[cif_index:cif_index + 10]
+        account_offsets = [
+            offset
+            for offset, candidate in enumerate(window[1:], start=1)
+            if re.fullmatch(
+                r"(?:Account|A/C)\s+(?:Number|No\.?)\s*:?\s*",
+                candidate,
+                re.I,
+            )
+        ]
+        if not account_offsets:
+            continue
+        account_offset = account_offsets[0]
+        remaining_labels = " ".join(window[account_offset + 1:])
+        if not re.search(r"\bA/C\s+Type\b", remaining_labels, re.I) or not re.search(
+            r"\bAddress\b", remaining_labels, re.I
+        ):
+            continue
+        values: list[str] = []
+        for candidate in lines[cif_index + account_offset + 1:cif_index + 24]:
+            if re.match(
+                r"^(?:Code|MICR|CKYCR|Statement\s+From|Date\s+of\s+Statement)\b",
+                candidate,
+                re.I,
+            ):
+                break
+            if re.fullmatch(r"\d{9,18}", candidate):
+                values.append(candidate)
+        if len(values) >= 2:
+            # The flattened value order mirrors the CIF/account label order.
+            return values[1]
+    return None
 
 
 def _bank_statement_header_holder_name(text: str) -> str | None:

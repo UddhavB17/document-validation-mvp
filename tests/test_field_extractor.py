@@ -163,6 +163,36 @@ msfc1500 - Rohit Kumar Banthia
     assert result["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
 
 
+def test_cam_extracts_sanction_table_when_decision_heading_is_on_previous_page() -> None:
+    text = """CREDIT APPROVAL MEMO
+Sanction Loan Amount
+Sanction Tenure
+Advance EMI
+Sanction Rate
+Sanction EMI
+Sanction Date
+Sanction Remarks
+Username
+275000.000000
+60
+-
+26.00
+8,234.00
+20-June-2026
+Case is approved
+msfc1063 - Kailash Chandra Jat
+SANCTION CONDITIONS
+"""
+
+    result = extract_fields("CAM", text)
+
+    assert result["loan_amount"] == "275000"
+    assert result["sanction_amount"] == "275000"
+    assert result["tenure"] == 60
+    assert result["roi"] == pytest.approx(26.0)
+    assert result["emi"] == "8234"
+
+
 def test_application_form_keeps_coapplicant_kyc_rows_person_scoped() -> None:
     text = """CO-APPLICANT KYC DETAILS
 APPLICANT NAME
@@ -297,6 +327,29 @@ S No. Opening Balance EMI (In Rs.) Principal Interest Closing Balance
 """
     result = extract_fields("Bank Statement", text)
     assert result == {"_validation_blocked_reason": "amortization_schedule_not_bank_statement"}
+
+
+def test_bank_statement_extracts_account_from_stacked_sbi_header() -> None:
+    text = """STATE BANK OF INDIA
+Name: Mrs.
+RADHA
+S/0/H/0 : UNKAR LAL
+CIF Number:
+Account No.:
+A/C Type
+Address
+71216839034
+38 TINY SPL OD GEN PUB IND
+: SEMALI BAKHATA
+61246812678
+SEMALI BAKHATA
+Code: 31270
+IFSC: SBIN0031270
+"""
+
+    result = extract_fields("Bank Statement", text)
+
+    assert result["account_number"] == "61246812678"
 
 
 def test_passbook_extracts_shri_account_holder_name() -> None:

@@ -1,6 +1,7 @@
 from services.pipeline import (
     _assign_sequential_document_type,
     _infer_document_type_from_filename,
+    _refresh_page_from_cached_ocr,
     _smooth_page_classifications,
 )
 
@@ -572,6 +573,33 @@ def test_evidentiary_filenames_have_safe_specific_fallbacks() -> None:
     assert _infer_document_type_from_filename("LOAN/COLLATERAL/peeru lal proprty paper.pdf") == "Property Document"
     assert _infer_document_type_from_filename("Loan/TASK/House Photo.pdf") == "House Photo"
     assert _infer_document_type_from_filename("Loan/TASK/Working Place Visit.pdf") == "Workplace Photo"
+
+
+def test_cached_spdc_filename_overrides_bank_statement_content_classification() -> None:
+    refreshed = _refresh_page_from_cached_ocr(
+        {
+            "page_number": 59,
+            "page_type": "scanned",
+            "ocr_text": "Bank account details A/c No. 0071000100264386 IFSC PUNB0007100",
+            "ocr_confidence": 0.92,
+            "document_type": "Bank Statement",
+            "classification_confidence": 0.92,
+            "extracted_fields": {"account_number": "0071000100264386"},
+        },
+        current_type="Unknown",
+        current_confidence=0.0,
+        current_detected_page=None,
+        source_documents=[{
+            "source_document_id": "file-0018",
+            "original_filename": "LOAN/TASK/peeru spdc.pdf",
+            "internal_page_start": 59,
+            "internal_page_end": 60,
+        }],
+    )
+
+    assert refreshed["document_type"] == "PDC"
+    assert refreshed["detection_method"] == "filename_override"
+    assert refreshed["classification_confidence"] == 0.95
 
 
 def test_unknown_filename_prose_does_not_invent_document_types() -> None:

@@ -64,6 +64,31 @@ def test_nameless_bank_statement_does_not_emit_ownership_warning() -> None:
     assert ownership_anomalies_for_unassigned([page]) == []
 
 
+def test_document_index_owner_survives_noisy_bank_continuation_page() -> None:
+    page = {
+        "page_number": 34,
+        "document_type": "Bank Statement",
+        "person_id": "coapplicant_2",
+        "applicant_role": "coapplicant_2",
+        "ocr_text": "Transaction ledger\nOutside Person\nDebit 1000.00\nBalance 5000.00",
+        "extracted_fields": {
+            "account_holder_name": "Outside Person",
+            "_ownership": {
+                "person_id": "coapplicant_2",
+                "document_scope": "single_person",
+                "evidence": ["document_index"],
+            },
+        },
+    }
+
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": PEERU_FAMILY})
+
+    assert page["person_id"] == "coapplicant_2"
+    assert "document_index" in page["extracted_fields"]["_ownership"]["evidence"]
+    assert ownership_anomalies_for_unassigned([page]) == []
+
+
 def test_unmatched_bank_holder_still_emits_ownership_warning() -> None:
     page = {
         "page_number": 1,

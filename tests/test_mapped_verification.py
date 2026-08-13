@@ -422,6 +422,100 @@ def test_multipage_bank_statement_does_not_require_name_on_continuation_pages() 
     )
 
 
+def test_cam_uses_requested_amount_and_cross_page_sanction_table() -> None:
+    pages = [
+        {
+            "page_number": 101,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": """CREDIT APPROVAL MEMO
+APPLICATION DETAILS
+Requested Loan Amount
+275000.00
+""",
+            "document_type": "CAM",
+            "classification_confidence": 0.99,
+            "extracted_fields": {"requested_amount": "275000"},
+        },
+        {
+            "page_number": 106,
+            "page_type": "digital",
+            "is_readable": True,
+            "ocr_text": """CREDIT APPROVAL MEMO
+Sanction Loan Amount
+Sanction Tenure
+Advance EMI
+Sanction Rate
+Sanction EMI
+Sanction Date
+Sanction Remarks
+Username
+275000.000000
+60
+-
+26.00
+8,234.00
+20-June-2026
+Approved
+msfc1063
+""",
+            "document_type": "CAM",
+            "classification_confidence": 0.99,
+            "extracted_fields": {},
+        },
+    ]
+    manifest = {
+        "reference_data": {
+            "primary": {"loan_amount": "275000", "sanction_amount": "275000"},
+        },
+        "documents": [{
+            "source_document_id": "cam-1",
+            "applicant_role": "primary",
+            "document_type": "CAM",
+            "pages": [101, 106],
+            "expected_fields": {"loan_amount": "275000", "sanction_amount": "275000"},
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 2
+    assert result["matched_fields"] == 2
+
+
+def test_aadhaar_address_comparison_includes_separate_relationship_fields() -> None:
+    pages = [{
+        "page_number": 241,
+        "page_type": "digital",
+        "is_readable": True,
+        "ocr_text": "DigiLocker verified e-Aadhaar\nS/O: Unkar Lal\nAddress\nSemli Bakhta 326502",
+        "document_type": "Aadhaar",
+        "classification_confidence": 0.99,
+        "extracted_fields": {
+            "relationship_qualifier": "S/O",
+            "related_person_name": "Unkar Lal",
+            "address": "mehar basti, semli bakhta, Semlibakta, Jhalawar, Rajasthan, 326502",
+        },
+    }]
+    manifest = {
+        "reference_data": {"primary": {"address": "S/O: Unkar Lal"}},
+        "documents": [{
+            "source_document_id": "aadhaar-1",
+            "applicant_role": "primary",
+            "document_type": "Aadhaar",
+            "pages": [241],
+            "expected_fields": {"address": "S/O: Unkar Lal"},
+        }],
+    }
+
+    result = compare_processed_pages(pages, manifest)
+
+    assert result["anomalies"] == []
+    assert result["checked_fields"] == 1
+    assert result["matched_fields"] == 1
+
+
 def test_mapped_verification_rejects_address_like_applicant_name_candidate() -> None:
     pages = [{
         "page_number": 1,

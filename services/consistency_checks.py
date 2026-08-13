@@ -19,6 +19,7 @@ from services.document_classifier import (
     is_insurance_application_context,
     is_insurer_local_application_identifier,
 )
+from services.field_verification import address_with_relationship
 from services.validation_gates import field_reliable_for_validation
 from services.language_detection import (
     analyze_text_languages,
@@ -181,19 +182,26 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
                         # evidence. It is not an applicant/co-applicant address
                         # variant and must not enter address consistency checks.
                         continue
+                    comparison_value = (
+                        address_with_relationship(value, record)
+                        if canonical_field in ADDRESS_FIELDS
+                        else value
+                    )
                     if not _usable_observation_value(
                         str(page.get("document_type") or "Unknown"),
                         canonical_field,
-                        value,
+                        comparison_value,
                         str(page.get("ocr_text") or ""),
                     ):
                         continue
-                    if not _observation_is_reliable(page, canonical_field, value):
+                    if not _observation_is_reliable(
+                        page, canonical_field, comparison_value
+                    ):
                         continue
                     result.append({
                         "person_id": record_person_id,
                         "field": canonical_field,
-                        "value": value,
+                        "value": comparison_value,
                         "document_type": str(page.get("document_type") or "Unknown"),
                         "page_number": page.get("page_number"),
                         "ocr_text": page.get("ocr_text"),
@@ -216,19 +224,26 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
                 # marked guarantor/co-applicant section. Re-reading that flat
                 # value as primary creates high-severity false mismatches.
                 continue
+            comparison_value = (
+                address_with_relationship(value, fields)
+                if canonical_field in ADDRESS_FIELDS
+                else value
+            )
             if not _usable_observation_value(
                 str(page.get("document_type") or "Unknown"),
                 canonical_field,
-                value,
+                comparison_value,
                 str(page.get("ocr_text") or ""),
             ):
                 continue
-            if not _observation_is_reliable(page, canonical_field, value):
+            if not _observation_is_reliable(
+                page, canonical_field, comparison_value
+            ):
                 continue
             result.append({
                 "person_id": person_id or "unassigned",
                 "field": canonical_field,
-                "value": value,
+                "value": comparison_value,
                 "document_type": str(page.get("document_type") or "Unknown"),
                 "page_number": page.get("page_number"),
                 "ocr_text": page.get("ocr_text"),

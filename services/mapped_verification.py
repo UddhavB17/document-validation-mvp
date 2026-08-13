@@ -16,6 +16,7 @@ from services.cersai import (
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.field_verification import (
+    address_with_relationship,
     verify_aadhaar,
     verify_address,
     verify_amount,
@@ -99,6 +100,7 @@ ALIASES = {
     "current_address": "address",
     "permanent_address": "address",
     "communication_address": "address",
+    "requested_amount": "loan_amount",
 }
 
 DOCUMENT_FIELDS = {
@@ -379,10 +381,15 @@ def run_mapped_verification(
                         and value not in (None, "")
                     ):
                         field = _canonical(key)
+                        comparison_value = (
+                            address_with_relationship(value, extracted)
+                            if field == "address"
+                            else value
+                        )
                         if not field_reliable_for_validation(
                             page_record,
                             field,
-                            value,
+                            comparison_value,
                             expected_document_type=document_type,
                         ):
                             if field != "applicant_name":
@@ -396,7 +403,7 @@ def run_mapped_verification(
                             "source_document_id": mapping.get("source_document_id"),
                             "page_number": page_number,
                             "field_name": field,
-                            "value": value,
+                            "value": comparison_value,
                             "ocr_confidence": confidence,
                             "text_source": text_source,
                         }
@@ -729,10 +736,15 @@ def compare_processed_pages(
                 ):
                     continue
                 field = _canonical(key)
+                comparison_value = (
+                    address_with_relationship(value, comparison_fields)
+                    if field == "address"
+                    else value
+                )
                 if not field_reliable_for_validation(
                     page,
                     field,
-                    value,
+                    comparison_value,
                     expected_document_type=provided_type,
                 ):
                     if field != "applicant_name":
@@ -749,7 +761,7 @@ def compare_processed_pages(
                     "source_segment": _source_segment(source_lookup.get(str(source_document_id), {})),
                     "page_number": page_number,
                     "field_name": field,
-                    "value": value,
+                    "value": comparison_value,
                     "document_confidence": mapping.get("auto_mapping", {}).get("document_confidence"),
                     "ocr_confidence": page.get("ocr_confidence"),
                     "text_source": (

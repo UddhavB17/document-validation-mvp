@@ -143,6 +143,37 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
     )
 
 
+def address_with_relationship(address: Any, fields: dict[str, Any] | None) -> str:
+    """Rejoin Aadhaar relationship data for comparison without changing storage.
+
+    Aadhaar extraction intentionally stores the physical address separately
+    from ``S/O``, ``D/O``, ``W/O`` or ``C/O``. Trusted data may contain only
+    that relationship prefix, so validation needs a comparison-only view that
+    includes both pieces of evidence.
+    """
+    physical_address = str(address or "").strip()
+    if not physical_address or not isinstance(fields, dict):
+        return physical_address
+    qualifier_key = re.sub(
+        r"[^A-Za-z]", "", str(fields.get("relationship_qualifier") or "")
+    ).upper()
+    qualifier = {
+        "SO": "S/O",
+        "DO": "D/O",
+        "WO": "W/O",
+        "CO": "C/O",
+    }.get(qualifier_key)
+    related_name = re.sub(
+        r"\s+", " ", str(fields.get("related_person_name") or "")
+    ).strip(" ,.;:-")
+    if not qualifier or not related_name:
+        return physical_address
+    relationship = f"{qualifier}: {related_name}"
+    if _relationship_prefix_matches(physical_address, relationship):
+        return physical_address
+    return f"{relationship}, {physical_address}"
+
+
 def verify_address(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify addresses using rapidfuzz token-set similarity with abbreviation normalization."""
     if _relationship_prefix_matches(extracted, db_value):

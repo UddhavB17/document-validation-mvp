@@ -1061,6 +1061,8 @@ def _build_page_records(
                     "Property Image",
                     "KYC Card Photo",
                     "Ration Card Photo",
+                    "PDC",
+                    "Cheque",
                 } and _source_filename_override_allowed(source_filename_type, document_type):
                     document_type = source_filename_type
                     classification = {"confidence": 0.95}
@@ -1081,6 +1083,12 @@ def _build_page_records(
                             if inferred and not _filename_type_contradicted_by_text(inferred, text):
                                 document_type = inferred
                                 detection_method = "filename_inference"
+                                classification = {
+                                    "confidence": max(
+                                        float(classification.get("confidence") or 0.0),
+                                        0.70,
+                                    )
+                                }
                             break
                 routed_ocr = None
                 if needs_ocr:
@@ -1395,7 +1403,7 @@ def _refresh_page_from_cached_ocr(
     )
     if filename_type in {
         "House Photo", "Workplace Photo", "Property Image", "KYC Card Photo",
-        "Ration Card Photo",
+        "Ration Card Photo", "PDC", "Cheque",
     } and _source_filename_override_allowed(filename_type, document_type):
         document_type = filename_type
         confidence = 0.95

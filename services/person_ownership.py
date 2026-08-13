@@ -377,16 +377,19 @@ def resolve_person_owner(
         people,
     )
     provided = str(provided_person_id or "").strip() or None
-    source_role = source_role_from_filename(
-        source_filename
-        or next(
-            (
-                str(page.get("source_filename") or "")
-                for page in page_list
-                if isinstance(page, dict) and page.get("source_filename")
-            ),
-            "",
-        )
+    resolved_source_filename = source_filename or next(
+        (
+            str(page.get("source_filename") or "")
+            for page in page_list
+            if isinstance(page, dict) and page.get("source_filename")
+        ),
+        "",
+    )
+    source_role = source_role_from_filename(resolved_source_filename)
+    filename_owner = (
+        _filename_person_name_owner(resolved_source_filename, people)
+        if type_key in PERSON_SCOPED_DOCUMENT_TYPES
+        else None
     )
 
     # A clean identity match is stronger than a folder/index hint. This also
@@ -449,6 +452,13 @@ def resolve_person_owner(
                 "evidence": sorted(set([*(identity.get("evidence") or []), f"source_role:{source_role}"])),
                 "source_role": source_role,
             }
+        if filename_owner in role_candidates:
+            return {
+                "person_id": filename_owner,
+                "confidence": 0.9,
+                "evidence": ["source_filename_name", f"source_role:{source_role}"],
+                "source_role": source_role,
+            }
         return {
             "person_id": None,
             "confidence": 0.0,
@@ -459,6 +469,7 @@ def resolve_person_owner(
     if provided and provided in people:
         if (
             type_key in PERSON_SCOPED_DOCUMENT_TYPES
+            and not provided_person_is_document_scope
             and not identity["scores"].get(provided)
             and not identity.get("best_id")
             and _observed_names_clearly_contradict(page_list, people[provided])
@@ -498,6 +509,13 @@ def resolve_person_owner(
             "person_id": identity["best_id"],
             "confidence": identity["confidence"],
             "evidence": identity["evidence"],
+        }
+
+    if filename_owner:
+        return {
+            "person_id": filename_owner,
+            "confidence": 0.9,
+            "evidence": ["source_filename_name"],
         }
 
     if len(people) == 1:
@@ -647,6 +665,9 @@ def assign_page_owners(
             # Keep the provenance durable across the checklist's intentional
             # second ownership pass inside consistency checks.
             ownership_meta["document_scope"] = "single_person"
+            ownership_meta["evidence"] = sorted(
+                set([*(ownership_meta.get("evidence") or []), "document_index"])
+            )
         if isinstance(fields, dict):
             fields = dict(fields)
             fields["_ownership"] = ownership_meta
@@ -673,6 +694,29 @@ def source_role_from_filename(value: Any) -> str | None:
         if key == "applicant" or key.startswith("primaryapplicant"):
             return "primary"
     return None
+
+
+def _filename_person_name_owner(
+    value: Any,
+    people: dict[str, dict[str, Any]],
+) -> str | None:
+    """Resolve a unique full trusted name explicitly present in a basename."""
+    basename = re.split(r"[/\\]+", str(value or ""))[-1]
+    stem = re.sub(r"\.[A-Za-z0-9]{1,8}$", "", basename)
+    stem_tokens = re.findall(r"[a-z0-9]+", stem.casefold())
+    matches: list[str] = []
+    for person_id, person in people.items():
+        expected = first_value(person, FIELD_ALIASES["applicant_name"])
+        name_tokens = re.findall(r"[a-z0-9]+", str(expected or "").casefold())
+        if len(name_tokens) < 2:
+            continue
+        width = len(name_tokens)
+        if any(
+            stem_tokens[index:index + width] == name_tokens
+            for index in range(len(stem_tokens) - width + 1)
+        ):
+            matches.append(person_id)
+    return matches[0] if len(matches) == 1 else None
 
 
 def _trusted_role(person_id: str, person: dict[str, Any]) -> str | None:
