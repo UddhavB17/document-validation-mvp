@@ -1785,6 +1785,33 @@ OFFICE ADDRESS
     assert all("FINCAP" not in str(record) for record in fields["person_records"])
 
 
+def test_coapplicant_address_extracted_from_its_own_section() -> None:
+    text = """APPLICANT DETAILS
+NAME
+Batti Lal Meena
+DATE OF BIRTH
+02-12-1992
+PERMANENT ADDRESS
+Permanent ADDRESS
+ADDRESS
+44 Ward 2 Deoli Rajasthan 304023
+CO-APPLICANT ADDRESS
+PERMANENT ADDRESS
+NAME
+Aaratiben Suthar
+ADDRESS
+81 Modi Vas Harnivav Gujarat 382435
+"""
+    fields = extract_fields("Application Form", text)
+    
+    assert fields["applicant_name"] == "Batti Lal Meena"
+    assert fields["permanent_address"] == "44 Ward 2 Deoli Rajasthan 304023"
+    
+    co_records = [r for r in fields["person_records"] if r.get("applicant_name") == "Aaratiben Suthar"]
+    assert len(co_records) == 1
+    assert co_records[0]["permanent_address"] == "81 Modi Vas Harnivav Gujarat 382435"
+
+
 def test_empty_guarantor_address_does_not_consume_next_section_heading() -> None:
     fields = extract_fields(
         "Application Form",

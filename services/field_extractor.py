@@ -1578,11 +1578,13 @@ def _extract_application_form(text: str) -> dict[str, Any]:
             for field_name, value in coapplicant_address_record.items():
                 if value not in (None, "") and matching_record.get(field_name) in (None, ""):
                     matching_record[field_name] = value
-        # These values belong to the named co-applicant row, not to the
-        # container-level/primary applicant.
-        current_address = None
-        permanent_address = None
-        communication_address = None
+        # Only clear container-level addresses if they were actually assigned to the co-applicant
+        if coapplicant_address_record.get("current_address") == current_address:
+            current_address = None
+        if coapplicant_address_record.get("permanent_address") == permanent_address:
+            permanent_address = None
+        if coapplicant_address_record.get("communication_address") == communication_address:
+            communication_address = None
     return {
         "applicant_name": (name_match.group(1).strip() if name_match else _line_after_label(
             text, "applicant name", "borrower name", "name of applicant"
@@ -2031,11 +2033,25 @@ def _extract_coapplicant_address_record(
             break
     if not person_name:
         return None
+    co_current = (
+        _extract_application_address_block(
+            scoped_text, "COMMUNICATION ADDRESS", ("PERMANENT ADDRESS", "OFFICE ADDRESS")
+        )
+        or _extract_residential_address_alias(scoped_text, "current address", "communication address")
+        or current_address
+    )
+    co_permanent = (
+        _extract_application_address_block(
+            scoped_text, "PERMANENT ADDRESS", ("OFFICE ADDRESS",)
+        )
+        or _extract_residential_address_alias(scoped_text, "permanent address")
+        or permanent_address
+    )
     return {
         "applicant_name": person_name,
-        "current_address": current_address,
-        "communication_address": current_address,
-        "permanent_address": permanent_address,
+        "current_address": co_current,
+        "communication_address": co_current,
+        "permanent_address": co_permanent,
     }
 
 
