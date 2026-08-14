@@ -300,12 +300,6 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
     if len(pages) > 8:
         page_preview += f", … (+{len(pages) - 8} more)"
 
-    found_parts = [f"{len(items)} occurrence(s)"]
-    if page_preview:
-        found_parts.append(f"pages {page_preview}")
-    if doc_preview:
-        found_parts.append(doc_preview)
-
     is_repayment_total_root = rule_id == "REPAYMENT_TOTAL_MISMATCH_ROOT"
     reason = _SUMMARY_REASONS.get(rule_id)
     if is_repayment_total_root:
@@ -316,6 +310,36 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
     if reason is None:
         reason = items[0].get("reason") or f"Repeated {rule_id} flags"
     reason = f"{reason} ({len(items)} occurrences)"
+
+    from collections import defaultdict
+    val_to_pages = defaultdict(list)
+    for item in items:
+        val = item.get("found_value")
+        p_list = _pages_from_anomaly(item)
+        for p in p_list:
+            val_to_pages[val].append(p)
+        if not p_list:
+            val_to_pages[val].append(None)
+
+    parts = []
+    for val, p_list in val_to_pages.items():
+        unique_pages = sorted(list(set(p for p in p_list if p is not None)))
+        has_none = None in p_list
+        
+        pages_str = ""
+        if unique_pages:
+            pages_label = "Pages" if len(unique_pages) > 1 else "Page"
+            pages_str = f"{pages_label} {','.join(map(str, unique_pages))}"
+        if has_none:
+            if pages_str:
+                pages_str += " & File-level"
+            else:
+                pages_str = "File-level"
+        
+        val_repr = f"'{val}'" if val is not None else "None"
+        parts.append(f"{pages_str}: {val_repr}")
+
+    found_value = "; ".join(parts)
 
     result = {
         "rule_id": (
@@ -329,7 +353,7 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
         "person_role": items[0].get("person_role"),
         "field_name": items[0].get("field_name"),
         "expected_value": items[0].get("expected_value"),
-        "found_value": "; ".join(found_parts),
+        "found_value": found_value,
         "page_number": pages[0] if pages else None,
         "reason": reason,
         "collapsed_page_numbers": pages,

@@ -248,3 +248,30 @@ def test_repayment_total_checks_collapse_with_contributing_evidence() -> None:
     assert reviewer["anomaly_count"] == 1
     assert reviewer["review_items"][0]["contributing_rule_ids"] == item["contributing_rule_ids"]
     assert len(reviewer["review_items"][0]["contributing_evidence"]) == 2
+
+
+def test_build_summary_found_value_with_multiple_pages() -> None:
+    anomalies = [
+        {
+            "rule_id": "UNCLASSIFIED_PAGE",
+            "severity": "LOW",
+            "page_number": 1,
+            "found_value": "Statement Header",
+        },
+        {
+            "rule_id": "UNCLASSIFIED_PAGE",
+            "severity": "LOW",
+            "page_number": 2,
+            "found_value": "Statement Header",
+        },
+        {
+            "rule_id": "UNCLASSIFIED_PAGE",
+            "severity": "LOW",
+            "page_number": 3,
+            "found_value": "Salary Details",
+        },
+    ]
+
+    collapsed = collapse_for_reviewer(anomalies)
+    assert len(collapsed) == 1
+    assert collapsed[0]["found_value"] == "Pages 1,2: 'Statement Header'; Page 3: 'Salary Details'"
