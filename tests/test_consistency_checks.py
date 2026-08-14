@@ -1397,3 +1397,59 @@ def test_hindi_identity_affidavit_is_used_even_if_page_was_typed_as_aadhaar() ->
 
     assert any(item["rule_id"] == "TRUSTED_APPLICANT_NAME_MISMATCH" for item in anomalies)
     assert not any(item["rule_id"] == "IDENTITY_AFFIDAVIT_MISSING" for item in anomalies)
+
+
+def test_anomaly_points_to_page_where_data_actually_exists() -> None:
+    trusted = {
+        "people": {
+            "primary": {
+                "applicant_name": "ANUPKUMAR SUTHAR",
+                "address": "44 Ward 2 Deoli Rajasthan 304023",
+            },
+            "coapplicant_1": {
+                "applicant_name": "Aaratiben Suthar",
+                "address": "81 Modi Vas Harnivav Gujarat 382435",
+            }
+        }
+    }
+    
+    p18 = page(18, "Application Form", "primary")
+    p18["source_document_id"] = "app-doc-1"
+    p18["ocr_text"] = "MS FINCAP OFFICE ADDRESS"
+    
+    p20 = page(20, "Application Form", "primary")
+    p20["source_document_id"] = "app-doc-1"
+    p20["ocr_text"] = "Permanent Address: 44 Ward 2 Deoli Rajasthan 304023"
+    
+    p22 = page(22, "Application Form", "primary")
+    p22["source_document_id"] = "app-doc-1"
+    p22["ocr_text"] = "Coapplicant Address: 81 Modi Vas Harnivav Gujarat 382435"
+    
+    extracted_records = [
+        {
+            "_resolved_person_id": "primary",
+            "applicant_name": "ANUPKUMAR SUTHAR",
+            "permanent_address": "44 Ward 2 Deoli Rajasthan 304023",
+        },
+        {
+            "_resolved_person_id": "coapplicant_1",
+            "applicant_name": "Aaratiben Suthar",
+            "permanent_address": "81 Modi Vas Harnivav Gujarat 382435",
+        }
+    ]
+    p18["extracted_fields"] = {"person_records": extracted_records}
+    p20["extracted_fields"] = {"person_records": extracted_records}
+    p22["extracted_fields"] = {"person_records": extracted_records}
+    
+    aadhaar_primary = page(100, "Aadhaar", "primary", address="99 Unrelated Road Jaipur Rajasthan 302001")
+    aadhaar_coapplicant = page(101, "Aadhaar", "coapplicant_1", address="77 Different Street Kota Rajasthan 324001")
+    
+    anomalies = run_consistency_checks([p18, p20, p22, aadhaar_primary, aadhaar_coapplicant], trusted)
+    
+    primary_mismatches = [item for item in anomalies if item["rule_id"] == "AADHAAR_ADDRESS_MISMATCH" and item["person_id"] == "primary"]
+    assert len(primary_mismatches) >= 1
+    assert all(item["page_number"] == 20 for item in primary_mismatches)
+    
+    coapplicant_mismatches = [item for item in anomalies if item["rule_id"] == "AADHAAR_ADDRESS_MISMATCH" and item["person_id"] == "coapplicant_1"]
+    assert len(coapplicant_mismatches) >= 1
+    assert all(item["page_number"] == 22 for item in coapplicant_mismatches)
