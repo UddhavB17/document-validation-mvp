@@ -560,6 +560,16 @@ function ReviewerSummary({
   );
 }
 
+function getSeverityBadgeColor(severity: string | null | undefined): string {
+  if (severity === "HIGH") {
+    return "bg-rose-100 text-rose-800 border-rose-200 border";
+  }
+  if (severity === "MEDIUM") {
+    return "bg-amber-100 text-amber-800 border-amber-200 border";
+  }
+  return "bg-slate-100 text-slate-800 border-slate-200 border";
+}
+
 function AiAuditInsights({
   data,
   onSelectEvidence,
@@ -757,45 +767,7 @@ function ResultExplanation({ data }: { data: ApplicationReview }) {
   );
 }
 
-function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType?: string) => void }) {
-  if (data.page_events.length === 0) {
-    return <InfoMessage message="No page events logged." />;
-  }
-  return (
-    <section className="space-y-3">
-      <h2 className="text-base font-bold text-slate-800">Page Processing Output</h2>
-      <SortableTable
-        rows={data.page_events}
-        columns={[
-          {
-            key: "page",
-            header: "Page",
-            value: (row) => {
-              const pageNo = row.page_number;
-              if (typeof pageNo !== "number") return "-";
-              return (
-                <button
-                  type="button"
-                  onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)}
-                  className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-bold text-blue-750 hover:bg-blue-100 transition-colors"
-                >
-                  Page {pageNo}
-                </button>
-              );
-            },
-            sortValue: (row) => row.page_number
-          },
-          { key: "status", header: "Status", value: (row) => <StatusBadge status={row.status ?? "unknown"} />, sortValue: (row) => row.status },
-          { key: "type", header: "Type", value: (row) => row.page_type ?? "-", sortValue: (row) => row.page_type },
-          { key: "document", header: "Document", value: (row) => row.document_type ?? "Unknown", sortValue: (row) => row.document_type },
-          { key: "llm_document", header: "LLM Document", value: (row) => formatLlmDocument(row.extracted_fields), sortValue: (row) => formatLlmDocument(row.extracted_fields) },
-          { key: "time", header: "Time", value: (row) => formatSeconds(row.elapsed_seconds), sortValue: (row) => row.elapsed_seconds },
-          { key: "data", header: "Data", value: (row) => row.error ?? summarizeFields(row.extracted_fields) },
-        ]}
-      />
-    </section>
-  );
-}
+
 
 function Anomalies({
   applicationId,
@@ -931,8 +903,11 @@ function AnomalyGroup({
   );
 }
 
-function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType: string) => void }) {
+function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType?: string) => void }) {
   const events = data.page_events;
+  if (events.length === 0) {
+    return <InfoMessage message="No page events logged." />;
+  }
   const avgSeconds = averagePageTime(events);
   
   return (
@@ -945,24 +920,30 @@ function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSel
       <SortableTable
         rows={events}
         columns={[
-          { key: "pageNumber", header: "Page", value: (row) => String(row.page_number ?? "-"), sortValue: (row) => Number(row.page_number) },
-          { key: "documentType", header: "Document Label", value: (row) => asText(row.document_type), sortValue: (row) => String(row.document_type ?? "") },
-          { key: "elapsedSeconds", header: "Elapsed Time", value: (row) => formatSeconds(row.elapsed_seconds), sortValue: (row) => Number(row.elapsed_seconds) },
-          { key: "fields", header: "Extracted Key/Values Output", value: (row) => summarizeFields(row.extracted_fields), sortValue: (row) => summarizeFields(row.extracted_fields) },
           {
-            key: "action",
-            header: "Open",
-            value: (row) => (
-              <button
-                type="button"
-                className="font-mono text-xs bg-[#EAF0F8] text-[#2B4C7E] border-none rounded-md px-2.5 py-1 font-semibold hover:bg-[#2B4C7E] hover:text-white transition-all cursor-pointer"
-                onClick={() => row.page_number && onSelectPage?.(row.page_number, String(row.document_type || "Page"))}
-              >
-                Page {row.page_number}
-              </button>
-            ),
-            sortValue: (row) => Number(row.page_number)
+            key: "page",
+            header: "Page",
+            value: (row) => {
+              const pageNo = row.page_number;
+              if (typeof pageNo !== "number") return "-";
+              return (
+                <button
+                  type="button"
+                  className="font-mono text-xs bg-[#EAF0F8] text-[#2B4C7E] border-none rounded-md px-2.5 py-1 font-semibold hover:bg-[#2B4C7E] hover:text-white transition-all cursor-pointer"
+                  onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)}
+                >
+                  Page {pageNo}
+                </button>
+              );
+            },
+            sortValue: (row) => row.page_number
           },
+          { key: "status", header: "Status", value: (row) => <StatusBadge status={row.status ?? "unknown"} />, sortValue: (row) => row.status },
+          { key: "type", header: "Type", value: (row) => row.page_type ?? "-", sortValue: (row) => row.page_type },
+          { key: "document", header: "Document", value: (row) => row.document_type ?? "Unknown", sortValue: (row) => row.document_type },
+          { key: "llm_document", header: "LLM Document", value: (row) => formatLlmDocument(row.extracted_fields), sortValue: (row) => formatLlmDocument(row.extracted_fields) },
+          { key: "time", header: "Time", value: (row) => formatSeconds(row.elapsed_seconds), sortValue: (row) => row.elapsed_seconds },
+          { key: "data", header: "Data", value: (row) => row.error ?? summarizeFields(row.extracted_fields) },
         ]}
       />
     </section>
