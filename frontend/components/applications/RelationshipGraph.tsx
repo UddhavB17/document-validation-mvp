@@ -56,25 +56,25 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
   const coApplicants = others.filter((n) => n.role === "co_applicant" || n.role === "guarantor");
   const familyMembers = others.filter((n) => n.role === "family_member");
 
-  // 3. Grid Coordinates Math (viewBox="0 0 760 260")
-  const cx = 380, cy = 130;
+  // 3. Grid Coordinates Math (viewBox="0 0 960 260")
+  const cx = 480, cy = 130;
   const positions: Record<string, { x: number; y: number }> = {};
 
   // Primary sits at exact center
   positions[primaryNode.id] = { x: cx, y: cy };
 
-  // Co-applicants on the right (x = 590)
+  // Co-applicants on the right (x = 810)
   coApplicants.forEach((n, i) => {
     const total = coApplicants.length;
     const y = total > 1 ? 45 + (i * 170) / (total - 1) : cy;
-    positions[n.id] = { x: 590, y };
+    positions[n.id] = { x: 810, y };
   });
 
-  // Family members on the left (x = 170)
+  // Family members on the left (x = 150)
   familyMembers.forEach((n, i) => {
     const total = familyMembers.length;
     const y = total > 1 ? 45 + (i * 170) / (total - 1) : cy;
-    positions[n.id] = { x: 170, y };
+    positions[n.id] = { x: 150, y };
   });
 
   // 4. Helper functions to render nodes and lines
@@ -275,7 +275,7 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
         }
       `}} />
 
-      <svg id="relGraph" width="100%" height="260" viewBox="0 0 760 260" className="mx-auto block">
+      <svg id="relGraph" width="100%" height="260" viewBox="0 0 960 260" className="mx-auto block">
         {edges}
         {nodeCards}
       </svg>
