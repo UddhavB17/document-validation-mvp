@@ -15,7 +15,6 @@ interface Setting {
   has_value?: boolean;
 }
 
-// Map of all possible fields for each document type to render in the Matrix
 const ALL_FIELD_SCHEMAS: Record<string, { label: string; fields: string[] }> = {
   pan: {
     label: "PAN Card",
@@ -146,7 +145,6 @@ export default function SettingsPage() {
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
-  // Helper getters/setters for specific settings keys
   const getSetting = (key: string) => settings.find((s) => s.config_key === key);
   const getVal = (key: string) => getSetting(key)?.config_value ?? "";
 
@@ -166,18 +164,18 @@ export default function SettingsPage() {
     const googleControlsVisible = ocrProvider === "google_vision" || ocrProvider === "auto";
 
     return (
-      <div className="space-y-8">
+      <div className="space-y-8 animate-fade-in">
         {/* Classification Settings */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold text-slate-900 flex items-center gap-2">
+        <div className="rounded-xl border border-[#E1E5EB] bg-white p-6 shadow-2xs">
+          <h2 className="mb-4 text-base font-bold font-serif text-[#16202E] flex items-center gap-2 border-b border-slate-50 pb-2">
             ⚙️ Classification Settings
           </h2>
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-slate-700">
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-1">
                 Minimum Classification Confidence
               </label>
-              <p className="text-xs text-slate-500 mb-2">
+              <p className="text-xs text-[#5C6B7A] mb-3 font-semibold leading-relaxed">
                 Raise or lower the minimum score required to auto-classify pages. Currently recommended: 0.70.
               </p>
               <div className="flex items-center gap-4">
@@ -188,41 +186,41 @@ export default function SettingsPage() {
                   step="0.05"
                   value={minConfidence}
                   onChange={(e) => updateSingleSetting("min_confidence", e.target.value)}
-                  className="h-2 w-64 cursor-pointer appearance-none rounded-lg bg-slate-200 accent-blue-600"
+                  className="h-2 w-64 cursor-pointer appearance-none rounded-lg bg-slate-200 accent-[#2B4C7E]"
                 />
-                <span className="text-sm font-semibold text-slate-800">{minConfidence}</span>
+                <span className="text-sm font-bold font-mono text-[#16202E]">{minConfidence}</span>
               </div>
             </div>
           </div>
         </div>
 
         {/* OCR Settings */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold text-slate-900 flex items-center gap-2">
+        <div className="rounded-xl border border-[#E1E5EB] bg-white p-6 shadow-2xs">
+          <h2 className="mb-4 text-base font-bold font-serif text-[#16202E] flex items-center gap-2 border-b border-slate-50 pb-2">
             OCR Settings
           </h2>
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
-                <label className="block text-sm font-medium text-slate-700">OCR Provider</label>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">OCR Provider</label>
                 <select
                   value={ocrProvider}
                   onChange={(e) => updateSingleSetting("ocr.provider", e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                  className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium"
                 >
                   <option value="google_vision">Google Vision API only</option>
                 </select>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-[#5C6B7A] font-semibold leading-relaxed">
                   Scanned pages use Google Vision API. Digital PDF text still uses embedded text and incurs no OCR call.
                 </p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700">Google Vision Feature</label>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Google Vision Feature</label>
                 <select
                   value={googleFeature}
                   onChange={(e) => updateSingleSetting("google.vision.feature", e.target.value)}
                   disabled={!googleControlsVisible}
-                  className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                  className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium disabled:bg-[#F6F7FA] disabled:text-[#5C6B7A]"
                 >
                   <option value="DOCUMENT_TEXT_DETECTION">Document text detection</option>
                   <option value="TEXT_DETECTION">Text detection</option>
@@ -233,11 +231,11 @@ export default function SettingsPage() {
             {googleControlsVisible && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-slate-100 pt-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700">Google Vision Auth Mode</label>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Google Vision Auth Mode</label>
                   <select
                     value={googleAuth}
                     onChange={(e) => updateSingleSetting("google.vision.auth", e.target.value)}
-                    className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                    className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium"
                   >
                     <option value="auto">Auto</option>
                     <option value="api_key">API key</option>
@@ -245,18 +243,18 @@ export default function SettingsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700">Google Vision Timeout</label>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Google Vision Timeout</label>
                   <input
                     type="number"
                     min="5"
                     max="300"
                     value={googleTimeout}
                     onChange={(e) => updateSingleSetting("google.vision.timeout.seconds", e.target.value)}
-                    className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                    className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm font-mono text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs font-medium"
                   />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700">Optional language hints</label>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Optional language hints</label>
                   <div className="mt-1 flex flex-col gap-2 sm:flex-row">
                     <input
                       type="text"
@@ -265,23 +263,23 @@ export default function SettingsPage() {
                         setDraftValues((prev) => ({ ...prev, "google.vision.language_hints": e.target.value }))
                       }
                       placeholder="Leave blank for auto-detection, or use en,gu"
-                      className="block min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                      className="block min-w-0 flex-1 rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs font-medium"
                     />
                     <button
                       type="button"
                       onClick={() => updateSingleSetting("google.vision.language_hints", googleLanguageHints)}
                       disabled={savingKey === "google.vision.language_hints"}
-                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-100"
+                      className="rounded-lg border border-[#E1E5EB] bg-white px-4 py-2 text-xs font-semibold text-[#5C6B7A] hover:text-[#16202E] shadow-3xs disabled:cursor-not-allowed disabled:bg-slate-100 cursor-pointer"
                     >
                       Save hints
                     </button>
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
+                  <p className="mt-1.5 text-xs text-[#5C6B7A] font-semibold leading-relaxed">
                     Keep blank for automatic multilingual detection. Add a short BCP-47 list only for noisy regional batches.
                   </p>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700">Google Vision API Key</label>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Google Vision API Key</label>
                   <div className="mt-1 flex flex-col gap-2 sm:flex-row">
                     <input
                       type="password"
@@ -294,13 +292,13 @@ export default function SettingsPage() {
                           ? "Saved key configured. Paste a new key to replace it."
                           : "Paste Google Vision API key"
                       }
-                      className="block min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                      className="block min-w-0 flex-1 rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs font-medium"
                     />
                     <button
                       type="button"
                       onClick={() => updateSingleSetting("google.vision.api_key", googleApiKeyDraft)}
                       disabled={!googleApiKeyDraft.trim() || savingKey === "google.vision.api_key"}
-                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:bg-slate-300"
+                      className="rounded-lg bg-[#2B4C7E] hover:bg-[#1E3559] px-4 py-2 text-xs font-semibold text-white shadow-3xs disabled:cursor-not-allowed disabled:bg-slate-300 border-none cursor-pointer"
                     >
                       Save key
                     </button>
@@ -309,13 +307,13 @@ export default function SettingsPage() {
                         type="button"
                         onClick={() => updateSingleSetting("google.vision.api_key", "", { clearSecret: true })}
                         disabled={savingKey === "google.vision.api_key"}
-                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm disabled:cursor-not-allowed disabled:bg-slate-100"
+                        className="rounded-lg border border-[#E1E5EB] bg-white px-4 py-2 text-xs font-semibold text-[#5C6B7A] hover:text-[#16202E] shadow-3xs disabled:cursor-not-allowed disabled:bg-slate-100 cursor-pointer"
                       >
                         Clear
                       </button>
                     )}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">The saved key is hidden after saving and is used only for OCR requests.</p>
+                  <p className="mt-1.5 text-xs text-[#5C6B7A] font-semibold leading-relaxed">The saved key is hidden after saving and is used only for OCR requests.</p>
                 </div>
               </div>
             )}
@@ -323,17 +321,17 @@ export default function SettingsPage() {
         </div>
 
         {/* LLM Validation Settings */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-lg font-semibold text-slate-900 flex items-center gap-2">
+        <div className="rounded-xl border border-[#E1E5EB] bg-white p-6 shadow-2xs">
+          <h2 className="mb-4 text-base font-bold font-serif text-[#16202E] flex items-center gap-2 border-b border-slate-50 pb-2">
             🤖 LLM Verification Settings
           </h2>
           <div className="space-y-6">
             <div className="flex items-start justify-between">
               <div>
-                <label className="text-sm font-medium text-slate-700 block">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] block">
                   Enable LLM Verification checks
                 </label>
-                <span className="text-xs text-slate-500 block">
+                <span className="text-xs text-[#5C6B7A] block mt-1 font-semibold leading-relaxed">
                   Toggle dynamic validation checks & checklist evaluations via LLM.
                 </span>
               </div>
@@ -341,7 +339,7 @@ export default function SettingsPage() {
                 type="button"
                 onClick={() => updateSingleSetting("llm_enabled", isLlmEnabled ? "false" : "true")}
                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                  isLlmEnabled ? "bg-blue-600" : "bg-slate-200"
+                  isLlmEnabled ? "bg-[#2B4C7E]" : "bg-slate-200"
                 }`}
               >
                 <span
@@ -355,11 +353,11 @@ export default function SettingsPage() {
             {isLlmEnabled && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700">LLM Provider</label>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">LLM Provider</label>
                   <select
                     value={provider}
                     onChange={(e) => updateSingleSetting("llm_provider", e.target.value)}
-                    className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                    className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium"
                   >
                     <option value="ollama">Ollama (Local)</option>
                     <option value="openai">OpenAI</option>
@@ -367,16 +365,16 @@ export default function SettingsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700">Model Name</label>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Model Name</label>
                   <input
                     type="text"
                     value={model}
                     onChange={(e) => {}}
                     onBlur={(e) => updateSingleSetting("llm_model", e.target.value)}
                     placeholder="e.g. qwen2.5:7b-instruct-q4_0"
-                    className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none"
+                    className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs font-medium"
                   />
-                  <span className="text-[10px] text-slate-400">Press enter or focus out to save</span>
+                  <span className="text-[10px] text-[#5C6B7A] font-semibold mt-1 block">Press enter or focus out to save</span>
                 </div>
               </div>
             )}
@@ -407,9 +405,9 @@ export default function SettingsPage() {
 
   const renderFieldsMatrix = () => {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-2 text-lg font-semibold text-slate-900">📋 Document Verification Fields Matrix</h2>
-        <p className="text-sm text-slate-500 mb-6">
+      <div className="rounded-xl border border-[#E1E5EB] bg-white p-6 shadow-2xs animate-fade-in">
+        <h2 className="mb-2 text-base font-bold font-serif text-[#16202E]">📋 Document Verification Fields Matrix</h2>
+        <p className="text-xs text-[#5C6B7A] mb-6 font-semibold leading-relaxed">
           Toggle which specific fields are required to pass validation checklist for each document type.
         </p>
 
@@ -424,18 +422,18 @@ export default function SettingsPage() {
             }
 
             return (
-              <div key={docKey} className="border-b border-slate-100 pb-4 last:border-0 last:pb-0">
-                <h3 className="text-sm font-semibold text-slate-800 mb-2">{schema.label}</h3>
-                <div className="flex flex-wrap gap-4">
+              <div key={docKey} className="border-b border-[#E1E5EB] pb-5 last:border-0 last:pb-0">
+                <h3 className="text-[13.5px] font-bold text-[#16202E] mb-3 font-serif uppercase tracking-wider">{schema.label}</h3>
+                <div className="flex flex-wrap gap-3">
                   {schema.fields.map((field) => {
                     const isRequired = enabledFields.includes(field);
                     return (
                       <label
                         key={field}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-colors ${
                           isRequired
-                            ? "bg-blue-50 border-blue-200 text-blue-700 font-semibold"
-                            : "bg-slate-50 border-slate-200 text-slate-600"
+                            ? "bg-[#EAF0F8] border-[#2B4C7E] text-[#2B4C7E]"
+                            : "bg-[#F6F7FA] border-[#E1E5EB] text-[#5C6B7A] hover:bg-slate-50"
                         }`}
                       >
                         <input
@@ -444,8 +442,8 @@ export default function SettingsPage() {
                           onChange={() => handleFieldToggle(docKey, field, isRequired)}
                           className="sr-only"
                         />
-                        <span>{field}</span>
-                        {isRequired && <span className="text-[10px] text-blue-500">✓</span>}
+                        <span className="font-mono text-[11.5px]">{field}</span>
+                        {isRequired && <span className="text-[10px] text-[#2B4C7E]">✓</span>}
                       </label>
                     );
                   })}
@@ -459,36 +457,38 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">System settings</h1>
-          <p className="text-sm text-slate-500">Configure OCR, LLM, and document field verification parameters.</p>
+          <h1 className="text-2xl font-bold font-serif text-[#16202E]">System settings</h1>
+          <p className="text-sm text-[#5C6B7A] mt-1 font-medium">Configure OCR, LLM, and document field verification parameters.</p>
         </div>
         {successMessage && (
-          <div className="rounded-lg bg-green-50 px-4 py-2 text-sm font-medium text-green-700 border border-green-200 animate-pulse">
+          <div className="stamp match select-none rotate-0 py-1.5 px-3">
             {successMessage}
           </div>
         )}
       </div>
 
-      <div className="flex gap-2 border-b border-slate-200">
+      <div className="flex gap-1 border-b border-[#E1E5EB]">
         <button
+          type="button"
           onClick={() => setActiveTab("general")}
-          className={`pb-3 text-sm font-semibold border-b-2 px-4 transition-colors ${
+          className={`pb-3 text-sm font-semibold border-b-2 px-5 transition-colors border-solid -mb-[2px] cursor-pointer ${
             activeTab === "general"
-              ? "border-blue-600 text-blue-600"
-              : "border-transparent text-slate-500 hover:text-slate-700"
+              ? "border-[#2B4C7E] text-[#2B4C7E]"
+              : "border-transparent text-[#5C6B7A] hover:text-[#16202E]"
           }`}
         >
           General Configuration
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab("fields")}
-          className={`pb-3 text-sm font-semibold border-b-2 px-4 transition-colors ${
+          className={`pb-3 text-sm font-semibold border-b-2 px-5 transition-colors border-solid -mb-[2px] cursor-pointer ${
             activeTab === "fields"
-              ? "border-blue-600 text-blue-600"
-              : "border-transparent text-slate-500 hover:text-slate-700"
+              ? "border-[#2B4C7E] text-[#2B4C7E]"
+              : "border-transparent text-[#5C6B7A] hover:text-[#16202E]"
           }`}
         >
           Required Fields Matrix
@@ -496,7 +496,7 @@ export default function SettingsPage() {
       </div>
 
       {loading ? (
-        <div className="text-center py-12 text-slate-500">Loading settings...</div>
+        <div className="text-center py-12 text-[#5C6B7A] font-semibold italic">Loading settings...</div>
       ) : activeTab === "general" ? (
         renderGeneralSettings()
       ) : (

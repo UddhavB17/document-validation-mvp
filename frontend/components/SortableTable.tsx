@@ -28,15 +28,15 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
   }, [columns, rows, sort]);
 
   return (
-    <div className="overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm max-h-[600px]">
-      <table className="min-w-full divide-y divide-slate-200 text-sm relative">
-        <thead className="sticky top-0 bg-slate-50 text-left text-xs font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200 z-10">
+    <div className="overflow-auto rounded-xl border border-[#E1E5EB] bg-white shadow-3xs max-h-[600px]">
+      <table className="min-w-full divide-y divide-[#E1E5EB] text-[13px] relative border-collapse">
+        <thead className="sticky top-0 bg-[#F6F7FA] text-left text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] border-b border-[#E1E5EB] z-10">
           <tr>
             {columns.map((column) => (
-              <th key={column.key} className="whitespace-nowrap px-4 py-3">
+              <th key={column.key} className="whitespace-nowrap px-6 py-3.5">
                 <button
                   type="button"
-                  className="font-bold hover:text-slate-800 transition-colors duration-150 flex items-center gap-1"
+                  className="font-bold hover:text-[#16202E] transition-colors duration-150 flex items-center gap-1.5 border-none bg-transparent cursor-pointer"
                   onClick={() =>
                     setSort((current) =>
                       current?.key === column.key
@@ -47,7 +47,7 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
                 >
                   {column.header}
                   {sort?.key === column.key ? (
-                    <span className="text-[10px] text-blue-600 font-mono">
+                    <span className="text-[10px] text-[#2B4C7E] font-mono font-bold">
                       {sort.direction === "asc" ? " ▲" : " ▼"}
                     </span>
                   ) : null}
@@ -56,11 +56,11 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
+        <tbody className="divide-y divide-[#E1E5EB] text-[#16202E]">
           {sortedRows.map((row, index) => (
-            <tr key={index} className="align-top hover:bg-slate-50/50 transition-colors duration-100">
+            <tr key={index} className="align-middle hover:bg-[#EAF0F8]/15 transition-colors duration-100">
               {columns.map((column) => (
-                <td key={column.key} className="px-4 py-3.5 text-slate-700 font-medium">
+                <td key={column.key} className="px-6 py-3.5 text-[#16202E] font-medium leading-relaxed">
                   {column.value(row)}
                 </td>
               ))}
