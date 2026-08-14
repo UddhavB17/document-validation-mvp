@@ -311,35 +311,18 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
         reason = items[0].get("reason") or f"Repeated {rule_id} flags"
     reason = f"{reason} ({len(items)} occurrences)"
 
-    from collections import defaultdict
-    val_to_pages = defaultdict(list)
+    occurrences = []
     for item in items:
         val = item.get("found_value")
         p_list = _pages_from_anomaly(item)
-        for p in p_list:
-            val_to_pages[val].append(p)
-        if not p_list:
-            val_to_pages[val].append(None)
+        val_str = f"'{val}'" if val is not None else "None"
+        if p_list:
+            pages_str = ",".join(map(str, p_list))
+            occurrences.append(f"Page {pages_str}: {val_str}")
+        else:
+            occurrences.append(f"File-level: {val_str}")
 
-    parts = []
-    for val, p_list in val_to_pages.items():
-        unique_pages = sorted(list(set(p for p in p_list if p is not None)))
-        has_none = None in p_list
-        
-        pages_str = ""
-        if unique_pages:
-            pages_label = "Pages" if len(unique_pages) > 1 else "Page"
-            pages_str = f"{pages_label} {','.join(map(str, unique_pages))}"
-        if has_none:
-            if pages_str:
-                pages_str += " & File-level"
-            else:
-                pages_str = "File-level"
-        
-        val_repr = f"'{val}'" if val is not None else "None"
-        parts.append(f"{pages_str}: {val_repr}")
-
-    found_value = "; ".join(parts)
+    found_value = "\n".join(occurrences)
 
     result = {
         "rule_id": (
