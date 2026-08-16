@@ -59,7 +59,9 @@ def test_recovery_payload_is_encrypted_and_secret_settings_are_excluded(tmp_path
     recovered = load_job_input(application_id, job_id)
     assert recovered["system_data"]["pan_number"] == "ABCDE1234F"
     assert "google.vision.api_key" not in recovered["settings_snapshot"]["system_settings"]
-    assert (tmp_path / "recovery.key").stat().st_mode & 0o777 == 0o600
+    import os
+    if os.name != "nt":
+        assert (tmp_path / "recovery.key").stat().st_mode & 0o777 == 0o600
 
 
 def test_recovery_rejects_modified_source_file(tmp_path, monkeypatch) -> None:
