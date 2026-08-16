@@ -344,7 +344,9 @@ export const api = {
     const base = `${API_BASE_URL}/review/applications/${applicationId}/source-pdf`;
     return pageNumber ? `${base}#page=${pageNumber}&zoom=page-width` : base;
   },
-  sourcePageImageUrl: (applicationId: number, pageNumber: number) =>
-    `${API_BASE_URL}/review/applications/${applicationId}/source-page/${pageNumber}`,
+  sourcePageImageUrl: (applicationId: number, pageNumber: number, highlight?: string) => {
+    const base = `${API_BASE_URL}/review/applications/${applicationId}/source-page/${pageNumber}`;
+    return highlight ? `${base}?highlight=${encodeURIComponent(highlight)}` : base;
+  },
   ocrJsonUrl: (applicationId: number) => `${API_BASE_URL}/review/applications/${applicationId}/ocr-json`,
 };

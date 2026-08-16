@@ -417,7 +417,11 @@ export default function ApplicationReviewPage() {
                     </div>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={api.sourcePageImageUrl(applicationId, pageNo)}
+                      src={api.sourcePageImageUrl(
+                        applicationId,
+                        pageNo,
+                        selectedEvidence.anomaly.found_value || selectedEvidence.anomaly.expected_value || ""
+                      )}
                       alt={`Original source PDF page ${pageNo}`}
                       className="h-auto w-full bg-white shadow border border-slate-200 rounded-sm"
                     />

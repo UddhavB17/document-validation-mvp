@@ -109,11 +109,15 @@ def _find_source_pages_for_value(pages: list[dict[str, Any]], value: str, field_
             continue
         page_no = int(page_no)
         
-        # If page_to_person mapping is provided, filter out pages belonging to other people
+        # If page_to_person mapping is provided, filter out pages belonging to other people.
+        # Do not filter out multi-person container pages (like Application Form or CAM)
+        # since their pages contain fields for multiple applicants/coapplicants/guarantors.
         if person_id and page_to_person:
             mapped_person = page_to_person.get(page_no)
             if mapped_person and mapped_person != person_id:
-                continue
+                doc_type = str(p.get("document_type") or "").strip().lower()
+                if doc_type not in {"application form", "cam"}:
+                    continue
             
         # 1. Check extracted fields
         is_match = False
@@ -624,7 +628,11 @@ def get_application_source_pdf(application_id: int) -> FileResponse:
     "/applications/{application_id}/source-page/{page_number}",
     summary="Render one source PDF page for evidence review",
 )
-def get_application_source_page(application_id: int, page_number: int) -> Response:
+def get_application_source_page(
+    application_id: int,
+    page_number: int,
+    highlight: str | None = None
+) -> Response:
     if page_number < 1:
         raise HTTPException(status_code=422, detail="Page number must be one or greater")
     with get_connection() as connection:
@@ -644,12 +652,35 @@ def get_application_source_page(application_id: int, page_number: int) -> Respon
         raise HTTPException(status_code=404, detail="Source PDF not found")
 
     import fitz
+    import re
 
     try:
         with fitz.open(file_path) as document:
             if page_number > document.page_count:
                 raise HTTPException(status_code=404, detail="Source page not found")
             page = document.load_page(page_number - 1)
+            
+            if highlight and len(highlight.strip()) >= 3:
+                # Try exact match first
+                rects = page.search_for(highlight)
+                if not rects:
+                    # Fallback to key words of the value to handle slight OCR variances
+                    exclude_words = {"and", "the", "for", "with", "india", "pincode", "gujarat", "state", "district", "p.o.", "post", "office"}
+                    words = []
+                    for w in re.split(r"[,\s:\-\[\]\(\)]+", highlight):
+                        w_clean = w.strip().lower()
+                        if len(w_clean) >= 3 and w_clean not in exclude_words:
+                            words.append(w.strip())
+                    
+                    for word in sorted(set(words), key=len, reverse=True)[:5]:
+                        word_rects = page.search_for(word)
+                        if word_rects:
+                            rects.extend(word_rects)
+                            
+                for rect in rects:
+                    annot = page.add_highlight_annot(rect)
+                    annot.update()
+
             pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
             image_bytes = pixmap.tobytes("png")
     except HTTPException:
