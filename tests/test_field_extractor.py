@@ -875,6 +875,107 @@ def test_utility_bill_extracts_address_proof_fields() -> None:
     assert result["pin_code"] == "110001"
 
 
+def test_passport_extracts_machine_readable_identity_fields() -> None:
+    result = extract_fields(
+        "Passport",
+        """REPUBLIC OF INDIA PASSPORT
+Passport No: A1234567
+Surname: KUMAR
+Given Names: RAVI
+Nationality: INDIAN
+Date of Birth: 12/03/1990
+Place of Birth: JAIPUR
+Date of Issue: 01/02/2020
+Date of Expiry: 31/01/2030
+Place of Issue: JAIPUR
+P<INDKUMAR<<RAVI
+""",
+    )
+
+    assert result["passport_number"] == "A1234567"
+    assert result["applicant_name"] == "RAVI KUMAR"
+    assert result["dob"] == "1990-03-12"
+    assert result["date_of_expiry"] == "2030-01-31"
+
+
+def test_passbook_transaction_pages_supply_three_month_period() -> None:
+    result = extract_fields(
+        "Passbook",
+        """PASSBOOK Account Number 123456789012
+Transaction Date Narration Debit Credit Balance
+05/05/2026 Opening 0 0 1000
+10/06/2026 Deposit 0 500 1500
+31/07/2026 Transfer 100 0 1400
+""",
+    )
+
+    assert result["statement_period_start"] == "2026-05-05"
+    assert result["statement_period_end"] == "2026-07-31"
+
+
+def test_insurance_signature_requires_affirmative_completion_evidence() -> None:
+    blank = extract_fields(
+        "Life Insurance Form",
+        "Life Insurance Proposal Form\nProposer Name: Ravi Kumar\nSignature of Proposer: ____",
+    )
+    signed = extract_fields(
+        "Life Insurance Form",
+        "Life Insurance Proposal Form\nProposer Name: Ravi Kumar\nDigitally signed by Ravi Kumar",
+    )
+
+    assert blank["signature_present"] is None
+    assert signed["signature_present"] is True
+
+
+def test_fi_crime_udyam_and_shop_fields_are_extracted() -> None:
+    fi = extract_fields(
+        "FI Report",
+        "FIELD INVESTIGATION REPORT\nApplicant Name: Ravi Kumar\n"
+        "Verification Status: Positive\nVisit Date: 01/08/2026",
+    )
+    crime = extract_fields(
+        "Crime Check Report",
+        "CRIME CHECK REPORT\nSubject Name: Ravi Kumar\nNo adverse record\nApproved by Credit",
+    )
+    udyam = extract_fields(
+        "Udyam Certificate",
+        "UDYAM REGISTRATION CERTIFICATE\nUDYAM-RJ-12-1234567\n"
+        "Name of Enterprise: Ravi Traders\nDate of Udyam Registration: 01/07/2026",
+    )
+    shop = extract_fields(
+        "Shop Establishment Certificate",
+        "GUMASTA CERTIFICATE\nRegistration No: RJ-123\n"
+        "Name of Establishment: Ravi Traders\nNature of Business: Retail",
+    )
+
+    assert fi["fi_report_status"] == "positive"
+    assert crime["report_status"] == "clear"
+    assert crime["credit_approval_status"] == "approved"
+    assert udyam["udyam_registration_number"] == "UDYAM-RJ-12-1234567"
+    assert shop["registration_number"] == "RJ-123"
+
+
+def test_pdc_extractor_counts_multiple_leaves_and_preserves_owners() -> None:
+    result = extract_fields(
+        "PDC",
+        """A/C No: 111111111111
+Account Holder: Ravi Kumar
+Cheque No: 000001
+000001 123456789
+A/C No: 222222222222
+Account Holder: Neha Kumar
+Cheque No: 000002
+000002 987654321
+""",
+    )
+
+    assert result["cheque_numbers"] == ["000001", "000002"]
+    assert result["cheque_count"] == 2
+    assert {leaf["account_number"] for leaf in result["pdc_leaves"]} == {
+        "111111111111", "222222222222"
+    }
+
+
 def test_utility_bill_does_not_treat_billing_month_as_pin_code() -> None:
     result = extract_fields(
         "Utility Bill",

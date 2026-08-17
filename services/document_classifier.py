@@ -172,6 +172,31 @@ def is_bank_statement_profile_context(text: str) -> bool:
     )
 
 
+def is_multi_cheque_sheet_context(text: str) -> bool:
+    """Recognize a scan containing several non-cancelled cheque leaves."""
+    raw = str(text or "")
+    if re.search(r"\bcancell?ed\b", raw, re.IGNORECASE):
+        return False
+    cheque_numbers = {
+        match.group(1)
+        for match in re.finditer(
+            r"(?<!\d)(\d{6})[\s'\"*]*(?:\d{9})(?!\d)",
+            raw,
+        )
+    }
+    if len(cheque_numbers) < 2:
+        return False
+    structure_families = sum(
+        bool(re.search(pattern, raw, re.IGNORECASE))
+        for pattern in (
+            r"\b(?:a\s*/?\s*c|account)\s+(?:payee|number|no\.?)\b",
+            r"\b(?:rupees|pay|bearer)\b",
+            r"\b(?:ifsc|cts[- ]?2010|cheque\s+(?:number|no\.?))\b",
+        )
+    )
+    return structure_families >= 2
+
+
 def _insurance_identifier_values(text: str, pattern: str) -> set[str]:
     return {
         key
@@ -250,6 +275,19 @@ def classify_page_with_candidates(text: str) -> dict[str, Any]:
                     {"kind": "semantic", "value": "statement_profile_and_transactions"},
                 ]
                 break
+    if is_multi_cheque_sheet_context(text or ""):
+        for candidate in candidates:
+            if candidate["document_type"] == "PDC":
+                candidate["confidence"] = max(0.95, candidate["confidence"])
+                candidate["matched_signals"] = [
+                    *candidate["matched_signals"],
+                    {"kind": "semantic", "value": "multiple_non_cancelled_cheque_leaves"},
+                ]
+            elif candidate["document_type"] == "Cheque":
+                candidate["confidence"] = 0.0
+                candidate["matched_signals"] = [
+                    {"kind": "suppressed", "value": "multi_cheque_pdc_sheet"}
+                ]
     candidates.sort(
         key=lambda item: (
             -item["confidence"],

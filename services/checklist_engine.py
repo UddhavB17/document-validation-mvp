@@ -426,6 +426,167 @@ def _document_evidence_count(pages: list[dict], document_type: str) -> tuple[int
     return len(pages), "page(s)"
 
 
+def _account_numbers(record: dict | None) -> set[str]:
+    record = record or {}
+    values: list[object] = []
+    for key in (
+        "repayment_account_number", "repayment_account_no", "disbursement_account_number",
+        "bank_account_number", "bank_account_no", "account_number", "account_no",
+    ):
+        value = record.get(key)
+        if isinstance(value, list):
+            values.extend(value)
+        elif value not in (None, ""):
+            values.append(value)
+    bank_accounts = record.get("bank_accounts")
+    if isinstance(bank_accounts, list):
+        for account in bank_accounts:
+            if isinstance(account, dict):
+                values.extend(_account_numbers(account))
+    return {
+        digits
+        for value in values
+        if len(digits := re.sub(r"\D", "", str(value or ""))) >= 6
+    }
+
+
+def _pdc_leaf_records(pages: list[dict], system_data: dict) -> list[dict]:
+    """Return unique physical cheque leaves with conservatively resolved owners."""
+    people = _people(system_data)
+    leaves_by_number: dict[str, dict] = {}
+    for page in _find_pages(pages, "PDC"):
+        fields = page.get("extracted_fields") or {}
+        page_leaves = fields.get("pdc_leaves") if isinstance(fields, dict) else None
+        if not isinstance(page_leaves, list) or not page_leaves:
+            numbers = fields.get("cheque_numbers") if isinstance(fields, dict) else None
+            if not isinstance(numbers, list) or not numbers:
+                number = fields.get("cheque_number") if isinstance(fields, dict) else None
+                numbers = [number] if number not in (None, "") else [f"page:{page.get('page_number')}"]
+            page_leaves = [{
+                "cheque_number": str(number),
+                "account_number": fields.get("account_number"),
+                "account_holder_name": fields.get("account_holder_name"),
+                "is_cancelled": bool(fields.get("is_cancelled")),
+            } for number in numbers]
+
+        for raw_leaf in page_leaves:
+            if not isinstance(raw_leaf, dict) or raw_leaf.get("is_cancelled") is True:
+                continue
+            cheque_number = str(raw_leaf.get("cheque_number") or "").strip()
+            if not cheque_number:
+                continue
+            leaf = dict(raw_leaf)
+            leaf["page_number"] = page.get("page_number")
+            leaf["page_person_id"] = page.get("person_id") or page.get("applicant_role")
+            owner = _pdc_leaf_owner(leaf, people)
+            leaf["resolved_person_id"] = owner
+            if isinstance(raw_leaf, dict):
+                raw_leaf["resolved_person_id"] = owner
+            existing = leaves_by_number.get(cheque_number)
+            if existing is None or sum(value not in (None, "", [], {}) for value in leaf.values()) > sum(
+                value not in (None, "", [], {}) for value in existing.values()
+            ):
+                leaves_by_number[cheque_number] = leaf
+    return list(leaves_by_number.values())
+
+
+def _pdc_leaf_owner(leaf: dict, people: dict[str, dict]) -> str | None:
+    if not people:
+        return None
+    leaf_account = re.sub(r"\D", "", str(leaf.get("account_number") or ""))
+    if len(leaf_account) >= 6:
+        account_matches = {
+            person_id
+            for person_id, person in people.items()
+            if leaf_account in _account_numbers(person)
+        }
+        if len(account_matches) == 1:
+            return next(iter(account_matches))
+
+    holder = str(leaf.get("account_holder_name") or "").strip()
+    if holder:
+        from services.person_ownership import name_matches_trusted_person
+
+        name_matches = {
+            person_id
+            for person_id, person in people.items()
+            if name_matches_trusted_person(holder, person)
+        }
+        if len(name_matches) == 1:
+            return next(iter(name_matches))
+
+    page_person = str(leaf.get("page_person_id") or "").strip()
+    return page_person if page_person in people else None
+
+
+def _pdc_count_for_person(pages: list[dict], person_id: str, system_data: dict) -> int:
+    return sum(
+        1 for leaf in _pdc_leaf_records(pages, system_data)
+        if leaf.get("resolved_person_id") == person_id
+    )
+
+
+def _pdc_count_for_repayment_account(pages: list[dict], system_data: dict) -> int | None:
+    leaves = _pdc_leaf_records(pages, system_data)
+    if not leaves:
+        return 0
+    people = _people(system_data)
+    target_accounts = _account_numbers({
+        key: system_data.get(key)
+        for key in (
+            "repayment_account_number", "repayment_account_no", "disbursement_account_number",
+            "bank_account_number", "bank_account_no",
+        )
+    })
+    target_people = {
+        person_id
+        for person_id, person in people.items()
+        if person_id == "primary" or str(person.get("role") or "").strip().lower() in {
+            "primary", "applicant", "primary_applicant", "primary applicant"
+        }
+    }
+    for person_id in target_people:
+        target_accounts.update(_account_numbers(people.get(person_id)))
+
+    # Never credit unowned leaves to the applicant's repayment account.
+    if not people and not target_accounts:
+        return None
+
+    count = 0
+    for leaf in leaves:
+        leaf_account = re.sub(r"\D", "", str(leaf.get("account_number") or ""))
+        if leaf_account and leaf_account in target_accounts:
+            count += 1
+        elif leaf.get("resolved_person_id") in target_people:
+            count += 1
+    return count
+
+
+def _evidence_is_same_source_or_adjacent(left_pages: list[dict], right_pages: list[dict]) -> bool:
+    """Link paired evidence by source metadata or nearby physical page order."""
+    for left in left_pages:
+        for right in right_pages:
+            left_source = str(
+                left.get("source_document_id")
+                or left.get("document_instance_id")
+                or left.get("source_filename")
+                or ""
+            ).strip()
+            right_source = str(
+                right.get("source_document_id")
+                or right.get("document_instance_id")
+                or right.get("source_filename")
+                or ""
+            ).strip()
+            if left_source and right_source and left_source == right_source:
+                return True
+            left_number = _numeric(left.get("page_number"))
+            right_number = _numeric(right.get("page_number"))
+            if left_number is not None and right_number is not None and abs(left_number - right_number) <= 3:
+                return True
+    return False
+
+
 def _numeric(value: object) -> float | None:
     if value in (None, ""):
         return None
@@ -433,6 +594,14 @@ def _numeric(value: object) -> float | None:
         return float(re.sub(r"[^0-9.-]", "", str(value)))
     except (TypeError, ValueError):
         return None
+
+
+def _truthy_evidence(value: object) -> bool:
+    if value is True:
+        return True
+    return str(value or "").strip().casefold() in {
+        "1", "true", "yes", "y", "present", "signed", "verified", "completed"
+    }
 
 
 def _condition_value(field: str, aliases: list[str], system_data: dict) -> object:
@@ -458,6 +627,8 @@ def _condition_value(field: str, aliases: list[str], system_data: dict) -> objec
         )
     if field == "pdc_person_count" and people:
         return len(_scoped_people("pdc_people", system_data))
+    if field == "pdc_coapplicant_count" and people:
+        return len(_scoped_people("pdc_coapplicants", system_data))
     return None
 
 
@@ -539,7 +710,9 @@ def _people(system_data: dict) -> dict[str, dict]:
 
 def _scoped_people(scope: str | None, system_data: dict) -> dict[str, dict]:
     people = _people(system_data)
-    if not people or scope not in {"each_borrower", "each_person", "banking_people", "pdc_people"}:
+    if not people or scope not in {
+        "each_borrower", "each_person", "banking_people", "pdc_people", "pdc_coapplicants"
+    }:
         return {}
     if scope == "banking_people":
         selected = {
@@ -563,6 +736,14 @@ def _scoped_people(scope: str | None, system_data: dict) -> dict[str, dict]:
                     or str(person.get("gender") or "").strip().lower() in {"female", "f"}
                 )
             )
+        }
+    if scope == "pdc_coapplicants":
+        return {
+            person_id: person
+            for person_id, person in people.items()
+            if str(person.get("role") or "").strip().lower() in {
+                "coapplicant", "co-applicant", "co applicant", "coborrower", "co-borrower"
+            }
         }
     if scope == "each_borrower":
         return {
@@ -661,7 +842,7 @@ def _run_presence_checks(
     for item in items:
         # Some manual checklist controls live in the source system or a CSO
         # workflow rather than in the uploaded PDF.  Keep them visible in the
-        # 44-item checklist, but do not treat absent PDF evidence as proof that
+        # configured checklist, but do not treat absent PDF evidence as proof that
         # the control failed.
         if item.get("automated_presence_check", True) is False:
             continue
@@ -697,10 +878,13 @@ def _run_presence_checks(
                         anomalies.append(_missing_presence_anomaly(item, document_type=missing_type, person_id=person_id))
                 elif item.get("check_type") == "presence_min_count":
                     minimum = int(item.get("min_count") or 1)
-                    found_count = sum(
-                        _document_evidence_count(_find_pages(person_pages, doc_type), doc_type)[0]
-                        for doc_type in types
-                    )
+                    if types == ["PDC"]:
+                        found_count = _pdc_count_for_person(pages, person_id, system_data)
+                    else:
+                        found_count = sum(
+                            _document_evidence_count(_find_pages(person_pages, doc_type), doc_type)[0]
+                            for doc_type in types
+                        )
                     if found_count < minimum:
                         anomalies.append(build_anomaly(
                             rule_id=f"MISSING_DOC_S{s_no}_{person_id}", s_no=s_no,
@@ -772,9 +956,30 @@ def _run_presence_checks(
                 )
 
         elif check_type == "presence_all":
+            related_pages: dict[str, list[dict]] = {}
             for required_type in document_type:
-                if not _find_pages(pages, required_type):
+                related_pages[required_type] = _find_pages(pages, required_type)
+                if not related_pages[required_type]:
                     anomalies.append(_missing_presence_anomaly(item, document_type=required_type))
+            if (
+                item.get("evidence_relationship") == "same_source_or_adjacent"
+                and len(document_type) == 2
+                and all(related_pages.values())
+                and not _evidence_is_same_source_or_adjacent(
+                    related_pages[document_type[0]], related_pages[document_type[1]]
+                )
+            ):
+                anomalies.append(build_anomaly(
+                    rule_id=f"MISSING_DOC_RELATION_S{s_no}",
+                    s_no=s_no,
+                    severity=severity,
+                    expected_value=(
+                        f"{document_type[1]} in the same source or adjacent to {document_type[0]}"
+                    ),
+                    found_value="Documents found, but their relationship could not be established",
+                    reason=description,
+                    document_type=" / ".join(document_type),
+                ))
 
         elif check_type == "requirements":
             applicability_unknown_reported = False
@@ -821,9 +1026,26 @@ def _run_presence_checks(
                                 )
                             )
                 else:
-                    found_count = _document_evidence_count(
-                        _find_pages(pages, required_type), required_type
-                    )[0]
+                    if required_type == "PDC" and item.get("pdc_scope") == "repayment_account":
+                        found_count = _pdc_count_for_repayment_account(pages, system_data)
+                        if found_count is None:
+                            leaves_found = len(_pdc_leaf_records(pages, system_data))
+                            anomalies.append(build_anomaly(
+                                rule_id=f"PDC_OWNER_UNVERIFIABLE_S{s_no}",
+                                s_no=s_no,
+                                severity="LOW",
+                                expected_value="Cheque leaves linked to the applicant repayment account",
+                                found_value=f"{leaves_found} unowned cheque leaf/leaves found",
+                                reason=(
+                                    f"{description}; repayment account ownership could not be verified."
+                                ),
+                                document_type=required_type,
+                            ))
+                            continue
+                    else:
+                        found_count = _document_evidence_count(
+                            _find_pages(pages, required_type), required_type
+                        )[0]
                     if found_count < minimum:
                         anomalies.append(
                             build_anomaly(
@@ -1001,6 +1223,43 @@ def _run_accuracy_checks(
                             )
                         )
 
+        elif check_type == "required_boolean_field":
+            field_names = list(item.get("document_fields") or [])
+            for required_type in _document_types(document_type):
+                doc_pages = _matching_pages(pages, required_type)
+                if not doc_pages:
+                    continue
+                observed_values = [
+                    (page.get("extracted_fields") or {}).get(field_name)
+                    for page in doc_pages
+                    for field_name in field_names
+                    if (page.get("extracted_fields") or {}).get(field_name) not in (None, "")
+                ]
+                if any(_truthy_evidence(value) for value in observed_values):
+                    continue
+                explicit_negative = bool(observed_values)
+                first_page = doc_pages[0]
+                anomalies.append(
+                    build_anomaly(
+                        rule_id=(
+                            f"FIELD_CHECK_S{s_no}"
+                            if explicit_negative
+                            else f"FIELD_UNVERIFIABLE_S{s_no}"
+                        ),
+                        s_no=s_no,
+                        severity=(item.get("severity_if_fail", "HIGH") if explicit_negative else "LOW"),
+                        expected_value="Affirmative signature evidence",
+                        found_value=("Not signed" if explicit_negative else "Signature not extractable"),
+                        reason=(
+                            description
+                            if explicit_negative
+                            else f"{description}; inspect the signature area manually."
+                        ),
+                        page_number=first_page.get("page_number"),
+                        document_type=required_type,
+                    )
+                )
+
         elif check_type == "date_range":
             doc_pages = _matching_pages(pages, document_type)
             if doc_pages:
@@ -1073,7 +1332,29 @@ def _run_accuracy_checks(
             doc_pages = _matching_pages(pages, document_type)
             found_value, found_page = _field_from_pages(doc_pages, *item.get("document_fields", []))
             expected_value = system_data.get(item.get("system_field"))
-            if found_value not in (None, "") and expected_value not in (None, ""):
+            if doc_pages and found_value in (None, ""):
+                anomalies.append(build_anomaly(
+                    rule_id=f"DATE_UNVERIFIABLE_S{s_no}", s_no=s_no,
+                    severity="LOW", expected_value="Stamp date extractable",
+                    found_value="Stamp date not extracted",
+                    reason=f"{description}; inspect the stamp date manually.",
+                    page_number=doc_pages[0].get("page_number"),
+                    document_type=" / ".join(_document_types(document_type)),
+                ))
+            elif doc_pages and expected_value in (None, ""):
+                anomaly = build_anomaly(
+                    rule_id=f"SYSTEM_VALUE_UNKNOWN_S{s_no}", s_no=s_no,
+                    severity="LOW", expected_value=str(item.get("system_field") or "disbursement_date"),
+                    found_value="System date not supplied",
+                    reason=f"{description}; supply the disbursement date for comparison.",
+                    page_number=(found_page or {}).get("page_number"),
+                    document_type=" / ".join(_document_types(document_type)),
+                )
+                anomaly["status"] = "INTAKE_REQUIREMENT"
+                anomaly["source"] = "trusted_json_or_system_input"
+                anomaly["is_pdf_error"] = False
+                anomalies.append(anomaly)
+            elif found_value not in (None, "") and expected_value not in (None, ""):
                 try:
                     passed = _parse_date(found_value).date() <= _parse_date(expected_value).date()
                 except Exception:
@@ -1104,6 +1385,97 @@ def _run_accuracy_checks(
                         document_type=" / ".join(_document_types(document_type)),
                     )
                 )
+
+        elif check_type == "required_status_fields_all":
+            doc_pages = _matching_pages(pages, document_type)
+            if not doc_pages:
+                continue
+
+            grouped_pages: dict[str, list[dict]] = {}
+            has_source_metadata = any(
+                page.get("source_document_id") or page.get("document_instance_id")
+                for page in doc_pages
+            )
+            for page in doc_pages:
+                key = (
+                    _distinct_document_key(page)
+                    if has_source_metadata
+                    else "all-matching-pages"
+                )
+                grouped_pages.setdefault(key, []).append(page)
+
+            group_results: list[tuple[str, list[str], list[str], dict]] = []
+            for group_key, group in grouped_pages.items():
+                rejected_fields: list[str] = []
+                unverifiable_fields: list[str] = []
+                for requirement in item.get("status_requirements") or []:
+                    field = str(requirement.get("field") or "status")
+                    accepted = [
+                        _normalized_status(value)
+                        for value in requirement.get("accepted_statuses") or []
+                    ]
+                    rejected = [
+                        _normalized_status(value)
+                        for value in requirement.get("rejected_statuses") or []
+                    ]
+                    values = [
+                        _normalized_status((page.get("extracted_fields") or {}).get(field))
+                        for page in group
+                        if (page.get("extracted_fields") or {}).get(field) not in (None, "")
+                    ]
+                    if not values:
+                        unverifiable_fields.append(field)
+                        continue
+                    value_states: list[str] = []
+                    for value in values:
+                        accepted_matches = [term for term in accepted if term and term in value]
+                        rejected_matches = [term for term in rejected if term and term in value]
+                        accepted_length = max((len(term) for term in accepted_matches), default=0)
+                        rejected_length = max((len(term) for term in rejected_matches), default=0)
+                        if rejected_length and rejected_length >= accepted_length:
+                            value_states.append("rejected")
+                        elif accepted_length:
+                            value_states.append("accepted")
+                        else:
+                            value_states.append("unknown")
+                    if "rejected" in value_states:
+                        rejected_fields.append(field)
+                        continue
+                    if "accepted" not in value_states:
+                        unverifiable_fields.append(field)
+                group_results.append((group_key, rejected_fields, unverifiable_fields, group[0]))
+
+            if any(not rejected and not missing for _, rejected, missing, _ in group_results):
+                continue
+            first_key, rejected_fields, missing_fields, first_page = group_results[0]
+            if any(rejected for _, rejected, _, _ in group_results):
+                rejected_fields = next(
+                    rejected for _, rejected, _, _ in group_results if rejected
+                )
+                anomalies.append(build_anomaly(
+                    rule_id=f"STATUS_CHECK_S{s_no}", s_no=s_no,
+                    severity=item.get("severity_if_fail", "HIGH"),
+                    expected_value="All required statuses accepted",
+                    found_value=f"Rejected status: {', '.join(rejected_fields)}",
+                    reason=description,
+                    page_number=first_page.get("page_number"),
+                    document_type=str(first_page.get("document_type") or document_type),
+                ))
+            else:
+                missing_fields = sorted({
+                    field
+                    for _, _, fields, _ in group_results
+                    for field in fields
+                })
+                anomalies.append(build_anomaly(
+                    rule_id=f"STATUS_UNVERIFIABLE_S{s_no}", s_no=s_no,
+                    severity="LOW",
+                    expected_value="All required statuses extractable and accepted",
+                    found_value=f"Unverifiable: {', '.join(missing_fields) or first_key}",
+                    reason=f"{description}; inspect the status fields manually.",
+                    page_number=first_page.get("page_number"),
+                    document_type=str(first_page.get("document_type") or document_type),
+                ))
 
         elif check_type == "required_status":
             doc_pages = _matching_pages(pages, document_type)
@@ -1248,17 +1620,21 @@ def run_checks(
 
 def _document_derived_system_data(pages: list[dict]) -> dict[str, object]:
     """Derive conditional checklist inputs from explicit document evidence."""
+    derived: dict[str, object] = {}
     for page in pages:
         fields = page.get("extracted_fields") or {}
         status = fields.get("nach_status")
-        if status in (None, ""):
-            continue
-        normalized = _normalized_status(status)
-        if any(term in normalized for term in ("not registered", "not done", "failed", "inactive")):
-            return {"nach_registered": False}
-        if any(term in normalized for term in ("done", "registered", "active", "approved")):
-            return {"nach_registered": True}
-    return {}
+        if status not in (None, ""):
+            normalized = _normalized_status(status)
+            if any(term in normalized for term in ("not registered", "not done", "failed", "inactive")):
+                derived["nach_registered"] = False
+            elif any(term in normalized for term in ("done", "registered", "active", "approved")):
+                derived["nach_registered"] = True
+
+        fi_status = fields.get("fi_report_status")
+        if fi_status not in (None, "") and "fi_report_status" not in derived:
+            derived["fi_report_status"] = _normalized_status(fi_status)
+    return derived
 
 
 def _non_loan_relevance_anomaly(

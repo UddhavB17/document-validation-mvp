@@ -51,6 +51,8 @@
         "Unique Identification Authority of India",
         "UIDAI",
         "e-Aadhaar",
+        "Aadhaar Letter",
+        "Aadhaar PVC Card",
         "DigiLocker verified e-Aadhaar",
         "मेरा आधार"
       ],
@@ -61,7 +63,9 @@
         "uidai",
         "आधार",
         "यूआईडीएआई",
-        "e-aadhaar"
+        "e-aadhaar",
+        "secure qr code",
+        "vid"
       ],
       "required_any": [
         "unique identification",
@@ -97,7 +101,8 @@
         "ऋण अनुबंध"
       ],
       "field_patterns": [
-        "\\b\\d{4}\\s\\d{4}\\s\\d{4}\\b"
+        "\\b\\d{4}\\s\\d{4}\\s\\d{4}\\b",
+        "(?:XXXX|[X*]{4})\\s*(?:XXXX|[X*]{4})\\s*\\d{4}"
       ],
       "min_confidence": 0.5
     },
@@ -106,23 +111,30 @@
       "priority": 30,
       "headings": [
         "Passport",
+        "e-Passport",
         "Republic of India",
         "Ministry of External Affairs"
       ],
       "keywords": [
         "passport",
         "republic of india",
-        "ministry of external affairs"
+        "ministry of external affairs",
+        "p<ind",
+        "place of issue"
       ],
       "required_any": [
         "passport",
-        "ministry of external affairs"
+        "ministry of external affairs",
+        "republic of india",
+        "p<ind"
       ],
       "required_regex": [
-        "[A-Z][0-9]{7}"
+        "\\b[A-Z][0-9]{7}\\b|P<IND[A-Z<]{2,39}"
       ],
       "field_patterns": [
-        "[A-Z][0-9]{7}"
+        "\\b[A-Z][0-9]{7}\\b",
+        "P<IND[A-Z<]{2,39}",
+        "(?:date of issue|date of expiry|place of birth)"
       ],
       "min_confidence": 0.55
     },
@@ -132,13 +144,16 @@
       "headings": [
         "Driving Licence",
         "Driving License",
+        "Form of Driving Licence",
         "Transport Department"
       ],
       "keywords": [
         "driving licence",
         "driving license",
         "motor vehicles act",
-        "transport department"
+        "transport department",
+        "licence no",
+        "dl no"
       ],
       "required_any": [
         "driving licence",
@@ -150,7 +165,9 @@
         "\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b|\\b\\d{4}[/-]\\d{2}[/-]\\d{2}\\b"
       ],
       "field_patterns": [
-        "\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b|\\b\\d{4}[/-]\\d{2}[/-]\\d{2}\\b"
+        "\\b\\d{2}[/-]\\d{2}[/-]\\d{2,4}\\b|\\b\\d{4}[/-]\\d{2}[/-]\\d{2}\\b",
+        "\\b[A-Z]{2}[- ]?\\d{2}[- ]?(?:19|20)?\\d{2}[- ]?\\d{7}\\b",
+        "(?:licen[cs]e|dl)\\s*(?:number|no\\.?)"
       ],
       "min_confidence": 0.55
     },
@@ -161,6 +178,8 @@
         "Voter ID",
         "Election Commission of India",
         "Electors Photo Identity Card",
+        "Elector Photo Identity Card",
+        "e-EPIC",
         "EPIC",
         "मतदाता पहचान"
       ],
@@ -168,9 +187,23 @@
         "election commission",
         "voter id",
         "electors photo identity",
+        "elector photo identity",
+        "e-epic",
         "epic",
         "मतदाता",
         "मतदाता पहचान"
+      ],
+      "required_any": [
+        "election commission",
+        "electors photo identity",
+        "elector photo identity",
+        "voter id",
+        "epic",
+        "मतदाता पहचान"
+      ],
+      "field_patterns": [
+        "\\b[A-Z]{3}[0-9]{7}\\b",
+        "(?:epic|voter id)\\s*(?:number|no\\.?)"
       ],
       "min_confidence": 0.5
     },
@@ -829,15 +862,23 @@
       ],
       "keywords": [
         "life insurance",
+        "proposal form",
+        "proposer",
         "life cover",
         "life assured",
         "sum assured",
-        "nominee"
+        "nominee",
+        "premium"
       ],
       "required_any": [
         "life insurance",
         "life cover",
-        "life assured"
+        "life assured",
+        "sum assured"
+      ],
+      "field_patterns": [
+        "(?:proposer|life assured|insured person)\\s*(?:name)?",
+        "(?:sum assured|premium|nominee)"
       ],
       "min_confidence": 0.5
     },
@@ -856,9 +897,13 @@
         "insured property",
         "property cover",
         "building insurance",
+        "proposal form",
+        "insured address",
+        "risk address",
         "home building",
         "home contents",
-        "griha raksha"
+        "griha raksha",
+        "bharat griha raksha"
       ],
       "required_any": [
         "property insurance",
@@ -867,6 +912,10 @@
         "home building",
         "home contents",
         "griha raksha"
+      ],
+      "field_patterns": [
+        "(?:insured property|risk address|insured address)",
+        "(?:sum insured|premium|policy period)"
       ],
       "min_confidence": 0.5
     },
@@ -974,7 +1023,14 @@
         "બિન ન્યાયિક"
       ],
       "keywords": [
+        "e-stamp certificate",
         "stamp duty",
+        "certificate no",
+        "certificate issued date",
+        "purchased by",
+        "description of document",
+        "first party",
+        "second party",
         "non judicial stamp",
         "india non judicial",
         "indianonjudicial",
@@ -998,6 +1054,12 @@
         "સ્ટેમ્પ ડ્યુટી",
         "બિન ન્યાયિક"
       ],
+      "boundary_evidence_required": true,
+      "field_patterns": [
+        "(?:certificate|uin)\\s*(?:number|no\\.?)",
+        "stamp\\s+duty\\s+amount",
+        "certificate\\s+issued\\s+date"
+      ],
       "min_confidence": 0.5
     },
     {
@@ -1012,6 +1074,10 @@
         "guarantee deed",
         "deed of guarantee",
         "deed of personal guarantee",
+        "continuing guarantee",
+        "guaranteed obligations",
+        "surety",
+        "in favour of the lender",
         "guarantor",
         "deed",
         "જામીનદાર",
@@ -1033,7 +1099,9 @@
       ],
       "field_patterns": [
         "guarantee\\s+deed",
-        "deed\\s+of\\s+guarantee"
+        "deed\\s+of\\s+(?:personal\\s+)?guarantee",
+        "executed\\s+by\\s+the\\s+guarantor",
+        "guarantor.{0,120}(?:borrower|lender)"
       ],
       "min_confidence": 0.5
     },
@@ -1045,6 +1113,9 @@
         "Water Bill",
         "Gas Bill",
         "Telephone Bill",
+        "Postpaid Mobile Bill",
+        "Landline Bill",
+        "Piped Gas Bill",
         "Broadband Bill",
         "Broadband",
         "Utility Bill",
@@ -1057,6 +1128,13 @@
         "water bill",
         "gas bill",
         "telephone bill",
+        "postpaid mobile",
+        "landline",
+        "piped gas",
+        "service address",
+        "supply address",
+        "billing period",
+        "monthly invoice",
         "broadband",
         "consumer no",
         "due date",
@@ -1072,6 +1150,10 @@
         "electricity bill",
         "water bill",
         "gas bill",
+        "telephone bill",
+        "postpaid mobile",
+        "landline",
+        "piped gas",
         "utility bill",
         "vidyut",
         "jvvnl",
@@ -1083,6 +1165,12 @@
         "विद्युत",
         "ગ્રાહક નંબર",
         "બાકી તારીખ"
+      ],
+      "boundary_evidence_required": true,
+      "field_patterns": [
+        "(?:consumer|connection|service|subscriber)\\s*(?:number|no\\.?)",
+        "(?:bill|invoice)\\s*(?:date|period|month)",
+        "(?:service|supply|billing)\\s+address"
       ],
       "min_confidence": 0.5
     },
@@ -1478,13 +1566,29 @@
       "headings": [
         "Udyam Registration",
         "MSME Registration",
-        "Udyam Certificate"
+        "Udyam Registration Certificate",
+        "Udyam Certificate",
+        "Udyog Aadhaar Memorandum"
       ],
       "keywords": [
         "udyam",
         "msme registration",
         "udyam registration",
-        "enterprise type"
+        "ministry of micro small and medium enterprises",
+        "enterprise type",
+        "national industry classification",
+        "date of udyam registration",
+        "udyog aadhaar"
+      ],
+      "required_any": [
+        "udyam registration",
+        "udyam registration number",
+        "udyog aadhaar memorandum",
+        "ministry of micro small and medium enterprises"
+      ],
+      "field_patterns": [
+        "UDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}",
+        "\\b[A-Z]{2}[0-9]{2}[A-Z][0-9]{7}\\b"
       ],
       "min_confidence": 0.5
     },
@@ -1558,12 +1662,32 @@
       "priority": 320,
       "headings": [
         "Shop Establishment Certificate",
-        "Shop Act Certificate"
+        "Shop Act Certificate",
+        "Certificate of Registration under the Shops and Establishments Act",
+        "Gumasta Certificate"
       ],
       "keywords": [
         "shop establishment",
         "shop act",
-        "establishment certificate"
+        "shops and establishments act",
+        "establishment certificate",
+        "gumasta",
+        "labour department",
+        "registration of establishment",
+        "name of establishment",
+        "nature of business"
+      ],
+      "required_any": [
+        "shop establishment",
+        "shop act",
+        "shops and establishments act",
+        "gumasta",
+        "registration of establishment"
+      ],
+      "boundary_evidence_required": true,
+      "field_patterns": [
+        "(?:registration|certificate)\\s*(?:number|no\\.?)",
+        "(?:name|address)\\s+of\\s+(?:the\\s+)?establishment"
       ],
       "min_confidence": 0.5
     },
@@ -1772,19 +1896,36 @@
       "headings": [
         "FI Report",
         "Field Investigation",
-        "Field Inquiry Report"
+        "Field Investigation Report",
+        "Field Inquiry Report",
+        "Residence Verification Report",
+        "Business Verification Report"
       ],
       "keywords": [
         "fi report",
         "field investigation",
         "field inquiry report",
-        "residence verification"
+        "residence verification",
+        "business verification",
+        "verification result",
+        "verification status",
+        "verification agency",
+        "neighbour check",
+        "visit date",
+        "negative verification",
+        "positive verification"
       ],
       "negative_keywords": [
         "fi approval",
         "field investigation approval",
         "negative fi approved",
         "referred fi approved"
+      ],
+      "boundary_evidence_required": true,
+      "field_patterns": [
+        "(?:applicant|subject|customer)\\s*(?:name)?",
+        "(?:verification|report)\\s*(?:status|result)",
+        "(?:visit|verification|report)\\s*date"
       ],
       "min_confidence": 0.5
     },
@@ -1823,7 +1964,12 @@
         "post dated cheque",
         "post-dated cheque",
         "pdc",
-        "security cheque"
+        "security cheque",
+        "spdc"
+      ],
+      "field_patterns": [
+        "(?<![0-9])([0-9]{6})[ \\t'\"*]*([0-9]{9})(?![0-9])",
+        "(?:cheque|chq)\\s*(?:number|no\\.?)"
       ],
       "min_confidence": 0.5
     },
@@ -1863,13 +2009,38 @@
       "priority": 410,
       "headings": [
         "Crime Check",
+        "Crime Check Report",
         "Criminal Verification",
-        "Police Verification Report"
+        "Criminal Record Check",
+        "Court Record Check",
+        "Police Verification Report",
+        "Background Verification Report"
       ],
       "keywords": [
         "crime check",
         "criminal verification",
-        "police verification report"
+        "criminal record check",
+        "court record check",
+        "police verification report",
+        "background verification report",
+        "no criminal record",
+        "no adverse record",
+        "credit approval",
+        "approved by credit"
+      ],
+      "required_any": [
+        "crime check",
+        "criminal verification",
+        "criminal record check",
+        "court record check",
+        "police verification report",
+        "background verification report"
+      ],
+      "boundary_evidence_required": true,
+      "field_patterns": [
+        "(?:report|verification)\\s*(?:status|result)",
+        "(?:applicant|subject|customer)\\s*(?:name)?",
+        "(?:approved\\s+by|credit\\s+approval)"
       ],
       "min_confidence": 0.5
     },

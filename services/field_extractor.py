@@ -87,6 +87,7 @@ def extract_fields(
         "PAN Card":         _extract_pan,
         "Aadhaar":          _extract_aadhaar,
         "Voter ID":         _extract_voter_id,
+        "Passport":         _extract_passport,
         "Driving License":  _extract_driving_license,
         "CERSAI Report":    _extract_cersai_report,
         "CRIF Report":      _extract_crif_report,
@@ -99,7 +100,13 @@ def extract_fields(
         "Application Form": _extract_application_form,
         "Insurance Form":   _extract_insurance_form,
         "Life Insurance Form": _extract_insurance_form,
+        "Property Insurance Form": _extract_insurance_form,
         "End-Use Letter":   _extract_end_use_letter,
+        "FI Report":        _extract_fi_report,
+        "Guarantee Deed":   _extract_guarantee_deed,
+        "Crime Check Report": _extract_crime_check_report,
+        "Udyam Certificate": _extract_udyam_certificate,
+        "Shop Establishment Certificate": _extract_shop_establishment_certificate,
         "Stamp Duty":       _extract_stamp_duty,
         "Insurance Consent Letter": _extract_insurance_consent,
         "Legal Clearance Report": _extract_clearance_report,
@@ -1278,6 +1285,11 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
     if form_kyc_section and not authority_evidence:
         return {}
     aadhaar_number = plausible_aadhaar_digits(aadhaar_match.group(1)) if aadhaar_match else None
+    masked_aadhaar = re.search(
+        r"(?:XXXX|[X*]{4})[ \t-]*(?:XXXX|[X*]{4})[ \t-]*(\d{4})(?!\d)",
+        text,
+        re.IGNORECASE,
+    )
     relation_match = re.search(
         r"\b(S\s*/\s*O|D\s*/\s*O|W\s*/\s*O|C\s*/\s*O|son\s+of|daughter\s+of|wife\s+of|care\s+of)\b\s*[:\-]?\s*([^\n\r,]{3,70})",
         text,
@@ -1292,7 +1304,11 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
             or _line_after_label(text, "name", "नाम")
         ),
         "aadhaar_number": aadhaar_number,
-        "aadhaar_last4": xml_fields.get("aadhaar_last4") or digilocker_fields.get("aadhaar_last4"),
+        "aadhaar_last4": (
+            xml_fields.get("aadhaar_last4")
+            or digilocker_fields.get("aadhaar_last4")
+            or (masked_aadhaar.group(1) if masked_aadhaar else None)
+        ),
         "dob": (
             xml_fields.get("dob")
             or digilocker_fields.get("dob")
@@ -2078,7 +2094,13 @@ def _extract_application_kyc_records(text: str) -> list[dict[str, Any]]:
 def _extract_utility_bill(text: str) -> dict[str, Any]:
     """Extract address-proof fields from electricity/water/gas/phone bills."""
     consumer_match = re.search(
-        r"(?:consumer|customer|account)\s*(?:name|holder)?\s*[:\-–]?\s*([^\n\r]{3,80})",
+        r"(?:consumer|customer|account\s+holder|subscriber)\s*(?:name|holder)\s*[:\-–]?\s*([^\n\r]{3,80})",
+        text,
+        re.IGNORECASE,
+    )
+    connection_match = re.search(
+        r"(?:consumer|connection|service|subscriber|customer)\s*"
+        r"(?:number|no\.?|id)\s*[:\-–]?\s*([A-Z0-9][A-Z0-9/-]{3,30})",
         text,
         re.IGNORECASE,
     )
@@ -2131,14 +2153,21 @@ def _extract_utility_bill(text: str) -> dict[str, Any]:
             text,
         )
         holder_name = _clean_name_like_value(relation_name.group(1)) if relation_name else None
+    bill_date = _extract_date_after_label(
+        text, "bill date", "billing date", "invoice date", "date of bill"
+    )
+    if bill_date is None:
+        date_candidates = re.findall(r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b", text)
+        if len(date_candidates) == 1:
+            bill_date = _parse_date(date_candidates[0])
     return {
         "applicant_name": holder_name,
         "address": address,
         "pin_code": pin_match.group(1) if pin_match else None,
-        "bill_date": (
-            _parse_date(date_match.group(0))
-            if (date_match := re.search(r"\b\d{2}[-/]\d{2}[-/]\d{4}\b", text))
-            else None
+        "utility_account_number": connection_match.group(1) if connection_match else None,
+        "bill_date": bill_date,
+        "bill_period": _inline_text_after_label(
+            text, "billing period", "bill month", "billing month", "invoice period"
         ),
     }
 
@@ -2193,16 +2222,44 @@ def _extract_voter_id(text: str) -> dict[str, Any]:
     t = text.lower()
 
     # Voter ID number: 3 uppercase letters + 7 digits  e.g. ABC1234567
-    vid_match = re.search(r'\b([A-Z]{3}[0-9]{7})\b', text)
+    vid_match = re.search(r'(?<![A-Z0-9])([A-Z]{3})[\s-]*([0-9]{7})(?![A-Z0-9])', text.upper())
 
     # DOB
     dob_raw = _extract_date_near(t, "dob", "date of birth")
 
     return {
         "applicant_name": _voter_cardholder_name(text),
-        "voter_id_number": vid_match.group(1) if vid_match else None,
+        "voter_id_number": "".join(vid_match.groups()) if vid_match else None,
         "address": _lines_after_label(text, "address", max_lines=3),
         "dob": dob_raw,
+    }
+
+
+def _extract_passport(text: str) -> dict[str, Any]:
+    """Extract the identity fields common to old and current Indian passports."""
+    passport_match = re.search(
+        r"(?:passport\s*(?:number|no\.?))\s*[:\-–]?\s*([A-Z][0-9]{7})\b",
+        text,
+        re.IGNORECASE,
+    ) or re.search(r"\b([A-Z][0-9]{7})\b", text.upper())
+    surname = _line_after_label(text, "surname")
+    given_names = _line_after_label(text, "given name", "given names")
+    combined_name = " ".join(
+        value.strip() for value in (given_names, surname) if value and value.strip()
+    ) or None
+    expiry = _extract_date_after_label(
+        text, "date of expiry", "expiry date", "valid until", "valid till"
+    )
+    return {
+        "applicant_name": combined_name or _line_after_label(text, "name of holder", "name"),
+        "passport_number": passport_match.group(1).upper() if passport_match else None,
+        "nationality": _line_after_label(text, "nationality"),
+        "dob": _extract_date_after_label(text, "date of birth", "dob"),
+        "place_of_birth": _line_after_label(text, "place of birth"),
+        "place_of_issue": _line_after_label(text, "place of issue"),
+        "date_of_issue": _extract_date_after_label(text, "date of issue", "issue date"),
+        "date_of_expiry": expiry,
+        "is_expired": _is_past_date(expiry),
     }
 
 
@@ -2240,7 +2297,22 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
 
     # DL number: 2 uppercase letters + 2 digits + optional space + 11 digits
     # (\b does not work between \d and \D reliably, so we anchor with lookahead/lookbehind)
-    dl_match = re.search(r'(?<![A-Z0-9])([A-Z]{2}\d{2}\s?\d{11})(?![A-Z0-9])', text)
+    dl_match = re.search(
+        r"(?<![A-Z0-9])([A-Z]{2})[- ]?(\d{2})[- ]?((?:19|20)?\d{2})[- ]?(\d{7})(?![A-Z0-9])",
+        text.upper(),
+    )
+    labeled_dl = re.search(
+        r"(?:driving\s+licen[cs]e|licen[cs]e|dl)\s*(?:number|no\.?)\s*[:\-–]?\s*"
+        r"([A-Z0-9][A-Z0-9 /-]{6,24})",
+        text,
+        re.IGNORECASE,
+    )
+    dl_number = None
+    if dl_match:
+        dl_number = "".join(dl_match.groups())
+    elif labeled_dl:
+        candidate = re.sub(r"[^A-Z0-9]", "", labeled_dl.group(1).upper())
+        dl_number = candidate if 8 <= len(candidate) <= 20 else None
 
     # Read dates only from their own labels.  A proximity window is unsafe on
     # DLs because Date of Issue, DOB and Valid Till are commonly printed beside
@@ -2277,7 +2349,7 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
 
     return {
         "applicant_name": _line_after_label(text, "name"),
-        "dl_number": dl_match.group(1).replace(" ", "") if dl_match else None,
+        "dl_number": dl_number,
         "dob": dob_raw,
         "date_of_issue": date_of_issue,
         "validity_date": validity_date,
@@ -2334,18 +2406,71 @@ def _extract_cersai_report(text: str) -> dict[str, Any]:
 def _extract_pdc(text: str) -> dict[str, Any]:
     """Extract individual cheque leaves from a scanned PDC sheet.
 
-    MICR lines normally contain the six-digit cheque number followed by nine
-    routing digits. OCR may repeat the same leaf, so return unique numbers.
+    One image can contain several cheque leaves.  Each unique six-digit cheque
+    number is counted once, and nearby account-holder/account-number evidence
+    is retained so the checklist can separate applicant and co-applicant PDCs.
     """
-    cheque_numbers = list(dict.fromkeys(
-        match.group(1)
+    raw = str(text or "")
+    anchors: dict[str, int] = {}
+    for pattern in (
+        r"(?:cheque|chq)\s*(?:number|no\.?)\s*[:\-–]?\s*(\d{6})(?!\d)",
+        r"(?<!\d)(\d{6})[\s'\"*]*(?:\d{9})(?!\d)",
+    ):
+        for match in re.finditer(pattern, raw, re.IGNORECASE):
+            anchors.setdefault(match.group(1), match.start())
+
+    ordered = sorted(anchors.items(), key=lambda item: item[1])
+    account_label_positions = [
+        match.start()
         for match in re.finditer(
-            r"(?<!\d)(\d{6})[\s'\"*]*(\d{9})(?!\d)", text or ""
+            r"(?:account\s*(?:number|no\.?|holder)|a\s*/\s*c\s*(?:number|no\.?))",
+            raw,
+            re.IGNORECASE,
         )
+    ]
+    leaf_starts: list[int] = []
+    for index, (_, position) in enumerate(ordered):
+        previous_anchor = ordered[index - 1][1] if index else -1
+        nearby_account_labels = [
+            value for value in account_label_positions
+            if previous_anchor < value <= position
+        ]
+        leaf_starts.append(nearby_account_labels[0] if nearby_account_labels else position)
+
+    leaves: list[dict[str, Any]] = []
+    for index, (cheque_number, position) in enumerate(ordered):
+        start = 0 if index == 0 and not leaf_starts else leaf_starts[index]
+        end = leaf_starts[index + 1] if index + 1 < len(leaf_starts) else len(raw)
+        block = raw[start:end]
+        cheque_fields = _extract_cheque(block)
+        leaves.append({
+            "cheque_number": cheque_number,
+            "account_number": cheque_fields.get("account_number"),
+            "account_holder_name": cheque_fields.get("account_holder_name"),
+            "ifsc": cheque_fields.get("ifsc"),
+            "cheque_date": cheque_fields.get("cheque_date"),
+            "is_cancelled": bool(cheque_fields.get("is_cancelled")),
+        })
+
+    cheque_numbers = [leaf["cheque_number"] for leaf in leaves]
+    account_numbers = list(dict.fromkeys(
+        str(leaf["account_number"])
+        for leaf in leaves
+        if leaf.get("account_number") not in (None, "")
+    ))
+    holder_names = list(dict.fromkeys(
+        str(leaf["account_holder_name"])
+        for leaf in leaves
+        if leaf.get("account_holder_name") not in (None, "")
     ))
     return {
         "cheque_numbers": cheque_numbers,
         "cheque_count": len(cheque_numbers) or None,
+        "pdc_leaves": leaves,
+        "account_numbers": account_numbers,
+        "account_holder_names": holder_names,
+        "account_number": account_numbers[0] if len(account_numbers) == 1 else None,
+        "account_holder_name": holder_names[0] if len(holder_names) == 1 else None,
     }
 
 
@@ -2656,6 +2781,12 @@ def _statement_holder_after_title(text: str) -> str | None:
 def _extract_passbook(text: str) -> dict[str, Any]:
     """Extract fields from a bank passbook page."""
     t = text.lower()
+    period_start, period_end = _extract_statement_period(text)
+    transaction_dates = _extract_bank_transaction_dates(text)
+    period_source = "statement_period" if period_start and period_end else None
+    if not period_source and transaction_dates:
+        period_start, period_end = transaction_dates[0], transaction_dates[-1]
+        period_source = "transaction_dates"
     stacked_name_branch = re.search(
         r"(?:name|नाम)\s*:\s*\n\s*([0-9Xx* ]{6,24})\s*\n"
         r"[^\n]*(?:branch|शाखा)\s*:\s*([A-Z][A-Z .'-]{3,70})\s*\n"
@@ -2695,6 +2826,15 @@ def _extract_passbook(text: str) -> dict[str, Any]:
             if stacked_name_branch else (branch_match.group(1).strip() if branch_match else None)
         ),
         "account_type": type_match.group(1).strip() if type_match else None,
+        "statement_period_start": period_start,
+        "statement_period_end": period_end,
+        "_statement_date_evidence": (
+            {
+                "source": period_source,
+                "transaction_dates": transaction_dates,
+            }
+            if period_source or transaction_dates else {}
+        ),
     }
 
 
@@ -2703,6 +2843,7 @@ def _extract_cheque(text: str) -> dict[str, Any]:
     cheque_number = _extract_cheque_number(text)
     account_match = re.search(
         r"(?:account\s*(?:number|no\.?|#)|"
+        r"a\s*/\s*c\s*(?:number|no\.?)?|"
         r"a\s*[/\\lI|]?\s*c\s*(?:number|no\.)?|"
         r"a[lI]?[ct]\s*(?:number|no\.?))"
         r"\s*[:\-\u2013]?\s*(?:\r?\n\s*)?([0-9Xx*][0-9Xx* \t]{5,23})",
@@ -2867,6 +3008,140 @@ def _extract_stamp_duty(text: str) -> dict[str, Any]:
     }
 
 
+def _extract_fi_report(text: str) -> dict[str, Any]:
+    """Extract stable fields from residence/business field-investigation reports."""
+    normalized = re.sub(r"\s+", " ", str(text or "")).casefold()
+    status = None
+    if re.search(r"\b(?:negative|referred|refer|unsatisfactory|not verified)\b", normalized):
+        status = "referred" if re.search(r"\brefer(?:red)?\b", normalized) else "negative"
+    elif re.search(r"\b(?:positive|satisfactory|verified|clear)\b", normalized):
+        status = "positive"
+    return {
+        "applicant_name": _inline_text_after_label(
+            text, "applicant name", "customer name", "subject name", "name of applicant"
+        ),
+        "fi_report_status": status,
+        "verification_type": _inline_text_after_label(
+            text, "verification type", "type of verification", "visit type"
+        ),
+        "verification_agency": _inline_text_after_label(
+            text, "verification agency", "agency name", "verified by"
+        ),
+        "report_date": _extract_date_after_label(
+            text, "report date", "verification date", "visit date", "date of visit"
+        ),
+        "report_reference_number": _inline_identifier_after_label(
+            text, "report reference number", "report id", "case id"
+        ),
+    }
+
+
+def _extract_guarantee_deed(text: str) -> dict[str, Any]:
+    """Extract deed parties and execution evidence without guessing legal sufficiency."""
+    guarantor = _inline_text_after_label(
+        text, "name of guarantor", "guarantor name", "surety name"
+    )
+    if guarantor is None:
+        match = re.search(
+            r"\b(?:by|executed\s+by)\s+(?:Mr\.?|Mrs\.?|Ms\.?|Shri|Smt)?\s*"
+            r"([A-Za-z][A-Za-z .'-]{2,70})\s*\(?(?:hereinafter\s+)?(?:called|referred\s+to\s+as)\s+"
+            r"(?:the\s+)?[\"']?Guarantor",
+            text,
+            re.IGNORECASE,
+        )
+        guarantor = _clean_name_like_value(match.group(1)) if match else None
+    return {
+        "guarantor_name": guarantor,
+        "borrower_name": _inline_text_after_label(text, "borrower name", "name of borrower"),
+        "lender_name": _inline_text_after_label(text, "lender name", "in favour of"),
+        "deed_date": _extract_date_after_label(
+            text, "deed date", "date of execution", "executed on", "made on"
+        ),
+        "stamp_evidence_present": bool(re.search(
+            r"\b(?:e[ -]?stamp|non[ -]?judicial|stamp\s+duty|franking)\b",
+            text,
+            re.IGNORECASE,
+        )),
+        "signature_present": _affirmative_signature_evidence(text),
+    }
+
+
+def _extract_crime_check_report(text: str) -> dict[str, Any]:
+    """Extract subject, result and Credit approval from crime/background checks."""
+    normalized = re.sub(r"\s+", " ", str(text or "")).casefold()
+    report_status = None
+    if re.search(
+        r"\b(?:no\s+criminal\s+record|no\s+adverse\s+record|clear|positive|no\s+match)\b",
+        normalized,
+    ):
+        report_status = "clear"
+    elif re.search(
+        r"\b(?:criminal\s+record\s+found|adverse\s+record|negative|match\s+found|case\s+found)\b",
+        normalized,
+    ):
+        report_status = "adverse"
+
+    credit_approval = None
+    if re.search(r"\b(?:approved\s+by\s+credit|credit\s+approved|credit\s+approval\s*:\s*approved)\b", normalized):
+        credit_approval = "approved"
+    elif re.search(r"\b(?:not\s+approved\s+by\s+credit|credit\s+approval\s*:\s*(?:pending|rejected))\b", normalized):
+        credit_approval = "not approved"
+    return {
+        "applicant_name": _inline_text_after_label(
+            text, "applicant name", "customer name", "subject name", "name of subject"
+        ),
+        "report_status": report_status,
+        "credit_approval_status": credit_approval,
+        "report_date": _extract_date_after_label(
+            text, "report date", "verification date", "search date"
+        ),
+        "report_reference_number": _inline_identifier_after_label(
+            text, "report reference number", "report id", "case id"
+        ),
+        "verification_agency": _inline_text_after_label(
+            text, "verification agency", "agency name", "service provider"
+        ),
+    }
+
+
+def _extract_udyam_certificate(text: str) -> dict[str, Any]:
+    current = re.search(r"\b(UDYAM-[A-Z]{2}-\d{2}-\d{7})\b", text.upper())
+    legacy = re.search(r"\b([A-Z]{2}\d{2}[A-Z]\d{7})\b", text.upper())
+    return {
+        "udyam_registration_number": (
+            current.group(1) if current else (legacy.group(1) if legacy else None)
+        ),
+        "enterprise_name": _inline_text_after_label(text, "name of enterprise", "enterprise name"),
+        "enterprise_type": _inline_text_after_label(text, "type of enterprise", "enterprise type"),
+        "organisation_type": _inline_text_after_label(text, "organisation type", "organization type"),
+        "registration_date": _extract_date_after_label(
+            text, "date of udyam registration", "date of registration"
+        ),
+        "official_address": _lines_after_label(text, "official address of enterprise", max_lines=5),
+    }
+
+
+def _extract_shop_establishment_certificate(text: str) -> dict[str, Any]:
+    return {
+        "registration_number": _inline_identifier_after_label(
+            text, "registration number", "registration no", "certificate number", "license number"
+        ),
+        "establishment_name": _inline_text_after_label(
+            text, "name of establishment", "establishment name", "name of shop"
+        ),
+        "owner_name": _inline_text_after_label(
+            text, "name of employer", "employer name", "proprietor name", "owner name"
+        ),
+        "business_nature": _inline_text_after_label(text, "nature of business", "business activity"),
+        "issue_date": _extract_date_after_label(text, "date of issue", "issue date", "registration date"),
+        "validity_date": _extract_date_after_label(text, "valid until", "valid upto", "expiry date"),
+        "establishment_address": (
+            _lines_after_label(text, "address of establishment", max_lines=4)
+            or _lines_after_label(text, "establishment address", max_lines=4)
+        ),
+    }
+
+
 def _extract_insurance_form(text: str) -> dict[str, Any]:
     """Extract insurance-form fields without collapsing IDs into loan IDs.
 
@@ -2924,7 +3199,35 @@ def _extract_insurance_form(text: str) -> dict[str, Any]:
         "total_premium": _extract_amount(
             text.casefold(), "total premium", "premium amount"
         ),
+        "signature_present": _affirmative_signature_evidence(text),
     }
+
+
+def _affirmative_signature_evidence(text: str) -> bool | None:
+    """Return True only for textual evidence that a signature/consent was completed.
+
+    A blank ``Signature of Proposer`` label is deliberately not enough. Wet
+    handwriting that OCR cannot read remains ``None`` and is sent to review.
+    """
+    raw = str(text or "")
+    if re.search(
+        r"\b(?:digitally\s+signed\s+by|e[ -]?signed\s+by|signature\s+verified|"
+        r"otp\s+(?:consent\s+)?verified|consent\s+(?:was\s+)?captured)\b",
+        raw,
+        re.IGNORECASE,
+    ):
+        return True
+    same_line = re.search(
+        r"(?:signature|thumb\s+impression)\s+of\s+(?:the\s+)?(?:proposer|insured|guarantor|applicant)"
+        r"\s*[:\-–]\s*([^\n\r]{2,80})",
+        raw,
+        re.IGNORECASE,
+    )
+    if same_line:
+        value = same_line.group(1).strip(" _.-")
+        if value and not re.fullmatch(r"(?:date|place|witness|signature|n/?a)", value, re.IGNORECASE):
+            return True
+    return None
 
 
 def _inline_identifier_after_label(text: str, *labels: str) -> str | None:

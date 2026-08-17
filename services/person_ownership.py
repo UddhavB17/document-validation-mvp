@@ -84,6 +84,7 @@ PERSON_SCOPED_DOCUMENT_TYPES = frozenset(
         "bank statement",
         "passbook",
         "cheque",
+        "pdc",
         "salary slip",
         "income tax return",
         "form 97",

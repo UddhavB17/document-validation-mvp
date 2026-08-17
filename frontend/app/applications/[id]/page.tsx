@@ -1081,7 +1081,7 @@ function Checklist({ data, onSelectPage }: { data: ApplicationReview; onSelectPa
       <div className="grid grid-cols-3 gap-4">
         <Metric label="Found Items" value={data.checklist.found} />
         <Metric label="Missing Items" value={data.checklist.missing} />
-        <Metric label="Exempt Items" value={data.checklist.not_checked} />
+        <Metric label="Review / Exempt" value={data.checklist.not_checked} />
       </div>
       <SortableTable
         rows={data.checklist.rows}

@@ -25,6 +25,20 @@ def test_presence_any_passes_with_aadhaar() -> None:
     assert result["passed"] is True
 
 
+def test_identity_checklist_accepts_only_four_requested_document_types() -> None:
+    from services.checklist_service import get_all_checklist_items
+
+    items = {item["s_no"]: item for item in get_all_checklist_items("LAP")}
+    expected = ["Aadhaar", "Voter ID", "Passport", "Driving License"]
+
+    assert items[3]["document_type"] == expected
+    assert items[4]["document_type"] == expected
+    assert 11 not in items
+    assert 25 not in items
+    assert 26 not in items
+    assert 36 not in items
+
+
 def test_technical_report_satisfies_technical_clearance_presence() -> None:
     pages = [
         {
@@ -148,6 +162,24 @@ def test_bank_period_accepts_long_statement_covering_latest_completed_months() -
             extracted_fields={
                 "account_number": "123456789012",
                 "statement_period_start": "2026-01-01",
+                "statement_period_end": "2026-07-31",
+            },
+        )
+    ]
+
+    anomalies = run_checks(pages, {}, {"application_date": "2026-08-17"}, "LAP")
+
+    assert not any(anomaly.get("s_no") == 17 for anomaly in anomalies)
+
+
+def test_bank_period_accepts_passbook_transactions_for_required_months() -> None:
+    pages = [
+        _confident_page(
+            1,
+            "Passbook",
+            extracted_fields={
+                "account_number": "123456789012",
+                "statement_period_start": "2026-05-01",
                 "statement_period_end": "2026-07-31",
             },
         )
@@ -341,14 +373,17 @@ def test_missing_pan() -> None:
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
 
 
-def test_temporarily_excluded_physical_items_are_not_reviewed() -> None:
+def test_manual_and_automated_items_follow_refined_review_modes() -> None:
     ai_snos = {item["s_no"] for item in get_ai_checkable_items("LAP")}
     manual_snos = {item["s_no"] for item in get_human_review_items("LAP")}
 
     assert 1 in ai_snos
     assert 1 not in manual_snos
     assert 24 not in manual_snos
-    assert 41 in manual_snos
+    assert 41 in ai_snos
+    assert 41 not in manual_snos
+    assert 5 in manual_snos
+    assert 20 in manual_snos
 
     anomalies = run_checks([], {}, {}, "LAP")
     assert any(anomaly["rule_id"] == "MISSING_DOC_S1" for anomaly in anomalies)
@@ -505,7 +540,7 @@ def test_kfs_and_sanction_letter_are_both_required() -> None:
     )
 
 
-def test_stamp_date_check_is_temporarily_disabled() -> None:
+def test_stamp_date_must_not_follow_disbursement() -> None:
     pages = [
         _confident_page(1, "Stamp Duty", extracted_fields={"stamp_date": "2026-07-20"}),
         _confident_page(2, "Application Form"),
@@ -519,7 +554,64 @@ def test_stamp_date_check_is_temporarily_disabled() -> None:
         "LAP",
     )
 
-    assert not any(anomaly["rule_id"] == "DATE_CHECK_S33" for anomaly in anomalies)
+    assert any(anomaly["rule_id"] == "DATE_CHECK_S33" for anomaly in anomalies)
+
+
+def test_stamp_date_or_disbursement_date_missing_is_not_silently_verified() -> None:
+    stamp_without_date = [_confident_page(1, "Stamp Duty", extracted_fields={})]
+    anomalies = run_checks(
+        stamp_without_date,
+        {"disbursement_date": "2026-07-15"},
+        {"disbursement_date": "2026-07-15"},
+        "LAP",
+    )
+    assert any(anomaly["rule_id"] == "DATE_UNVERIFIABLE_S33" for anomaly in anomalies)
+
+    stamp_with_date = [
+        _confident_page(1, "Stamp Duty", extracted_fields={"stamp_date": "2026-07-10"})
+    ]
+    anomalies = run_checks(stamp_with_date, {}, {}, "LAP")
+    assert any(anomaly["rule_id"] == "SYSTEM_VALUE_UNKNOWN_S33" for anomaly in anomalies)
+
+
+def test_guarantee_deed_stamp_evidence_must_be_linked() -> None:
+    unlinked = [
+        _confident_page(1, "Guarantee Deed", source_document_id="deed-a"),
+        _confident_page(10, "Stamp Duty", source_document_id="unrelated-stamp"),
+    ]
+    system_data = {"has_guarantor": True}
+
+    anomalies = run_checks(unlinked, system_data, system_data, "LAP")
+    assert any(anomaly["rule_id"] == "MISSING_DOC_RELATION_S27" for anomaly in anomalies)
+
+    unlinked[1]["source_document_id"] = "deed-a"
+    anomalies = run_checks(unlinked, system_data, system_data, "LAP")
+    assert not any(anomaly["rule_id"] == "MISSING_DOC_RELATION_S27" for anomaly in anomalies)
+
+
+def test_crime_check_requires_clear_report_and_credit_approval() -> None:
+    system_data = {"loan_amount": 1000000}
+    approved = [
+        _confident_page(
+            1,
+            "Crime Check Report",
+            source_document_id="crime-a",
+            extracted_fields={
+                "report_status": "No adverse record",
+                "credit_approval_status": "Approved",
+            },
+        )
+    ]
+    anomalies = run_checks(approved, system_data, system_data, "LAP")
+    assert not any(anomaly.get("s_no") == 28 and anomaly["rule_id"].startswith("STATUS_") for anomaly in anomalies)
+
+    approved[0]["extracted_fields"]["credit_approval_status"] = "Pending"
+    anomalies = run_checks(approved, system_data, system_data, "LAP")
+    assert any(anomaly["rule_id"] == "STATUS_CHECK_S28" for anomaly in anomalies)
+
+    approved[0]["extracted_fields"].pop("credit_approval_status")
+    anomalies = run_checks(approved, system_data, system_data, "LAP")
+    assert any(anomaly["rule_id"] == "STATUS_UNVERIFIABLE_S28" for anomaly in anomalies)
 
 
 def test_two_positive_technical_reports_must_be_distinct() -> None:
@@ -589,12 +681,25 @@ def test_unknown_condition_is_review_not_silent_skip() -> None:
 
 
 def test_pdc_count_changes_with_nach_registration() -> None:
-    five_pdcs = [_confident_page(index, "PDC") for index in range(1, 6)]
-    registered = {"nach_registered": True}
+    five_pdcs = [
+        _confident_page(
+            index,
+            "PDC",
+            extracted_fields={
+                "cheque_number": f"00000{index}",
+                "account_number": "111111111111",
+            },
+        )
+        for index in range(1, 6)
+    ]
+    registered = {
+        "nach_registered": True,
+        "people": {"primary": {"role": "primary", "account_number": "111111111111"}},
+    }
     anomalies = run_checks(five_pdcs, registered, registered, "LAP")
     assert not any(item.get("s_no") == 41 and item["rule_id"].startswith("MISSING_DOC") for item in anomalies)
 
-    unregistered = {"nach_registered": False}
+    unregistered = {**registered, "nach_registered": False}
     anomalies = run_checks(five_pdcs, unregistered, unregistered, "LAP")
     assert any(
         item.get("s_no") == 41
@@ -615,16 +720,155 @@ def test_pdc_count_uses_explicit_nach_status_from_banking_approval() -> None:
             2,
             "PDC",
             extracted_fields={
-                "cheque_numbers": ["000001", "000002", "000003", "000004", "000005"]
+                "pdc_leaves": [
+                    {
+                        "cheque_number": f"00000{index}",
+                        "account_number": "111111111111",
+                        "is_cancelled": False,
+                    }
+                    for index in range(1, 6)
+                ]
             },
         ),
     ]
-    anomalies = run_checks(pages, {}, {}, "LAP")
+    trusted = {
+        "people": {"primary": {"role": "primary", "account_number": "111111111111"}}
+    }
+    anomalies = run_checks(pages, trusted, trusted, "LAP")
     assert not any(item.get("s_no") == 41 for item in anomalies)
     assert not any(item.get("s_no") == 42 for item in anomalies)
 
 
-def test_ach_not_registered_requires_approval_bsv_and_three_nach_forms() -> None:
+def test_pdc_without_trusted_owner_is_review_not_applicant_credit() -> None:
+    pages = [
+        _confident_page(
+            1,
+            "PDC",
+            extracted_fields={
+                "pdc_leaves": [
+                    {"cheque_number": f"00000{index}", "is_cancelled": False}
+                    for index in range(1, 6)
+                ]
+            },
+        )
+    ]
+
+    anomalies = run_checks(
+        pages,
+        {"nach_registered": True},
+        {"nach_registered": True},
+        "LAP",
+    )
+
+    assert any(item["rule_id"] == "PDC_OWNER_UNVERIFIABLE_S41" for item in anomalies)
+    assert not any(
+        item.get("s_no") == 41 and item["rule_id"].startswith("MISSING_DOC")
+        for item in anomalies
+    )
+
+
+def test_pdc_counts_are_separated_by_repayment_owner_and_coapplicant() -> None:
+    leaves = [
+        {
+            "cheque_number": f"00000{index}",
+            "account_number": "111111111111",
+            "account_holder_name": "Ravi Kumar",
+            "is_cancelled": False,
+        }
+        for index in range(1, 6)
+    ] + [
+        {
+            "cheque_number": f"00010{index}",
+            "account_number": "222222222222",
+            "account_holder_name": "Neha Kumar",
+            "is_cancelled": False,
+        }
+        for index in range(1, 4)
+    ]
+    pages = [
+        _confident_page(
+            1,
+            "PDC",
+            extracted_fields={
+                "cheque_numbers": [leaf["cheque_number"] for leaf in leaves],
+                "pdc_leaves": leaves,
+            },
+        )
+    ]
+    system_data = {
+        "nach_registered": True,
+        "people": {
+            "primary": {
+                "role": "primary",
+                "applicant_name": "Ravi Kumar",
+                "bank_account_number": "111111111111",
+            },
+            "coapplicant_1": {
+                "role": "coapplicant",
+                "applicant_name": "Neha Kumar",
+                "bank_account_number": "222222222222",
+            },
+        },
+    }
+
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+
+    assert not any(item.get("s_no") in {41, 43} for item in anomalies)
+
+
+def test_pdc_coapplicant_shortfall_is_not_filled_by_primary_cheques() -> None:
+    leaves = [
+        {
+            "cheque_number": f"00000{index}",
+            "account_number": "111111111111",
+            "is_cancelled": False,
+        }
+        for index in range(1, 6)
+    ] + [
+        {
+            "cheque_number": f"00010{index}",
+            "account_number": "222222222222",
+            "is_cancelled": False,
+        }
+        for index in range(1, 3)
+    ]
+    pages = [_confident_page(1, "PDC", extracted_fields={"pdc_leaves": leaves})]
+    system_data = {
+        "nach_registered": True,
+        "people": {
+            "primary": {"role": "primary", "bank_account_number": "111111111111"},
+            "coapplicant_1": {"role": "coapplicant", "bank_account_number": "222222222222"},
+        },
+    }
+
+    anomalies = run_checks(pages, system_data, system_data, "LAP")
+
+    assert not any(item.get("s_no") == 41 for item in anomalies)
+    assert any(
+        item.get("s_no") == 43
+        and item.get("person_id") == "coapplicant_1"
+        and "2 found" in str(item.get("found_value"))
+        for item in anomalies
+    )
+
+
+def test_insurance_forms_need_affirmative_signature_evidence() -> None:
+    pages = [
+        _confident_page(1, "Life Insurance Form", extracted_fields={"signature_present": True}),
+        _confident_page(2, "Property Insurance Form", extracted_fields={}),
+    ]
+
+    anomalies = run_checks(pages, {}, {}, "LAP")
+
+    assert any(
+        item.get("s_no") == 22
+        and item.get("document_type") == "Property Insurance Form"
+        and item.get("rule_id") == "FIELD_UNVERIFIABLE_S22"
+        for item in anomalies
+    )
+
+
+def test_ach_not_registered_physical_nach_and_bsr_remain_manual() -> None:
     pages = [
         _confident_page(1, "ACH Approval Document"),
         _confident_page(2, "Bank Signature Verification"),
@@ -633,16 +877,10 @@ def test_ach_not_registered_requires_approval_bsv_and_three_nach_forms() -> None
     ]
     system_data = {"nach_registered": False}
     anomalies = run_checks(pages, system_data, system_data, "LAP")
-    assert any(
-        item.get("s_no") == 42
-        and item.get("document_type") == "NACH Form"
-        and "3" in str(item.get("expected_value"))
-        for item in anomalies
-    )
-
-    pages.append(_confident_page(5, "NACH Form"))
-    anomalies = run_checks(pages, system_data, system_data, "LAP")
-    assert not any(item.get("s_no") == 42 and item["rule_id"].startswith("MISSING_DOC") for item in anomalies)
+    assert not any(item.get("s_no") == 42 for item in anomalies)
+    manual = {item["s_no"]: item for item in get_human_review_items("LAP")}
+    assert 42 in manual
+    assert "physical NACH" in manual[42]["description"]
 
 
 def test_negative_or_referred_fi_requires_approval_letter() -> None:

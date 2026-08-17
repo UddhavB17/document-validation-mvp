@@ -127,14 +127,14 @@ def test_normal_case_does_not_run_bt_rows() -> None:
     assert not any(item.get("s_no") in {25, 26, 36} for item in anomalies)
 
 
-def test_bt_case_runs_all_bt_rows() -> None:
+def test_bt_rows_are_removed_from_the_mvp_even_for_bt_case_input() -> None:
     anomalies = run_checks(
         [page(1, "Application Form"), page(2, "Bank Statement")],
         {"case_type": "BT Case"},
         {"case_type": "BT Case"},
         "LAP",
     )
-    assert {25, 26, 36}.issubset({item.get("s_no") for item in anomalies})
+    assert not ({25, 26, 36} & {item.get("s_no") for item in anomalies})
 
 
 def test_pdc_count_is_enforced_for_each_qualifying_person() -> None:

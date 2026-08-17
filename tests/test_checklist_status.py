@@ -63,3 +63,43 @@ def test_build_checklist_status_requires_confident_match() -> None:
     pan_row = next(row for row in rows if row["s_no"] == 7)
     assert pan_row["status"] == "MISSING"
     assert pan_row["pages"] == "-"
+
+
+def test_manual_and_hybrid_items_are_not_reported_as_found() -> None:
+    items = get_all_checklist_items("LAP")
+    pages = [
+        {"document_type": "Loan Agreement", "page_number": 1, "classification_confidence": 0.99},
+        {"document_type": "Life Insurance Form", "page_number": 2, "classification_confidence": 0.99},
+        {"document_type": "Property Insurance Form", "page_number": 3, "classification_confidence": 0.99},
+    ]
+
+    rows = build_checklist_status(items, pages=pages, anomalies=[])
+    by_number = {row["s_no"]: row for row in rows}
+
+    assert by_number[20]["status"] == "NOT_CHECKED"
+    assert by_number[22]["status"] == "NOT_CHECKED"
+
+
+def test_pdc_shortfall_beats_document_presence_in_reviewer_status() -> None:
+    items = get_all_checklist_items("LAP")
+    rows = build_checklist_status(
+        items,
+        pages=[{"document_type": "PDC", "page_number": 1, "classification_confidence": 0.99}],
+        anomalies=[{"rule_id": "MISSING_DOC_S41", "s_no": 41}],
+        system_data={"nach_registered": False},
+    )
+
+    assert next(row for row in rows if row["s_no"] == 41)["status"] == "MISSING"
+
+
+def test_accuracy_anomaly_prevents_found_status() -> None:
+    items = get_all_checklist_items("LAP")
+    rows = build_checklist_status(
+        items,
+        pages=[
+            {"document_type": "Bank Statement", "page_number": 1, "classification_confidence": 0.99}
+        ],
+        anomalies=[{"rule_id": "PERIOD_COVERAGE_S17", "s_no": 17}],
+    )
+
+    assert next(row for row in rows if row["s_no"] == 17)["status"] == "NEEDS_REVIEW"

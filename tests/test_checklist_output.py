@@ -32,6 +32,50 @@ def test_checklist_output_uses_document_nach_status_and_pdc_evidence() -> None:
     assert by_number[42].status == "not_applicable"
 
 
+def test_manual_and_hybrid_rows_never_false_verify() -> None:
+    pages = [
+        {
+            "page_number": 1,
+            "document_type": "Loan Agreement",
+            "classification_confidence": 0.99,
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 2,
+            "document_type": "Life Insurance Form",
+            "classification_confidence": 0.99,
+            "extracted_fields": {"signature_present": True},
+        },
+        {
+            "page_number": 3,
+            "document_type": "Property Insurance Form",
+            "classification_confidence": 0.99,
+            "extracted_fields": {"signature_present": True},
+        },
+        {
+            "page_number": 4,
+            "document_type": "Stamp Duty",
+            "classification_confidence": 0.99,
+            "extracted_fields": {"stamp_date": "2026-07-10"},
+        },
+    ]
+    response = build_checklist_verification_response(
+        loan_file_id="L1",
+        pages=pages,
+        anomalies=[],
+        product_type="LAP",
+        system_data={"disbursement_date": "2026-07-15"},
+    )
+    by_number = {item.item_number: item for item in response.items}
+
+    assert by_number[20].status == "unknown"
+    assert by_number[20].flagged_reason == "manual_review_required"
+    assert by_number[22].status == "needs_review"
+    assert by_number[22].flagged_reason == "manual_subcheck_required"
+    assert by_number[33].status == "needs_review"
+    assert by_number[33].flagged_reason == "manual_subcheck_required"
+
+
 def test_build_checklist_verification_response_counts_statuses() -> None:
     pages = [
         {
@@ -51,7 +95,7 @@ def test_build_checklist_verification_response_counts_statuses() -> None:
         product_type="LAP",
     )
 
-    assert result.summary.total == 36
+    assert result.summary.total == 37
     assert result.summary.verified >= 1
     assert result.summary.missing >= 1
 
@@ -125,7 +169,9 @@ def test_bank_statement_row_lists_dynamic_months_and_collective_page_count() -> 
         "July 2026, August 2026, September 2026"
     )
     assert bank_item.extracted_fields["statement_pages_evaluated_together"] == "3"
-    assert bank_item.extracted_fields["coverage_scope"] == "Collective, per bank account"
+    assert bank_item.extracted_fields["coverage_scope"] == (
+        "Statement/passbook pages combined per bank account"
+    )
 
 
 def test_false_condition_is_reported_as_not_applicable() -> None:
@@ -142,7 +188,7 @@ def test_false_condition_is_reported_as_not_applicable() -> None:
     assert result.summary.not_applicable >= 1
 
 
-def test_system_flag_can_verify_kyc_checklist_row() -> None:
+def test_redundant_kyc_system_flag_row_is_not_rendered() -> None:
     result = build_checklist_verification_response(
         loan_file_id="LAP-1",
         pages=[],
@@ -151,9 +197,7 @@ def test_system_flag_can_verify_kyc_checklist_row() -> None:
         system_data={"kyc_details_checked": True},
     )
 
-    kyc_item = next(item for item in result.items if item.item_number == 11)
-    assert kyc_item.status == "verified"
-    assert kyc_item.extracted_fields["kyc_details_checked"] == "True"
+    assert all(item.item_number != 11 for item in result.items)
 
 
 def test_complete_applicability_data_keeps_external_controls_manual() -> None:
@@ -183,7 +227,7 @@ def test_complete_applicability_data_keeps_external_controls_manual() -> None:
         system_data=system_data,
     )
 
-    assert len(result.items) == 36
+    assert len(result.items) == 37
     unknown_items = {item.item_number: item for item in result.items if item.status == "unknown"}
-    assert set(unknown_items) == {13, 14, 19}
+    assert set(unknown_items) == {5, 13, 14, 19, 20}
     assert all(item.flagged_reason == "manual_review_required" for item in unknown_items.values())

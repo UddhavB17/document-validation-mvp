@@ -1,4 +1,4 @@
-"""Build reviewer-facing 44-item NDC checklist output."""
+"""Build reviewer-facing NDC checklist output."""
 
 from __future__ import annotations
 
@@ -94,6 +94,12 @@ def _build_item(
     elif review_anomalies:
         status = "needs_review"
         flagged_reason = _flagged_reason(review_anomalies[0])
+    elif not checklist_item.get("ai_checkable"):
+        status = "unknown"
+        flagged_reason = "manual_review_required"
+    elif checklist_item.get("manual_subcheck_required"):
+        status = "needs_review"
+        flagged_reason = "manual_subcheck_required"
     elif matched_pages or system_state is True:
         status = "verified"
         flagged_reason = None
@@ -114,14 +120,14 @@ def _build_item(
     )
     extracted_fields = _merge_extracted_fields(matched_pages)
     if item_number == 17:
-        bank_statement_pages = confident_pages_for_types(pages, ["Bank Statement"])
+        bank_statement_pages = confident_pages_for_types(pages, ["Bank Statement", "Passbook"])
         required_months = bank_statement_required_month_labels(system_data)
         if bank_statement_pages and required_months:
             extracted_fields["required_statement_months"] = ", ".join(required_months)
             extracted_fields["statement_pages_evaluated_together"] = str(
                 len(bank_statement_pages)
             )
-            extracted_fields["coverage_scope"] = "Collective, per bank account"
+            extracted_fields["coverage_scope"] = "Statement/passbook pages combined per bank account"
     if checklist_item.get("check_type") == "system_flag":
         field = str(checklist_item.get("system_field") or "system_status")
         value = system_data.get(field)
@@ -198,7 +204,14 @@ def _confidence_for_item(
     if status == "verified" and checklist_item.get("check_type") == "system_flag":
         return "high", "confirmed by system checklist status"
     if status == "unknown":
+        if not checklist_item.get("ai_checkable"):
+            return "low", str(
+                checklist_item.get("manual_review_reason")
+                or "manual checklist review is required"
+            )
         return "low", "no deterministic checklist rule could verify this item"
+    if status == "needs_review" and checklist_item.get("manual_subcheck_required") and not item_anomalies:
+        return "medium", str(checklist_item.get("manual_subcheck_reason") or "manual subcheck required")
     if item_anomalies:
         return "medium", _anomaly_detail(item_anomalies[0])
 
