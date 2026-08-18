@@ -128,7 +128,7 @@ class ChecklistItem(BaseModel):
 
 
 class ChecklistSummary(BaseModel):
-    """Status counts for the 44-item NDC checklist response."""
+    """Status counts for the configured NDC checklist response."""
 
     total: int = 44
     verified: int = 0
@@ -147,7 +147,7 @@ class ChecklistProcessingMetadata(BaseModel):
 
 
 class ChecklistVerificationResponse(BaseModel):
-    """Top-level 44-item NDC checklist output for the reviewer UI/API."""
+    """Top-level configured NDC checklist output for the reviewer UI/API."""
 
     loan_file_id: str
     summary: ChecklistSummary

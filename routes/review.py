@@ -537,7 +537,19 @@ def get_application_review(application_id: int) -> dict[str, Any]:
     summary = summarize_for_display(anomalies)
     reviewer_summary = load_reviewer_summary(application_id)
     checklist_items = get_all_checklist_items(product_type)
-    checklist_rows = build_checklist_status(checklist_items, data["pages"], anomalies)
+    ground_truth = data.get("ground_truth") or {}
+    try:
+        system_data = json.loads(ground_truth.get("raw_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        system_data = {}
+    if not isinstance(system_data, dict):
+        system_data = {}
+    checklist_rows = build_checklist_status(
+        checklist_items,
+        data["pages"],
+        anomalies,
+        system_data=system_data,
+    )
     manual_items = get_human_review_items(product_type)
     ai_items = get_ai_checkable_items(product_type)
     failed_ai_snos = {anomaly.get("s_no") for anomaly in anomalies if anomaly.get("s_no") is not None}
@@ -582,7 +594,10 @@ def get_application_review(application_id: int) -> dict[str, Any]:
             "total": len(checklist_rows),
             "found": len([row for row in checklist_rows if row["status"] == "FOUND"]),
             "missing": len([row for row in checklist_rows if row["status"] == "MISSING"]),
-            "not_checked": len([row for row in checklist_rows if row["status"] == "NOT_CHECKED"]),
+            "not_checked": len([
+                row for row in checklist_rows
+                if row["status"] in {"NOT_CHECKED", "NOT_APPLICABLE", "NEEDS_REVIEW"}
+            ]),
             "rows": checklist_rows,
         },
         "ai_checklist": {

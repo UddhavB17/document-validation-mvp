@@ -92,6 +92,63 @@ def test_stamp_and_utility_pages_classify_correctly() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
+        (
+            "Unique Identification Authority of India Aadhaar Letter "
+            "XXXX XXXX 1234 Secure QR Code",
+            "Aadhaar",
+        ),
+        (
+            "REPUBLIC OF INDIA PASSPORT Ministry of External Affairs "
+            "P<INDKUMAR<<RAVI A1234567",
+            "Passport",
+        ),
+        (
+            "Election Commission of India e-EPIC Elector Photo Identity Card ABC1234567",
+            "Voter ID",
+        ),
+        (
+            "FORM OF DRIVING LICENCE Transport Department DL No RJ14 2020 1234567 "
+            "Date of Issue 01/01/2020",
+            "Driving License",
+        ),
+        (
+            "UDYAM REGISTRATION CERTIFICATE Ministry of Micro Small and Medium Enterprises "
+            "UDYAM-RJ-12-1234567",
+            "Udyam Certificate",
+        ),
+        (
+            "GUMASTA CERTIFICATE Registration of Establishment under the Shops and "
+            "Establishments Act Registration No RJ-123",
+            "Shop Establishment Certificate",
+        ),
+        (
+            "FIELD INVESTIGATION REPORT Applicant Name Ravi Kumar Verification Status Positive "
+            "Visit Date 01/08/2026",
+            "FI Report",
+        ),
+        (
+            "CRIME CHECK REPORT Subject Name Ravi Kumar Report Status No Adverse Record "
+            "Approved by Credit",
+            "Crime Check Report",
+        ),
+    ],
+)
+def test_refined_document_formats_classify(text: str, expected: str) -> None:
+    assert classify_page(text)["document_type"] == expected
+
+
+def test_multi_cheque_scan_is_classified_as_pdc_sheet() -> None:
+    text = (
+        "A/C Payee Rupees IFSC HDFC0001234 Cheque No 000001 000001 123456789\n"
+        "Account Payee Rupees IFSC HDFC0001234 Cheque No 000002 000002 123456789"
+    )
+
+    assert classify_page(text)["document_type"] == "PDC"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
         ("લોન કરાર ઉધારકર્તા લોનદાતા ડિફોલ્ટ અને ચુકવણીની શરતો", "Loan Agreement"),
         ("સ્ટેમ્પ ડ્યુટી બિન ન્યાયિક ગુજરાત પ્રમાણપત્ર", "Stamp Duty"),
         ("ગ્રાહક અરજી ફોર્મ અરજદારની વિગતો સહ અરજદાર સરનામું", "Application Form"),

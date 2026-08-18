@@ -34,7 +34,7 @@ def get_checklist_verification(
     application_id: int,
     include_narration: bool = False,
 ) -> ChecklistVerificationResponse:
-    """Return the 44-item deterministic NDC checklist output for an application."""
+    """Return the configured deterministic NDC checklist output for an application."""
     init_db()
     stored = _load_application_checklist_inputs(application_id)
     if stored is None:

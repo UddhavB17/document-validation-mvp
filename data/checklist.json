@@ -1,6 +1,6 @@
 {
   "product_type": "LAP",
-  "version": "MSFC/NDC/MAY'26/VER.1.4",
+  "version": "MSFC/NDC/AUG'26/VER.1.5",
   "checklist_items": [
     {
       "s_no": 1,
@@ -27,6 +27,7 @@
       "condition_description": "Physical OSV evidence is required when KYC is not digitally verified in Graviton",
       "required": true,
       "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "HIGH",
       "review_mode": "manual",
       "manual_review_reason": "KYC OSV employee stamp/signature is a physical/manual verification item."
@@ -39,9 +40,7 @@
         "Aadhaar",
         "Voter ID",
         "Passport",
-        "Driving License",
-        "MNREGA Job Card",
-        "NPR Letter"
+        "Driving License"
       ],
       "check_type": "presence_any",
       "scope": "each_person",
@@ -58,9 +57,7 @@
         "Aadhaar",
         "Voter ID",
         "Passport",
-        "Driving License",
-        "MNREGA Job Card",
-        "NPR Letter"
+        "Driving License"
       ],
       "check_type": "presence_any",
       "scope": "each_person",
@@ -71,7 +68,6 @@
     },
     {
       "s_no": 5,
-      "enabled": false,
       "category": "Application Form / KYC",
       "description": "Signature proof of Borrower",
       "document_type": [
@@ -83,9 +79,11 @@
       "check_type": "presence_any",
       "scope": "each_borrower",
       "required": true,
-      "ai_checkable": true,
+      "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "HIGH",
-      "review_mode": "ai"
+      "review_mode": "manual",
+      "manual_review_reason": "Signature comparison requires a human reviewer; document presence alone must not verify the signature."
     },
     {
       "s_no": 6,
@@ -124,7 +122,6 @@
     },
     {
       "s_no": 8,
-      "enabled": false,
       "category": "Application Form / KYC",
       "description": "Dual Name / Signature / DOB declaration with applicable stamp duty and authority approval, if required",
       "document_type": [
@@ -140,6 +137,7 @@
       "condition_description": "Required only when a name, signature, or DOB mismatch exists",
       "required": true,
       "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
       "manual_review_reason": "Dual-name/signature/DOB declaration applies only when mismatch exists; verify manually."
@@ -174,6 +172,7 @@
     },
     {
       "s_no": 11,
+      "enabled": false,
       "category": "System Check",
       "description": "KYC details checked in system",
       "document_type": "KYC System Check",
@@ -275,7 +274,7 @@
     {
       "s_no": 17,
       "category": "Internal Documents",
-      "description": "Bank account vintage document - passbook front page or statement of account",
+      "description": "Disbursement-account statement/passbook covers the three completed calendar months immediately before application",
       "document_type": [
         "Bank Statement",
         "Passbook"
@@ -289,16 +288,14 @@
     },
     {
       "s_no": 18,
-      "enabled": false,
       "category": "Internal Documents",
       "description": "Pre-disbursement / sanction conditions document",
       "document_type": "Pre-Disbursement Conditions",
       "check_type": "presence",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "Pre-disbursement conditions are compiled/system uploaded; reviewer verifies applicability."
+      "review_mode": "ai"
     },
     {
       "s_no": 19,
@@ -323,9 +320,11 @@
       ],
       "check_type": "presence_any",
       "required": true,
-      "ai_checkable": true,
+      "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "HIGH",
-      "review_mode": "ai"
+      "review_mode": "manual",
+      "manual_review_reason": "Completeness and signatures of every borrower must be checked manually."
     },
     {
       "s_no": 21,
@@ -344,7 +343,7 @@
     {
       "s_no": 22,
       "category": "Internal Documents",
-      "description": "Insurance Forms - Signed Life and Property with Calculators",
+      "description": "Signed Life and Property Insurance Forms",
       "document_type": [
         "Life Insurance Form",
         "Property Insurance Form"
@@ -352,6 +351,8 @@
       "check_type": "presence_all",
       "required": true,
       "ai_checkable": true,
+      "manual_subcheck_required": true,
+      "manual_subcheck_reason": "Insurance calculators must be reviewed manually.",
       "severity_if_missing": "MEDIUM",
       "review_mode": "ai"
     },
@@ -385,10 +386,9 @@
       },
       "condition_description": "Required when loan/sanction amount is at least 15 lakh",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "FI report applies only for threshold/credit-policy cases; verify applicability manually."
+      "review_mode": "ai"
     },
     {
       "s_no": 24,
@@ -419,6 +419,7 @@
     },
     {
       "s_no": 25,
+      "enabled": false,
       "category": "Internal Documents",
       "description": "Internal BT Undertaking if required",
       "document_type": "BT Undertaking",
@@ -437,6 +438,7 @@
     },
     {
       "s_no": 26,
+      "enabled": false,
       "category": "Internal Documents",
       "description": "Consent Letter for Internal BT / Top-up cases",
       "document_type": "Consent Letter",
@@ -457,8 +459,12 @@
       "s_no": 27,
       "category": "Internal Documents",
       "description": "Guarantee Deed with applicable stamp duty",
-      "document_type": "Guarantee Deed",
-      "check_type": "presence",
+      "document_type": [
+        "Guarantee Deed",
+        "Stamp Duty"
+      ],
+      "check_type": "presence_all",
+      "evidence_relationship": "same_source_or_adjacent",
       "applies_when": {
         "field": "has_guarantor",
         "field_aliases": ["guarantee_deed_required"],
@@ -466,15 +472,16 @@
       },
       "condition_description": "Required when the case has a guarantor/GTR",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
+      "manual_subcheck_required": true,
+      "manual_subcheck_reason": "Deed execution/signatures and state-specific stamp-duty sufficiency require manual review.",
       "severity_if_missing": "HIGH",
-      "review_mode": "manual",
-      "manual_review_reason": "Guarantee deed and stamp duty are physical execution checks; verify manually."
+      "review_mode": "ai"
     },
     {
       "s_no": 28,
       "category": "Internal Documents",
-      "description": "Crime Check Report for cases of 10 lakh and above",
+      "description": "Credit-approved Crime Check Report for cases of 10 lakh and above",
       "document_type": "Crime Check Report",
       "check_type": "presence",
       "applies_when": {
@@ -485,10 +492,9 @@
       },
       "condition_description": "Required when loan/sanction amount is at least 10 lakh",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "Crime check applies only for qualifying cases; verify system upload manually."
+      "review_mode": "ai"
     },
     {
       "s_no": 29,
@@ -546,7 +552,6 @@
     },
     {
       "s_no": 32,
-      "enabled": false,
       "category": "Documents required from customer",
       "description": "Bank signature verification if NACH not registered at disbursement",
       "document_type": "Bank Signature Verification",
@@ -559,19 +564,21 @@
       "condition_description": "Required when ACH/NACH is not registered at disbursement",
       "required": true,
       "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
       "manual_review_reason": "Bank signature verification is conditional on NACH status; verify manually."
     },
     {
       "s_no": 33,
-      "enabled": false,
       "category": "Documents required from customer",
-      "description": "Stamp Duty - stamp date equal to or older than disbursement date",
+      "description": "Stamp Duty as per applicable state law; stamp date must be on or before disbursement date",
       "document_type": "Stamp Duty",
       "check_type": "presence",
       "required": true,
       "ai_checkable": true,
+      "manual_subcheck_required": true,
+      "manual_subcheck_reason": "The state-law stamp-duty amount/article must be confirmed manually unless a compliance-approved rule is configured.",
       "severity_if_missing": "HIGH",
       "review_mode": "ai"
     },
@@ -592,9 +599,11 @@
       },
       "condition_description": "Required when assessed-income documents are called for by credit policy",
       "required": true,
-      "ai_checkable": true,
+      "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "ai"
+      "review_mode": "manual",
+      "manual_review_reason": "Income-document applicability and sufficiency depend on credit policy and require manual review."
     },
     {
       "s_no": 35,
@@ -619,12 +628,15 @@
       },
       "condition_description": "Required when insurance tenure is shorter than loan tenure",
       "required": true,
-      "ai_checkable": true,
+      "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "ai"
+      "review_mode": "manual",
+      "manual_review_reason": "Customer consent and the insurance-versus-loan tenure decision require manual review."
     },
     {
       "s_no": 36,
+      "enabled": false,
       "category": "Documents required from customer",
       "description": "Foreclosure Letter and LOD if BT case",
       "document_type": [
@@ -725,28 +737,26 @@
       ],
       "condition_description": "Five PDCs when ACH/NACH is registered; ten when it is not registered",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "PDC count is physical cheque custody; verify manually."
+      "review_mode": "ai",
+      "pdc_scope": "repayment_account"
     },
     {
       "s_no": 42,
       "category": "Repayments",
-      "description": "ACH not registered - CBO/CEO approval and 3 physical NACH forms",
+      "description": "If ACH is not registered, physical NACH and Bank Signature Verification (BSR) must be in file",
       "document_type": [
-        "ACH Approval Document",
-        "NACH Form"
+        "NACH Form",
+        "Bank Signature Verification"
       ],
       "check_type": "requirements",
       "requirements": [
         {
-          "document_type": "ACH Approval Document"
+          "document_type": "NACH Form"
         },
         {
-          "document_type": "NACH Form",
-          "check_type": "presence_min_count",
-          "min_count": 3
+          "document_type": "Bank Signature Verification"
         }
       ],
       "applies_when": {
@@ -757,30 +767,30 @@
       "condition_description": "Required only when ACH/NACH is not registered",
       "required": true,
       "ai_checkable": false,
+      "automated_presence_check": false,
       "severity_if_missing": "MEDIUM",
       "review_mode": "manual",
-      "manual_review_reason": "ACH-not-registered approval is conditional; verify manually."
+      "manual_review_reason": "Physical NACH and bank-signature verification are custody/manual controls."
     },
     {
       "s_no": 43,
       "category": "Repayments",
-      "description": "3 PDCs from Co-Applicants and GTRs",
+      "description": "3 PDCs from each Co-Applicant",
       "document_type": "PDC",
       "check_type": "presence_min_count",
       "min_count": 3,
-      "scope": "pdc_people",
+      "scope": "pdc_coapplicants",
       "applies_when": {
-        "field": "pdc_person_count",
-        "field_aliases": ["qualifying_pdc_person_count"],
+        "field": "pdc_coapplicant_count",
+        "field_aliases": ["qualifying_pdc_coapplicant_count"],
         "operator": ">",
         "value": 0
       },
-      "condition_description": "Three PDCs for each qualifying income-earner co-applicant, female non-earner co-applicant, and GTR",
+      "condition_description": "Three PDCs for each co-applicant",
       "required": true,
-      "ai_checkable": false,
+      "ai_checkable": true,
       "severity_if_missing": "MEDIUM",
-      "review_mode": "manual",
-      "manual_review_reason": "Co-applicant/GTR PDC count is physical cheque custody; verify manually."
+      "review_mode": "ai"
     }
   ],
   "accuracy_check_items": [
@@ -824,7 +834,7 @@
     {
       "s_no": 17,
       "description": "Bank account vintage of 3 months for disbursement account",
-      "document_type": "Bank Statement",
+      "document_type": ["Bank Statement", "Passbook"],
       "check_type": "period_minimum_months",
       "min_months": 3,
       "coverage_mode": "completed_calendar_months",
@@ -841,9 +851,37 @@
       "ai_checkable": true
     },
     {
+      "s_no": 22,
+      "description": "Life and property insurance forms must contain affirmative signature evidence",
+      "document_type": ["Life Insurance Form", "Property Insurance Form"],
+      "check_type": "required_boolean_field",
+      "document_fields": ["signature_present"],
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
+      "s_no": 28,
+      "description": "Crime Check Report must be clear/positive and approved by Credit",
+      "document_type": "Crime Check Report",
+      "check_type": "required_status_fields_all",
+      "status_requirements": [
+        {
+          "field": "report_status",
+          "accepted_statuses": ["clear", "cleared", "positive", "no adverse record", "no criminal record"],
+          "rejected_statuses": ["negative", "adverse", "criminal record found", "rejected"]
+        },
+        {
+          "field": "credit_approval_status",
+          "accepted_statuses": ["approved"],
+          "rejected_statuses": ["not approved", "rejected", "pending"]
+        }
+      ],
+      "severity_if_fail": "HIGH",
+      "ai_checkable": true
+    },
+    {
       "s_no": 33,
-      "enabled": false,
-      "description": "Stamp date must be equal to or older than disbursement date",
+      "description": "Stamp date must be on or before disbursement date",
       "document_type": "Stamp Duty",
       "check_type": "date_not_after",
       "document_fields": ["stamp_date", "document_date", "issue_date"],
@@ -853,6 +891,7 @@
     },
     {
       "s_no": 35,
+      "enabled": false,
       "description": "Insurance tenure must be less than loan tenure",
       "document_type": "Insurance Consent Letter",
       "check_type": "field_less_than",
@@ -928,9 +967,31 @@
       "ai_checkable": true
     }
   ],
-  "human_review_items": [],
+  "human_review_items": [
+    {
+      "s_no": 22,
+      "category": "Internal Documents",
+      "description": "Insurance calculators for the life and property forms",
+      "document_type": ["Life Insurance Calculator", "Property Insurance Calculator"],
+      "reason": "Calculator inputs and results are a manual underwriting check; the program verifies only the signed insurance forms."
+    },
+    {
+      "s_no": 27,
+      "category": "Internal Documents",
+      "description": "Guarantee Deed execution and applicable state stamp-duty amount",
+      "document_type": "Guarantee Deed",
+      "reason": "The program checks the deed and stamp evidence; signatures and state-specific legal sufficiency require a reviewer."
+    },
+    {
+      "s_no": 33,
+      "category": "Documents required from customer",
+      "description": "Stamp-duty amount/article sufficiency under the applicable state law",
+      "document_type": "Stamp Duty",
+      "reason": "Rates vary by state, instrument, execution date and transaction value; use only compliance-approved rules or review manually."
+    }
+  ],
   "validation_strategy": {
-    "mode": "43_item_conditional_availability_and_cross_document_consistency",
+    "mode": "conditional_availability_and_cross_document_consistency",
     "goal": "Check every currently enabled NDC item, validate trusted JSON/database fields against documents, and enforce applicant, address, relationship, loan, bureau and banking consistency.",
     "primary_ocr_targets": [
       "PAN",
@@ -960,16 +1021,14 @@
       "loan_amount": "Controls CIBIL (>5 lakh), Crime Check (>=10 lakh), FI Report (>=15 lakh), and two technical reports (>20 lakh).",
       "people": "Person map with role, income_earner, repayment_contributor, and gender; used for per-person KYC/banking/PDC scopes.",
       "kyc_verified_in_graviton": "When true, physical KYC OSV evidence is not applicable.",
-      "kyc_details_checked": "System completion flag for checklist row 11.",
-      "case_type": "User-selected Normal Case or BT Case. BT-only rows 25, 26 and 36 run only for BT Case.",
       "application_date": "Company case-open date used to require the three most recently completed bank-statement months.",
       "business_proof_required": "Controls Udyam/GST/shop-establishment proof.",
       "nach_registered": "Controls BSV, PDC counts, and ACH-not-registered documents.",
       "assessed_income_documents_required": "Controls assessed-income documents.",
       "insurance_consent_required": "Controls the insurance-tenure consent letter; may instead be derived from insurance_tenure and tenure.",
       "fi_report_status": "Negative or referred FI results require an FI approval letter.",
-    "disbursement_date": "Retained as trusted data, while stamp-duty validation is temporarily disabled."
+      "disbursement_date": "Trusted comparison date; stamp evidence must be dated on or before it."
     },
-    "manual_review_policy": "Physical, media, cheque-custody, and workflow items are checked for availability across the packet; their execution quality and signatures still require manual review."
+    "manual_review_policy": "Manual rows never become factual missing-document findings. Signature comparison, insurance calculators, state-law adequacy, and physical workflow controls remain reviewer decisions."
   }
 }
