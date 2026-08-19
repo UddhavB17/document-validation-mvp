@@ -161,6 +161,7 @@ export const checklistRowSchema = z.object({
   description: z.string(),
   document_types: z.string(),
   pages: z.string(),
+  reason: z.string().nullable().optional(),
 });
 
 export const anomalySchema = z.object({
@@ -349,4 +350,5 @@ export const api = {
     return highlight ? `${base}?highlight=${encodeURIComponent(highlight)}` : base;
   },
   ocrJsonUrl: (applicationId: number) => `${API_BASE_URL}/review/applications/${applicationId}/ocr-json`,
+  summaryReportUrl: (applicationId: number) => `${API_BASE_URL}/review/applications/${applicationId}/summary-report`,
 };

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from database.db import get_connection, init_db
 from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
@@ -899,3 +899,502 @@ def _load_saved_document_ocr_json(application_id: int) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+@router.get("/applications/{application_id}/summary-report", summary="Download print-ready summary report")
+def get_application_summary_report(application_id: int) -> HTMLResponse:
+    from datetime import datetime
+    init_db()
+    data = _load_application_result(application_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    application = data["application"]
+    product_type = str(application.get("product_type") or "LAP")
+    anomalies = data["anomalies"]
+    checklist_items = get_all_checklist_items(product_type)
+    ground_truth = data.get("ground_truth") or {}
+    try:
+        system_data = json.loads(ground_truth.get("raw_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        system_data = {}
+    if not isinstance(system_data, dict):
+        system_data = {}
+
+    checklist_rows = build_checklist_status(
+        checklist_items,
+        data["pages"],
+        anomalies,
+        system_data=system_data,
+    )
+
+    total_items = len(checklist_rows)
+    verified_items = sum(1 for row in checklist_rows if row.get("status") == "FOUND")
+    missing_items = sum(1 for row in checklist_rows if row.get("status") == "MISSING")
+    review_items = sum(1 for row in checklist_rows if row.get("status") in ("NEEDS_REVIEW", "NOT_CHECKED"))
+
+    loan_id = application.get("loan_id") or f"APP_{application_id}"
+    applicant_name = application.get("applicant_name") or "-"
+    coapplicant_name = application.get("coapplicant_name") or "-"
+    branch = application.get("branch") or "-"
+    status = str(application.get("status") or "uploaded").upper()
+    status_lower = status.lower()
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Load or generate LLM summary on-the-fly
+    llm_summary_str = application.get("llm_summary")
+    if not llm_summary_str or not llm_summary_str.strip():
+        if not anomalies:
+            llm_summary_data = {
+                "overall_summary": "All checks passed successfully. No anomalies flagged. Clean check.",
+                "final_recommendation": "APPROVE",
+                "page_summaries": []
+            }
+        else:
+            from services.llm_service import generate_explanation
+            try:
+                llm_summary_str = generate_explanation(anomalies, ground_truth, application_id)
+                llm_summary_data = json.loads(llm_summary_str) if llm_summary_str else {}
+            except Exception as e:
+                logger.warning("Error generating LLM summary on-the-fly: %s", e)
+                llm_summary_data = {}
+    else:
+        try:
+            llm_summary_data = json.loads(llm_summary_str)
+        except Exception:
+            llm_summary_data = {}
+
+    if not llm_summary_data:
+        from services.llm_service import build_default_summary
+        llm_summary_data = build_default_summary(anomalies, ground_truth)
+
+    overall_summary = llm_summary_data.get("overall_summary") or "No overall summary available."
+    rec_raw = str(llm_summary_data.get("final_recommendation") or "MANUAL REVIEW").upper()
+    if rec_raw == "APPROVE":
+        rec_class = "badge-approved"
+        rec = "APPROVE"
+    elif rec_raw == "SEND BACK TO BRANCH":
+        rec_class = "badge-pending"
+        rec = "SEND BACK TO BRANCH"
+    else:
+        rec_class = "badge-critical"
+        rec = "MANUAL REVIEW"
+
+    page_summaries_list = llm_summary_data.get("page_summaries") or []
+    page_summaries_html = ""
+    if page_summaries_list:
+        items_html = []
+        for item in page_summaries_list:
+            page_num = item.get("page_number")
+            doc_type = item.get("document_type") or "Unknown Document"
+            problem = item.get("problem_description")
+            points = item.get("summary_points") or []
+            
+            page_lbl = f"Page {page_num}" if page_num else "General"
+            points_lbl = f" | {', '.join(points)}" if points else ""
+            problem_lbl = f" — <strong style='color: #991b1b;'>Anomaly:</strong> {problem}" if problem else ""
+            
+            items_html.append(f"""
+            <li style="margin-bottom: 6px; font-size: 11px; line-height: 1.4;">
+              <strong>{page_lbl} ({doc_type})</strong>{points_lbl}{problem_lbl}
+            </li>
+            """)
+        
+        page_summaries_html = f"""
+        <div style="margin-top: 12px; border-top: 1px dashed #e2e8f0; padding-top: 10px;">
+          <div style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #64748b; margin-bottom: 6px; letter-spacing: 0.05em;">Key Findings by Page</div>
+          <ul style="margin: 0; padding-left: 16px; color: #475569;">
+            {"".join(items_html)}
+          </ul>
+        </div>
+        """
+
+    ai_summary_section = f"""
+    <div class="section-title">AI Audit Insights &amp; Recommendation</div>
+    <div class="info-card" style="border-left: 4px solid #4f46e5; background: #faf5ff; margin-bottom: 24px; padding: 16px; border-radius: 12px; border-top: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+        <span style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #4f46e5; letter-spacing: 0.05em;">Executive Summary</span>
+        <span class="badge {rec_class}">{rec}</span>
+      </div>
+      <div style="font-size: 13px; line-height: 1.5; color: #3b0764; font-weight: 550; font-style: italic; margin-bottom: 8px;">
+        "{overall_summary}"
+      </div>
+      {page_summaries_html}
+    </div>
+    """
+
+    anomaly_rows = []
+    # Display up to 7 anomalies to keep the summary to exactly one page
+    display_limit = 7
+    displayed_anomalies = anomalies[:display_limit]
+    
+    for a in displayed_anomalies:
+        page = str(a.get("page_number") or "Gen")
+        doc_type = a.get("document_type") or "Unknown Document"
+        severity = str(a.get("severity") or "LOW").upper()
+        reason = a.get("reason") or f"Validation check {a.get('rule_id')} failed."
+        
+        sev_class = "sev-low"
+        if severity == "HIGH":
+            sev_class = "sev-high"
+        elif severity == "MEDIUM":
+            sev_class = "sev-medium"
+            
+        row_html = f"""
+        <tr>
+          <td>{page}</td>
+          <td><strong>{doc_type}</strong></td>
+          <td><span class="severity-tag {sev_class}">{severity}</span></td>
+          <td>{reason}</td>
+        </tr>
+        """
+        anomaly_rows.append(row_html)
+
+    if not anomaly_rows:
+        anomaly_rows_str = '<tr><td colspan="4" style="text-align: center; color: #64748b; font-style: italic; padding: 20px;">No anomalies flagged. Clean check.</td></tr>'
+    else:
+        anomaly_rows_str = "\n".join(anomaly_rows)
+        if len(anomalies) > display_limit:
+            anomaly_rows_str += f"""
+            <tr>
+              <td colspan="4" style="text-align: center; color: #475569; font-weight: 700; background-color: #f8fafc; padding: 12px;">
+                ... and {len(anomalies) - display_limit} other anomaly/anomalies flagged. Please view the full dashboard for details.
+              </td>
+            </tr>
+            """
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Application Summary Report - {loan_id}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    body {{
+      font-family: 'Inter', -apple-system, sans-serif;
+      color: #1e293b;
+      margin: 0;
+      padding: 24px;
+      line-height: 1.5;
+      background-color: #f8fafc;
+    }}
+    .report-container {{
+      max-width: 800px;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 40px;
+      border-radius: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+      border: 1px solid #e2e8f0;
+      position: relative;
+    }}
+    .header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #f1f5f9;
+      padding-bottom: 20px;
+      margin-bottom: 24px;
+    }}
+    .title-area h1 {{
+      margin: 0;
+      font-size: 24px;
+      font-weight: 800;
+      color: #1e3a8a;
+      letter-spacing: -0.025em;
+    }}
+    .title-area p {{
+      margin: 4px 0 0 0;
+      font-size: 12px;
+      color: #64748b;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }}
+    .badge {{
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border: 1px solid transparent;
+    }}
+    .badge-critical {{
+      background-color: #fef2f2;
+      color: #991b1b;
+      border-color: #fca5a5;
+    }}
+    .badge-approved {{
+      background-color: #ecfdf5;
+      color: #065f46;
+      border-color: #6ee7b7;
+    }}
+    .badge-pending {{
+      background-color: #fffbeb;
+      color: #92400e;
+      border-color: #fcd34d;
+    }}
+    .badge-uploaded {{
+      background-color: #f1f5f9;
+      color: #475569;
+      border-color: #cbd5e1;
+    }}
+    .badge-needs_review {{
+      background-color: #fffbeb;
+      color: #d97706;
+      border-color: #fcd34d;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }}
+    .info-card {{
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+    }}
+    .info-item {{
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }}
+    .info-item:last-child {{
+      margin-bottom: 0;
+    }}
+    .info-label {{
+      color: #64748b;
+      font-weight: 600;
+    }}
+    .info-value {{
+      color: #0f172a;
+      font-weight: 700;
+    }}
+    .section-title {{
+      font-size: 14px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #475569;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 6px;
+    }}
+    .checklist-summary {{
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+    }}
+    .metric-pill {{
+      flex: 1;
+      text-align: center;
+      padding: 12px 8px;
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+    }}
+    .metric-num {{
+      font-size: 18px;
+      font-weight: 800;
+      color: #0f172a;
+    }}
+    .metric-label {{
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-top: 2px;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 24px;
+    }}
+    th {{
+      background: #f1f5f9;
+      color: #475569;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 2px solid #e2e8f0;
+    }}
+    td {{
+      padding: 10px 12px;
+      font-size: 12px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #334155;
+    }}
+    tr:last-child td {{
+      border-bottom: none;
+    }}
+    .text-right {{
+      text-align: right;
+    }}
+    .severity-tag {{
+      font-size: 9px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }}
+    .sev-high {{
+      background: #fef2f2;
+      color: #991b1b;
+    }}
+    .sev-medium {{
+      background: #fffbeb;
+      color: #92400e;
+    }}
+    .sev-low {{
+      background: #f0fdf4;
+      color: #166534;
+    }}
+    .footer {{
+      text-align: center;
+      font-size: 10px;
+      color: #94a3b8;
+      border-top: 1px solid #f1f5f9;
+      padding-top: 16px;
+      margin-top: 32px;
+      font-weight: 500;
+    }}
+    .no-print-btn {{
+      position: absolute;
+      top: 40px;
+      right: 40px;
+      background: #1e3a8a;
+      color: #ffffff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      transition: background 0.15s;
+    }}
+    .no-print-btn:hover {{
+      background: #1d4ed8;
+    }}
+    @media print {{
+      body {{
+        background: #ffffff;
+        padding: 0;
+      }}
+      .report-container {{
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        max-width: 100%;
+      }}
+      .no-print-btn {{
+        display: none;
+      }}
+      @page {{
+        size: A4 portrait;
+        margin: 1.5cm;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="report-container">
+    <button class="no-print-btn" onclick="window.print()">Print / Save PDF</button>
+    <div class="header">
+      <div class="title-area">
+        <h1>MSFC Document Validation Report</h1>
+        <p>System Generated Summary &amp; Analysis</p>
+      </div>
+      <div class="status-badge">
+        <span class="badge badge-{status_lower}">{status}</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="info-card">
+        <div class="section-title">Application Details</div>
+        <div class="info-item">
+          <span class="info-label">Loan Application ID:</span>
+          <span class="info-value">{loan_id}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Product Type:</span>
+          <span class="info-value">{product_type}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Branch:</span>
+          <span class="info-value">{branch}</span>
+        </div>
+      </div>
+      <div class="info-card">
+        <div class="section-title">Applicant Roster</div>
+        <div class="info-item">
+          <span class="info-label">Primary Applicant:</span>
+          <span class="info-value">{applicant_name}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Co-Applicant:</span>
+          <span class="info-value">{coapplicant_name}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Generated At:</span>
+          <span class="info-value">{generated_at}</span>
+        </div>
+      </div>
+    </div>
+
+    {ai_summary_section}
+
+    <div class="section-title">Checklist Execution Status</div>
+    <div class="checklist-summary">
+      <div class="metric-pill">
+        <div class="metric-num">{total_items}</div>
+        <div class="metric-label">Total Checks</div>
+      </div>
+      <div class="metric-pill" style="border-color: #a7f3d0; background-color: #f0fdf4;">
+        <div class="metric-num" style="color: #047857;">{verified_items}</div>
+        <div class="metric-label">Verified</div>
+      </div>
+      <div class="metric-pill" style="border-color: #fecaca; background-color: #fef2f2;">
+        <div class="metric-num" style="color: #b91c1c;">{missing_items}</div>
+        <div class="metric-label">Missing</div>
+      </div>
+      <div class="metric-pill" style="border-color: #fde68a; background-color: #fffbeb;">
+        <div class="metric-num" style="color: #d97706;">{review_items}</div>
+        <div class="metric-label">Needs Review / Manual</div>
+      </div>
+    </div>
+
+    <div class="section-title">Flagged Anomalies ({len(anomalies)})</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 8%;">Page</th>
+          <th style="width: 25%;">Document</th>
+          <th style="width: 12%;">Severity</th>
+          <th style="width: 55%;">Rule &amp; Issue Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {anomaly_rows_str}
+      </tbody>
+    </table>
+
+    <div class="footer">
+      DMEF Document Validation Service • Confidential • Generated on {generated_at}
+    </div>
+  </div>
+</body>
+</html>"""
+
+    return HTMLResponse(content=html_content)
+

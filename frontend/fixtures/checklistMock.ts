@@ -19,7 +19,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 1,
       document_name: "Application Form",
-      status: "verified",
+      status: "required_and_present",
       confidence: "high",
       confidence_detail: "matched 1 of 1 expected page(s); lowest classification confidence 96%",
       extracted_fields: {
@@ -33,7 +33,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 7,
       document_name: "PAN",
-      status: "needs_review",
+      status: "not_evaluated_by_engine",
       confidence: "medium",
       confidence_detail: "PAN number differs from digital application form; expected TSTAA0001T, found TSTAA0009T",
       extracted_fields: {
@@ -47,7 +47,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 19,
       document_name: "Bank Statement",
-      status: "missing",
+      status: "required_and_missing",
       confidence: "low",
       confidence_detail: "matched 0 of 1 expected page(s)",
       extracted_fields: {},
@@ -58,7 +58,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 26,
       document_name: "CERSAI",
-      status: "unknown",
+      status: "not_evaluated_by_engine",
       confidence: "low",
       confidence_detail: "no deterministic checklist rule could verify this item",
       extracted_fields: {
@@ -67,6 +67,97 @@ export const checklistMock: ChecklistVerificationResponse = {
       extraction_source: "llm_fallback",
       narration: "unknown was assigned because the page was handled through fallback extraction and requires manual confirmation before checklist approval.",
       flagged_reason: "manual_review_required",
+    },
+  ],
+};
+
+export const legacyChecklistMock: ChecklistVerificationResponse = {
+  loan_file_id: "LEGACY-STATUS-CHECK",
+  summary: {
+    total: 8,
+    verified: 2,
+    needs_review: 2,
+    missing: 2,
+    unknown: 1,
+    not_applicable: 1,
+  },
+  processing_metadata: {
+    ocr_time_ms: 1000,
+    classification_time_ms: 500,
+    narration_time_ms: 100,
+  },
+  items: [
+    {
+      item_number: 1,
+      document_name: "Legacy Verified Doc",
+      status: "verified",
+      confidence: "high",
+      confidence_detail: "should land in Verified OK",
+      extracted_fields: {},
+      extraction_source: "deterministic",
+    },
+    {
+      item_number: 2,
+      document_name: "Legacy Needs Review Doc",
+      status: "needs_review",
+      confidence: "medium",
+      confidence_detail: "should land in Exceptions",
+      extracted_fields: {},
+      extraction_source: "deterministic",
+    },
+    {
+      item_number: 3,
+      document_name: "Legacy Missing Doc",
+      status: "missing",
+      confidence: "low",
+      confidence_detail: "should land in Exceptions",
+      extracted_fields: {},
+      extraction_source: "deterministic",
+    },
+    {
+      item_number: 4,
+      document_name: "Legacy Unknown Doc",
+      status: "unknown",
+      confidence: "low",
+      confidence_detail: "should land in Exceptions",
+      extracted_fields: {},
+      extraction_source: "llm_fallback",
+    },
+    {
+      item_number: 5,
+      document_name: "Legacy N/A Doc",
+      status: "not_applicable",
+      confidence: "high",
+      confidence_detail: "should land in Verified OK",
+      extracted_fields: {},
+      extraction_source: "deterministic",
+    },
+    {
+      item_number: 6,
+      document_name: "Modern Present Doc",
+      status: "required_and_present",
+      confidence: "high",
+      confidence_detail: "should land in Verified OK",
+      extracted_fields: {},
+      extraction_source: "deterministic",
+    },
+    {
+      item_number: 7,
+      document_name: "Modern Missing Doc",
+      status: "required_and_missing",
+      confidence: "low",
+      confidence_detail: "should land in Exceptions",
+      extracted_fields: {},
+      extraction_source: "deterministic",
+    },
+    {
+      item_number: 8,
+      document_name: "Modern Not Evaluated Doc",
+      status: "not_evaluated_by_engine",
+      confidence: "medium",
+      confidence_detail: "should land in Exceptions",
+      extracted_fields: {},
+      extraction_source: "deterministic",
     },
   ],
 };

@@ -256,6 +256,91 @@ export default function ApplicationReviewPage() {
                 </table>
               </div>
 
+              <h2 className="font-serif text-[16px] font-semibold mb-3 mt-6">MSFC Checklist Summary</h2>
+              <div className="space-y-4">
+                {/* Metric Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs flex items-center justify-between">
+                    <div>
+                      <div className="text-[#5C6B7A] text-[12px] font-bold uppercase tracking-wider">Verified Items</div>
+                      <div className="text-2xl font-extrabold text-emerald-600 mt-1">{review.data.checklist.found} / {review.data.checklist.total}</div>
+                    </div>
+                    <span className="h-9 w-9 flex items-center justify-center rounded-full bg-emerald-50 text-emerald-600 text-lg font-bold border border-emerald-100">✓</span>
+                  </div>
+                  <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs flex items-center justify-between">
+                    <div>
+                      <div className="text-[#5C6B7A] text-[12px] font-bold uppercase tracking-wider">Missing Items</div>
+                      <div className="text-2xl font-extrabold text-rose-600 mt-1">{review.data.checklist.missing} / {review.data.checklist.total}</div>
+                    </div>
+                    <span className="h-9 w-9 flex items-center justify-center rounded-full bg-rose-50 text-rose-600 text-lg font-bold border border-rose-100">✗</span>
+                  </div>
+                  <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs flex items-center justify-between">
+                    <div>
+                      <div className="text-[#5C6B7A] text-[12px] font-bold uppercase tracking-wider">Manual / Needs Review</div>
+                      <div className="text-2xl font-extrabold text-amber-600 mt-1">{review.data.checklist.not_checked} / {review.data.checklist.total}</div>
+                    </div>
+                    <span className="h-9 w-9 flex items-center justify-center rounded-full bg-amber-50 text-amber-600 text-lg font-bold border border-amber-100">!</span>
+                  </div>
+                </div>
+
+                {/* Sub-sections: Unverified parts and Verified parts */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Unverified Parts */}
+                  <div className="border border-slate-200 rounded-xl p-4.5 bg-[#FAF3F5]/10 space-y-3">
+                    <h3 className="text-sm font-bold text-rose-800 flex items-center gap-1.5 font-serif">
+                      <span>Cannot Be Verified Automatically ({review.data.checklist.rows.filter((row: any) => row.status !== "FOUND" && row.status !== "NOT_APPLICABLE").length})</span>
+                    </h3>
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                      {review.data.checklist.rows
+                        .filter((row: any) => row.status !== "FOUND" && row.status !== "NOT_APPLICABLE")
+                        .map((row: any) => (
+                          <div key={row.s_no} className="bg-white border border-[#E1E5EB] rounded-lg p-3 text-[12.5px] shadow-3xs hover:shadow-2xs transition-shadow">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-bold text-slate-800">{row.s_no}. {row.description}</span>
+                              <StatusBadge status={row.status} />
+                            </div>
+                            {row.reason && (
+                              <p className="mt-1.5 text-rose-750 bg-rose-50/50 border border-rose-100/60 p-2 rounded-md font-medium text-[11.5px] leading-relaxed">
+                                {row.reason}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      {review.data.checklist.rows.filter((row: any) => row.status !== "FOUND" && row.status !== "NOT_APPLICABLE").length === 0 && (
+                        <div className="text-slate-500 italic text-center py-6">No unverified items. All items are verified or not applicable!</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Verified Parts */}
+                  <div className="border border-slate-200 rounded-xl p-4.5 bg-[#EEFDF7]/10 space-y-3">
+                    <h3 className="text-sm font-bold text-emerald-800 flex items-center gap-1.5 font-serif">
+                      <span>Successfully Verified ({review.data.checklist.rows.filter((row: any) => row.status === "FOUND").length})</span>
+                    </h3>
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                      {review.data.checklist.rows
+                        .filter((row: any) => row.status === "FOUND")
+                        .map((row: any) => (
+                          <div key={row.s_no} className="bg-white border border-[#E1E5EB] rounded-lg p-3 text-[12.5px] shadow-3xs hover:shadow-2xs transition-shadow">
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-bold text-slate-800">{row.s_no}. {row.description}</span>
+                              <StatusBadge status={row.status} />
+                            </div>
+                            {row.reason && (
+                              <p className="mt-1.5 text-emerald-850 bg-emerald-50/50 border border-emerald-100/60 p-2 rounded-md font-medium text-[11.5px] leading-relaxed">
+                                {row.reason}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      {review.data.checklist.rows.filter((row: any) => row.status === "FOUND").length === 0 && (
+                        <div className="text-slate-500 italic text-center py-6">No verified items yet.</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {[
                 "uploaded",
                 "processing",
@@ -1122,6 +1207,29 @@ function Checklist({ data, onSelectPage }: { data: ApplicationReview; onSelectPa
             },
             sortValue: (row) => row.pages
           },
+          {
+            key: "reason",
+            header: "Verification Details & Status Reason",
+            value: (row) => {
+              const status = String(row.status || "").toLowerCase();
+              let bg = "bg-slate-50 border-slate-200 text-slate-700";
+              if (status === "found" || status === "verified") {
+                bg = "bg-emerald-50 border-emerald-100 text-emerald-850";
+              } else if (status === "missing" || status === "failed") {
+                bg = "bg-rose-50 border-rose-105 text-rose-850 font-medium";
+              } else if (status === "needs_review") {
+                bg = "bg-amber-50 border-amber-105 text-amber-850";
+              } else if (status === "not_applicable") {
+                bg = "bg-slate-50 border-slate-105 text-slate-400 italic";
+              }
+              return (
+                <div className={`text-[12px] leading-relaxed max-w-md p-2 rounded-lg border ${bg} break-words font-medium`}>
+                  {row.reason ?? "—"}
+                </div>
+              );
+            },
+            sortValue: (row) => row.reason || ""
+          },
         ]}
       />
     </section>
@@ -1132,9 +1240,14 @@ function Downloads({ applicationId }: { applicationId: number }) {
   return (
     <section className="space-y-3">
       <h2 className="text-base font-bold text-slate-800">Downloads</h2>
-      <a className="inline-block rounded-lg border border-slate-350 bg-white hover:bg-slate-55 px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors" href={api.ocrJsonUrl(applicationId)} download>
-        Download Document OCR JSON
-      </a>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+        <a className="inline-block rounded-lg border border-slate-350 bg-white hover:bg-slate-55 px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors" href={api.ocrJsonUrl(applicationId)} download>
+          Download Document OCR JSON
+        </a>
+        <a className="inline-block rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 px-5 py-2 text-sm font-semibold text-blue-750 shadow-sm transition-colors" href={api.summaryReportUrl(applicationId)} download>
+          Download One-Page Summary Report (HTML)
+        </a>
+      </div>
     </section>
   );
 }
