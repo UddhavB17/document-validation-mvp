@@ -1,6 +1,7 @@
 """Reviewer decision API routes."""
 
 from datetime import datetime, timedelta
+from typing import Final
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -11,8 +12,8 @@ from services.reviewer import compute_final_status
 
 router = APIRouter(prefix="/decision", tags=["decision"])
 
-VALID_DECISIONS = {"ACCEPT", "OVERRIDE", "REQUEST_DOCS"}
-STATUS_BY_DECISION = {
+VALID_DECISIONS: Final = frozenset({"ACCEPT", "OVERRIDE", "REQUEST_DOCS"})
+STATUS_BY_DECISION: Final = {
     "ACCEPT": "verified",
     "OVERRIDE": "verified_with_override",
     "REQUEST_DOCS": "incomplete",
@@ -53,7 +54,10 @@ def create_decision(payload: DecisionRequest) -> dict[str, object]:
     reviewer_note = payload.reviewer_note.strip()
 
     if decision not in VALID_DECISIONS:
-        raise HTTPException(status_code=400, detail="Decision must be ACCEPT, OVERRIDE, or REQUEST_DOCS")
+        raise HTTPException(
+            status_code=400,
+            detail="Decision must be ACCEPT, OVERRIDE, or REQUEST_DOCS",
+        )
 
     if len(reviewer_note) <= 10:
         raise HTTPException(status_code=400, detail="Reviewer note must be more than 10 characters")

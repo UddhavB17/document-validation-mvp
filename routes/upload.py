@@ -1,19 +1,17 @@
-"""Upload API routes."""
-
-from datetime import datetime
-from io import BytesIO
 import json
-from pathlib import Path, PurePosixPath
 import logging
 import re
 import shutil
 import time
+import zipfile
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path, PurePosixPath
 from typing import Literal
 from uuid import uuid4
-import zipfile
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from database.db import get_connection, init_db
 from services.file_validator import (
@@ -22,7 +20,6 @@ from services.file_validator import (
     validate_package_upload,
     validate_upload,
 )
-from pydantic import ValidationError
 from services.company_dump_adapter import (
     CompanyDumpConversionError,
     convert_company_database_dump,
@@ -40,7 +37,11 @@ from services.progress_tracker import (
 )
 from services.pipeline import run_pipeline
 from services.verification_manifest import VerificationManifest
-from services.zip_package import PackageValidationError, load_package_metadata, normalize_zip_package
+from services.zip_package import (
+    PackageValidationError,
+    load_package_metadata,
+    normalize_zip_package,
+)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = Path("data/uploads")
@@ -55,8 +56,8 @@ class PartnerPayload(BaseModel):
     coapplicant_name: str | None = None
     product_type: str = "LAP"
     branch: str | None = None
-    digital_text: dict
-    scanned_docs: dict
+    digital_text: dict[str, object]
+    scanned_docs: dict[str, object]
 
 
 def _safe_name(value: str) -> str:

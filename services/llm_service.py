@@ -1,27 +1,28 @@
 """LLM explanation service using local/open-source HTTP APIs with TOON format."""
 
 import json
+import logging
 import re
+from typing import Any
 
 from database.db import get_connection
+from dotenv import load_dotenv
+from services.audit_service import log_action
 from services.llm_client import call_llm_api, extract_response_text as _extract_response_text
+
+logger = logging.getLogger(__name__)
 
 
 def generate_explanation(
-    anomalies: list[dict],
-    ground_truth: dict,
+    anomalies: list[dict[str, Any]],
+    ground_truth: dict[str, Any],
     application_id: int | None = None,
 ) -> str | None:
     """Generate a short operations summary from anomalies in TOON format."""
     if not anomalies:
         return None
 
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except Exception:
-        pass
+    load_dotenv()
 
     parsed = None
     try:
@@ -29,8 +30,8 @@ def generate_explanation(
         raw_text = call_llm_api(prompt)
         if raw_text:
             parsed = parse_llm_summary(raw_text)
-    except Exception as exc:
-        print(f"Error calling LLM or decoding TOON: {exc}")
+    except Exception:
+        logger.exception("Failed to generate an LLM explanation; using deterministic summary")
 
     if parsed is None:
         parsed = build_default_summary(anomalies, ground_truth)
@@ -43,17 +44,12 @@ def generate_explanation(
                 "UPDATE applications SET llm_summary = ? WHERE id = ?",
                 (json_str, application_id),
             )
-        try:
-            from services.audit_service import log_action
-
-            log_action(application_id, "llm_summary_generated", {"summary_length": len(json_str)})
-        except Exception:
-            pass
+        log_action(application_id, "llm_summary_generated", {"summary_length": len(json_str)})
 
     return json_str
 
 
-def parse_llm_summary(text: str) -> dict | None:
+def parse_llm_summary(text: str) -> dict[str, Any] | None:
     if not text:
         return None
     cleaned = text.strip()
@@ -65,6 +61,7 @@ def parse_llm_summary(text: str) -> dict | None:
 
     try:
         from toon import decode
+
         parsed = decode(cleaned)
         if isinstance(parsed, dict) and "overall_summary" in parsed:
             # Normalize list formatting
@@ -78,11 +75,14 @@ def parse_llm_summary(text: str) -> dict | None:
                             page_sum["summary_points"] = [str(points)]
             return parsed
     except Exception as exc:
-        print(f"TOON decode error: {exc}")
+        logger.warning("Failed to decode the LLM summary as TOON: %s", exc)
     return None
 
 
-def build_default_summary(anomalies: list[dict], ground_truth: dict) -> dict:
+def build_default_summary(
+    anomalies: list[dict[str, Any]],
+    ground_truth: dict[str, Any],
+) -> dict[str, Any]:
     page_summaries = []
     for anomaly in anomalies:
         page_num = anomaly.get("page_number")
@@ -132,14 +132,14 @@ def build_default_summary(anomalies: list[dict], ground_truth: dict) -> dict:
     }
 
 
-def summarize_exceptions(exceptions: list[dict]) -> str | None:
+def summarize_exceptions(exceptions: list[dict[str, Any]]) -> str | None:
     if not exceptions:
         return None
     default_summary = build_default_summary(exceptions, {})
     return json.dumps(default_summary, ensure_ascii=False)
 
 
-def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
+def _build_prompt(anomalies: list[dict[str, Any]], ground_truth: dict[str, Any]) -> str:
     loan_id = ground_truth.get("loan_id", "")
     applicant_name = ground_truth.get("applicant_name", "")
     return (
@@ -158,5 +158,3 @@ def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
         "Anomalies detected:\n"
         f"{json.dumps(anomalies, indent=2)}\n"
     )
-
-

@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any, Callable, TypeVar
+
+from database.db import get_connection
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T", int, float)
 
-_PROFILE_DEFAULTS = {
+TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+_PROFILE_DEFAULTS: dict[str, dict[str, float | int]] = {
     "fast": {
         "min_classification_confidence": 0.50,
         "min_scanned_ocr_confidence": 0.60,
@@ -41,58 +50,70 @@ _PROFILE_DEFAULTS = {
 
 
 def get_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is not None:
-        return raw.strip().lower() in {"1", "true", "yes", "on"}
-    db_key = name.lower().replace("_", ".")
-    db_val = get_setting(db_key)
-    if db_val is not None:
-        return bool(db_val)
-    return default
+    value = _configured_value(name)
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in TRUE_VALUES
 
 
-def get_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
-    raw = os.getenv(name)
-    if raw is not None:
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = default
-    else:
-        db_key = name.lower().replace("_", ".")
-        db_val = get_setting(db_key)
-        if db_val is not None:
-            try:
-                value = int(db_val)
-            except (TypeError, ValueError):
-                value = default
-        else:
-            value = default
-
-    if minimum is not None:
-        value = max(minimum, value)
-    if maximum is not None:
-        value = min(maximum, value)
-    return value
+def get_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    return _bounded_number(
+        name,
+        default,
+        converter=int,
+        minimum=minimum,
+        maximum=maximum,
+    )
 
 
-def get_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
-    raw = os.getenv(name)
-    if raw is not None:
-        try:
-            value = float(raw)
-        except (TypeError, ValueError):
-            value = default
-    else:
-        db_key = name.lower().replace("_", ".")
-        db_val = get_setting(db_key)
-        if db_val is not None:
-            try:
-                value = float(db_val)
-            except (TypeError, ValueError):
-                value = default
-        else:
-            value = default
+def get_float(
+    name: str,
+    default: float,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    return _bounded_number(
+        name,
+        default,
+        converter=float,
+        minimum=minimum,
+        maximum=maximum,
+    )
+
+
+def _configured_value(name: str) -> Any:
+    """Read an environment override, then the matching database setting."""
+    raw_environment_value = os.getenv(name)
+    if raw_environment_value is not None:
+        return raw_environment_value
+
+    database_key = name.lower().replace("_", ".")
+    return get_setting(database_key)
+
+
+def _bounded_number(
+    name: str,
+    default: T,
+    *,
+    converter: Callable[[Any], T],
+    minimum: T | None = None,
+    maximum: T | None = None,
+) -> T:
+    """Parse and clamp a numeric setting from the configured sources."""
+    configured_value = _configured_value(name)
+    try:
+        value = converter(configured_value) if configured_value is not None else default
+    except (TypeError, ValueError):
+        value = default
 
     if minimum is not None:
         value = max(minimum, value)
@@ -183,49 +204,58 @@ def log_effective_config() -> None:
 
 
 def get_setting(key: str, default: Any = None) -> Any:
-    """Read a setting from environment first (for overrides/tests), then system_settings DB table, with fallback to default."""
-    import json
-    
+    """Read a setting from environment, then ``system_settings``."""
     env_key = key.upper().replace(".", "_")
     env_val = os.getenv(env_key)
     if env_val is not None:
-        val_lower = env_val.strip().lower()
-        if val_lower in {"true", "yes", "on", "1"}:
+        normalized_value = env_val.strip().lower()
+        if normalized_value in TRUE_VALUES:
             return True
-        if val_lower in {"false", "no", "off", "0"}:
+        if normalized_value in FALSE_VALUES:
             return False
-        if val_lower.startswith("[") or val_lower.startswith("{"):
+        if normalized_value.startswith(("[", "{")):
             try:
                 return json.loads(env_val)
-            except Exception:
-                pass
+            except json.JSONDecodeError:
+                logger.warning("Invalid JSON value for setting %r; treating it as text", key)
         try:
             if "." in env_val:
                 return float(env_val)
             return int(env_val)
-        except ValueError:
+        except (TypeError, ValueError):
             return env_val
 
-    from database.db import get_connection
     try:
-        with get_connection() as conn:
-            row = conn.execute(
-                "SELECT config_value, value_type FROM system_settings WHERE config_key = ?",
-                (key,)
-            ).fetchone()
-            if row:
-                val = row["config_value"]
-                val_type = row["value_type"]
-                if val_type == "bool":
-                    return val.strip().lower() in ("1", "true", "yes", "on")
-                elif val_type == "int":
-                    return int(val)
-                elif val_type == "float":
-                    return float(val)
-                elif val_type == "json":
-                    return json.loads(val)
-                return val
+        return _database_setting(key, default)
     except Exception as exc:
-        logger.warning("Failed to load setting %r from database: %s; using default %r", key, exc, default)
-    
+        logger.warning(
+            "Failed to load setting %r from database: %s; using default %r",
+            key,
+            exc,
+            default,
+        )
     return default
+
+
+def _database_setting(key: str, default: Any) -> Any:
+    """Load and type-convert one value from the settings table."""
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT config_value, value_type FROM system_settings WHERE config_key = ?",
+            (key,),
+        ).fetchone()
+
+    if row is None:
+        return default
+
+    raw_value = row["config_value"]
+    value_type = row["value_type"]
+    if value_type == "bool":
+        return str(raw_value).strip().lower() in TRUE_VALUES
+    if value_type == "int":
+        return int(raw_value)
+    if value_type == "float":
+        return float(raw_value)
+    if value_type == "json":
+        return json.loads(raw_value)
+    return raw_value

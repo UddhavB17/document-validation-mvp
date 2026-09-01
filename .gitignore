@@ -20,6 +20,8 @@ data/pages/*
 data/reports/*
 data/dmef.db
 data/dmef.db-*
+data/dmef.db.bak-*
+data/.job_input.key
 database.db
 data/database.db
 data/paddlex_cache/*

@@ -123,7 +123,7 @@ def test_run_pipeline_saves_rule_summary_when_llm_fails(
     pdf_path = tmp_path / "application.pdf"
     output_dir = tmp_path / "processed"
     monkeypatch.setattr(db, "DATABASE_PATH", db_path)
-    monkeypatch.setattr("services.pipeline.generate_explanation", lambda *args, **kwargs: None)
+    monkeypatch.setattr("services.pipeline.orchestrator.generate_explanation", lambda *args, **kwargs: None)
     _create_application_pdf(pdf_path)
 
     init_db()
@@ -176,7 +176,7 @@ def test_run_pipeline_continues_when_page_processing_errors(
     output_dir = tmp_path / "processed"
     monkeypatch.setattr(db, "DATABASE_PATH", db_path)
     _create_application_pdf(pdf_path)
-    monkeypatch.setattr("services.pipeline.extract_fields", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr("services.pipeline.page_processing.extract_fields", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
 
     init_db()
     with get_connection() as connection:
@@ -239,7 +239,7 @@ def test_run_pipeline_marks_partial_scan_and_preserves_skipped_readability(
     _create_blank_scanned_pdf(pdf_path, pages=5)
 
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "Permanent Account Number ABCDE1234F",
             "is_readable": True,
@@ -306,7 +306,7 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
     _create_blank_scanned_pdf(pdf_path, pages=1)
 
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "",
             "is_readable": False,
@@ -360,7 +360,7 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
 
 def test_build_page_records_routes_photo_without_classification(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "",
             "is_readable": False,
@@ -374,7 +374,7 @@ def test_build_page_records_routes_photo_without_classification(monkeypatch: pyt
         },
     )
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("classification should be skipped")),
     )
 
@@ -390,7 +390,7 @@ def test_build_page_records_routes_photo_without_classification(monkeypatch: pyt
 
 def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "rent paid 4500",
             "is_readable": True,
@@ -416,7 +416,7 @@ def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest
 
 def test_build_page_records_marks_only_starting_json_as_db_data(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "services.pipeline.classify_with_structured_llm",
+        "services.pipeline.page_processing.classify_with_structured_llm",
         lambda **_kwargs: None,
     )
 
@@ -434,18 +434,18 @@ def test_build_page_records_does_not_mark_normal_digital_document_as_db_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (
             {"document_type": "Application Form", "confidence": 0.95},
             {"source": "test_classifier"},
         ),
     )
     monkeypatch.setattr(
-        "services.pipeline.extract_fields",
+        "services.pipeline.page_processing.extract_fields",
         lambda document_type, _text: {"applicant_name": "Ramesh Kumar"} if document_type == "Application Form" else {},
     )
     monkeypatch.setattr(
-        "services.pipeline.classify_with_structured_llm",
+        "services.pipeline.page_processing.classify_with_structured_llm",
         lambda **_kwargs: None,
     )
 
@@ -472,15 +472,15 @@ def test_build_page_records_does_not_mark_later_json_page_as_db_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (
             {"document_type": "Unknown", "confidence": 0.0},
             {"source": "test_classifier"},
         ),
     )
-    monkeypatch.setattr("services.pipeline.extract_fields", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("services.pipeline.page_processing.extract_fields", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
-        "services.pipeline.classify_with_structured_llm",
+        "services.pipeline.page_processing.classify_with_structured_llm",
         lambda **_kwargs: None,
     )
 

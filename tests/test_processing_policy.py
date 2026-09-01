@@ -78,7 +78,7 @@ def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> N
         ocr_calls.append(image_path)
         return {"ocr_text": "Permanent Account Number ABCDE1234F", "is_readable": True, "confidence": 0.95}
 
-    monkeypatch.setattr("services.pipeline.run_ocr_on_page", fake_ocr)
+    monkeypatch.setattr("services.pipeline.page_processing.run_ocr_on_page", fake_ocr)
 
     pages = _build_page_records(_scanned_pages(5), {})
 
