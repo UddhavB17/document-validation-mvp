@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from database.db import get_connection
 from services.config import get_int
-
 
 ACTIVE_PROGRESS_STATES = frozenset({"queued", "processing", "pause_requested"})
 RETRYABLE_PROGRESS_STATES = frozenset(
@@ -17,7 +16,7 @@ RETRYABLE_PROGRESS_STATES = frozenset(
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _audit(application_id: int, action: str, details: dict[str, Any]) -> None:
@@ -390,9 +389,9 @@ def _is_stale_timestamp(value: Any) -> bool:
     except ValueError:
         return False
     if updated.tzinfo is None:
-        updated = updated.replace(tzinfo=timezone.utc)
+        updated = updated.replace(tzinfo=UTC)
     stale_minutes = get_int("DMEF_STALE_JOB_MINUTES", 30, minimum=1)
-    return (datetime.now(timezone.utc) - updated).total_seconds() > stale_minutes * 60
+    return (datetime.now(UTC) - updated).total_seconds() > stale_minutes * 60
 
 
 def create_pipeline_job(
@@ -476,7 +475,7 @@ def _estimate_eta_seconds(progress: dict[str, Any]) -> int | None:
         started = datetime.fromisoformat(str(started_at))
     except ValueError:
         return None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     elapsed_seconds = max(1.0, (now - started).total_seconds())
     seconds_per_page = elapsed_seconds / processed_pages
     remaining_pages = max(0, total_pages - processed_pages)

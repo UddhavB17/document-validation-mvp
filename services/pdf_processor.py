@@ -15,10 +15,9 @@ from typing import TypedDict
 
 import fitz  # PyMuPDF
 
-from services.config import get_float, get_int
+from services.config import get_float
 from services.image_limits import downscale_if_needed, max_image_side_px
 from services.processing_policy import selected_scanned_page_numbers
-
 
 # ---------------------------------------------------------------------------
 # Public API

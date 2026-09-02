@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from pathlib import Path, PurePosixPath
+from typing import Any
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
 import fitz
 from openpyxl import load_workbook
 
 from services.config import get_int
-
 
 ALLOWED_PACKAGE_EXTENSIONS = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".xlsx"})
 MACOS_METADATA_NAMES = frozenset({".DS_Store"})

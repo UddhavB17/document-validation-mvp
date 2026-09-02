@@ -89,7 +89,7 @@ class VerificationManifest(BaseModel):
         return payload
 
     @model_validator(mode="after")
-    def validate_relationships(self) -> "VerificationManifest":
+    def validate_relationships(self) -> VerificationManifest:
         normalized_people: dict[str, PersonReference] = {}
         for key, person in self.people.items():
             person_id = str(key).strip()

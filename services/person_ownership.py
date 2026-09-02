@@ -15,9 +15,17 @@ from typing import Any
 
 from services.cersai import (
     ASSET_BASED as CERSAI_ASSET_BASED,
+)
+from services.cersai import (
     DEBTOR_BASED as CERSAI_DEBTOR_BASED,
+)
+from services.cersai import (
     UNKNOWN as CERSAI_UNKNOWN,
+)
+from services.cersai import (
     report_search_type as detect_cersai_report_search_type,
+)
+from services.cersai import (
     search_type as detect_cersai_search_type,
 )
 from services.identifiers import plausible_aadhaar_digits

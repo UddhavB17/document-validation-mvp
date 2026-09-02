@@ -1,6 +1,5 @@
 from services.company_dump_adapter import convert_company_database_dump
 
-
 RAW_DUMP = """
 Loan Application: RJ000028546
 --- START RAW DATABASE JSON DUMP ---

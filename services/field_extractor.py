@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
 from services.bureau_scores import has_explicit_no_score_evidence
@@ -2586,8 +2586,6 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
 
     Also flags expired licences via 'is_expired' key.
     """
-    t = text.lower()
-
     # DL number: 2 uppercase letters + 2 digits + optional space + 11 digits
     # (\b does not work between \d and \D reliably, so we anchor with lookahead/lookbehind)
     dl_match = re.search(r"(?<![A-Z0-9])([A-Z]{2}\d{2}\s?\d{11})(?![A-Z0-9])", text)
@@ -2774,7 +2772,6 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         return {
             "_validation_blocked_reason": "amortization_schedule_not_bank_statement",
         }
-    t = text.lower()
     account_match = re.search(
         r"(?:account\s*(?:number|no\.?|#)|a/c\s*(?:no\.?|number)?)\s*[:\-–]?\s*([0-9Xx* ]{6,24})",
         text,
@@ -3024,7 +3021,6 @@ def _statement_holder_after_title(text: str) -> str | None:
 
 def _extract_passbook(text: str) -> dict[str, Any]:
     """Extract fields from a bank passbook page."""
-    t = text.lower()
     stacked_name_branch = re.search(
         r"(?:name|नाम)\s*:\s*\n\s*([0-9Xx* ]{6,24})\s*\n"
         r"[^\n]*(?:branch|शाखा)\s*:\s*([A-Z][A-Z .'-]{3,70})\s*\n"

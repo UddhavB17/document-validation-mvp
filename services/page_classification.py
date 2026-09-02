@@ -7,13 +7,13 @@ from typing import Any
 
 from services.bureau_anchors import classify_credit_bureau_by_anchors
 from services.document_classifier import classify_page
-from services.validation_gates import has_intrinsic_aadhaar_evidence
 from services.llm_page_classifier import (
     classify_page_with_llm,
     is_llm_page_classifier_enabled,
     llm_classifier_max_pages_per_file,
     needs_llm_classification,
 )
+from services.validation_gates import has_intrinsic_aadhaar_evidence
 
 
 class LlmClassifierBudget:

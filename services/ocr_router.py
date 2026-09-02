@@ -6,18 +6,19 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.config import get_float, get_int, get_setting
 from services.document_classifier import document_type_config
 from services.low_memory import ocr_force_fast_path
-from services.offline_ocr_languages import normalize_paddle_language, recognition_model_for_language
 from services.ocr_engine import run_ocr_on_page
+from services.offline_ocr_languages import normalize_paddle_language, recognition_model_for_language
 
 logger = logging.getLogger(__name__)
 

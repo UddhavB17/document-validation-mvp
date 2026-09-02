@@ -3,9 +3,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import fitz
 import pytest
-from PIL import Image
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
+from PIL import Image
 
 from services.zip_package import PackageValidationError, normalize_zip_package
 

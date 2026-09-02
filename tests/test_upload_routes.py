@@ -1,8 +1,7 @@
-from io import BytesIO
 import json
-from pathlib import Path
 import zipfile
-from types import SimpleNamespace
+from io import BytesIO
+from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi.testclient import TestClient

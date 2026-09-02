@@ -1,7 +1,7 @@
 from services.checklist_engine import run_checks
 from services.consistency_checks import _matches, run_consistency_checks
-from services.field_verification import verify_address
 from services.field_extractor import extract_fields
+from services.field_verification import verify_address
 from services.page_quality import is_confident_document_match
 
 

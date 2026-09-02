@@ -6,7 +6,6 @@ import os
 
 import requests
 
-
 DEFAULT_OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LOCAL_MODEL = "llama3.1"

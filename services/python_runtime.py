@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 
-
 REQUIRED_MAJOR = 3
 REQUIRED_MINOR = 11
 

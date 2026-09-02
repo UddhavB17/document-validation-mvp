@@ -14,7 +14,6 @@ import unicodedata
 from collections import Counter
 from typing import Any
 
-
 _NUMBER = r"(?:\d[\d,]*(?:\.\d{1,2})?)"
 _ROW_PATTERN = re.compile(
     rf"(?<![\d.])(\d{{1,3}})\s+(?:Rs\.?\s*|INR\s*|₹\s*)?({_NUMBER})"

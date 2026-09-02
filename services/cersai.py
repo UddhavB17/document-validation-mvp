@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 DEBTOR_BASED = "debtor_based"
 ASSET_BASED = "asset_based"
 UNKNOWN = "unknown"

@@ -6,6 +6,11 @@ import re
 from typing import Any
 
 from services.cersai import starts_new_report as cersai_starts_new_report
+from services.person_names import (
+    has_independent_identity_anchor,
+    is_person_name_candidate,
+    name_similarity,
+)
 from services.person_ownership import (
     MULTI_PERSON_DOCUMENT_TYPES,
     bank_statement_has_holder_evidence,
@@ -13,14 +18,6 @@ from services.person_ownership import (
     document_requires_person_owner,
     resolve_person_owner,
 )
-
-from services.person_names import (
-    has_independent_identity_anchor,
-    is_person_name_candidate,
-    name_similarity,
-)
-from services.validation_gates import field_reliable_for_validation
-
 
 IGNORED_DOCUMENT_TYPES = {
     "",

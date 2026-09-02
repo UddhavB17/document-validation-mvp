@@ -11,6 +11,8 @@ from database.models import FieldVerificationResult
 from services.config import get_bool
 from services.structured_llm_classifier import (
     LOCAL_DEFAULT_URL as _LOCAL_DEFAULT_URL,
+)
+from services.structured_llm_classifier import (
     REMOTE_DEFAULT_URL as _REMOTE_DEFAULT_URL,
 )
 

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any
 
-
 NAME_FIELD_ALIASES = {
     "name",
     "full_name",

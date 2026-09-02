@@ -24,7 +24,6 @@ from typing import Any, TypedDict
 
 import fitz  # PyMuPDF
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -362,7 +361,7 @@ def _clean_name_candidate(value: str) -> str | None:
     return candidate
 
 
-def _page_layout_cells(fitz_page: "fitz.Page", page_index: int) -> list[_LayoutCell]:
+def _page_layout_cells(fitz_page: fitz.Page, page_index: int) -> list[_LayoutCell]:
     try:
         words = fitz_page.get_text("words")
     except Exception:  # noqa: BLE001

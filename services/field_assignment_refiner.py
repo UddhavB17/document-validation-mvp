@@ -13,7 +13,6 @@ from toon import decode, encode
 from services.config import get_bool
 from services.llm_client import llm_provider
 from services.person_names import canonicalize_person_name, is_name_field
-from services.validation_gates import is_aadhaar_verification_appendix
 from services.structured_llm_classifier import (
     DEFAULT_MODEL,
     _call_ollama_generate,
@@ -21,6 +20,7 @@ from services.structured_llm_classifier import (
     _classifier_timeout_seconds,
     _is_ollama_available,
 )
+from services.validation_gates import is_aadhaar_verification_appendix
 
 _MAX_TEXT_CHARS = 3500
 

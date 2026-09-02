@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Protocol
 
-from services.verification_manifest import IndexedDocument, VerificationManifest
 from services.company_data_provider import CompanyReferenceData
+from services.verification_manifest import IndexedDocument, VerificationManifest
 
 
 class DocumentIndexProvider(Protocol):

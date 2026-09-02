@@ -6,7 +6,7 @@ import logging
 import sys
 import time
 
-from services.progress_tracker import mark_page_started, update_page_progress
+from services.progress_tracker import mark_page_started
 
 logger = logging.getLogger("dmef.pipeline")
 

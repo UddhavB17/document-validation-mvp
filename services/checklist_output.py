@@ -11,7 +11,6 @@ from database.models import (
     ChecklistSummary,
     ChecklistVerificationResponse,
 )
-from services.checklist_service import get_all_checklist_items
 from services.checklist_engine import (
     _document_derived_system_data,
     _document_evidence_count,
@@ -19,6 +18,7 @@ from services.checklist_engine import (
     condition_applies,
     system_flag_state,
 )
+from services.checklist_service import get_all_checklist_items
 from services.page_quality import confident_pages_for_types
 
 

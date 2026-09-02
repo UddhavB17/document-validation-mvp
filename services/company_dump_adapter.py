@@ -6,7 +6,6 @@ import json
 import re
 from typing import Any
 
-
 SMART_QUOTES = str.maketrans({"\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'"})
 MISSING_VALUES = {"", "-", "na", "n/a", "none", "null", "not provided"}
 

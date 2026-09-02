@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database.models import initialize_schema
-from routes import decisions, review, upload, verification, settings
+from routes import decisions, review, settings, upload, verification
 from services.config import log_effective_config
 from services.low_memory import apply_low_memory_defaults
 
@@ -72,12 +72,12 @@ def health_check() -> dict[str, str]:
 @app.post("/shutdown", tags=["meta"])
 def shutdown() -> dict[str, str]:
     """Gracefully shutdown Next.js UI and FastAPI backend."""
-    import threading
-    import time
-    import subprocess
     import os
     import signal
+    import subprocess
     import sys
+    import threading
+    import time
 
     def perform_shutdown():
         time.sleep(0.5)  # Wait for the API response to be sent

@@ -6,14 +6,13 @@ deduplicated, priority-sorted list ready for the report generator.
 
 from __future__ import annotations
 
-_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
-
 import json
 
 from database.db import get_connection
 from services.processing_policy import is_internal_document_type
 from services.reviewer import compute_final_status
 
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
 

@@ -2,14 +2,14 @@
 
 import logging
 import os
+import re
 from datetime import date, datetime, timedelta
 from math import ceil
-import re
 from typing import Any
 
 from services import checklist_service
-from services.consistency_checks import run_consistency_checks
 from services.config import effective_config
+from services.consistency_checks import run_consistency_checks
 from services.page_quality import confident_pages_for_types, is_confident_document_match
 from services.person_names import is_person_name_candidate
 from services.processing_policy import is_ocr_skipped_page

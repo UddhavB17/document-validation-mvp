@@ -9,6 +9,15 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from services.bureau_scores import has_explicit_no_score_evidence
+from services.document_classifier import (
+    is_insurance_application_context,
+    is_insurer_local_application_identifier,
+)
+from services.field_verification import address_with_relationship
+from services.language_detection import (
+    analyze_text_languages,
+    normalize_language_code,
+)
 from services.person_names import (
     canonicalize_person_name,
     comparable_name,
@@ -16,16 +25,7 @@ from services.person_names import (
     name_similarity,
     names_match,
 )
-from services.document_classifier import (
-    is_insurance_application_context,
-    is_insurer_local_application_identifier,
-)
-from services.field_verification import address_with_relationship
 from services.validation_gates import field_reliable_for_validation
-from services.language_detection import (
-    analyze_text_languages,
-    normalize_language_code,
-)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1178,7 +1178,9 @@ def _relationship_name_matches(left: Any, right: Any) -> bool:
         # Mohammad/Mohammed). A shared two-character consonant skeleton is
         # acceptable here only because the full relationship comparison also
         # requires another aligned name token.
-        consonants = lambda token: re.sub(r"[aeiouy]", "", token.casefold())
+        def consonants(token: str) -> str:
+            return re.sub(r"[aeiouy]", "", token.casefold())
+
         left_skeleton = consonants(short_token)
         right_skeleton = consonants(long_token)
         return len(left_skeleton) >= 2 and left_skeleton == right_skeleton
@@ -1489,6 +1491,7 @@ def _plausible_adult_date_of_birth(value: Any) -> bool:
         return False
     try:
         from datetime import date
+
         from dateutil import parser
 
         parsed = parser.parse(str(value), dayfirst=True).date()
@@ -1684,6 +1687,7 @@ def _matches(field: str, left: Any, right: Any) -> bool:
     if field in DATE_FIELDS:
         try:
             from datetime import date
+
             from dateutil import parser
 
             def parse_date(value: Any) -> date:

@@ -7,7 +7,7 @@ import json
 import os
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,7 +15,6 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from database import db
 from database.db import get_connection
-
 
 ControlAction = Literal["pause", "resume", "cancel"]
 _ACTIVE_JOB_STATUSES = frozenset({"queued", "running", "pause_requested", "paused"})
@@ -42,7 +41,7 @@ class PipelineCancelled(RuntimeError):
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _fernet() -> Fernet:

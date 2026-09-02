@@ -14,7 +14,6 @@ from services.consistency_checks import (
     _people,
 )
 
-
 _GLOBAL_COMPARABLE_FIELDS = LOAN_FIELDS | {
     "branch",
     "case_type",

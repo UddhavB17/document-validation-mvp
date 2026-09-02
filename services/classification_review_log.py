@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from database.db import get_connection
@@ -46,6 +46,6 @@ def log_classification_review_event(
                 reason,
                 json.dumps(anchor_match_results or {}, ensure_ascii=False),
                 llm_document_type,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )

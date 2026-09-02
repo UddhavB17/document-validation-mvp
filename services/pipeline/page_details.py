@@ -9,8 +9,8 @@ from typing import Any
 from services.field_assignment_refiner import refine_field_assignments
 from services.field_extractor import extract_fields
 from services.job_control import mark_checkpoint
-from services.progress_tracker import record_page_completed
 from services.pipeline.persistence import _save_page_checkpoint
+from services.progress_tracker import record_page_completed
 
 
 def _extract_fields_with_layout(

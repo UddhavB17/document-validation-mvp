@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # PDF helpers (reused from pdf_processor test style)
 # ---------------------------------------------------------------------------

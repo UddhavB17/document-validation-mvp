@@ -11,10 +11,7 @@ from typing import Any
 from services.classification_review_log import log_classification_review_event
 from services.document_classifier import HIGH_CONFIDENCE
 from services.person_names import has_independent_identity_anchor
-from services.progress_tracker import record_page_completed, update_stage
-from services.validation_gates import attach_field_provenance
 from services.pipeline._shared import (
-    DOCUMENT_TYPE_ALIASES,
     _EMAIL_ADDRESS_RE,
     _EMAIL_INFERRED_EVIDENCE_TYPES,
     _FILENAME_IDENTITY_TYPE_ANCHORS,
@@ -24,8 +21,11 @@ from services.pipeline._shared import (
     _NO_PAGE_INHERITANCE_TYPES,
     _NO_SANDWICH_SMOOTHING_TYPES,
     _ONE_PAGE_INHERITANCE_TYPES,
+    DOCUMENT_TYPE_ALIASES,
 )
 from services.pipeline.page_details import _extract_fields_with_layout
+from services.progress_tracker import record_page_completed
+from services.validation_gates import attach_field_provenance
 
 try:  # pragma: no cover - exercised when rapidfuzz is available
     from rapidfuzz import fuzz
@@ -63,7 +63,6 @@ def _apply_smoothed_document_type(
     page["detection_method"] = method
 
     text = page.get("ocr_text", "")
-    from services.field_extractor import extract_fields
     from services.field_assignment_refiner import refine_field_assignments
 
     extracted_fields = _extract_fields_with_layout(

@@ -1,35 +1,36 @@
 """Upload API routes."""
 
-from datetime import datetime
-from io import BytesIO
 import json
-from pathlib import Path, PurePosixPath
 import logging
 import re
 import shutil
 import time
+import zipfile
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path, PurePosixPath
 from typing import Literal
 from uuid import uuid4
-import zipfile
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from database.db import get_connection, init_db
+from services.company_dump_adapter import (
+    CompanyDumpConversionError,
+    convert_company_database_dump,
+    is_company_database_dump,
+)
 from services.file_validator import (
     max_file_size_bytes,
     validate_file,
     validate_package_upload,
     validate_upload,
 )
-from pydantic import ValidationError
-from services.company_dump_adapter import (
-    CompanyDumpConversionError,
-    convert_company_database_dump,
-    is_company_database_dump,
-)
-from services.job_runner import submit_job
 from services.job_control import PipelineCancelled, persist_job_input_or_fail
+from services.job_runner import submit_job
+from services.paths import upload_dir
+from services.pipeline import run_pipeline
 from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
@@ -39,8 +40,6 @@ from services.progress_tracker import (
     mark_job_started,
     start_tracking,
 )
-from services.pipeline import run_pipeline
-from services.paths import upload_dir
 from services.verification_manifest import VerificationManifest
 from services.zip_package import (
     PackageValidationError,

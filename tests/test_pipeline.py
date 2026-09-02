@@ -1,19 +1,19 @@
-from pathlib import Path
 import os
+from pathlib import Path
 
 import pytest
 
 import database.db as db
 from database.db import get_connection, init_db
-from services.pipeline import run_pipeline
+from services.ocr_router import OCRRouter
 from services.pipeline import (
     _build_page_records,
     _build_page_reuse_map,
     _build_unsupported_page_records,
     _clone_reused_page,
     _ensure_page_has_json_details,
+    run_pipeline,
 )
-from services.ocr_router import OCRRouter
 
 
 @pytest.fixture(autouse=True)

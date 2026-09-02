@@ -14,7 +14,6 @@ from services.validation_gates import (
     has_passbook_anchor,
 )
 
-
 _DOCUMENT_TYPE_ALIASES: dict[str, set[str]] = {
     "Technical Clearance Report": {"Technical Report"},
 }

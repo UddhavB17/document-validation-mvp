@@ -9,7 +9,8 @@ ambiguous.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from services.field_verification import (
     verify_aadhaar,
@@ -21,7 +22,6 @@ from services.field_verification import (
     verify_pincode,
 )
 from services.person_names import is_person_name_candidate
-
 
 RECOVERABLE_TRUSTED_FIELDS = frozenset(
     {

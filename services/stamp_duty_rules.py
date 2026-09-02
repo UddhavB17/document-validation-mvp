@@ -8,15 +8,14 @@ compliance owners supply the rule records; this module never guesses a rate.
 
 from __future__ import annotations
 
-from datetime import date
-from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
-from functools import lru_cache
 import json
 import os
-from pathlib import Path
 import re
+from datetime import date
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
-
 
 DEFAULT_RULES_PATH = Path(__file__).resolve().parents[1] / "data" / "stamp_duty_rules.json"
 

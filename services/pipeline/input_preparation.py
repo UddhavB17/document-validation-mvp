@@ -7,8 +7,9 @@ from typing import Any
 
 import fitz
 
-from services.text_extractor import extract_digital_text
 from services.pipeline.page_details import _build_db_data_fields, _is_starting_json_db_page
+from services.text_extractor import extract_digital_text
+
 
 
 def _mapped_ground_truth(

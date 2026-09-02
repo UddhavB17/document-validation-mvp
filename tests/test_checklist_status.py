@@ -1,6 +1,6 @@
 from services.checklist_engine import check_presence_min_count, run_checks
-from services.checklist_status import build_checklist_status
 from services.checklist_service import get_all_checklist_items
+from services.checklist_status import build_checklist_status
 
 
 def test_presence_min_count_requires_two_pages() -> None:

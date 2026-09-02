@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 PHOTO_MIN_CHARS = 40
 PHOTO_MAX_CONFIDENCE = 0.35
 HANDWRITTEN_MAX_CONFIDENCE = 0.62

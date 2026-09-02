@@ -12,12 +12,10 @@ Strategy
 from __future__ import annotations
 
 from pathlib import Path
-import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Image creation helpers (no PDF or OCR dependency)

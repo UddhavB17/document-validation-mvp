@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 
-
 # Language abbreviations are PaddleOCR's public ``lang`` values.  Some differ
 # from standard BCP-47 codes (for example, Magahi is ``mah`` in PaddleOCR).
 DEVANAGARI_LANGUAGES = frozenset(

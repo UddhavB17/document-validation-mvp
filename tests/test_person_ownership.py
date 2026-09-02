@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from services.consistency_checks import run_consistency_checks
+from services.field_extractor import extract_fields
 from services.person_ownership import (
     assign_page_owners,
     name_matches_trusted_person,
     ownership_anomalies_for_unassigned,
     resolve_person_owner,
 )
-from services.field_extractor import extract_fields
-
 
 PEERU_FAMILY = {
     "primary": {

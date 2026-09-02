@@ -1,12 +1,12 @@
 import json
 
+from services.exception_aggregator import aggregate
 from services.pipeline import _build_page_records
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
     full_scan_ocr_enabled,
     selected_scanned_page_numbers,
 )
-from services.exception_aggregator import aggregate
 
 
 def _scanned_pages(count: int) -> list[dict]:

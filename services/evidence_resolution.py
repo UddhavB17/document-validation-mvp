@@ -20,7 +20,6 @@ from services.identifiers import plausible_aadhaar_digits
 from services.person_ownership import MULTI_PERSON_DOCUMENT_TYPES, resolve_person_owner
 from services.validation_gates import attach_field_provenance
 
-
 UNKNOWN_TYPES = {"", "none", "unknown", "ocr skipped"}
 _PAN_RE = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
 _AADHAAR_RE = re.compile(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)")

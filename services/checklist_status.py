@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.page_quality import confident_pages_for_types
 from services.checklist_engine import condition_applies, system_flag_state
+from services.page_quality import confident_pages_for_types
 
 
 def _document_types(item: dict[str, Any]) -> list[str]:

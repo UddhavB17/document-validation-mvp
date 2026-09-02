@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from services.audit_service import log_action
-from services.checklist_output import build_checklist_verification_response
 from services.exception_aggregator import aggregate
 from services.llm_service import generate_explanation, summarize_exceptions
-from services.progress_tracker import mark_completed
-from services.report_generator import build_report, save_report_json
 from services.pipeline.persistence import (
     _save_ground_truth,
     _save_llm_summary,
     _save_pages,
     _should_call_llm,
 )
+from services.progress_tracker import mark_completed
+from services.report_generator import build_report, save_report_json
+
 
 
 def _finalize_pipeline_result(

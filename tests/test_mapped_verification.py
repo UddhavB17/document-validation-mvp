@@ -1,18 +1,17 @@
-from pathlib import Path
 
 import database.db as db
-from services.automatic_document_index import build_automatic_document_index
 from database.db import get_connection, init_db
-from services.mapped_verification import compare_processed_pages, run_mapped_verification
-from services.field_extractor import extract_fields
-from services.field_verification import verify_name
-from services.reviewer import build_reviewer_summary, load_reviewer_summary
-from services.verification_manifest import VerificationManifest
+from services.automatic_document_index import build_automatic_document_index
 from services.company_data_provider import CompanyReferenceData, LocalJsonCompanyDataProvider
 from services.document_index_provider import (
     ManualDocumentIndexProvider,
     compose_verification_manifest,
 )
+from services.field_extractor import extract_fields
+from services.field_verification import verify_name
+from services.mapped_verification import compare_processed_pages, run_mapped_verification
+from services.reviewer import build_reviewer_summary, load_reviewer_summary
+from services.verification_manifest import VerificationManifest
 
 
 def _anomaly_text(anomalies: list[dict]) -> str:

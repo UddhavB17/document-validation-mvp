@@ -8,7 +8,6 @@ from typing import Any
 from services.cersai import is_debtor_based, search_criteria_text
 from services.person_names import has_independent_identity_anchor, is_person_name_candidate
 
-
 IDENTITY_FIELDS = {
     "applicant_name",
     "borrower_name",

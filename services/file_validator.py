@@ -77,7 +77,7 @@ def validate_upload(filename: str, file_size_bytes: int = 0) -> dict[str, object
     if not filename or filename.strip() == "":
         errors.append("Filename must not be empty.")
     elif suffix not in ALLOWED_EXTENSIONS:
-        errors.append(f"Only PDF files accepted")
+        errors.append("Only PDF files accepted")
 
     if file_size_bytes > max_file_size_bytes():
         errors.append(f"File too large, max {max_file_size_label()}")

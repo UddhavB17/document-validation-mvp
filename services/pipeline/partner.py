@@ -10,13 +10,6 @@ from services.document_classifier import classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.llm_service import generate_explanation, summarize_exceptions
-from services.progress_tracker import (
-    mark_completed,
-    start_tracking,
-    update_page_progress,
-    update_stage,
-)
-from services.report_generator import build_report, save_report_json
 from services.pipeline.anomalies import _pipeline_outcome, _run_checklist_with_fallback
 from services.pipeline.classification import _normalize_document_type, _smooth_page_classifications
 from services.pipeline.persistence import (
@@ -25,6 +18,13 @@ from services.pipeline.persistence import (
     _save_pages,
     _should_call_llm,
 )
+from services.progress_tracker import (
+    mark_completed,
+    start_tracking,
+    update_page_progress,
+    update_stage,
+)
+from services.report_generator import build_report, save_report_json
 
 
 def run_partner_json_pipeline(

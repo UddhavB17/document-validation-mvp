@@ -7,9 +7,9 @@ need a short actionable list, not one row per scanned page or document fragment.
 
 from __future__ import annotations
 
-from collections import Counter
 import json
 import re
+from collections import Counter
 from typing import Any
 
 from database.db import get_connection
@@ -288,7 +288,6 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
     doc_types = Counter(
         str(item.get("document_type") or "Unknown") for item in items if item.get("document_type")
     )
-    doc_preview = ", ".join(f"{name}×{count}" for name, count in doc_types.most_common(4))
     page_preview = ", ".join(map(str, pages[:8]))
     if len(pages) > 8:
         page_preview += f", … (+{len(pages) - 8} more)"

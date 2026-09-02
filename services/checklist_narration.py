@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+
 from database.models import ChecklistItem
 from services.llm_client import call_llm_messages
-
 
 CHECKLIST_NARRATION_SYSTEM_PROMPT = (
     "You are a document verification narration assistant for an Indian NBFC. "

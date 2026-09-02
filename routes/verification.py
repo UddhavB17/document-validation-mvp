@@ -10,8 +10,8 @@ from fastapi import APIRouter, HTTPException
 from database.db import get_connection, init_db
 from database.models import ChecklistVerificationResponse
 from services.checklist_output import build_checklist_verification_response
-from services.verification_report_store import load_verification_report
 from services.reviewer import load_reviewer_summary
+from services.verification_report_store import load_verification_report
 
 router = APIRouter(prefix="/verification", tags=["verification"])
 
