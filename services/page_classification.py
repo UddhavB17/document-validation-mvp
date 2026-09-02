@@ -157,7 +157,10 @@ def _llm_document_type_has_required_evidence(
         return (
             (True, None)
             if has_intrinsic_aadhaar_evidence(text)
-            else (False, "Aadhaar requires an authority heading or a labelled 12-digit Aadhaar number")
+            else (
+                False,
+                "Aadhaar requires an authority heading or a labelled 12-digit Aadhaar number",
+            )
         )
 
     if normalized_type in {"pan", "pan card"}:
@@ -175,7 +178,11 @@ def _llm_document_type_has_required_evidence(
     if normalized_type == "voter id":
         election_heading = any(
             marker in normalized
-            for marker in ("election commission of india", "electors photo identity", "भारत निर्वाचन आयोग")
+            for marker in (
+                "election commission of india",
+                "electors photo identity",
+                "भारत निर्वाचन आयोग",
+            )
         )
         return (
             (True, None)
@@ -184,9 +191,7 @@ def _llm_document_type_has_required_evidence(
         )
 
     if normalized_type == "kyc osv mark":
-        osv = bool(
-            re.search(r"\boriginal\s+seen\s+(?:and\s+)?verified\b|\bosv\b", normalized)
-        )
+        osv = bool(re.search(r"\boriginal\s+seen\s+(?:and\s+)?verified\b|\bosv\b", normalized))
         return (
             (True, None)
             if osv
@@ -216,4 +221,6 @@ def _layout_enriched_text(text: str, layout_metadata: dict[str, Any] | None) -> 
 
     if not structured_lines:
         return text
-    return "STRUCTURED PAGE CONTENT:\n" + "\n".join(structured_lines) + "\n\nFULL OCR TEXT:\n" + text
+    return (
+        "STRUCTURED PAGE CONTENT:\n" + "\n".join(structured_lines) + "\n\nFULL OCR TEXT:\n" + text
+    )

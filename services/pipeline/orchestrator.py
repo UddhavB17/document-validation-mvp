@@ -89,7 +89,10 @@ def run_pipeline(
             if "people" not in system_data:
                 system_data["people"] = ground_truth.get("reference_data")
     elif system_data:
-        ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
+        ground_truth = {
+            **system_data,
+            **{key: value for key, value in ground_truth.items() if value},
+        }
 
     # Persist validated recovery data before page work begins. This is the same
     # data the completed pipeline stores, but saving it here prevents a crash
@@ -186,7 +189,9 @@ def run_pipeline(
             },
         )
 
-    assign_page_owners(pages, {**(ground_truth or {}), **(system_data or {}), **(mapped_manifest or {})})
+    assign_page_owners(
+        pages, {**(ground_truth or {}), **(system_data or {}), **(mapped_manifest or {})}
+    )
     if mapped_manifest is not None:
         automatic_index: dict[str, Any] | None = None
         if not (mapped_manifest.get("documents") or []):
@@ -233,7 +238,9 @@ def run_pipeline(
         )
     else:
         cooperate(job_id, application_id)
-        update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
+        update_stage(
+            application_id, "verifying_documents", "Comparing OCR fields with Graviton data"
+        )
         verification_report, document_page_numbers = _run_document_verification(
             pdf_path, application_id, pages, ground_truth
         )

@@ -52,7 +52,9 @@ def get_bool(name: str, default: bool) -> bool:
     return default
 
 
-def get_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+def get_int(
+    name: str, default: int, *, minimum: int | None = None, maximum: int | None = None
+) -> int:
     raw = os.getenv(name)
     if raw is not None:
         try:
@@ -77,7 +79,9 @@ def get_int(name: str, default: int, *, minimum: int | None = None, maximum: int
     return value
 
 
-def get_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
+def get_float(
+    name: str, default: float, *, minimum: float | None = None, maximum: float | None = None
+) -> float:
     raw = os.getenv(name)
     if raw is not None:
         try:
@@ -186,14 +190,16 @@ def log_effective_config() -> None:
 _MISSING = object()
 
 # Settings UI keys: database wins over a leftover .env copy.
-_UI_MANAGED_SETTING_KEYS = frozenset({
-    "ocr.provider",
-    "llm_enabled",
-    "llm_provider",
-    "llm_model",
-    "min_confidence",
-    "classification_profile",
-})
+_UI_MANAGED_SETTING_KEYS = frozenset(
+    {
+        "ocr.provider",
+        "llm_enabled",
+        "llm_provider",
+        "llm_model",
+        "min_confidence",
+        "classification_profile",
+    }
+)
 
 
 def get_setting(key: str, default: Any = None) -> Any:

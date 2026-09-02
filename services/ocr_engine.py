@@ -56,7 +56,9 @@ def _create_paddle_structure(lang: str) -> Any:
     from paddleocr import PPStructureV3
 
     det_limit = get_int("PADDLE_OCR_DET_LIMIT_SIDE_LEN", 1280, minimum=640, maximum=2400)
-    det_model = os.getenv("PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det").strip() or "PP-OCRv5_mobile_det"
+    det_model = (
+        os.getenv("PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det").strip() or "PP-OCRv5_mobile_det"
+    )
     rec_model = recognition_model_for_language(lang)
 
     base_kwargs = {
@@ -101,9 +103,13 @@ def get_structure_models() -> dict[str, Any | None]:
     global structure_models, structure_model
     if structure_models is None:
         structure_models = _load_structure_models()
-        structure_model = structure_models.get("hi") or structure_models.get("en") or next(
-            (model for model in structure_models.values() if model is not None),
-            None,
+        structure_model = (
+            structure_models.get("hi")
+            or structure_models.get("en")
+            or next(
+                (model for model in structure_models.values() if model is not None),
+                None,
+            )
         )
     return structure_models
 
@@ -148,7 +154,9 @@ def run_ocr_on_page(image_path: str | Path) -> _OcrResult:
     is_blurry = not readability["is_readable"]
     blur_score = readability["blur_score"]
 
-    active_models = [(lang, model) for lang, model in get_structure_models().items() if model is not None]
+    active_models = [
+        (lang, model) for lang, model in get_structure_models().items() if model is not None
+    ]
     if not active_models:
         return {
             "is_readable": False,
@@ -455,7 +463,9 @@ def _merge_structure_metadata(results: list[dict[str, Any]]) -> dict[str, Any]:
         merged["structure_json"].extend(result.get("structure_json") or [])
 
     merged["header_text"] = "\n".join(_deduplicate_strings(header_texts))
-    merged["layout_blocks"] = _deduplicate_mappings(merged["layout_blocks"], ("type", "text", "bbox"))
+    merged["layout_blocks"] = _deduplicate_mappings(
+        merged["layout_blocks"], ("type", "text", "bbox")
+    )
     merged["tables"] = _deduplicate_mappings(merged["tables"])
     merged["seals"] = _deduplicate_mappings(merged["seals"])
     merged["formulas"] = _deduplicate_mappings(merged["formulas"])
@@ -511,11 +521,7 @@ def _compact_native_page(page: dict[str, Any]) -> dict[str, Any]:
     Normalized layout/table fields are persisted separately, so the compact
     native representation only needs the small, review-relevant fields below.
     """
-    return {
-        key: _json_safe(page[key])
-        for key in _NATIVE_PAGE_KEYS
-        if key in page
-    }
+    return {key: _json_safe(page[key]) for key in _NATIVE_PAGE_KEYS if key in page}
 
 
 def _json_safe(value: Any) -> Any:

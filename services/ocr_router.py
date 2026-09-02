@@ -72,7 +72,9 @@ class OCRResult(BaseModel):
             "ocr_pipeline": (
                 "Google Vision API"
                 if self.route_used == "google_vision"
-                else "PP-StructureV3" if self.route_used == "structured" else "PaddleOCR"
+                else "PP-StructureV3"
+                if self.route_used == "structured"
+                else "PaddleOCR"
             ),
             "header_text": structure.get("header_text", ""),
             "layout_blocks": structure.get("layout_regions", []),
@@ -199,10 +201,7 @@ class OCRRouter:
             )
             fast_result.requested_route = "fast"
             fast_result.routing_rationale = decision.rationale
-            if (
-                not ocr_force_fast_path()
-                and fast_result.confidence < self._confidence_threshold
-            ):
+            if not ocr_force_fast_path() and fast_result.confidence < self._confidence_threshold:
                 result = _coerce_structured_result(self._structured_processor(page_image))
                 result.escalated = True
                 result.requested_route = "fast"
@@ -224,10 +223,7 @@ class OCRRouter:
                 )
             else:
                 result = fast_result
-                if (
-                    ocr_force_fast_path()
-                    and fast_result.confidence < self._confidence_threshold
-                ):
+                if ocr_force_fast_path() and fast_result.confidence < self._confidence_threshold:
                     result.routing_rationale = (
                         f"{decision.rationale}; kept fast path despite confidence "
                         f"{fast_result.confidence:.3f} (structured escalation disabled)"
@@ -285,7 +281,10 @@ def ocr_provider() -> str:
     # Local OCR is deliberately unavailable through ordinary production
     # settings.  It must be opted into explicitly for a developer smoke test.
     local_test_mode = os.getenv("DMEF_LOCAL_OCR_TEST_MODE", "").strip().lower() in {
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     }
     if local_test_mode:
         raw = str(os.getenv("OCR_PROVIDER") or "local").strip().lower()
@@ -331,7 +330,9 @@ def _get_fast_model() -> Any:
                 "use_doc_unwarping": False,
                 "use_textline_orientation": False,
                 "lang": lang,
-                "text_detection_model_name": os.getenv("PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det"),
+                "text_detection_model_name": os.getenv(
+                    "PADDLE_OCR_DET_MODEL", "PP-OCRv5_mobile_det"
+                ),
                 "text_det_limit_side_len": get_int(
                     "PADDLE_OCR_DET_LIMIT_SIDE_LEN", 1280, minimum=640, maximum=2400
                 ),
@@ -351,7 +352,9 @@ def run_fast_ocr_on_page(page_image: str | Path) -> OCRResult:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dmef-fast-ocr")
     future = executor.submit(_predict_fast, model, page_image)
     try:
-        raw_result = list(future.result(timeout=get_int("OCR_HARD_TIMEOUT_SECONDS", 180, minimum=1)))
+        raw_result = list(
+            future.result(timeout=get_int("OCR_HARD_TIMEOUT_SECONDS", 180, minimum=1))
+        )
     except TimeoutError as exc:
         future.cancel()
         raise TimeoutError("Fast OCR exceeded its hard timeout") from exc
@@ -435,7 +438,10 @@ def _coerce_fast_result(value: OCRResult | dict[str, Any]) -> OCRResult:
         confidence=float(value.get("confidence") or 0.0),
         route_used="fast",
         bounding_boxes=list(value.get("bounding_boxes") or []),
-        char_count=int(value.get("char_count") or len(str(value.get("text") or value.get("ocr_text") or "").strip())),
+        char_count=int(
+            value.get("char_count")
+            or len(str(value.get("text") or value.get("ocr_text") or "").strip())
+        ),
         word_count=int(value.get("word_count") or 0),
         line_count=int(value.get("line_count") or 0),
         image_width=int(value.get("image_width") or 0),
@@ -463,7 +469,10 @@ def _coerce_google_vision_result(value: OCRResult | dict[str, Any]) -> OCRResult
         confidence=float(value.get("confidence") or 0.0),
         route_used="google_vision",
         bounding_boxes=list(value.get("bounding_boxes") or []),
-        char_count=int(value.get("char_count") or len(str(value.get("text") or value.get("ocr_text") or "").strip())),
+        char_count=int(
+            value.get("char_count")
+            or len(str(value.get("text") or value.get("ocr_text") or "").strip())
+        ),
         word_count=int(value.get("word_count") or 0),
         line_count=int(value.get("line_count") or 0),
         image_width=int(value.get("image_width") or 0),
@@ -491,7 +500,10 @@ def _coerce_structured_result(value: OCRResult | dict[str, Any]) -> OCRResult:
         confidence=float(value.get("confidence") or 0.0),
         route_used="structured",
         bounding_boxes=list(value.get("bounding_boxes") or []),
-        char_count=int(value.get("char_count") or len(str(value.get("text") or value.get("ocr_text") or "").strip())),
+        char_count=int(
+            value.get("char_count")
+            or len(str(value.get("text") or value.get("ocr_text") or "").strip())
+        ),
         word_count=int(value.get("word_count") or 0),
         line_count=int(value.get("line_count") or 0),
         image_width=int(value.get("image_width") or 0),
@@ -535,12 +547,12 @@ def _result_route(value: OCRResult | dict[str, Any] | None) -> str | None:
         return value.route_used
     if not isinstance(value, dict):
         return None
-    return str(
-        value.get("route_used")
-        or value.get("ocr_route")
-        or value.get("ocr_provider")
-        or ""
-    ).strip() or None
+    return (
+        str(
+            value.get("route_used") or value.get("ocr_route") or value.get("ocr_provider") or ""
+        ).strip()
+        or None
+    )
 
 
 def _record_ocr_route_event(**event: Any) -> None:

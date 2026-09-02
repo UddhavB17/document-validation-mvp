@@ -152,7 +152,10 @@ class ChecklistVerificationResponse(BaseModel):
     loan_file_id: str
     summary: ChecklistSummary
     items: list[ChecklistItem]
-    processing_metadata: ChecklistProcessingMetadata = Field(default_factory=ChecklistProcessingMetadata)
+    processing_metadata: ChecklistProcessingMetadata = Field(
+        default_factory=ChecklistProcessingMetadata
+    )
+
 
 SCHEMA_STATEMENTS = [
     """

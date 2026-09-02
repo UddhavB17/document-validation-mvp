@@ -27,7 +27,10 @@ def test_builds_contiguous_index_and_infers_people() -> None:
     )
 
     assert result["anomalies"] == []
-    assert [(item["document_type"], item["pages"], item["applicant_role"]) for item in result["documents"]] == [
+    assert [
+        (item["document_type"], item["pages"], item["applicant_role"])
+        for item in result["documents"]
+    ] == [
         ("PAN", [1], "primary"),
         ("Aadhaar", [2, 3], "coapplicant_1"),
     ]
@@ -109,19 +112,19 @@ def test_bank_statement_uses_unique_person_name_in_source_filename() -> None:
             "coapplicant_1": {"applicant_name": "Unkar Lal"},
             "coapplicant_2": {"applicant_name": "Radha Bai"},
         },
-        source_documents=[{
-            "source_document_id": "file-0016",
-            "original_filename": "LOAN/TASK/Radha bai 6 month banking.pdf",
-            "internal_page_start": 33,
-            "internal_page_end": 33,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0016",
+                "original_filename": "LOAN/TASK/Radha bai 6 month banking.pdf",
+                "internal_page_start": 33,
+                "internal_page_end": 33,
+            }
+        ],
     )
 
     assert result["anomalies"] == []
     assert result["documents"][0]["applicant_role"] == "coapplicant_2"
-    assert result["documents"][0]["auto_mapping"]["owner_evidence"] == [
-        "source_filename_name"
-    ]
+    assert result["documents"][0]["auto_mapping"]["owner_evidence"] == ["source_filename_name"]
 
 
 def test_low_document_type_confidence_is_not_reported_as_person_assignment_failure() -> None:
@@ -147,30 +150,34 @@ def test_low_document_type_confidence_is_not_reported_as_person_assignment_failu
             "primary": {"applicant_name": "Kala Singh"},
             "coapplicant_1": {"applicant_name": "Seeta Seeta"},
         },
-        source_documents=[{
-            "source_document_id": "file-0021",
-            "original_filename": "loan Agreement.pdf",
-            "internal_page_start": 127,
-            "internal_page_end": 127,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0021",
+                "original_filename": "loan Agreement.pdf",
+                "internal_page_start": 127,
+                "internal_page_end": 127,
+            }
+        ],
     )
 
     assert result["documents"] == []
-    assert result["anomalies"] == [{
-        "rule_id": "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
-        "s_no": None,
-        "severity": "LOW",
-        "document_type": "Loan Agreement",
-        "person_id": None,
-        "person_role": None,
-        "matched_person_id": None,
-        "field_name": None,
-        "status": "MANUAL_REVIEW_REQUIRED",
-        "expected_value": "Document type confidence of at least 50%",
-        "found_value": "0% confidence",
-        "page_number": 127,
-        "reason": "Document type confidence was too low for trusted JSON field comparison.",
-    }]
+    assert result["anomalies"] == [
+        {
+            "rule_id": "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
+            "s_no": None,
+            "severity": "LOW",
+            "document_type": "Loan Agreement",
+            "person_id": None,
+            "person_role": None,
+            "matched_person_id": None,
+            "field_name": None,
+            "status": "MANUAL_REVIEW_REQUIRED",
+            "expected_value": "Document type confidence of at least 50%",
+            "found_value": "0% confidence",
+            "page_number": 127,
+            "reason": "Document type confidence was too low for trusted JSON field comparison.",
+        }
+    ]
 
 
 def test_loan_level_docs_skip_owner_noise_and_still_index() -> None:
@@ -239,12 +246,14 @@ Applicant RAMESH KUMAR PAN ABCDE1234F
             "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
             "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
         },
-        source_documents=[{
-            "source_document_id": "file-0022",
-            "original_filename": "CERSAI_For_Asset_Based_Search.pdf",
-            "internal_page_start": 145,
-            "internal_page_end": 146,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0022",
+                "original_filename": "CERSAI_For_Asset_Based_Search.pdf",
+                "internal_page_start": 145,
+                "internal_page_end": 146,
+            }
+        ],
     )
 
     assert result["anomalies"] == []
@@ -253,9 +262,7 @@ Applicant RAMESH KUMAR PAN ABCDE1234F
     assert result["documents"][0]["pages"] == [145, 146]
     assert result["documents"][0]["applicant_role"] is None
     assert result["documents"][0]["document_scope"] == "loan_level"
-    assert result["documents"][0]["auto_mapping"]["owner_evidence"] == [
-        "cersai_asset_based"
-    ]
+    assert result["documents"][0]["auto_mapping"]["owner_evidence"] == ["cersai_asset_based"]
 
 
 def test_debtor_based_cersai_continuations_inherit_search_debtor() -> None:
@@ -284,12 +291,14 @@ Search Output Details
             "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
             "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
         },
-        source_documents=[{
-            "source_document_id": "file-0023",
-            "original_filename": "CERSAI_For_Debtor_Based_Search.pdf",
-            "internal_page_start": 147,
-            "internal_page_end": 150,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0023",
+                "original_filename": "CERSAI_For_Debtor_Based_Search.pdf",
+                "internal_page_start": 147,
+                "internal_page_end": 150,
+            }
+        ],
     )
 
     assert result["anomalies"] == []
@@ -459,12 +468,14 @@ def test_zip_member_multi_page_pdf_is_one_document_candidate() -> None:
     result = build_automatic_document_index(
         pages,
         {"primary": {"applicant_name": "Peeru Lal", "pan_number": "TSTAA0001T"}},
-        source_documents=[{
-            "source_document_id": "file-0001",
-            "original_filename": "application-form.pdf",
-            "internal_page_start": 1,
-            "internal_page_end": 2,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0001",
+                "original_filename": "application-form.pdf",
+                "internal_page_start": 1,
+                "internal_page_end": 2,
+            }
+        ],
     )
 
     assert len(result["documents"]) == 1
@@ -482,19 +493,23 @@ def test_zip_member_with_multiple_document_types_is_split() -> None:
     result = build_automatic_document_index(
         pages,
         {"primary": {"applicant_name": "Peeru Lal", "pan_number": "ABCDE1234F"}},
-        source_documents=[{
-            "source_document_id": "file-0001",
-            "original_filename": "kyc-pack.pdf",
-            "internal_page_start": 1,
-            "internal_page_end": 3,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0001",
+                "original_filename": "kyc-pack.pdf",
+                "internal_page_start": 1,
+                "internal_page_end": 3,
+            }
+        ],
     )
 
     assert [(item["document_type"], item["pages"]) for item in result["documents"]] == [
         ("PAN", [1]),
         ("Aadhaar", [2, 3]),
     ]
-    assert all(item["auto_mapping"]["source_document_id"] == "file-0001" for item in result["documents"])
+    assert all(
+        item["auto_mapping"]["source_document_id"] == "file-0001" for item in result["documents"]
+    )
 
 
 def test_detected_bureau_appendix_remains_with_subject_page_in_same_source() -> None:
@@ -509,12 +524,14 @@ def test_detected_bureau_appendix_remains_with_subject_page_in_same_source() -> 
     result = build_automatic_document_index(
         [first, appendix],
         {"coapplicant_3": {"applicant_name": "Mosmee Meena"}},
-        source_documents=[{
-            "source_document_id": "file-0001",
-            "original_filename": "credit_score.pdf",
-            "internal_page_start": 1,
-            "internal_page_end": 2,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0001",
+                "original_filename": "credit_score.pdf",
+                "internal_page_start": 1,
+                "internal_page_end": 2,
+            }
+        ],
     )
 
     assert result["anomalies"] == []
@@ -543,12 +560,14 @@ def test_repeated_aadhaar_heading_does_not_split_front_and_back_in_same_source()
             },
             "coapplicant_2": {"applicant_name": "Radha Bai"},
         },
-        source_documents=[{
-            "source_document_id": "file-0007",
-            "original_filename": "Co-Applicant/KYC/aadhaar.pdf",
-            "internal_page_start": 19,
-            "internal_page_end": 20,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0007",
+                "original_filename": "Co-Applicant/KYC/aadhaar.pdf",
+                "internal_page_start": 19,
+                "internal_page_end": 20,
+            }
+        ],
     )
 
     assert result["anomalies"] == []
@@ -579,11 +598,13 @@ def test_two_strongly_different_aadhaar_ids_still_split_in_same_source() -> None
                 "aadhaar_number": "999988887777",
             },
         },
-        source_documents=[{
-            "source_document_id": "file-0001",
-            "internal_page_start": 1,
-            "internal_page_end": 2,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0001",
+                "internal_page_start": 1,
+                "internal_page_end": 2,
+            }
+        ],
     )
 
     assert [item["pages"] for item in result["documents"]] == [[1], [2]]

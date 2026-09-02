@@ -11,7 +11,11 @@ from services.exception_aggregator import aggregate
 
 def _scanned_pages(count: int) -> list[dict]:
     return [
-        {"page_number": page_number, "page_type": "scanned", "image_path": f"page_{page_number}.png"}
+        {
+            "page_number": page_number,
+            "page_type": "scanned",
+            "image_path": f"page_{page_number}.png",
+        }
         for page_number in range(1, count + 1)
     ]
 
@@ -90,7 +94,11 @@ def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> N
 
     def fake_ocr(image_path: str) -> dict:
         ocr_calls.append(image_path)
-        return {"ocr_text": "Permanent Account Number ABCDE1234F", "is_readable": True, "confidence": 0.95}
+        return {
+            "ocr_text": "Permanent Account Number ABCDE1234F",
+            "is_readable": True,
+            "confidence": 0.95,
+        }
 
     monkeypatch.setattr("services.pipeline.page_processing.run_ocr_on_page", fake_ocr)
 

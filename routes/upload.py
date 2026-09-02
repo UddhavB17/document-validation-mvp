@@ -42,7 +42,11 @@ from services.progress_tracker import (
 from services.pipeline import run_pipeline
 from services.paths import upload_dir
 from services.verification_manifest import VerificationManifest
-from services.zip_package import PackageValidationError, load_package_metadata, normalize_zip_package
+from services.zip_package import (
+    PackageValidationError,
+    load_package_metadata,
+    normalize_zip_package,
+)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 UPLOAD_DIR = upload_dir()
@@ -120,7 +124,11 @@ async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
             INSERT INTO audit_log (application_id, action, details)
             VALUES (?, ?, ?)
             """,
-            (application_id, "partner_json_ingested", f"Ingested partner JSON for {payload.loan_id}"),
+            (
+                application_id,
+                "partner_json_ingested",
+                f"Ingested partner JSON for {payload.loan_id}",
+            ),
         )
 
     result = run_partner_json_pipeline(
@@ -173,10 +181,14 @@ async def upload_mapped_file(
     uploaded_name = file.filename or "mapped_upload"
 
     if Path(uploaded_name).suffix.lower() == ".zip":
-        file_path, manifest_text, original_filename = await _save_mapped_zip_package(file, manifest, timestamp)
+        file_path, manifest_text, original_filename = await _save_mapped_zip_package(
+            file, manifest, timestamp
+        )
     else:
         if not manifest or not manifest.strip():
-            raise HTTPException(status_code=422, detail="Manifest JSON is required for mapped PDF upload")
+            raise HTTPException(
+                status_code=422, detail="Manifest JSON is required for mapped PDF upload"
+            )
         file_path = UPLOAD_DIR / f"mapped_{timestamp}.pdf"
         await _save_upload_stream(file, file_path)
         manifest_text = manifest
@@ -333,7 +345,9 @@ async def verify_zip_package(
     _validate_package_mapping(package_id, parsed)
     pdf_path = Path(row["normalized_pdf_path"])
     if not pdf_path.is_file():
-        raise HTTPException(status_code=410, detail="Prepared ZIP package files are no longer available")
+        raise HTTPException(
+            status_code=410, detail="Prepared ZIP package files are no longer available"
+        )
     pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
     if not pdf_validation["valid"]:
         raise HTTPException(status_code=422, detail=pdf_validation["error"])
@@ -347,7 +361,9 @@ async def verify_zip_package(
             (package_id,),
         )
         if updated.rowcount != 1:
-            raise HTTPException(status_code=409, detail="ZIP package verification has already started")
+            raise HTTPException(
+                status_code=409, detail="ZIP package verification has already started"
+            )
     try:
         result = _queue_mapped_verification(
             parsed,
@@ -419,7 +435,9 @@ def _queue_mapped_verification(
             """,
             (
                 parsed.loan_id,
-                parsed.people.get("primary").applicant_name if parsed.people.get("primary") else None,
+                parsed.people.get("primary").applicant_name
+                if parsed.people.get("primary")
+                else None,
                 _first_coapplicant_name(parsed),
                 parsed.product_type,
                 parsed.branch,
@@ -483,9 +501,7 @@ def _queue_mapped_verification(
     job_id = create_pipeline_job(application_id)
     manifest_payload = parsed.pipeline_payload()
     reference_data = manifest_payload.get("reference_data") or {}
-    primary_reference = (
-        reference_data.get("primary") if isinstance(reference_data, dict) else {}
-    )
+    primary_reference = reference_data.get("primary") if isinstance(reference_data, dict) else {}
     primary_reference = primary_reference if isinstance(primary_reference, dict) else {}
     recovery_system_data = {
         **primary_reference,
@@ -555,8 +571,12 @@ async def _save_mapped_zip_package(
             and not PurePosixPath(member.filename).name.startswith(".")
             and "__MACOSX" not in PurePosixPath(member.filename).parts
         ]
-        pdf_members = [member for member in members if PurePosixPath(member.filename).suffix.lower() == ".pdf"]
-        json_members = [member for member in members if PurePosixPath(member.filename).suffix.lower() == ".json"]
+        pdf_members = [
+            member for member in members if PurePosixPath(member.filename).suffix.lower() == ".pdf"
+        ]
+        json_members = [
+            member for member in members if PurePosixPath(member.filename).suffix.lower() == ".json"
+        ]
 
         if not manifest_override and len(json_members) != 1:
             raise HTTPException(
@@ -572,7 +592,10 @@ async def _save_mapped_zip_package(
         if not pdf_bytes:
             raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
         if len(pdf_bytes) > max_file_size_bytes():
-            raise HTTPException(status_code=400, detail=f"File too large, max {max_file_size_bytes() // (1024 * 1024)}MB")
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large, max {max_file_size_bytes() // (1024 * 1024)}MB",
+            )
 
     file_path = UPLOAD_DIR / f"mapped_package_{timestamp}.pdf"
     file_path.write_bytes(pdf_bytes)
@@ -593,7 +616,9 @@ def _decode_manifest_payload(manifest_text: str) -> dict[str, object]:
             try:
                 payload = convert_company_database_dump(stripped)
             except CompanyDumpConversionError as exc:
-                raise HTTPException(status_code=422, detail=f"Invalid manifest JSON/database dump: {exc}") from exc
+                raise HTTPException(
+                    status_code=422, detail=f"Invalid manifest JSON/database dump: {exc}"
+                ) from exc
     else:
         # Raw database dump — convert and use the resulting dict
         try:
@@ -659,7 +684,9 @@ async def _read_upload_bytes(file: UploadFile) -> bytes:
     while chunk := await file.read(1024 * 1024):
         bytes_read += len(chunk)
         if bytes_read > limit:
-            raise HTTPException(status_code=400, detail=f"File too large, max {limit // (1024 * 1024)}MB")
+            raise HTTPException(
+                status_code=400, detail=f"File too large, max {limit // (1024 * 1024)}MB"
+            )
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -977,7 +1004,8 @@ async def upload_file(
             "primary": {"role": "primary", "applicant_name": applicant_name},
             **(
                 {"coapplicant_1": {"role": "coapplicant", "applicant_name": coapplicant_name}}
-                if coapplicant_name else {}
+                if coapplicant_name
+                else {}
             ),
         },
     }

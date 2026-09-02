@@ -10,8 +10,7 @@ from services.company_data_provider import CompanyReferenceData
 
 
 class DocumentIndexProvider(Protocol):
-    def get_document_index(self, pdf_path: str | Path) -> list[IndexedDocument]:
-        ...
+    def get_document_index(self, pdf_path: str | Path) -> list[IndexedDocument]: ...
 
 
 class ManualDocumentIndexProvider:

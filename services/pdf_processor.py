@@ -101,7 +101,9 @@ def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
     import cv2
     import numpy as np
 
-    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(pixmap.height, pixmap.width, pixmap.n)
+    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
+        pixmap.height, pixmap.width, pixmap.n
+    )
     if pixmap.n == 4:
         image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
     elif pixmap.n == 1:

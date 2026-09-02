@@ -18,6 +18,7 @@ from services.pipeline.persistence import (
     _should_call_llm,
 )
 
+
 def _finalize_pipeline_result(
     *,
     application_id: int,

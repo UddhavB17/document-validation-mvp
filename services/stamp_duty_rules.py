@@ -40,7 +40,9 @@ def evaluate_stamp_duty(
     context: dict[str, Any],
     rules: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    state = _key(observed.get("stamp_jurisdiction_state") or context.get("stamp_jurisdiction_state"))
+    state = _key(
+        observed.get("stamp_jurisdiction_state") or context.get("stamp_jurisdiction_state")
+    )
     instrument = _instrument_key(observed.get("stamp_article") or context.get("stamp_article"))
     execution_date = _date(observed.get("stamp_date") or context.get("execution_date"))
     paid = _decimal(observed.get("stamp_duty_amount"))

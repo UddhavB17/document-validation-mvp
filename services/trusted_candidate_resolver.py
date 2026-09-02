@@ -301,10 +301,10 @@ def _label_blocks(
         if match is None or (reject_label is not None and reject_label.search(line)):
             continue
         parts: list[str] = []
-        same_line = line[match.end():].strip(" :-/|\t")
+        same_line = line[match.end() :].strip(" :-/|\t")
         if same_line:
             parts.append(same_line)
-        for candidate in lines[index + 1:index + 1 + max_lines]:
+        for candidate in lines[index + 1 : index + 1 + max_lines]:
             if stop_at_next_field and _NEXT_FIELD_LABEL.search(candidate):
                 break
             if candidate:

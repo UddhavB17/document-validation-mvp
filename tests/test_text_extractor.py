@@ -373,4 +373,3 @@ def test_clean_xml_and_metadata() -> None:
     assert "Ramesh Kumar" in cleaned
     assert "123 Main St" in cleaned
     assert "Jhalawar, Rajasthan, India, 326502" in cleaned
-

@@ -7,9 +7,23 @@ import os
 
 # Language abbreviations are PaddleOCR's public ``lang`` values.  Some differ
 # from standard BCP-47 codes (for example, Magahi is ``mah`` in PaddleOCR).
-DEVANAGARI_LANGUAGES = frozenset({
-    "hi", "mr", "ne", "bh", "mai", "ang", "bho", "mah", "sck", "new", "gom", "sa", "bgc",
-})
+DEVANAGARI_LANGUAGES = frozenset(
+    {
+        "hi",
+        "mr",
+        "ne",
+        "bh",
+        "mai",
+        "ang",
+        "bho",
+        "mah",
+        "sck",
+        "new",
+        "gom",
+        "sa",
+        "bgc",
+    }
+)
 ARABIC_SCRIPT_LANGUAGES = frozenset({"ar", "fa", "ug", "ur", "ps", "ku", "sd", "bal"})
 
 LANGUAGE_ALIASES = {

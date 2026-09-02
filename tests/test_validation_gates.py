@@ -69,9 +69,7 @@ def test_insurer_local_application_id_is_not_loan_validation_evidence() -> None:
         "extracted_fields": {"application_number": "0030705"},
     }
 
-    assert not compatible_field_for_document(
-        "Insurance Form", "application_number", page
-    )
+    assert not compatible_field_for_document("Insurance Form", "application_number", page)
 
 
 def test_insurance_form_keeps_explicit_loan_account_id_as_validation_evidence() -> None:
@@ -85,9 +83,7 @@ def test_insurance_form_keeps_explicit_loan_account_id_as_validation_evidence() 
         "extracted_fields": {"application_number": "5000030765"},
     }
 
-    assert compatible_field_for_document(
-        "Insurance Form", "application_number", page
-    )
+    assert compatible_field_for_document("Insurance Form", "application_number", page)
 
 
 def test_cached_page_counter_is_not_reliable_address_evidence() -> None:

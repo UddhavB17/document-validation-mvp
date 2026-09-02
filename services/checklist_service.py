@@ -27,22 +27,38 @@ def load_checklist(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH)
     raise ValueError(f"No checklist configured for product_type={product_type}")
 
 
-def get_ai_checkable_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+def get_ai_checkable_items(
+    product_type: str = "LAP", path: str | Path = CHECKLIST_PATH
+) -> list[dict]:
     checklist = load_checklist(product_type, path)
-    return [item for item in checklist.get("checklist_items", []) if item.get("ai_checkable") and item.get("enabled", True)]
+    return [
+        item
+        for item in checklist.get("checklist_items", [])
+        if item.get("ai_checkable") and item.get("enabled", True)
+    ]
 
 
-def get_accuracy_check_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+def get_accuracy_check_items(
+    product_type: str = "LAP", path: str | Path = CHECKLIST_PATH
+) -> list[dict]:
     checklist = load_checklist(product_type, path)
-    return [item for item in checklist.get("accuracy_check_items", []) if item.get("ai_checkable") and item.get("enabled", True)]
+    return [
+        item
+        for item in checklist.get("accuracy_check_items", [])
+        if item.get("ai_checkable") and item.get("enabled", True)
+    ]
 
 
-def get_all_checklist_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+def get_all_checklist_items(
+    product_type: str = "LAP", path: str | Path = CHECKLIST_PATH
+) -> list[dict]:
     checklist = load_checklist(product_type, path)
     return [item for item in checklist.get("checklist_items", []) if item.get("enabled", True)]
 
 
-def get_human_review_items(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> list[dict]:
+def get_human_review_items(
+    product_type: str = "LAP", path: str | Path = CHECKLIST_PATH
+) -> list[dict]:
     checklist = load_checklist(product_type, path)
     explicit_items = list(checklist.get("human_review_items", []))
     derived_items = [

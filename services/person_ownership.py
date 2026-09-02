@@ -131,9 +131,7 @@ FIELD_WEIGHTS = {
 
 RELATIONSHIP_OWNER_WEIGHT = 4.0
 
-STRONG_ID_FIELDS = frozenset(
-    {"pan_number", "aadhaar_number", "account_number", "phone_number"}
-)
+STRONG_ID_FIELDS = frozenset({"pan_number", "aadhaar_number", "account_number", "phone_number"})
 
 _MASKED_AADHAAR_LAST4_RE = re.compile(
     r"\b(?:aadhaar|aadhar)(?:\s+(?:number|no\.?))?\s*[:#\-]?\s*"
@@ -251,7 +249,8 @@ def _resolve_cersai_debtor_owner(
                 r"\s+",
                 "",
                 str(first_value(person, FIELD_ALIASES["pan_number"]) or ""),
-            ).upper() in observed_pans
+            ).upper()
+            in observed_pans
         }
         if len(pan_matches) == 1:
             return {
@@ -274,10 +273,14 @@ def _resolve_cersai_debtor_owner(
         return {
             "person_id": identity["best_id"],
             "confidence": identity["confidence"],
-            "evidence": sorted(set([
-                *(identity.get("evidence") or []),
-                "cersai_debtor_identity",
-            ])),
+            "evidence": sorted(
+                set(
+                    [
+                        *(identity.get("evidence") or []),
+                        "cersai_debtor_identity",
+                    ]
+                )
+            ),
         }
     return {
         "person_id": None,
@@ -302,12 +305,15 @@ def _cersai_document_groups(pages: list[dict[str, Any]]) -> list[list[dict[str, 
             current_has_search = False
             continue
 
-        source = str(
-            page.get("source_document_id")
-            or page.get("document_instance_id")
-            or page.get("report_id")
-            or ""
-        ).strip() or None
+        source = (
+            str(
+                page.get("source_document_id")
+                or page.get("document_instance_id")
+                or page.get("report_id")
+                or ""
+            ).strip()
+            or None
+        )
         fields = page.get("extracted_fields")
         fields = fields if isinstance(fields, dict) else {}
         page_has_search = bool(
@@ -347,19 +353,13 @@ def resolve_person_owner(
     """
     page_list = [pages] if isinstance(pages, dict) else list(pages or [])
     people = {
-        str(key): value
-        for key, value in (reference_data or {}).items()
-        if isinstance(value, dict)
+        str(key): value for key, value in (reference_data or {}).items() if isinstance(value, dict)
     }
     type_key = str(document_type or "").strip().lower()
     if not type_key and page_list:
         type_key = str(page_list[0].get("document_type") or "").strip().lower()
 
-    cersai_type = (
-        _cersai_search_type(page_list)
-        if type_key == "cersai report"
-        else CERSAI_UNKNOWN
-    )
+    cersai_type = _cersai_search_type(page_list) if type_key == "cersai report" else CERSAI_UNKNOWN
     if cersai_type == CERSAI_ASSET_BASED:
         # An asset-based search is property-scoped. Any people printed in the
         # results are returned registry parties, not the report's applicant.
@@ -400,9 +400,7 @@ def resolve_person_owner(
     # A clean identity match is stronger than a folder/index hint. This also
     # makes a wrongly filed primary PAN recoverable without trusting the path.
     identity_winner = identity.get("best_id")
-    if source_role and identity_winner and _identity_is_decisive(
-        identity, str(identity_winner)
-    ):
+    if source_role and identity_winner and _identity_is_decisive(identity, str(identity_winner)):
         evidence = list(identity.get("evidence") or [])
         if _trusted_role(str(identity_winner), people[str(identity_winner)]) != source_role:
             evidence.append(f"overrode_source_role:{source_role}")
@@ -454,7 +452,9 @@ def resolve_person_owner(
             return {
                 "person_id": identity_winner,
                 "confidence": identity["confidence"],
-                "evidence": sorted(set([*(identity.get("evidence") or []), f"source_role:{source_role}"])),
+                "evidence": sorted(
+                    set([*(identity.get("evidence") or []), f"source_role:{source_role}"])
+                ),
                 "source_role": source_role,
             }
         if filename_owner in role_candidates:
@@ -605,7 +605,9 @@ def assign_page_owners(
         existing = str(page.get("person_id") or page.get("applicant_role") or "").strip()
         provided = existing if existing and existing not in {"unassigned", "unknown"} else None
         # Manifest/ZIP mapping may live on the page or in extraction metadata.
-        fields = page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
+        fields = (
+            page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
+        )
         ownership = fields.get("_ownership") if isinstance(fields, dict) else None
         provided_person_is_document_scope = bool(
             isinstance(ownership, dict)
@@ -717,7 +719,7 @@ def _filename_person_name_owner(
             continue
         width = len(name_tokens)
         if any(
-            stem_tokens[index:index + width] == name_tokens
+            stem_tokens[index : index + width] == name_tokens
             for index in range(len(stem_tokens) - width + 1)
         ):
             matches.append(person_id)
@@ -748,9 +750,7 @@ def _identity_is_decisive(identity: dict[str, Any], person_id: str) -> bool:
     A format-valid full PAN, a full Aadhaar printed next to an Aadhaar label,
     or a unique full bank-account number may override that source role.
     """
-    return bool(
-        identity.get("source_override_evidence_by_person", {}).get(person_id)
-    )
+    return bool(identity.get("source_override_evidence_by_person", {}).get(person_id))
 
 
 def _strong_observed_identity_conflicts(
@@ -765,8 +765,10 @@ def _strong_observed_identity_conflicts(
     for field in ("pan_number", "aadhaar_number"):
         expected = first_value(person, FIELD_ALIASES[field])
         found = observations.get(field) or []
-        if expected not in (None, "") and found and not any(
-            identity_matches(field, value, expected) for value in found
+        if (
+            expected not in (None, "")
+            and found
+            and not any(identity_matches(field, value, expected) for value in found)
         ):
             return True
     return False
@@ -792,11 +794,12 @@ def ownership_anomalies_for_unassigned(
             # that genuinely omits the holder name must not fail that rule via
             # an unrelated automatic-ownership warning.
             continue
-        fields = page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
+        fields = (
+            page.get("extracted_fields") if isinstance(page.get("extracted_fields"), dict) else {}
+        )
         ownership = fields.get("_ownership") if isinstance(fields, dict) else {}
-        if (
-            isinstance(ownership, dict)
-            and "source_role_not_in_trusted_data" in set(ownership.get("evidence") or [])
+        if isinstance(ownership, dict) and "source_role_not_in_trusted_data" in set(
+            ownership.get("evidence") or []
         ):
             # The automatic index emits a single role-level trusted-data scope
             # item; avoid an additional unresolved-owner warning per page.
@@ -902,8 +905,7 @@ def _observed_names_clearly_contradict(
     observed = identity_observations(pages).get("applicant_name") or []
     clean = [value for value in observed if is_person_name_candidate(value)]
     return bool(clean) and all(
-        not name_matches_trusted_person(value, person)
-        and name_similarity(value, expected) < 0.60
+        not name_matches_trusted_person(value, person) and name_similarity(value, expected) < 0.60
         for value in clean
     )
 
@@ -928,10 +930,7 @@ def _score_people(
                     for found in found_values
                 )
             else:
-                matched = any(
-                    identity_matches(field, found, expected)
-                    for found in found_values
-                )
+                matched = any(identity_matches(field, found, expected) for found in found_values)
             if matched:
                 scores[person_id] += FIELD_WEIGHTS[field]
                 evidence[person_id].append(field)
@@ -996,10 +995,11 @@ def _source_override_evidence(
             candidates.append(mapped)
         generic = fields.get("_generic_evidence")
         ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
-        account_identity_document = (
-            str(page.get("document_type") or "").strip().casefold()
-            in {"bank statement", "passbook", "cheque"}
-        )
+        account_identity_document = str(page.get("document_type") or "").strip().casefold() in {
+            "bank statement",
+            "passbook",
+            "cheque",
+        }
 
         pan_values: list[Any] = []
         aadhaar_values: list[Any] = []
@@ -1024,8 +1024,7 @@ def _source_override_evidence(
             pan_values.extend(generic.get("pan_numbers") or [])
             aadhaar_values.extend(generic.get("aadhaar_numbers") or [])
         pan_values.extend(
-            match.group(0)
-            for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper())
+            match.group(0) for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper())
         )
         aadhaar_values.extend(
             match.group(1)
@@ -1085,9 +1084,9 @@ def _source_override_evidence(
 
         trusted_account_owners: dict[str, list[str]] = {}
         for candidate_id, trusted in people.items():
-            trusted_digits = _digits(str(
-                first_value(trusted, FIELD_ALIASES["account_number"]) or ""
-            ))
+            trusted_digits = _digits(
+                str(first_value(trusted, FIELD_ALIASES["account_number"]) or "")
+            )
             if len(trusted_digits) >= 8:
                 trusted_account_owners.setdefault(trusted_digits, []).append(candidate_id)
 
@@ -1102,18 +1101,14 @@ def _source_override_evidence(
             )
             if expected_aadhaar and expected_aadhaar in valid_aadhaars:
                 evidence[person_id].add("full_labeled_aadhaar_number")
-            expected_account = _digits(str(
-                first_value(trusted, FIELD_ALIASES["account_number"]) or ""
-            ))
-            if (
-                expected_account in valid_accounts
-                and trusted_account_owners.get(expected_account) == [person_id]
-            ):
+            expected_account = _digits(
+                str(first_value(trusted, FIELD_ALIASES["account_number"]) or "")
+            )
+            if expected_account in valid_accounts and trusted_account_owners.get(
+                expected_account
+            ) == [person_id]:
                 evidence[person_id].add("full_account_number")
-    return {
-        person_id: sorted(values)
-        for person_id, values in evidence.items()
-    }
+    return {person_id: sorted(values) for person_id, values in evidence.items()}
 
 
 def relationship_observations(
@@ -1185,7 +1180,12 @@ def _relationship_owner_candidates(
             _relationship_tails(
                 (
                     person.get(field)
-                    for field in ("address", "current_address", "permanent_address", "communication_address")
+                    for field in (
+                        "address",
+                        "current_address",
+                        "permanent_address",
+                        "communication_address",
+                    )
                 ),
                 qualifier,
             )
@@ -1216,7 +1216,8 @@ def _relation_name_matches(observed: Any, expected: Any) -> bool:
         return False
     width = len(expected_tokens)
     return any(
-        name_similarity(" ".join(observed_tokens[index:index + width]), " ".join(expected_tokens)) >= 0.85
+        name_similarity(" ".join(observed_tokens[index : index + width]), " ".join(expected_tokens))
+        >= 0.85
         for index in range(0, max(1, len(observed_tokens) - width + 1))
     )
 
@@ -1244,7 +1245,9 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
         fields = page.get("extracted_fields")
         if not isinstance(fields, dict):
             # Allow passing a bare fields dict as a synthetic page.
-            if isinstance(page, dict) and any(key in page for key in ("applicant_name", "pan_number", "dob")):
+            if isinstance(page, dict) and any(
+                key in page for key in ("applicant_name", "pan_number", "dob")
+            ):
                 fields = page
             else:
                 continue
@@ -1274,10 +1277,7 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             for value in generic.get("pan_numbers") or []:
                 observations["pan_number"].append(value)
             for value in generic.get("aadhaar_numbers") or []:
-                if (
-                    plausible_aadhaar_digits(value)
-                    and has_labeled_aadhaar_value(ocr_text, value)
-                ):
+                if plausible_aadhaar_digits(value) and has_labeled_aadhaar_value(ocr_text, value):
                     observations["aadhaar_number"].append(value)
             for value in generic.get("phone_numbers") or []:
                 observations["phone_number"].append(value)
@@ -1301,9 +1301,8 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             for match in re.finditer(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", ocr_text.upper()):
                 observations["pan_number"].append(match.group(0))
             for match in re.finditer(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", ocr_text):
-                if (
-                    plausible_aadhaar_digits(match.group(1))
-                    and has_labeled_aadhaar_value(ocr_text, match.group(1))
+                if plausible_aadhaar_digits(match.group(1)) and has_labeled_aadhaar_value(
+                    ocr_text, match.group(1)
                 ):
                     observations["aadhaar_number"].append(match.group(1))
             for match in _MASKED_AADHAAR_LAST4_RE.finditer(ocr_text):
@@ -1331,7 +1330,11 @@ def _explicit_name_observations(text: str, document_type: str) -> list[str]:
     for pattern in patterns:
         for match in re.finditer(pattern, text, re.IGNORECASE):
             candidate = match.group(1).strip(" :\t")
-            if re.match(r"^(?:[wsdcf]\s*/?\s*o|wife\s+of|son\s+of|daughter\s+of|care\s+of)\b", candidate, re.I):
+            if re.match(
+                r"^(?:[wsdcf]\s*/?\s*o|wife\s+of|son\s+of|daughter\s+of|care\s+of)\b",
+                candidate,
+                re.I,
+            ):
                 continue
             candidates.append(candidate)
     return candidates
@@ -1365,7 +1368,7 @@ def _banking_holder_name_observations(text: str) -> list[str]:
         match = label_pattern.match(line)
         if not match:
             continue
-        for candidate in [match.group(1), *lines[index + 1:index + 4]]:
+        for candidate in [match.group(1), *lines[index + 1 : index + 4]]:
             if _banking_name_candidate(candidate):
                 candidates.append(candidate)
                 break
@@ -1478,7 +1481,9 @@ def identity_matches(field: str, found: Any, expected: Any) -> bool:
         left_tokens = re.findall(r"[a-z0-9]+", left.lower())
         right_tokens = re.findall(r"[a-z0-9]+", right.lower())
         is_haystack = len(left_tokens) >= max(4, len(right_tokens) + 2)
-        if not is_haystack and (not is_person_name_candidate(left) or not is_person_name_candidate(right)):
+        if not is_haystack and (
+            not is_person_name_candidate(left) or not is_person_name_candidate(right)
+        ):
             return False
         if not is_haystack and name_similarity(left, right) >= 0.85:
             return True
@@ -1510,11 +1515,7 @@ def identity_matches(field: str, found: Any, expected: Any) -> bool:
         right_digits = _digits(right)
         # Masked suffixes are useful for field review but are not unique enough
         # to establish person ownership.
-        return (
-            len(left_digits) >= 8
-            and len(right_digits) >= 8
-            and left_digits == right_digits
-        )
+        return len(left_digits) >= 8 and len(right_digits) >= 8 and left_digits == right_digits
     return _words(left) == _words(right)
 
 

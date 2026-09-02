@@ -51,9 +51,7 @@ def _fernet() -> Fernet:
         try:
             return Fernet(configured.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
-            raise JobInputUnavailableError(
-                "DMEF_JOB_INPUT_KEY must be a valid Fernet key"
-            ) from exc
+            raise JobInputUnavailableError("DMEF_JOB_INPUT_KEY must be a valid Fernet key") from exc
 
     key_path = Path(
         os.getenv("DMEF_JOB_INPUT_KEY_FILE", str(db.DATABASE_PATH.parent / ".job_input.key"))
@@ -97,9 +95,7 @@ def safe_settings_snapshot() -> dict[str, Any]:
     return {
         "system_settings": {str(row["config_key"]): row["config_value"] for row in rows},
         "environment": {
-            key: os.environ[key]
-            for key in _SAFE_ENVIRONMENT_KEYS
-            if key in os.environ
+            key: os.environ[key] for key in _SAFE_ENVIRONMENT_KEYS if key in os.environ
         },
     }
 

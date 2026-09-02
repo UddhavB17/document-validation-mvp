@@ -29,8 +29,7 @@ def test_schedule_continuation_is_detected_without_document_classification() -> 
 
 def test_schedule_rows_accept_native_script_digits() -> None:
     rows = parse_repayment_schedule_rows(
-        "१ १०००.०० ५५०.०० ५००.०० ५०.०० ५००.००\n"
-        "२ ५००.०० ५२५.०० ५००.०० २५.०० ०.००"
+        "१ १०००.०० ५५०.०० ५००.०० ५०.०० ५००.००\n२ ५००.०० ५२५.०० ५००.०० २५.०० ०.००"
     )
 
     assert [row["installment_number"] for row in rows] == [1, 2]
@@ -54,8 +53,7 @@ def test_interest_only_pre_emi_is_not_counted_as_an_amortizing_installment() -> 
     )
 
     assert not any(
-        item["rule_id"] == "REPAYMENT_SCHEDULE_INSTALLMENT_COUNT_MISMATCH"
-        for item in anomalies
+        item["rule_id"] == "REPAYMENT_SCHEDULE_INSTALLMENT_COUNT_MISMATCH" for item in anomalies
     )
 
 

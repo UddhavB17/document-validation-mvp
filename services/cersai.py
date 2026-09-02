@@ -72,9 +72,7 @@ def report_search_type(
         fields = fields if isinstance(fields, dict) else {}
         ownership = fields.get("_ownership")
         if isinstance(ownership, dict) and ownership.get("cersai_search_type"):
-            detected = search_type(
-                "", {"cersai_search_type": ownership["cersai_search_type"]}
-            )
+            detected = search_type("", {"cersai_search_type": ownership["cersai_search_type"]})
             if detected != UNKNOWN:
                 return detected
         detected = search_type(page.get("ocr_text"), fields)

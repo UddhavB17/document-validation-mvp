@@ -110,7 +110,9 @@ def start_tracking(
                 now,
             ),
         )
-        connection.execute("DELETE FROM pipeline_page_events WHERE application_id = ?", (application_id,))
+        connection.execute(
+            "DELETE FROM pipeline_page_events WHERE application_id = ?", (application_id,)
+        )
 
 
 def update_stage(application_id: int, stage: str, message: str | None = None) -> None:
@@ -353,7 +355,9 @@ def get_progress(application_id: int) -> dict[str, Any] | None:
     eta_seconds = _estimate_eta_seconds({**payload, "status": operational_status})
     payload["eta_seconds"] = eta_seconds
     payload["last_processed_page"] = payload.pop("current_page")
-    payload["progress_text"] = f"{payload['processed_pages']}/{payload['total_pages']} pages processed"
+    payload["progress_text"] = (
+        f"{payload['processed_pages']}/{payload['total_pages']} pages processed"
+    )
     payload["pipeline_outcome"] = payload["status"]
     payload["operational_status"] = operational_status
     payload["is_stale"] = operational_status == "stale"

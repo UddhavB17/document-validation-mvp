@@ -104,7 +104,9 @@ def build_report(
         "generated_at": datetime.now(UTC).isoformat(),
         "total_exceptions": len(exceptions),
         "actionable_exception_count": len(actionable),
-        "high_severity_count": sum(1 for e in actionable if str(e.get("severity")).upper() == "HIGH"),
+        "high_severity_count": sum(
+            1 for e in actionable if str(e.get("severity")).upper() == "HIGH"
+        ),
         "llm_summary": llm_summary,
         "exceptions": exceptions,
         "actionable_exceptions": actionable,

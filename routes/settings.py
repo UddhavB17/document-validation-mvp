@@ -47,7 +47,7 @@ def update_setting(config_key: str, payload: SettingUpdatePayload):
     with get_connection() as conn:
         row = conn.execute(
             "SELECT config_key, config_value, value_type, category, label, description FROM system_settings WHERE config_key = ?",
-            (config_key,)
+            (config_key,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail=f"Setting {config_key} not found")
@@ -65,12 +65,12 @@ def update_setting(config_key: str, payload: SettingUpdatePayload):
 
         conn.execute(
             "UPDATE system_settings SET config_value = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE config_key = ?",
-            (new_value, config_key)
+            (new_value, config_key),
         )
         conn.commit()
 
         updated = conn.execute(
             "SELECT config_key, config_value, value_type, category, label, description FROM system_settings WHERE config_key = ?",
-            (config_key,)
+            (config_key,),
         ).fetchone()
     return {"status": "success", **_serialize_setting(updated)}

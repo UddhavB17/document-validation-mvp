@@ -44,7 +44,9 @@ def run_google_vision_ocr_on_page(page_image: str | Path) -> dict[str, Any]:
             return _result_from_payload(path, payload, auth_mode=auth_mode)
         except Exception as exc:  # noqa: BLE001
             if attempt >= attempts or not _is_retryable_error(exc):
-                return _error_result(path, f"Google Vision OCR failed after {attempt} attempt(s): {exc}")
+                return _error_result(
+                    path, f"Google Vision OCR failed after {attempt} attempt(s): {exc}"
+                )
             time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
 
     return _error_result(path, "Google Vision OCR failed without a response")
@@ -75,7 +77,11 @@ def _is_retryable_error(exc: Exception) -> bool:
 
 
 def _auth_mode() -> str:
-    requested = str(get_setting("google.vision.auth", os.getenv("GOOGLE_VISION_AUTH") or "auto") or "auto").strip().lower()
+    requested = (
+        str(get_setting("google.vision.auth", os.getenv("GOOGLE_VISION_AUTH") or "auto") or "auto")
+        .strip()
+        .lower()
+    )
     if requested in {"api_key", "apikey", "key"}:
         return "api_key"
     if requested in {"adc", "service_account", "client"}:
@@ -88,11 +94,18 @@ def _auth_mode() -> str:
 def _api_key() -> str:
     # Settings DB wins; the environment variable remains a fallback for
     # deployments configured outside the settings table.
-    return str(get_setting("google.vision.api_key", "") or os.getenv("GOOGLE_VISION_API_KEY") or "").strip()
+    return str(
+        get_setting("google.vision.api_key", "") or os.getenv("GOOGLE_VISION_API_KEY") or ""
+    ).strip()
 
 
 def _feature_type() -> str:
-    raw = str(get_setting("google.vision.feature", os.getenv("GOOGLE_VISION_FEATURE") or "DOCUMENT_TEXT_DETECTION") or "")
+    raw = str(
+        get_setting(
+            "google.vision.feature", os.getenv("GOOGLE_VISION_FEATURE") or "DOCUMENT_TEXT_DETECTION"
+        )
+        or ""
+    )
     normalized = raw.strip().upper()
     if normalized not in {"DOCUMENT_TEXT_DETECTION", "TEXT_DETECTION"}:
         return "DOCUMENT_TEXT_DETECTION"
@@ -108,7 +121,11 @@ def _call_rest_api_key(path: Path) -> dict[str, Any]:
     if not key:
         raise RuntimeError("GOOGLE_VISION_API_KEY is not configured")
     endpoint = str(
-        get_setting("google.vision.rest_url", os.getenv("GOOGLE_VISION_REST_URL") or "https://vision.googleapis.com/v1/images:annotate")
+        get_setting(
+            "google.vision.rest_url",
+            os.getenv("GOOGLE_VISION_REST_URL")
+            or "https://vision.googleapis.com/v1/images:annotate",
+        )
         or "https://vision.googleapis.com/v1/images:annotate"
     ).rstrip("?")
     content = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -142,10 +159,18 @@ def _call_client_library(path: Path) -> dict[str, Any]:
         raise RuntimeError("Install google-cloud-vision to use GOOGLE_VISION_AUTH=adc") from exc
 
     client_options = None
-    endpoint = str(os.getenv("GOOGLE_VISION_API_ENDPOINT") or get_setting("google.vision.api_endpoint", "") or "").strip()
+    endpoint = str(
+        os.getenv("GOOGLE_VISION_API_ENDPOINT")
+        or get_setting("google.vision.api_endpoint", "")
+        or ""
+    ).strip()
     if endpoint:
         client_options = {"api_endpoint": endpoint}
-    client = vision.ImageAnnotatorClient(client_options=client_options) if client_options else vision.ImageAnnotatorClient()
+    client = (
+        vision.ImageAnnotatorClient(client_options=client_options)
+        if client_options
+        else vision.ImageAnnotatorClient()
+    )
     image = vision.Image(content=path.read_bytes())
     hints = _language_hints()
     request_kwargs: dict[str, Any] = {
@@ -257,7 +282,9 @@ def _detected_languages(mapping: dict[str, Any]) -> list[str]:
     best: dict[str, float] = {}
     for code, confidence in found:
         best[code] = max(confidence, best.get(code, 0.0))
-    return [code for code, _confidence in sorted(best.items(), key=lambda item: (-item[1], item[0]))]
+    return [
+        code for code, _confidence in sorted(best.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
 
 def _text_annotation_boxes(annotations: Any) -> list[dict[str, Any]]:
@@ -272,15 +299,17 @@ def _text_annotation_boxes(annotations: Any) -> list[dict[str, Any]]:
             continue
         poly = annotation.get("boundingPoly") or annotation.get("bounding_poly") or {}
         vertices = poly.get("vertices") if isinstance(poly, dict) else []
-        boxes.append({
-            "text": description,
-            "confidence": annotation.get("confidence"),
-            "bbox": [
-                {"x": int(vertex.get("x") or 0), "y": int(vertex.get("y") or 0)}
-                for vertex in vertices or []
-                if isinstance(vertex, dict)
-            ],
-        })
+        boxes.append(
+            {
+                "text": description,
+                "confidence": annotation.get("confidence"),
+                "bbox": [
+                    {"x": int(vertex.get("x") or 0), "y": int(vertex.get("y") or 0)}
+                    for vertex in vertices or []
+                    if isinstance(vertex, dict)
+                ],
+            }
+        )
     return boxes
 
 
@@ -295,13 +324,15 @@ def _layout_blocks(mapping: dict[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(block, dict):
                 continue
             text = _block_text(block)
-            blocks.append({
-                "type": str(block.get("blockType") or block.get("block_type") or "TEXT"),
-                "text": text,
-                "page_index": page_index,
-                "confidence": block.get("confidence"),
-                "bounding_box": block.get("boundingBox") or block.get("bounding_box") or {},
-            })
+            blocks.append(
+                {
+                    "type": str(block.get("blockType") or block.get("block_type") or "TEXT"),
+                    "text": text,
+                    "page_index": page_index,
+                    "confidence": block.get("confidence"),
+                    "bounding_box": block.get("boundingBox") or block.get("bounding_box") or {},
+                }
+            )
     return blocks
 
 
@@ -312,7 +343,11 @@ def _block_text(block: dict[str, Any]) -> str:
             continue
         for word in paragraph.get("words") or []:
             symbols = word.get("symbols") if isinstance(word, dict) else []
-            token = "".join(str(symbol.get("text") or "") for symbol in symbols or [] if isinstance(symbol, dict))
+            token = "".join(
+                str(symbol.get("text") or "")
+                for symbol in symbols or []
+                if isinstance(symbol, dict)
+            )
             if token:
                 words.append(token)
     return " ".join(words)

@@ -16,7 +16,11 @@ from services.language_detection import analyze_text_languages, normalize_langua
 from services.llm_page_classifier import is_llm_classification_candidate
 from services.ocr_router import OCRResult, OCRRouter, get_ocr_router, run_fast_ocr_on_page
 from services.page_classification import classify_page_text, create_llm_classifier_budget
-from services.processing_policy import OCR_SKIPPED_DOCUMENT_TYPE, build_ocr_skipped_fields, selected_scanned_page_numbers
+from services.processing_policy import (
+    OCR_SKIPPED_DOCUMENT_TYPE,
+    build_ocr_skipped_fields,
+    selected_scanned_page_numbers,
+)
 from services.progress_tracker import mark_page_started, update_page_progress
 from services.stamp_duty_rules import evaluate_stamp_duty, load_stamp_duty_rules
 from services.structured_llm_classifier import classify_with_structured_llm
@@ -58,6 +62,7 @@ run_ocr_on_page = run_fast_ocr_on_page
 
 _DEFAULT_FAST_OCR_PROCESSOR = run_fast_ocr_on_page
 
+
 def _pipeline_ocr_router() -> OCRRouter:
     if run_ocr_on_page is _DEFAULT_FAST_OCR_PROCESSOR:
         return get_ocr_router()
@@ -65,6 +70,7 @@ def _pipeline_ocr_router() -> OCRRouter:
         fast_processor=run_ocr_on_page,
         structured_processor=run_ocr_on_page,
     )
+
 
 def _build_page_records(
     page_structure: list[dict[str, Any]],
@@ -266,10 +272,7 @@ def _build_page_records(
                         processed_pages=len(pages),
                         total_pages=total_pages,
                         current_page=page_number,
-                        message=(
-                            f"Processed {len(pages)}/{total_pages} pages "
-                            f"(OCR budget skip)"
-                        ),
+                        message=(f"Processed {len(pages)}/{total_pages} pages (OCR budget skip)"),
                     )
                 continue
             else:
@@ -315,7 +318,9 @@ def _build_page_records(
                         "detected_page_number": page_number,
                     },
                 }
-            elif triage["category"] == "handwritten" and (ocr_confidence is None or float(ocr_confidence) < 0.70):
+            elif triage["category"] == "handwritten" and (
+                ocr_confidence is None or float(ocr_confidence) < 0.70
+            ):
                 document_type = "Unknown"
                 detection_method = "triage_low_confidence"
                 if source_documents:
@@ -323,7 +328,9 @@ def _build_page_records(
                         start = doc.get("internal_page_start")
                         end = doc.get("internal_page_end")
                         if start is not None and end is not None and start <= page_number <= end:
-                            inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                            inferred = _infer_document_type_from_filename(
+                                str(doc.get("original_filename") or "")
+                            )
                             if inferred and not _filename_type_contradicted_by_text(inferred, text):
                                 document_type = inferred
                                 detection_method = "filename_inference"
@@ -398,7 +405,10 @@ def _build_page_records(
                     document_type = source_filename_type
                     classification = {"confidence": 0.95}
                     detection_method = "filename_override"
-                if document_type == "Unknown" and "gps map camera" in _normalize_fresh_document_text(text):
+                if (
+                    document_type == "Unknown"
+                    and "gps map camera" in _normalize_fresh_document_text(text)
+                ):
                     # GPS-overlay photos exported from messaging apps carry no
                     # classifiable text, but the overlay itself proves the page
                     # is photographic evidence rather than a named document.
@@ -410,7 +420,9 @@ def _build_page_records(
                         start = doc.get("internal_page_start")
                         end = doc.get("internal_page_end")
                         if start is not None and end is not None and start <= page_number <= end:
-                            inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                            inferred = _infer_document_type_from_filename(
+                                str(doc.get("original_filename") or "")
+                            )
                             if inferred and not _filename_type_contradicted_by_text(inferred, text):
                                 document_type = inferred
                                 detection_method = "filename_inference"
@@ -522,7 +534,9 @@ def _build_page_records(
             if phase_started_at is not None:
                 _log_page_phase_failed(page_number, total_pages, phase_name, phase_started_at, exc)
             else:
-                logger.exception("[Page %s/%s] Page processing failed: %s", page_number, total_pages, exc)
+                logger.exception(
+                    "[Page %s/%s] Page processing failed: %s", page_number, total_pages, exc
+                )
                 _flush_log_handlers()
             page_status = "error"
             page_error = str(exc)
@@ -536,7 +550,9 @@ def _build_page_records(
                     start = doc.get("internal_page_start")
                     end = doc.get("internal_page_end")
                     if start is not None and end is not None and start <= page_number <= end:
-                        inferred = _infer_document_type_from_filename(str(doc.get("original_filename") or ""))
+                        inferred = _infer_document_type_from_filename(
+                            str(doc.get("original_filename") or "")
+                        )
                         if inferred:
                             document_type = inferred
                             detection_method = "filename_inference"
@@ -595,7 +611,9 @@ def _build_page_records(
                         reason="structured_llm_disagreement",
                         anchor_match_results={
                             "deterministic_document_type": document_type,
-                            "structured_llm_document_type": structured_llm_result.get("document_type"),
+                            "structured_llm_document_type": structured_llm_result.get(
+                                "document_type"
+                            ),
                             "structured_llm_confidence": structured_llm_result.get("confidence"),
                             "structured_llm_reason": structured_llm_result.get("reason"),
                             "structured_llm_trigger": structured_llm_result.get("trigger"),
@@ -605,9 +623,7 @@ def _build_page_records(
         language_profile = analyze_text_languages(text)
         provider_languages = ocr_metadata.get("ocr_languages")
         declared_languages = [
-            value
-            for value in (extracted_fields.get("second_language"),)
-            if value not in (None, "")
+            value for value in (extracted_fields.get("second_language"),) if value not in (None, "")
         ]
         identified_languages: list[dict[str, str]] = []
         for source, values in (
@@ -617,7 +633,8 @@ def _build_page_records(
             for value in values:
                 code = normalize_language_code(value)
                 if code and not any(
-                    item["code"] == code and item["source"] == source for item in identified_languages
+                    item["code"] == code and item["source"] == source
+                    for item in identified_languages
                 ):
                     identified_languages.append({"code": code, "source": source})
         if language_profile["scripts"] or provider_languages or declared_languages:
@@ -687,6 +704,7 @@ def _build_page_records(
     pages = _smooth_page_classifications(pages, application_id, total_pages)
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
+
 def _refresh_page_from_cached_ocr(
     checkpoint: dict[str, Any],
     *,
@@ -732,14 +750,21 @@ def _refresh_page_from_cached_ocr(
         str((source_document or {}).get("original_filename") or "")
     )
     if filename_type in {
-        "House Photo", "Workplace Photo", "Property Image", "KYC Card Photo",
-        "Ration Card Photo", "PDC", "Cheque",
+        "House Photo",
+        "Workplace Photo",
+        "Property Image",
+        "KYC Card Photo",
+        "Ration Card Photo",
+        "PDC",
+        "Cheque",
     } and _source_filename_override_allowed(filename_type, document_type):
         document_type = filename_type
         confidence = 0.95
         detection_method = "filename_override"
-    elif document_type == "Unknown" and filename_type and not _filename_type_contradicted_by_text(
-        filename_type, text
+    elif (
+        document_type == "Unknown"
+        and filename_type
+        and not _filename_type_contradicted_by_text(filename_type, text)
     ):
         document_type = filename_type
         detection_method = "filename_inference"
@@ -804,18 +829,23 @@ def _refresh_page_from_cached_ocr(
             **language_profile,
             "declared_languages": list((previous_language or {}).get("declared_languages") or []),
             "provider_languages": list((previous_language or {}).get("provider_languages") or []),
-            "identified_languages": list((previous_language or {}).get("identified_languages") or []),
+            "identified_languages": list(
+                (previous_language or {}).get("identified_languages") or []
+            ),
         }
 
-    refreshed.update({
-        "document_type": document_type,
-        "classification_confidence": confidence,
-        "detection_method": detection_method,
-        "detected_page_number": assigned.get("detected_page_number"),
-        "extracted_fields": fields,
-    })
+    refreshed.update(
+        {
+            "document_type": document_type,
+            "classification_confidence": confidence,
+            "detection_method": detection_method,
+            "detected_page_number": assigned.get("detected_page_number"),
+            "extracted_fields": fields,
+        }
+    )
     attach_field_provenance(refreshed, source_document=source_document)
     return refreshed
+
 
 def _build_page_reuse_map(
     source_documents: list[dict[str, Any]],
@@ -870,15 +900,15 @@ def _build_page_reuse_map(
         )
     return reuse
 
+
 def _digital_text_fingerprint(text: str) -> str | None:
-    normalized = " ".join(
-        unicodedata.normalize("NFKC", str(text or "")).casefold().split()
-    )
+    normalized = " ".join(unicodedata.normalize("NFKC", str(text or "")).casefold().split())
     # Avoid deduplicating short headers or near-empty pages that may have
     # different visual evidence despite sharing a few words.
     if len(normalized) < 120:
         return None
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
 
 def _clone_reused_page(
     canonical_page: dict[str, Any],
@@ -941,6 +971,7 @@ def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
         "structured_content",
     )
     return {key: metadata[key] for key in keys if key in metadata}
+
 
 def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
     return result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)

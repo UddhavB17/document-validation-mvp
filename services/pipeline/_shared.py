@@ -33,10 +33,17 @@ _MULTI_PAGE_RUN_FILL_TYPES = {
     "Passbook",
 }
 
-_INTRINSIC_IDENTITY_TYPES = frozenset({
-    "Aadhaar", "PAN", "PAN Card", "Voter ID", "Driving License", "Passport",
-    "Ration Card",
-})
+_INTRINSIC_IDENTITY_TYPES = frozenset(
+    {
+        "Aadhaar",
+        "PAN",
+        "PAN Card",
+        "Voter ID",
+        "Driving License",
+        "Passport",
+        "Ration Card",
+    }
+)
 
 # Identity-document types inferred from ZIP member filenames must be supported
 # by page content when the page carries substantial text.
@@ -44,8 +51,11 @@ _FILENAME_IDENTITY_TYPE_ANCHORS: dict[str, tuple[str, ...]] = {
     "PAN Card": ("permanent account number", "income tax", "पैन"),
     "Aadhaar": ("aadhaar", "aadhar", "uidai", "आधार"),
     "Driving License": (
-        "driving licence", "driving license", "transport department",
-        "motor vehicle", "ड्राइविंग",
+        "driving licence",
+        "driving license",
+        "transport department",
+        "motor vehicle",
+        "ड्राइविंग",
     ),
     "Voter ID": ("election commission", "voter", "epic", "मतदाता"),
     "Passport": ("passport", "पासपोर्ट"),
@@ -53,11 +63,13 @@ _FILENAME_IDENTITY_TYPE_ANCHORS: dict[str, tuple[str, ...]] = {
 
 _EMAIL_ADDRESS_RE = re.compile(r"[\w.+-]+@[\w-]+\.\w+")
 
-_EMAIL_INFERRED_EVIDENCE_TYPES = frozenset({
-    "Cheque",
-    "PDC",
-    "Insurance Form",
-    "Life Insurance Form",
-    "Property Insurance Form",
-    "Insurance Consent Letter",
-})
+_EMAIL_INFERRED_EVIDENCE_TYPES = frozenset(
+    {
+        "Cheque",
+        "PDC",
+        "Insurance Form",
+        "Life Insurance Form",
+        "Property Insurance Form",
+        "Insurance Consent Letter",
+    }
+)

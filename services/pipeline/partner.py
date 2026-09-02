@@ -10,11 +10,22 @@ from services.document_classifier import classify_page
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.llm_service import generate_explanation, summarize_exceptions
-from services.progress_tracker import mark_completed, start_tracking, update_page_progress, update_stage
+from services.progress_tracker import (
+    mark_completed,
+    start_tracking,
+    update_page_progress,
+    update_stage,
+)
 from services.report_generator import build_report, save_report_json
 from services.pipeline.anomalies import _pipeline_outcome, _run_checklist_with_fallback
 from services.pipeline.classification import _normalize_document_type, _smooth_page_classifications
-from services.pipeline.persistence import _save_ground_truth, _save_llm_summary, _save_pages, _should_call_llm
+from services.pipeline.persistence import (
+    _save_ground_truth,
+    _save_llm_summary,
+    _save_pages,
+    _should_call_llm,
+)
+
 
 def run_partner_json_pipeline(
     payload: dict[str, Any],
@@ -110,6 +121,7 @@ def run_partner_json_pipeline(
     )
     return result
 
+
 def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     for page_number, (doc_key, value) in enumerate(scanned_docs.items(), start=1):
@@ -142,6 +154,7 @@ def _build_partner_pages(scanned_docs: dict[str, Any]) -> list[dict[str, Any]]:
     pages = _smooth_page_classifications(pages, None, len(pages))
     return pages
 
+
 def _coerce_partner_doc(doc_key: str, value: Any) -> tuple[str, str | None, dict[str, Any], float]:
     if isinstance(value, dict):
         text = str(value.get("text") or value.get("ocr_text") or value.get("raw_text") or "")
@@ -150,6 +163,7 @@ def _coerce_partner_doc(doc_key: str, value: Any) -> tuple[str, str | None, dict
         confidence = float(value.get("confidence") or value.get("ocr_confidence") or 1.0)
         return text, document_type, extracted_fields, confidence
     return str(value or ""), _document_type_from_key(doc_key), {}, 1.0
+
 
 def _document_type_from_key(doc_key: str) -> str | None:
     normalized = doc_key.lower().replace("-", "_").replace(" ", "_")

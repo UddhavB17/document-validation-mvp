@@ -20,7 +20,9 @@ def verify_aadhaar(extracted: str, db_value: str) -> FieldVerificationResult:
     if not _has_values(extracted_digits, db_digits):
         return _failed("aadhaar_number", extracted, db_value, "exact", "Aadhaar value missing")
     if not re.fullmatch(r"\d{12}", extracted_digits) or not re.fullmatch(r"\d{12}", db_digits):
-        return _failed("aadhaar_number", extracted, db_value, "exact", "Aadhaar must be exactly 12 digits")
+        return _failed(
+            "aadhaar_number", extracted, db_value, "exact", "Aadhaar must be exactly 12 digits"
+        )
     return _exact_result("aadhaar_number", extracted, db_value, extracted_digits == db_digits)
 
 
@@ -31,7 +33,9 @@ def verify_pan(extracted: str, db_value: str) -> FieldVerificationResult:
     if not _has_values(extracted_pan, db_pan):
         return _failed("pan_number", extracted, db_value, "exact", "PAN value missing")
     if not _valid_pan(extracted_pan) or not _valid_pan(db_pan):
-        return _failed("pan_number", extracted, db_value, "exact", "PAN must match ABCDE1234F format")
+        return _failed(
+            "pan_number", extracted, db_value, "exact", "PAN must match ABCDE1234F format"
+        )
     return _exact_result("pan_number", extracted, db_value, extracted_pan == db_pan)
 
 
@@ -42,7 +46,9 @@ def verify_phone(extracted: str, db_value: str) -> FieldVerificationResult:
     if not _has_values(extracted_phone, db_phone):
         return _failed("phone_number", extracted, db_value, "exact", "Phone value missing")
     if not re.fullmatch(r"\d{10}", extracted_phone) or not re.fullmatch(r"\d{10}", db_phone):
-        return _failed("phone_number", extracted, db_value, "exact", "Phone must be exactly 10 digits")
+        return _failed(
+            "phone_number", extracted, db_value, "exact", "Phone must be exactly 10 digits"
+        )
     return _exact_result("phone_number", extracted, db_value, extracted_phone == db_phone)
 
 
@@ -85,7 +91,11 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
         return _failed("loan_amount", extracted, db_value, "exact", "Amount missing or invalid")
     tolerance = abs(db_amount) * 0.01
     matched = abs(extracted_amount - db_amount) <= tolerance
-    confidence = 1.0 if matched else max(0.0, 1.0 - (abs(extracted_amount - db_amount) / max(abs(db_amount), 1.0)))
+    confidence = (
+        1.0
+        if matched
+        else max(0.0, 1.0 - (abs(extracted_amount - db_amount) / max(abs(db_amount), 1.0)))
+    )
     return FieldVerificationResult(
         field_name="loan_amount",
         extracted_value=extracted,
@@ -163,9 +173,7 @@ def address_with_relationship(address: Any, fields: dict[str, Any] | None) -> st
         "WO": "W/O",
         "CO": "C/O",
     }.get(qualifier_key)
-    related_name = re.sub(
-        r"\s+", " ", str(fields.get("related_person_name") or "")
-    ).strip(" ,.;:-")
+    related_name = re.sub(r"\s+", " ", str(fields.get("related_person_name") or "")).strip(" ,.;:-")
     if not qualifier or not related_name:
         return physical_address
     relationship = f"{qualifier}: {related_name}"
@@ -205,7 +213,9 @@ def verify_pincode(extracted: str, db_value: str) -> FieldVerificationResult:
     if not _has_values(extracted_pin, db_pin):
         return _failed("pin_code", extracted, db_value, "exact", "PIN code value missing")
     if not re.fullmatch(r"\d{6}", extracted_pin) or not re.fullmatch(r"\d{6}", db_pin):
-        return _failed("pin_code", extracted, db_value, "exact", "PIN code must be exactly 6 digits")
+        return _failed(
+            "pin_code", extracted, db_value, "exact", "PIN code must be exactly 6 digits"
+        )
     return _exact_result("pin_code", extracted, db_value, extracted_pin == db_pin)
 
 
@@ -249,7 +259,9 @@ def _maybe_llm_review(result: FieldVerificationResult) -> FieldVerificationResul
     )
 
 
-def _exact_result(field_name: str, extracted: Any, db_value: Any, matched: bool) -> FieldVerificationResult:
+def _exact_result(
+    field_name: str, extracted: Any, db_value: Any, matched: bool
+) -> FieldVerificationResult:
     return FieldVerificationResult(
         field_name=field_name,
         extracted_value=extracted,
@@ -358,9 +370,17 @@ def _parse_supported_date(value: Any) -> datetime | None:
     # Try explicit formats first (most reliable, avoids locale ambiguity).
     # DD-MonthName-YYYY and DD/MonthName/YYYY are used by the DB store.
     for fmt in (
-        "%d-%B-%Y", "%d %B %Y", "%d-%b-%Y", "%d %b %Y",  # DD-MonthName-YYYY
-        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%B/%Y", "%d/%b/%Y",
-        "%b %d, %Y", "%B %d, %Y",
+        "%d-%B-%Y",
+        "%d %B %Y",
+        "%d-%b-%Y",
+        "%d %b %Y",  # DD-MonthName-YYYY
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d",
+        "%d/%B/%Y",
+        "%d/%b/%Y",
+        "%b %d, %Y",
+        "%B %d, %Y",
     ):
         try:
             return datetime.strptime(text, fmt)
@@ -368,6 +388,7 @@ def _parse_supported_date(value: Any) -> datetime | None:
             continue
     # Fall back to dateutil for remaining formats
     from dateutil import parser
+
     try:
         return parser.parse(text, dayfirst=True)
     except (ValueError, TypeError, OverflowError):
@@ -416,6 +437,7 @@ def _normalize_address(value: Any) -> str:
 
 def _relationship_prefix_matches(left: Any, right: Any) -> bool:
     """Match a trusted S/O/W/O prefix despite a one-character OCR error."""
+
     def relation(value: Any) -> tuple[str, list[str]] | None:
         normalized = re.sub(r"\b([swdc])\s*/\s*o\b", r"\1o", str(value).lower())
         match = re.search(r"\b(so|wo|do|co)\s*[:\-]?\s*([a-z]+(?:\s+[a-z]+)?)", normalized)
@@ -431,7 +453,7 @@ def _relationship_prefix_matches(left: Any, right: Any) -> bool:
         short_name, long_name = left_relation[1], right_relation[1]
     else:
         short_name, long_name = right_relation[1], left_relation[1]
-    compare_words = long_name[:max(1, len(short_name))]
+    compare_words = long_name[: max(1, len(short_name))]
     name_score = fuzz.ratio(" ".join(short_name), " ".join(compare_words))
     shared = left_tokens & right_tokens
     return name_score >= 75 and (min(len(left_tokens), len(right_tokens)) <= 3 or len(shared) >= 3)

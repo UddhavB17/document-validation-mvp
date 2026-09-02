@@ -70,16 +70,22 @@ def aggregate(
         {
             anomaly.get("document_type")
             for anomaly in sorted_anomalies
-            if str(anomaly.get("rule_id", "")).startswith("MISSING_DOC") and anomaly.get("document_type")
+            if str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
+            and anomaly.get("document_type")
         }
     )
     pages_with_issues = sorted(
-        {anomaly.get("page_number") for anomaly in sorted_anomalies if anomaly.get("page_number") is not None}
+        {
+            anomaly.get("page_number")
+            for anomaly in sorted_anomalies
+            if anomaly.get("page_number") is not None
+        }
     )
 
     # Filter out missing document presence anomalies from active anomalies and flags list
     active_anomalies = [
-        anomaly for anomaly in sorted_anomalies
+        anomaly
+        for anomaly in sorted_anomalies
         if not str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
     ]
 
@@ -108,7 +114,9 @@ def aggregate(
 
 def save_aggregation(application_id: int, anomalies: list[dict], final_status: str) -> None:
     with get_connection() as connection:
-        connection.execute("DELETE FROM validation_results WHERE application_id = ?", (application_id,))
+        connection.execute(
+            "DELETE FROM validation_results WHERE application_id = ?", (application_id,)
+        )
         for anomaly in anomalies:
             connection.execute(
                 """

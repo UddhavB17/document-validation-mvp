@@ -264,10 +264,7 @@ def canonicalize_person_name(value: Any) -> NameCandidate:
         return NameCandidate(None, False, "blank")
     if normalized in {_normalize_for_rules(label) for label in _LABEL_ONLY_VALUES}:
         return NameCandidate(None, False, "field_label")
-    if any(
-        piece.strip(" :,.–—\-/()[]|'\"") in _INDIC_LABEL_TOKENS
-        for piece in candidate.split()
-    ):
+    if any(piece.strip(" :,.–—\-/()[]|'\"") in _INDIC_LABEL_TOKENS for piece in candidate.split()):
         return NameCandidate(None, False, "indic_field_label")
     if normalized in _PLACEHOLDER_VALUES:
         return NameCandidate(None, False, "placeholder")
@@ -279,7 +276,9 @@ def canonicalize_person_name(value: Any) -> NameCandidate:
         return NameCandidate(None, False, "relationship_or_care_of_value")
     if re.search(r"\d", candidate):
         return NameCandidate(None, False, "contains_digits")
-    if any(part in candidate.lower() for part in ("xmlns", "http://", "https://", "<", ">", "=", "/>")):
+    if any(
+        part in candidate.lower() for part in ("xmlns", "http://", "https://", "<", ">", "=", "/>")
+    ):
         return NameCandidate(None, False, "metadata_or_markup")
     if not any(character.isalpha() for character in candidate):
         return NameCandidate(None, False, "no_letters")
@@ -343,7 +342,14 @@ def name_similarity(left: Any, right: Any) -> float:
 
 def has_independent_identity_anchor(fields: dict[str, Any]) -> bool:
     """Return true when a page has identity evidence stronger than name text."""
-    for field in ("pan_number", "aadhaar_number", "aadhaar_last4", "phone_number", "date_of_birth", "dob"):
+    for field in (
+        "pan_number",
+        "aadhaar_number",
+        "aadhaar_last4",
+        "phone_number",
+        "date_of_birth",
+        "dob",
+    ):
         value = fields.get(field)
         if value not in (None, "", [], {}):
             return True

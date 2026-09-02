@@ -49,11 +49,7 @@ _SUMMARY_LABELS: dict[str, tuple[str, ...]] = {
 # OCR frequently loses table borders, leaving (for example) ``Amount of
 # Facility`` followed immediately by ``Rate of Interest 21.00``.
 _SUMMARY_BOUNDARY_LABELS = tuple(
-    dict.fromkeys(
-        label
-        for labels in _SUMMARY_LABELS.values()
-        for label in labels
-    )
+    dict.fromkeys(label for labels in _SUMMARY_LABELS.values() for label in labels)
 ) + (
     "loan term",
     "rate of interest",
@@ -107,12 +103,9 @@ def parse_repayment_schedule_rows(text: Any) -> list[dict[str, Any]]:
         return []
     lowered = normalized.casefold()
     explicit_header = bool(
-        re.search(r"repayment\s+schedule|amorti[sz]ation\s+schedule", lowered)
-        and "emi" in lowered
+        re.search(r"repayment\s+schedule|amorti[sz]ation\s+schedule", lowered) and "emi" in lowered
     )
-    valid_count = sum(
-        1 for row in candidates if row["component_valid"] and row["balance_valid"]
-    )
+    valid_count = sum(1 for row in candidates if row["component_valid"] and row["balance_valid"])
     if not explicit_header and (
         len(candidates) < 2 or valid_count / max(1, len(candidates)) < 0.60
     ):
@@ -123,8 +116,7 @@ def parse_repayment_schedule_rows(text: Any) -> list[dict[str, Any]]:
 def extract_repayment_summary(text: Any) -> dict[str, Any]:
     """Extract KFS/APR illustration values relevant to schedule validation."""
     raw = "".join(
-        _ascii_digit(character)
-        for character in unicodedata.normalize("NFKC", str(text or ""))
+        _ascii_digit(character) for character in unicodedata.normalize("NFKC", str(text or ""))
     )
     if not raw.strip():
         return {}
@@ -203,8 +195,10 @@ def validate_repayment_schedules(
         recurring_rows = amortizing_rows[:-1] if len(amortizing_rows) > 1 else amortizing_rows
         recurring_emi = _modal_money([row["emi"] for row in recurring_rows])
         trusted_emi = _number(expected.get("emi"))
-        if recurring_emi is not None and trusted_emi is not None and not _close_money(
-            recurring_emi, trusted_emi, relative=0.005
+        if (
+            recurring_emi is not None
+            and trusted_emi is not None
+            and not _close_money(recurring_emi, trusted_emi, relative=0.005)
         ):
             anomalies.append(
                 _anomaly(
@@ -217,9 +211,7 @@ def validate_repayment_schedules(
                 )
             )
 
-        expected_count = _integer(
-            expected.get("installment_count") or expected.get("tenure")
-        )
+        expected_count = _integer(expected.get("installment_count") or expected.get("tenure"))
         if (
             _schedule_is_complete(rows)
             and expected_count is not None
@@ -285,8 +277,7 @@ def collect_repayment_schedules(pages: list[dict[str, Any]]) -> list[dict[str, A
         groups[-1]["rows"].extend(
             row
             for row in item["rows"]
-            if (row["installment_number"], row["opening_balance"], row["emi"])
-            not in existing
+            if (row["installment_number"], row["opening_balance"], row["emi"]) not in existing
         )
 
     unique: list[dict[str, Any]] = []
@@ -315,9 +306,8 @@ def _continues_schedule(group: dict[str, Any], item: dict[str, Any]) -> bool:
     current = item["rows"][0]
     if current["installment_number"] == previous["installment_number"] + 1:
         return True
-    return (
-        current["installment_number"] == previous["installment_number"]
-        and _close_money(current["opening_balance"], previous["opening_balance"])
+    return current["installment_number"] == previous["installment_number"] and _close_money(
+        current["opening_balance"], previous["opening_balance"]
     )
 
 
@@ -356,9 +346,7 @@ def _schedule_is_complete(rows: list[dict[str, Any]]) -> bool:
     numbers = [int(row["installment_number"]) for row in rows]
     if numbers != list(range(1, numbers[-1] + 1)):
         return False
-    return abs(rows[-1]["closing_balance"]) <= _money_tolerance(
-        rows[0]["opening_balance"]
-    )
+    return abs(rows[-1]["closing_balance"]) <= _money_tolerance(rows[0]["opening_balance"])
 
 
 def _has_repayment_summary_evidence(text: str) -> bool:
@@ -423,7 +411,9 @@ def _amount_after_any_label(text: str, labels: tuple[str, ...]) -> float | None:
             body = body[: min(boundaries)]
         values = [
             value
-            for raw in re.findall(r"(?<![\w.])(?:Rs\.?\s*|INR\s*|₹\s*)?(\d[\d,]*\.\d{1,2})(?![\w.])", body, re.I)
+            for raw in re.findall(
+                r"(?<![\w.])(?:Rs\.?\s*|INR\s*|₹\s*)?(\d[\d,]*\.\d{1,2})(?![\w.])", body, re.I
+            )
             if (value := _number(raw)) is not None
         ]
         if values:
@@ -436,8 +426,7 @@ def _amount_after_any_label(text: str, labels: tuple[str, ...]) -> float | None:
 
 def _next_summary_label(text: str) -> re.Match[str] | None:
     alternatives = [
-        r"\s+".join(re.escape(part) for part in label.split())
-        for label in _SUMMARY_BOUNDARY_LABELS
+        r"\s+".join(re.escape(part) for part in label.split()) for label in _SUMMARY_BOUNDARY_LABELS
     ]
     return re.search(rf"\b(?:{'|'.join(alternatives)})\b", text, re.IGNORECASE)
 

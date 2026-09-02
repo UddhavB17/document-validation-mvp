@@ -29,36 +29,49 @@ def test_google_vision_rest_api_key_parses_document_text(monkeypatch, tmp_path) 
 
         def json(self) -> dict:
             return {
-                "responses": [{
-                    "fullTextAnnotation": {
-                        "text": "Applicant Name\nRamesh Kumar",
-                        "pages": [{
-                            "property": {
-                                "detectedLanguages": [
-                                    {"languageCode": "gu", "confidence": 0.96},
-                                    {"languageCode": "en", "confidence": 0.72},
-                                ]
-                            },
-                            "blocks": [{
-                                "blockType": "TEXT",
-                                "confidence": 0.8,
-                                "paragraphs": [{
-                                    "words": [{
-                                        "confidence": 0.9,
-                                        "symbols": [{"text": "R"}, {"text": "K"}],
-                                    }]
-                                }],
-                            }]
-                        }],
-                    },
-                    "textAnnotations": [
-                        {"description": "Applicant Name\nRamesh Kumar"},
-                        {
-                            "description": "Ramesh",
-                            "boundingPoly": {"vertices": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]},
+                "responses": [
+                    {
+                        "fullTextAnnotation": {
+                            "text": "Applicant Name\nRamesh Kumar",
+                            "pages": [
+                                {
+                                    "property": {
+                                        "detectedLanguages": [
+                                            {"languageCode": "gu", "confidence": 0.96},
+                                            {"languageCode": "en", "confidence": 0.72},
+                                        ]
+                                    },
+                                    "blocks": [
+                                        {
+                                            "blockType": "TEXT",
+                                            "confidence": 0.8,
+                                            "paragraphs": [
+                                                {
+                                                    "words": [
+                                                        {
+                                                            "confidence": 0.9,
+                                                            "symbols": [
+                                                                {"text": "R"},
+                                                                {"text": "K"},
+                                                            ],
+                                                        }
+                                                    ]
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ],
                         },
-                    ],
-                }]
+                        "textAnnotations": [
+                            {"description": "Applicant Name\nRamesh Kumar"},
+                            {
+                                "description": "Ramesh",
+                                "boundingPoly": {"vertices": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]},
+                            },
+                        ],
+                    }
+                ]
             }
 
     def fake_post(url, *, json, timeout):

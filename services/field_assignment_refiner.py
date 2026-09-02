@@ -59,16 +59,51 @@ _PROTECTED_EXACT_FIELDS = {
 
 _EXPECTED_FIELDS = {
     "Aadhaar": ("applicant_name", "aadhaar_number", "dob", "address", "pin_code"),
-    "Bank Statement": ("account_holder_name", "account_number", "ifsc", "statement_period_start", "statement_period_end"),
-    "CERSAI Report": ("applicant_name", "pan_number", "dob", "search_reference_number", "transaction_id", "report_date", "search_result"),
-    "Cheque": ("account_holder_name", "account_number", "cheque_number", "ifsc", "cheque_date", "amount", "is_cancelled"),
+    "Bank Statement": (
+        "account_holder_name",
+        "account_number",
+        "ifsc",
+        "statement_period_start",
+        "statement_period_end",
+    ),
+    "CERSAI Report": (
+        "applicant_name",
+        "pan_number",
+        "dob",
+        "search_reference_number",
+        "transaction_id",
+        "report_date",
+        "search_result",
+    ),
+    "Cheque": (
+        "account_holder_name",
+        "account_number",
+        "cheque_number",
+        "ifsc",
+        "cheque_date",
+        "amount",
+        "is_cancelled",
+    ),
     "CIBIL Report": ("applicant_name", "credit_score", "report_date"),
     "CRIF Report": ("applicant_name", "credit_score", "report_date"),
-    "Driving License": ("applicant_name", "dl_number", "dob", "date_of_issue", "validity_date", "address"),
+    "Driving License": (
+        "applicant_name",
+        "dl_number",
+        "dob",
+        "date_of_issue",
+        "validity_date",
+        "address",
+    ),
     "Loan Agreement": ("borrower_name", "loan_amount", "tenure", "emi", "roi", "agreement_date"),
     "PAN": ("applicant_name", "father_name", "dob", "pan_number"),
     "PAN Card": ("applicant_name", "father_name", "dob", "pan_number"),
-    "Passbook": ("account_holder_name", "account_number", "ifsc", "customer_id", "passbook_issue_date"),
+    "Passbook": (
+        "account_holder_name",
+        "account_number",
+        "ifsc",
+        "customer_id",
+        "passbook_issue_date",
+    ),
     "Sanction Letter": ("applicant_name", "loan_amount", "tenure", "emi", "roi"),
     "Voter ID": ("applicant_name", "voter_id_number", "dob", "address"),
 }
@@ -102,9 +137,7 @@ def refine_field_assignments(
         # The certificate subject contains the signer's postal code.  Asking
         # the LLM to fill missing Aadhaar fields can misassign it to the holder.
         private_fields = {
-            key: value
-            for key, value in extracted_fields.items()
-            if str(key).startswith("_")
+            key: value for key, value in extracted_fields.items() if str(key).startswith("_")
         }
         return {**private_fields, "_aadhaar_verification_appendix": True}
 
@@ -118,7 +151,9 @@ def refine_field_assignments(
         extracted_fields=cleaned_fields,
     )
     if not llm_fields:
-        return _with_assignment_metadata(cleaned_fields, deterministic_changes, llm_metadata=llm_metadata)
+        return _with_assignment_metadata(
+            cleaned_fields, deterministic_changes, llm_metadata=llm_metadata
+        )
 
     refined_fields, llm_changes = _merge_llm_fields(cleaned_fields, llm_fields)
     return _with_assignment_metadata(
@@ -143,13 +178,19 @@ def is_suspicious_assignment(field_name: str, value: Any) -> bool:
     return False
 
 
-def _remove_suspicious_values(fields: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+def _remove_suspicious_values(
+    fields: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     cleaned = dict(fields)
     changes: dict[str, dict[str, Any]] = {}
     for field_name, value in list(_public_fields(fields).items()):
         if is_suspicious_assignment(field_name, value):
             cleaned[field_name] = None
-            changes[field_name] = {"from": value, "to": None, "reason": "label_or_placeholder_value"}
+            changes[field_name] = {
+                "from": value,
+                "to": None,
+                "reason": "label_or_placeholder_value",
+            }
     return cleaned, changes
 
 
@@ -252,7 +293,9 @@ def _merge_llm_fields(
 def _can_replace(field_name: str, current_value: Any) -> bool:
     if field_name in _PROTECTED_EXACT_FIELDS and current_value not in (None, "", [], {}):
         return False
-    return current_value in (None, "", [], {}) or is_suspicious_assignment(field_name, current_value)
+    return current_value in (None, "", [], {}) or is_suspicious_assignment(
+        field_name, current_value
+    )
 
 
 def _clean_llm_value(field_name: str, value: Any) -> Any:
@@ -330,11 +373,17 @@ def _parse_toon_object(response_text: str) -> dict[str, Any] | None:
 
 
 def _public_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    return {str(key): value for key, value in (fields or {}).items() if not str(key).startswith("_")}
+    return {
+        str(key): value for key, value in (fields or {}).items() if not str(key).startswith("_")
+    }
 
 
 def _model() -> str:
-    return os.getenv("LLM_FIELD_ASSIGNMENT_MODEL") or os.getenv("OLLAMA_CLASSIFIER_MODEL") or DEFAULT_MODEL
+    return (
+        os.getenv("LLM_FIELD_ASSIGNMENT_MODEL")
+        or os.getenv("OLLAMA_CLASSIFIER_MODEL")
+        or DEFAULT_MODEL
+    )
 
 
 def _normalize_text(value: str) -> str:
@@ -343,17 +392,45 @@ def _normalize_text(value: str) -> str:
 
 def _looks_like_non_name(normalized: str) -> bool:
     blocked = {
-        "account", "address", "date of birth", "dob", "ifsc", "loan amount", "pin code",
-        "source", "financer", "issuing authority", "ration card", "driving", "phone no",
-        "c/o", "s/o", "w/o", "d/o", "c/o , s/o", "s/o , c/o", "relationship", "relations",
-        "master policy holder", "name of grantor",
+        "account",
+        "address",
+        "date of birth",
+        "dob",
+        "ifsc",
+        "loan amount",
+        "pin code",
+        "source",
+        "financer",
+        "issuing authority",
+        "ration card",
+        "driving",
+        "phone no",
+        "c/o",
+        "s/o",
+        "w/o",
+        "d/o",
+        "c/o , s/o",
+        "s/o , c/o",
+        "relationship",
+        "relations",
+        "master policy holder",
+        "name of grantor",
     }
     if normalized in blocked:
         return True
     if re.fullmatch(r"(?:c/?o|s/?o|w/?o|d/?o)(?:\s*[,/]\s*(?:c/?o|s/?o|w/?o|d/?o))*", normalized):
         return True
     compact = re.sub(r"[^a-z]", "", normalized)
-    return compact in {"acnumber", "acnumeber", "accountnumber", "accountno", "coso", "soco", "null", "none"}
+    return compact in {
+        "acnumber",
+        "acnumeber",
+        "accountnumber",
+        "accountno",
+        "coso",
+        "soco",
+        "null",
+        "none",
+    }
 
 
 def _looks_like_address_placeholder(normalized: str) -> bool:

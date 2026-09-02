@@ -28,6 +28,8 @@ def _zip_bytes(files: list[tuple[str, bytes]]) -> bytes:
         for filename, content in files:
             archive.writestr(filename, content)
     return buffer.getvalue()
+
+
 def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     client = TestClient(app)
@@ -75,7 +77,9 @@ def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
 def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
-    monkeypatch.setattr(upload_route, "run_pipeline", lambda *_args, **_kwargs: {"pipeline_status": "completed"})
+    monkeypatch.setattr(
+        upload_route, "run_pipeline", lambda *_args, **_kwargs: {"pipeline_status": "completed"}
+    )
     monkeypatch.setattr(upload_route, "submit_job", lambda fn, *args, **kwargs: fn(*args, **kwargs))
 
     pdf_path = tmp_path / "upload.pdf"
@@ -121,7 +125,9 @@ def test_progress_poll_does_not_reinitialize_database(monkeypatch) -> None:
     monkeypatch.setattr(
         upload_route,
         "init_db",
-        lambda: (_ for _ in ()).throw(AssertionError("progress polling must not initialize the database")),
+        lambda: (_ for _ in ()).throw(
+            AssertionError("progress polling must not initialize the database")
+        ),
     )
     monkeypatch.setattr(
         upload_route,
@@ -254,7 +260,7 @@ def test_trusted_json_upload_queues_automatic_page_identification(tmp_path, monk
 
 def test_upload_route_accepts_raw_company_database_dump() -> None:
     parsed = upload_route._parse_manifest(
-        '''
+        """
         Loan Application: RJ000000042
         {"applicantdetails": {
           "loanId": 42,
@@ -265,7 +271,7 @@ def test_upload_route_accepts_raw_company_database_dump() -> None:
           "loanId": 42,
           "loanamount": "500000"
         }}
-        '''
+        """
     )
 
     assert parsed.loan_id == "RJ000000042"
@@ -278,19 +284,23 @@ def test_mapped_background_job_uses_shared_pdf_pipeline(tmp_path, monkeypatch) -
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     db.init_db()
     with db.get_connection() as connection:
-        application_id = int(connection.execute(
-            "INSERT INTO applications (loan_id, status) VALUES (?, 'processing')",
-            ("MAP-SHARED-001",),
-        ).lastrowid)
+        application_id = int(
+            connection.execute(
+                "INSERT INTO applications (loan_id, status) VALUES (?, 'processing')",
+                ("MAP-SHARED-001",),
+            ).lastrowid
+        )
     job_id = upload_route.create_pipeline_job(application_id)
     captured = {}
 
     def fake_run_pipeline(file_path, passed_application_id, **kwargs):
-        captured.update({
-            "file_path": file_path,
-            "application_id": passed_application_id,
-            **kwargs,
-        })
+        captured.update(
+            {
+                "file_path": file_path,
+                "application_id": passed_application_id,
+                **kwargs,
+            }
+        )
         return {"pipeline_status": "completed", "final_status": "CLEAN"}
 
     monkeypatch.setattr(upload_route, "run_pipeline", fake_run_pipeline)
@@ -300,12 +310,14 @@ def test_mapped_background_job_uses_shared_pdf_pipeline(tmp_path, monkeypatch) -
         "reference_data": {
             "primary": {"applicant_name": "Ramesh Kumar"},
         },
-        "documents": [{
-            "source_document_id": "file-0001",
-            "applicant_role": "primary",
-            "document_type": "PAN",
-            "pages": [1],
-        }],
+        "documents": [
+            {
+                "source_document_id": "file-0001",
+                "applicant_role": "primary",
+                "document_type": "PAN",
+                "pages": [1],
+            }
+        ],
     }
 
     upload_route._run_mapped_pipeline_task(
@@ -519,9 +531,7 @@ def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) 
     assert retry.json()["application_id"] != body["application_id"]
 
 
-def test_zip_package_rejects_mapping_to_page_owned_by_another_source(
-    tmp_path, monkeypatch
-) -> None:
+def test_zip_package_rejects_mapping_to_page_owned_by_another_source(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     pdf_path = tmp_path / "source.pdf"
@@ -656,5 +666,3 @@ def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch) 
             (body["application_id"],),
         ).fetchone()
     assert uploaded["original_filename"] == "selected.pdf"
-
-

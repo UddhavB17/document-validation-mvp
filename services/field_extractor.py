@@ -42,15 +42,18 @@ LOGGER = logging.getLogger(__name__)
 # python-dateutil – graceful import with informative error
 try:
     from dateutil import parser as _dateutil_parser
+
     _DATEUTIL_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _DATEUTIL_AVAILABLE = False
+
 
 # Lazy import to avoid circular dependency; only used inside extractors.
 def _xml_cleaner(text: str) -> str:
     """Strip XML/digital-signature content from page text before field extraction."""
     try:
         from services.text_extractor import clean_xml_and_metadata  # noqa: PLC0415
+
         return clean_xml_and_metadata(text)
     except ImportError as exc:  # pragma: no cover
         LOGGER.warning("XML cleaner is unavailable; extracting from original text: %s", exc)
@@ -58,6 +61,7 @@ def _xml_cleaner(text: str) -> str:
 
 
 # ── Public dispatcher ─────────────────────────────────────────────────────────
+
 
 def extract_fields(
     document_type: str,
@@ -82,35 +86,35 @@ def extract_fields(
         return {"_aadhaar_verification_appendix": True}
 
     _EXTRACTORS = {
-        "CAM":              _extract_cam,
-        "Sanction Letter":  _extract_sanction_letter,
-        "KFS":              _extract_sanction_letter,
-        "Loan Agreement":   _extract_loan_agreement,
+        "CAM": _extract_cam,
+        "Sanction Letter": _extract_sanction_letter,
+        "KFS": _extract_sanction_letter,
+        "Loan Agreement": _extract_loan_agreement,
         "Facility Agreement": _extract_loan_agreement,
-        "PAN":              _extract_pan,
-        "PAN Card":         _extract_pan,
-        "Aadhaar":          _extract_aadhaar,
-        "Voter ID":         _extract_voter_id,
-        "Driving License":  _extract_driving_license,
-        "CERSAI Report":    _extract_cersai_report,
-        "CRIF Report":      _extract_crif_report,
-        "CIBIL Report":     _extract_crif_report,
-        "Passbook":         _extract_passbook,
-        "Bank Statement":   _extract_bank_statement,
-        "Cheque":           _extract_cheque,
-        "Salary Slip":      _extract_salary_slip,
-        "Utility Bill":     _extract_utility_bill,
+        "PAN": _extract_pan,
+        "PAN Card": _extract_pan,
+        "Aadhaar": _extract_aadhaar,
+        "Voter ID": _extract_voter_id,
+        "Driving License": _extract_driving_license,
+        "CERSAI Report": _extract_cersai_report,
+        "CRIF Report": _extract_crif_report,
+        "CIBIL Report": _extract_crif_report,
+        "Passbook": _extract_passbook,
+        "Bank Statement": _extract_bank_statement,
+        "Cheque": _extract_cheque,
+        "Salary Slip": _extract_salary_slip,
+        "Utility Bill": _extract_utility_bill,
         "Application Form": _extract_application_form,
-        "Insurance Form":   _extract_insurance_form,
+        "Insurance Form": _extract_insurance_form,
         "Life Insurance Form": _extract_insurance_form,
-        "End-Use Letter":   _extract_end_use_letter,
-        "Stamp Duty":       _extract_stamp_duty,
+        "End-Use Letter": _extract_end_use_letter,
+        "Stamp Duty": _extract_stamp_duty,
         "Insurance Consent Letter": _extract_insurance_consent,
         "Legal Clearance Report": _extract_clearance_report,
         "Technical Clearance Report": _extract_clearance_report,
         "Technical Report": _extract_clearance_report,
-        "NACH Form":        _extract_nach_form,
-        "PDC":              _extract_pdc,
+        "NACH Form": _extract_nach_form,
+        "PDC": _extract_pdc,
     }
     extractor = _EXTRACTORS.get(document_type)
     if extractor is None:
@@ -137,6 +141,7 @@ def extract_fields(
 
 # ── Shared extraction helpers ─────────────────────────────────────────────────
 
+
 def _digits_only(value: str) -> str:
     """Strip everything except digits and return as string."""
     return re.sub(r"[^\d]", "", value)
@@ -158,68 +163,122 @@ def _normalize_amount(value: str | None) -> str | None:
 def _extract_generic_labeled_fields(text: str) -> dict[str, Any]:
     """Extract clearly labelled fields shared by forms, CAMs and loan records."""
     labels = {
-        "salutation": ("salutation",), "customer_id": ("customer id", "applicant id"),
-        "application_number": ("application number", "application no", "loan account number", "loan id"),
+        "salutation": ("salutation",),
+        "customer_id": ("customer id", "applicant id"),
+        "application_number": (
+            "application number",
+            "application no",
+            "loan account number",
+            "loan id",
+        ),
         "ration_card_number": ("ration card number", "ration card no"),
-        "gstin": ("gstin", "gst number"), "udyam_status": ("udyam status",),
+        "gstin": ("gstin", "gst number"),
+        "udyam_status": ("udyam status",),
         "kyc_status": ("kyc status", "kyc verification status"),
         "profile_photograph_present": ("profile photograph", "photograph status"),
         "facial_identity_status": ("facial identity", "face match status"),
-        "age": ("age",), "gender": ("gender",), "marital_status": ("marital status",),
-        "qualification": ("qualification",), "profession": ("profession",),
-        "disability_status": ("disability status", "disabled"), "ews_status": ("ews status",),
-        "caste": ("caste",), "religion": ("religion",), "medical_condition": ("medical condition",),
-        "father_name": ("father's name", "father name"), "mother_name": ("mother's name", "mother name"),
+        "age": ("age",),
+        "gender": ("gender",),
+        "marital_status": ("marital status",),
+        "qualification": ("qualification",),
+        "profession": ("profession",),
+        "disability_status": ("disability status", "disabled"),
+        "ews_status": ("ews status",),
+        "caste": ("caste",),
+        "religion": ("religion",),
+        "medical_condition": ("medical condition",),
+        "father_name": ("father's name", "father name"),
+        "mother_name": ("mother's name", "mother name"),
         "relationship": ("relationship to applicant", "relation with applicant"),
-        "phone_number": ("mobile number", "mobile no", "phone numbers", "phone number"), "email": ("email", "email id", "email ids"),
+        "phone_number": ("mobile number", "mobile no", "phone numbers", "phone number"),
+        "email": ("email", "email id", "email ids"),
         "bank_linked_mobile": ("bank linked mobile", "mobile linked to bank"),
         "address_ownership": ("address ownership", "residence ownership"),
-        "address_subtype": ("address subtype", "residence type"), "landmark": ("landmark",),
-        "locality": ("village/locality", "locality", "village"), "tehsil": ("tehsil",),
-        "district": ("district",), "state": ("state",), "country": ("country",),
-        "pin_code": ("pin code", "pincode"), "occupied_since": ("occupied since", "residing since"),
-        "latitude": ("latitude",), "longitude": ("longitude",),
-        "employment_type": ("employment type",), "income_source": ("income source",),
-        "occupation": ("occupation",), "work_profile": ("work profile",), "industry": ("industry",),
-        "job_role": ("job role",), "job_description": ("job description",),
+        "address_subtype": ("address subtype", "residence type"),
+        "landmark": ("landmark",),
+        "locality": ("village/locality", "locality", "village"),
+        "tehsil": ("tehsil",),
+        "district": ("district",),
+        "state": ("state",),
+        "country": ("country",),
+        "pin_code": ("pin code", "pincode"),
+        "occupied_since": ("occupied since", "residing since"),
+        "latitude": ("latitude",),
+        "longitude": ("longitude",),
+        "employment_type": ("employment type",),
+        "income_source": ("income source",),
+        "occupation": ("occupation",),
+        "work_profile": ("work profile",),
+        "industry": ("industry",),
+        "job_role": ("job role",),
+        "job_description": ("job description",),
         "monthly_income": ("monthly declared income", "monthly income"),
         "verified_income": ("monthly verified income", "verified income"),
         "considered_income": ("income considered", "eligibility income"),
-        "turnover": ("turnover",), "margin": ("margin",),
+        "turnover": ("turnover",),
+        "margin": ("margin",),
         "years_current_work": ("years in current work", "work vintage"),
         "overall_experience": ("overall experience", "total experience"),
-        "income_stability": ("income stability",), "verification_method": ("verification method",),
-        "income_proof_basis": ("income proof basis",), "verification_status": ("verification status",),
-        "verifier": ("verified by", "verifier"), "field_remarks": ("field remarks", "pd remarks"),
-        "bank_name": ("bank name", "name of bank"), "branch": ("bank branch", "branch"),
-        "account_type": ("account type",), "bank_verification_status": ("bank verification status",),
-        "primary_account": ("primary account",), "nach_status": ("nach status", "mandate status"),
-        "mandate_amount": ("mandate amount",), "mandate_validity": ("mandate validity",),
+        "income_stability": ("income stability",),
+        "verification_method": ("verification method",),
+        "income_proof_basis": ("income proof basis",),
+        "verification_status": ("verification status",),
+        "verifier": ("verified by", "verifier"),
+        "field_remarks": ("field remarks", "pd remarks"),
+        "bank_name": ("bank name", "name of bank"),
+        "branch": ("bank branch", "branch"),
+        "account_type": ("account type",),
+        "bank_verification_status": ("bank verification status",),
+        "primary_account": ("primary account",),
+        "nach_status": ("nach status", "mandate status"),
+        "mandate_amount": ("mandate amount",),
+        "mandate_validity": ("mandate validity",),
         "payment_destination": ("payment destination",),
         "bureau_account_count": ("number of accounts", "total accounts"),
         "overdue_account_count": ("overdue account count", "overdue accounts"),
-        "dpd_status": ("dpd status",), "credit_report_id": ("credit report id", "report id"),
-        "monthly_obligations": ("monthly obligations",), "available_income": ("available income",),
-        "maximum_emi": ("maximum emi", "max emi"), "foir": ("foir",),
-        "loan_purpose": ("loan purpose",), "product_type": ("loan product", "product type"),
-        "requested_amount": ("requested amount",), "recommended_amount": ("recommended amount",),
-        "sanction_amount": ("sanctioned amount", "sanction amount"), "apr": ("apr",),
-        "first_emi": ("first emi",), "final_emi": ("final emi",),
+        "dpd_status": ("dpd status",),
+        "credit_report_id": ("credit report id", "report id"),
+        "monthly_obligations": ("monthly obligations",),
+        "available_income": ("available income",),
+        "maximum_emi": ("maximum emi", "max emi"),
+        "foir": ("foir",),
+        "loan_purpose": ("loan purpose",),
+        "product_type": ("loan product", "product type"),
+        "requested_amount": ("requested amount",),
+        "recommended_amount": ("recommended amount",),
+        "sanction_amount": ("sanctioned amount", "sanction amount"),
+        "apr": ("apr",),
+        "first_emi": ("first emi",),
+        "final_emi": ("final emi",),
         "repayment_start_date": ("repayment commencement date", "repayment start date"),
-        "maturity_date": ("maturity date",), "installment_count": ("scheduled installments", "installment count"),
-        "total_interest": ("total interest",), "total_repayment": ("total borrower repayment", "total repayment"),
-        "processing_fee": ("processing fee",), "insurance_amount": ("insurance amount",),
-        "other_charges": ("other charges",), "net_disbursement": ("net disbursement",),
-        "ltv": ("ltv", "loan to value"), "property_owner": ("property owner",),
-        "ownership_type": ("ownership type",), "market_value": ("market value",),
-        "distress_value": ("distress value",), "land_value": ("land value",),
-        "construction_value": ("construction value",), "property_area": ("property area", "total area"),
-        "property_address": ("property address", "document address"), "site_address": ("site address",),
-        "property_usage": ("property usage",), "occupancy": ("occupancy",),
-        "property_condition": ("property condition",), "construction_status": ("construction status",),
-        "sanction_conditions": ("sanction conditions",), "approved_deviations": ("approved deviations",),
-        "pending_conditions": ("pending conditions",), "tranche_structure": ("tranche structure",),
-        "workflow_status": ("workflow status",), "repayment_status": ("repayment status",),
+        "maturity_date": ("maturity date",),
+        "installment_count": ("scheduled installments", "installment count"),
+        "total_interest": ("total interest",),
+        "total_repayment": ("total borrower repayment", "total repayment"),
+        "processing_fee": ("processing fee",),
+        "insurance_amount": ("insurance amount",),
+        "other_charges": ("other charges",),
+        "net_disbursement": ("net disbursement",),
+        "ltv": ("ltv", "loan to value"),
+        "property_owner": ("property owner",),
+        "ownership_type": ("ownership type",),
+        "market_value": ("market value",),
+        "distress_value": ("distress value",),
+        "land_value": ("land value",),
+        "construction_value": ("construction value",),
+        "property_area": ("property area", "total area"),
+        "property_address": ("property address", "document address"),
+        "site_address": ("site address",),
+        "property_usage": ("property usage",),
+        "occupancy": ("occupancy",),
+        "property_condition": ("property condition",),
+        "construction_status": ("construction status",),
+        "sanction_conditions": ("sanction conditions",),
+        "approved_deviations": ("approved deviations",),
+        "pending_conditions": ("pending conditions",),
+        "tranche_structure": ("tranche structure",),
+        "workflow_status": ("workflow status",),
+        "repayment_status": ("repayment status",),
         "overdue_status": ("overdue status",),
     }
     fields: dict[str, Any] = {}
@@ -231,39 +290,128 @@ def _extract_generic_labeled_fields(text: str) -> dict[str, Any]:
 
 
 _IDENTITY_GENERIC_FIELDS = {
-    "salutation", "customer_id", "application_number", "ration_card_number", "gstin",
-    "udyam_status", "kyc_status", "profile_photograph_present", "facial_identity_status",
-    "age", "gender", "marital_status", "qualification", "profession",
-    "disability_status", "ews_status", "caste", "religion", "medical_condition",
-    "father_name", "mother_name", "relationship", "phone_number", "email",
+    "salutation",
+    "customer_id",
+    "application_number",
+    "ration_card_number",
+    "gstin",
+    "udyam_status",
+    "kyc_status",
+    "profile_photograph_present",
+    "facial_identity_status",
+    "age",
+    "gender",
+    "marital_status",
+    "qualification",
+    "profession",
+    "disability_status",
+    "ews_status",
+    "caste",
+    "religion",
+    "medical_condition",
+    "father_name",
+    "mother_name",
+    "relationship",
+    "phone_number",
+    "email",
 }
 _ADDRESS_GENERIC_FIELDS = {
-    "address_ownership", "address_subtype", "landmark", "locality", "tehsil", "district",
-    "state", "country", "pin_code", "occupied_since", "latitude", "longitude",
+    "address_ownership",
+    "address_subtype",
+    "landmark",
+    "locality",
+    "tehsil",
+    "district",
+    "state",
+    "country",
+    "pin_code",
+    "occupied_since",
+    "latitude",
+    "longitude",
 }
 _BANK_GENERIC_FIELDS = {
-    "bank_linked_mobile", "bank_name", "branch", "account_type", "bank_verification_status",
-    "primary_account", "nach_status", "mandate_amount", "mandate_validity", "payment_destination",
+    "bank_linked_mobile",
+    "bank_name",
+    "branch",
+    "account_type",
+    "bank_verification_status",
+    "primary_account",
+    "nach_status",
+    "mandate_amount",
+    "mandate_validity",
+    "payment_destination",
 }
 _BUREAU_GENERIC_FIELDS = {
-    "bureau_account_count", "overdue_account_count", "dpd_status", "credit_report_id",
-    "monthly_obligations", "available_income", "maximum_emi", "foir",
+    "bureau_account_count",
+    "overdue_account_count",
+    "dpd_status",
+    "credit_report_id",
+    "monthly_obligations",
+    "available_income",
+    "maximum_emi",
+    "foir",
 }
 _LOAN_GENERIC_FIELDS = {
-    "loan_purpose", "product_type", "requested_amount", "recommended_amount", "sanction_amount",
-    "apr", "first_emi", "final_emi", "repayment_start_date", "maturity_date",
-    "installment_count", "total_interest", "total_repayment", "processing_fee",
-    "insurance_amount", "other_charges", "net_disbursement", "ltv", "property_owner",
-    "ownership_type", "market_value", "distress_value", "land_value", "construction_value",
-    "property_area", "property_address", "site_address", "property_usage", "occupancy",
-    "property_condition", "construction_status", "sanction_conditions", "approved_deviations",
-    "pending_conditions", "tranche_structure", "workflow_status", "repayment_status", "overdue_status",
+    "loan_purpose",
+    "product_type",
+    "requested_amount",
+    "recommended_amount",
+    "sanction_amount",
+    "apr",
+    "first_emi",
+    "final_emi",
+    "repayment_start_date",
+    "maturity_date",
+    "installment_count",
+    "total_interest",
+    "total_repayment",
+    "processing_fee",
+    "insurance_amount",
+    "other_charges",
+    "net_disbursement",
+    "ltv",
+    "property_owner",
+    "ownership_type",
+    "market_value",
+    "distress_value",
+    "land_value",
+    "construction_value",
+    "property_area",
+    "property_address",
+    "site_address",
+    "property_usage",
+    "occupancy",
+    "property_condition",
+    "construction_status",
+    "sanction_conditions",
+    "approved_deviations",
+    "pending_conditions",
+    "tranche_structure",
+    "workflow_status",
+    "repayment_status",
+    "overdue_status",
 }
 _EMPLOYMENT_GENERIC_FIELDS = {
-    "employment_type", "income_source", "occupation", "work_profile", "industry", "job_role",
-    "job_description", "monthly_income", "verified_income", "considered_income", "turnover",
-    "margin", "years_current_work", "overall_experience", "income_stability",
-    "verification_method", "income_proof_basis", "verification_status", "verifier", "field_remarks",
+    "employment_type",
+    "income_source",
+    "occupation",
+    "work_profile",
+    "industry",
+    "job_role",
+    "job_description",
+    "monthly_income",
+    "verified_income",
+    "considered_income",
+    "turnover",
+    "margin",
+    "years_current_work",
+    "overall_experience",
+    "income_stability",
+    "verification_method",
+    "income_proof_basis",
+    "verification_status",
+    "verifier",
+    "field_remarks",
 }
 
 
@@ -280,13 +428,21 @@ def _generic_fields_allowed_for(document_type: str) -> set[str]:
         return _IDENTITY_GENERIC_FIELDS | _ADDRESS_GENERIC_FIELDS
     if document_type == "Application Form":
         return (
-            _IDENTITY_GENERIC_FIELDS | _ADDRESS_GENERIC_FIELDS | _BANK_GENERIC_FIELDS
-            | _BUREAU_GENERIC_FIELDS | _LOAN_GENERIC_FIELDS | _EMPLOYMENT_GENERIC_FIELDS
+            _IDENTITY_GENERIC_FIELDS
+            | _ADDRESS_GENERIC_FIELDS
+            | _BANK_GENERIC_FIELDS
+            | _BUREAU_GENERIC_FIELDS
+            | _LOAN_GENERIC_FIELDS
+            | _EMPLOYMENT_GENERIC_FIELDS
         )
     if document_type == "CAM":
         return (
-            _IDENTITY_GENERIC_FIELDS | _ADDRESS_GENERIC_FIELDS | _BANK_GENERIC_FIELDS
-            | _BUREAU_GENERIC_FIELDS | _LOAN_GENERIC_FIELDS | _EMPLOYMENT_GENERIC_FIELDS
+            _IDENTITY_GENERIC_FIELDS
+            | _ADDRESS_GENERIC_FIELDS
+            | _BANK_GENERIC_FIELDS
+            | _BUREAU_GENERIC_FIELDS
+            | _LOAN_GENERIC_FIELDS
+            | _EMPLOYMENT_GENERIC_FIELDS
         )
     if document_type in {"Sanction Letter", "KFS", "Loan Agreement", "Facility Agreement"}:
         return _IDENTITY_GENERIC_FIELDS | _LOAN_GENERIC_FIELDS | _ADDRESS_GENERIC_FIELDS
@@ -294,7 +450,11 @@ def _generic_fields_allowed_for(document_type: str) -> set[str]:
         return _IDENTITY_GENERIC_FIELDS | _LOAN_GENERIC_FIELDS
     if document_type in {"Bank Statement", "Passbook", "Cheque", "NACH Form"}:
         return _IDENTITY_GENERIC_FIELDS | _BANK_GENERIC_FIELDS
-    if document_type in {"Technical Report", "Technical Clearance Report", "Legal Clearance Report"}:
+    if document_type in {
+        "Technical Report",
+        "Technical Clearance Report",
+        "Legal Clearance Report",
+    }:
         return _LOAN_GENERIC_FIELDS | {"latitude", "longitude", "application_number"}
     return set()
 
@@ -312,15 +472,48 @@ def _sanitize_generic_value(field_name: str, value: Any) -> Any:
         return digits if re.fullmatch(r"\d{6}", digits) else None
     if field_name == "email":
         return compact if re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", compact) else None
-    if field_name in {"application_number", "customer_id", "credit_report_id", "gstin", "ration_card_number"}:
+    if field_name in {
+        "application_number",
+        "customer_id",
+        "credit_report_id",
+        "gstin",
+        "ration_card_number",
+    }:
         return compact if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9./_-]{3,40}", compact) else None
     if field_name in {
-        "requested_amount", "recommended_amount", "sanction_amount", "apr", "first_emi", "final_emi",
-        "installment_count", "total_interest", "total_repayment", "processing_fee", "insurance_amount",
-        "other_charges", "net_disbursement", "ltv", "market_value", "distress_value", "land_value",
-        "construction_value", "property_area", "monthly_income", "verified_income", "considered_income",
-        "turnover", "margin", "monthly_obligations", "available_income", "maximum_emi", "foir",
-        "bureau_account_count", "overdue_account_count", "mandate_amount", "latitude", "longitude",
+        "requested_amount",
+        "recommended_amount",
+        "sanction_amount",
+        "apr",
+        "first_emi",
+        "final_emi",
+        "installment_count",
+        "total_interest",
+        "total_repayment",
+        "processing_fee",
+        "insurance_amount",
+        "other_charges",
+        "net_disbursement",
+        "ltv",
+        "market_value",
+        "distress_value",
+        "land_value",
+        "construction_value",
+        "property_area",
+        "monthly_income",
+        "verified_income",
+        "considered_income",
+        "turnover",
+        "margin",
+        "monthly_obligations",
+        "available_income",
+        "maximum_emi",
+        "foir",
+        "bureau_account_count",
+        "overdue_account_count",
+        "mandate_amount",
+        "latitude",
+        "longitude",
     }:
         return compact if re.search(r"\d", compact) else None
     if field_name in {"father_name", "mother_name"}:
@@ -346,7 +539,7 @@ def _strip_trailing_page_footer(value: Any) -> str:
     """Remove a page counter and anything appended after it from an address."""
     raw = str(value or "")
     match = _PAGE_COUNTER_RE.search(raw)
-    return raw[:match.start()].rstrip(" ,.;:|-\n\r\t") if match else raw
+    return raw[: match.start()].rstrip(" ,.;:|-\n\r\t") if match else raw
 
 
 def _sanitize_address_fields(fields: dict[str, Any]) -> dict[str, Any]:
@@ -382,8 +575,17 @@ def _sanitize_address_value(value: Any) -> str | None:
     ):
         return None
     placeholder_tokens = {
-        "address", "landmark", "locality", "city", "district", "pin", "code",
-        "state", "country", "village", "tehsil",
+        "address",
+        "landmark",
+        "locality",
+        "city",
+        "district",
+        "pin",
+        "code",
+        "state",
+        "country",
+        "village",
+        "tehsil",
     }
     latin_tokens = re.findall(r"[A-Za-z0-9]+", compact)
     if latin_tokens and not any(token.isdigit() for token in latin_tokens):
@@ -409,7 +611,9 @@ _ADDRESS_FORM_NOISE_PATTERNS = (
 def _address_value_is_contaminated(value: str) -> bool:
     """Reject form-label soup produced by flattened multi-column OCR."""
     normalized = re.sub(r"\s+", " ", str(value or "")).casefold()
-    noise_hits = sum(bool(re.search(pattern, normalized)) for pattern in _ADDRESS_FORM_NOISE_PATTERNS)
+    noise_hits = sum(
+        bool(re.search(pattern, normalized)) for pattern in _ADDRESS_FORM_NOISE_PATTERNS
+    )
     tokens = re.findall(r"[A-Za-z0-9]+", normalized)
     return noise_hits >= 2 or (noise_hits >= 1 and len(tokens) > 28) or len(tokens) > 55
 
@@ -451,7 +655,7 @@ def _numeric_line_after_label(text: str, *labels: str, max_lines: int = 8) -> st
         normalized = re.sub(r"\s+", " ", line.strip()).lower()
         if not any(normalized == label or normalized.startswith(f"{label} ") for label in labels):
             continue
-        for candidate_line in lines[index + 1:index + 1 + max_lines]:
+        for candidate_line in lines[index + 1 : index + 1 + max_lines]:
             candidate = candidate_line.strip()
             match = re.fullmatch(
                 r"(?:rs\.?\s*)?([\d,]+(?:\.\d+)?)\s*(?:%|fixed|months?|/-)?",
@@ -559,7 +763,9 @@ def _extract_percentage_near(text_lower: str, *labels: str) -> float | None:
 
 def _extract_identifier(text: str, *labels: str) -> str | None:
     for label in labels:
-        match = re.search(rf"{re.escape(label)}\s*[:\-–#]?\s*([A-Z0-9][A-Z0-9\-/]{{3,40}})", text, re.IGNORECASE)
+        match = re.search(
+            rf"{re.escape(label)}\s*[:\-–#]?\s*([A-Z0-9][A-Z0-9\-/]{{3,40}})", text, re.IGNORECASE
+        )
         if match:
             return match.group(1).strip()
     return None
@@ -624,7 +830,8 @@ def _line_after_label(text: str, *labels: str) -> str | None:
         line_stripped = line.strip()
         matched_label = next(
             (
-                label for label in labels
+                label
+                for label in labels
                 if re.fullmatch(rf"{re.escape(label)}\s*[:\-–]?", line_stripped, re.IGNORECASE)
                 or re.match(rf"^{re.escape(label)}\s*[:\-–]\s*\S", line_stripped, re.IGNORECASE)
             ),
@@ -682,10 +889,28 @@ def _lines_after_label(text: str, label: str, max_lines: int = 3) -> str | None:
     """Return up to *max_lines* lines following *label*, joined by spaces."""
     lines = text.splitlines()
     stop_labels = {
-        "name", "applicant name", "father name", "date of birth", "dob",
-        "date of issue", "issue date", "issued on", "valid till", "valid upto",
-        "validity", "licence no", "license no", "dl no", "address", "pin code",
-        "gender", "sex", "date", "mobile", "phone", "blood group",
+        "name",
+        "applicant name",
+        "father name",
+        "date of birth",
+        "dob",
+        "date of issue",
+        "issue date",
+        "issued on",
+        "valid till",
+        "valid upto",
+        "validity",
+        "licence no",
+        "license no",
+        "dl no",
+        "address",
+        "pin code",
+        "gender",
+        "sex",
+        "date",
+        "mobile",
+        "phone",
+        "blood group",
     }
     for i, line in enumerate(lines):
         if not re.search(rf"\b{re.escape(label)}\b", line, re.IGNORECASE):
@@ -762,7 +987,7 @@ def _value_after_label(text: str, *labels: str) -> str | None:
         normalized_line = _normalize_label(line)
         if normalized_line not in normalized_labels:
             continue
-        for candidate in lines[index + 1: index + 5]:
+        for candidate in lines[index + 1 : index + 5]:
             normalized_candidate = _normalize_label(candidate)
             if not candidate or normalized_candidate in stop_labels:
                 continue
@@ -798,16 +1023,16 @@ def _parse_date(text: str) -> str | None:
 def _extract_date_near(text_lower: str, *anchors: str) -> str | None:
     """Find a date-like pattern near any of the anchor keywords."""
     date_pattern = re.compile(
-        r"\b(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}"   # DD/MM/YYYY or DD-MM-YY
-        r"|\d{4}[/\-\.]\d{2}[/\-\.]\d{2}"            # YYYY-MM-DD
-        r"|\d{1,2}[-\s]+\w+[-\s]+\d{4})\b"           # 01-January-2025
+        r"\b(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}"  # DD/MM/YYYY or DD-MM-YY
+        r"|\d{4}[/\-\.]\d{2}[/\-\.]\d{2}"  # YYYY-MM-DD
+        r"|\d{1,2}[-\s]+\w+[-\s]+\d{4})\b"  # 01-January-2025
     )
     for anchor in anchors:
         idx = text_lower.find(anchor)
         if idx == -1:
             continue
         # Search in a 120-character window around the anchor
-        window = text_lower[max(0, idx - 20): idx + 100]
+        window = text_lower[max(0, idx - 20) : idx + 100]
         match = date_pattern.search(window)
         if match:
             return _parse_date(match.group(0))
@@ -860,7 +1085,7 @@ def _extract_date_below_label(
             for label in normalized_labels
         ):
             continue
-        for candidate in lines[index + 1:index + 1 + max_lines]:
+        for candidate in lines[index + 1 : index + 1 + max_lines]:
             normalized_candidate = _normalize_label(candidate)
             if normalized_candidate and any(
                 normalized_candidate == stop
@@ -886,6 +1111,7 @@ def _is_past_date(iso_date: str | None) -> bool:
 
 
 # ── Per-document-type extractors ──────────────────────────────────────────────
+
 
 def _extract_cam(text: str) -> dict[str, Any]:
     """Extract conservative loan-level fields from a Credit Approval Memo.
@@ -914,12 +1140,8 @@ def _extract_cam(text: str) -> dict[str, Any]:
         "phone_number", _next_nonempty_line(text, "mobile number")
     )
     tenure_value = _normalize_amount(_next_nonempty_line(text, "tenure"))
-    requested_amount = _normalize_amount(
-        _next_nonempty_line(text, "requested loan amount")
-    )
-    requested_roi = _float_or_none(
-        _normalize_amount(_next_nonempty_line(text, "requested irr"))
-    )
+    requested_amount = _normalize_amount(_next_nonempty_line(text, "requested loan amount"))
+    requested_roi = _float_or_none(_normalize_amount(_next_nonempty_line(text, "requested irr")))
     return {
         "application_number": application_number,
         "applicant_name": applicant_name,
@@ -962,13 +1184,15 @@ def _extract_cam_decision_fields(text: str) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     if decision:
         amount = _normalize_amount(decision.group(1))
-        fields.update({
-            "loan_amount": amount,
-            "sanction_amount": amount,
-            "tenure": _int_or_none(decision.group(2)),
-            "roi": _float_or_none(decision.group(4)),
-            "emi": _normalize_amount(decision.group(5)),
-        })
+        fields.update(
+            {
+                "loan_amount": amount,
+                "sanction_amount": amount,
+                "tenure": _int_or_none(decision.group(2)),
+                "roi": _float_or_none(decision.group(4)),
+                "emi": _normalize_amount(decision.group(5)),
+            }
+        )
 
     if re.search(r"\bREPAYMENT\s+BANK\s+DETAILS\b", text, re.IGNORECASE):
         section_match = re.search(
@@ -977,11 +1201,16 @@ def _extract_cam_decision_fields(text: str) -> dict[str, Any]:
             re.IGNORECASE | re.DOTALL,
         )
         bank_text = section_match.group(1) if section_match else ""
-        fields.update({
-            "account_number": _digits_only(_next_nonempty_line(bank_text, "account number") or "") or None,
-            "ifsc": (_next_nonempty_line(bank_text, "ifsc code") or "").upper() or None,
-            "account_holder_name": _next_nonempty_line(bank_text, "account holder name"),
-        })
+        fields.update(
+            {
+                "account_number": _digits_only(
+                    _next_nonempty_line(bank_text, "account number") or ""
+                )
+                or None,
+                "ifsc": (_next_nonempty_line(bank_text, "ifsc code") or "").upper() or None,
+                "account_holder_name": _next_nonempty_line(bank_text, "account holder name"),
+            }
+        )
     return fields
 
 
@@ -991,7 +1220,7 @@ def _next_nonempty_line(text: str, label: str, *, max_lines: int = 3) -> str | N
     for index, line in enumerate(lines):
         if re.sub(r"\s+", " ", line.strip()).casefold() != label.casefold():
             continue
-        for candidate_line in lines[index + 1:index + 1 + max_lines]:
+        for candidate_line in lines[index + 1 : index + 1 + max_lines]:
             candidate = re.sub(r"\s+", " ", candidate_line.strip())
             if candidate:
                 return candidate[:160]
@@ -1009,11 +1238,13 @@ def _extract_cam_person_records(text: str) -> list[dict[str, Any]]:
         re.IGNORECASE,
     )
     for match in pattern.finditer(text):
-        records.append({
-            "applicant_name": re.sub(r"\s+", " ", match.group(2)).strip(),
-            "phone_number": match.group(3),
-            "date_of_birth": _parse_date(re.sub(r"\s+", "", match.group(4))),
-        })
+        records.append(
+            {
+                "applicant_name": re.sub(r"\s+", " ", match.group(2)).strip(),
+                "phone_number": match.group(3),
+                "date_of_birth": _parse_date(re.sub(r"\s+", "", match.group(4))),
+            }
+        )
     return records
 
 
@@ -1028,11 +1259,13 @@ def _extract_cam_kyc_records(text: str) -> list[dict[str, Any]]:
         re.IGNORECASE,
     )
     for match in pattern.finditer(text):
-        records.append({
-            "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
-            "aadhaar_last4": match.group(2)[-4:],
-            "pan_number": match.group(3).upper(),
-        })
+        records.append(
+            {
+                "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
+                "aadhaar_last4": match.group(2)[-4:],
+                "pan_number": match.group(3).upper(),
+            }
+        )
     return records
 
 
@@ -1053,11 +1286,13 @@ def _extract_cam_address_records(text: str) -> list[dict[str, Any]]:
         if not address:
             continue
         subtype = match.group(2).lower()
-        records.append({
-            "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
-            "address": address,
-            f"{subtype}_address": address,
-        })
+        records.append(
+            {
+                "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
+                "address": address,
+                f"{subtype}_address": address,
+            }
+        )
     return records
 
 
@@ -1074,10 +1309,12 @@ def _extract_cam_score_records(text: str) -> list[dict[str, Any]]:
         if not match.group(3).isdigit():
             continue
         bureau = match.group(2).lower()
-        records.append({
-            "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
-            f"{bureau}_score": match.group(3),
-        })
+        records.append(
+            {
+                "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
+                f"{bureau}_score": match.group(3),
+            }
+        )
     return records
 
 
@@ -1095,13 +1332,15 @@ def _extract_application_coapplicant_records(text: str) -> list[dict[str, Any]]:
         re.IGNORECASE,
     )
     for match in pattern.finditer(text):
-        records.append({
-            "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
-            "date_of_birth": _parse_date(re.sub(r"\s+", "", match.group(2))),
-            "father_name": re.sub(r"\s+", " ", match.group(3)).strip(),
-            "phone_number": match.group(4),
-            "relationship": match.group(5).title(),
-        })
+        records.append(
+            {
+                "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
+                "date_of_birth": _parse_date(re.sub(r"\s+", "", match.group(2))),
+                "father_name": re.sub(r"\s+", " ", match.group(3)).strip(),
+                "phone_number": match.group(4),
+                "relationship": match.group(5).title(),
+            }
+        )
     return records
 
 
@@ -1117,21 +1356,35 @@ def _extract_sanction_letter(text: str) -> dict[str, Any]:
     t = text.lower()
     return {
         "loan_amount": _extract_amount(
-            t, "sanctioned loan amount", "sanctioned amount", "loan amount", "amount sanctioned",
-            "amount of facility", "sanction amount"
-        ) or _normalize_amount(_numeric_line_after_label(
-            text, "sanctioned loan amount (in rs.)", "sanction amount", "amount of facility (in rs.)"
-        )),
-        "tenure": _extract_tenure_months(t) or _int_or_none(
-            _numeric_line_after_label(text, "loan terms (months)", "tenure (months)")
+            t,
+            "sanctioned loan amount",
+            "sanctioned amount",
+            "loan amount",
+            "amount sanctioned",
+            "amount of facility",
+            "sanction amount",
+        )
+        or _normalize_amount(
+            _numeric_line_after_label(
+                text,
+                "sanctioned loan amount (in rs.)",
+                "sanction amount",
+                "amount of facility (in rs.)",
+            )
         ),
-        "emi": _extract_emi(t) or _normalize_amount(_numeric_line_after_label(text, "epi (in rs.)", "emi")),
-        "roi": _extract_roi(t) or _float_or_none(_numeric_line_after_label(
-            text, "roi (p.a)", "interest rate (%) and type"
-        )),
+        "tenure": _extract_tenure_months(t)
+        or _int_or_none(_numeric_line_after_label(text, "loan terms (months)", "tenure (months)")),
+        "emi": _extract_emi(t)
+        or _normalize_amount(_numeric_line_after_label(text, "epi (in rs.)", "emi")),
+        "roi": _extract_roi(t)
+        or _float_or_none(
+            _numeric_line_after_label(text, "roi (p.a)", "interest rate (%) and type")
+        ),
         "apr": _extract_percentage_near(t, "apr", "annual percentage rate"),
         "applicant_name": _line_after_label(text, "borrower", "applicant name"),
-        "application_number": _extract_identifier(text, "application number", "application no", "loan account number", "loan id"),
+        "application_number": _extract_identifier(
+            text, "application number", "application no", "loan account number", "loan id"
+        ),
         "first_emi": _extract_amount(t, "first emi"),
         "final_emi": _extract_amount(t, "final emi", "last emi"),
         "processing_fee": _extract_amount(t, "processing fee"),
@@ -1159,21 +1412,26 @@ def _extract_loan_agreement(text: str) -> dict[str, Any]:
     return {
         "loan_amount": _extract_amount(
             t, "amount of facility", "loan amount", "sanctioned amount", "amount sanctioned"
-        ) or _normalize_amount(_numeric_line_after_label(text, "amount of facility (in rs.)")),
-        "tenure": _extract_tenure_months(t) or _int_or_none(
-            _numeric_line_after_label(text, "term or tenure")
+        )
+        or _normalize_amount(_numeric_line_after_label(text, "amount of facility (in rs.)")),
+        "tenure": _extract_tenure_months(t)
+        or _int_or_none(_numeric_line_after_label(text, "term or tenure")),
+        "emi": _extract_emi(t)
+        or _normalize_amount(
+            _numeric_line_after_label(text, "emi amount* (in rs.)", "emi amount (in rs.)")
         ),
-        "emi": _extract_emi(t) or _normalize_amount(_numeric_line_after_label(
-            text, "emi amount* (in rs.)", "emi amount (in rs.)"
-        )),
-        "roi": _extract_roi(t) or _float_or_none(_numeric_line_after_label(text, "rate of interest")),
+        "roi": _extract_roi(t)
+        or _float_or_none(_numeric_line_after_label(text, "rate of interest")),
         "apr": _extract_percentage_near(t, "apr", "annual percentage rate"),
         "borrower_name": (
             re.sub(r"\s+", " ", schedule_name.group(1)).strip()
-            if schedule_name else _line_after_label(text, "borrower")
+            if schedule_name
+            else _line_after_label(text, "borrower")
         ),
         "agreement_date": _extract_date_near(t, "date of agreement", "agreement date", "date"),
-        "application_number": _extract_identifier(text, "application number", "application no", "loan account number", "loan id"),
+        "application_number": _extract_identifier(
+            text, "application number", "application no", "loan account number", "loan id"
+        ),
         "processing_fee": _extract_amount(t, "processing fee"),
         "insurance_amount": _extract_amount(t, "insurance amount", "insurance premium"),
         "net_disbursement": _extract_amount(t, "net disbursement", "net disbursal"),
@@ -1191,9 +1449,7 @@ def _extract_end_use_letter(text: str) -> dict[str, Any]:
     purpose = None
     if purpose_match:
         purpose = " ".join(
-            part.strip(" .")
-            for part in purpose_match.groups()
-            if part and part.strip(" .")
+            part.strip(" .") for part in purpose_match.groups() if part and part.strip(" .")
         )
     reference_match = re.search(
         r"(?:^|\n)\s*(?:Ref\.?|Loan\s+No\.?)\s*[:\-]\s*([A-Z0-9][A-Z0-9/-]{3,40})",
@@ -1218,25 +1474,24 @@ def _extract_pan(text: str) -> dict[str, Any]:
         return {}
     inline_name = None
     if pan_match:
-        after_pan = text[pan_match.end():pan_match.end() + 160]
-        name_match = (
-            re.search(
-                r"\bH?Name\s+([A-Za-z][A-Za-z ]{2,60}?)"
-                r"(?=\s+(?:[A-Za-z]?\d|[\u0900-\u097f]|Date\b|Father\b))",
-                after_pan,
-                re.IGNORECASE,
-            )
-            or re.search(
-                r"(?:Account\s+Number\s+)?(?:नाम\s*)?(?:[A-Z]?\s*Name\s+)?"
-                r"([A-Za-z][A-Za-z ]{2,60}?)(?=\s+(?:[\u0900-\u097f]|Date\b|Father\b))",
-                after_pan,
-                re.IGNORECASE,
-            )
+        after_pan = text[pan_match.end() : pan_match.end() + 160]
+        name_match = re.search(
+            r"\bH?Name\s+([A-Za-z][A-Za-z ]{2,60}?)"
+            r"(?=\s+(?:[A-Za-z]?\d|[\u0900-\u097f]|Date\b|Father\b))",
+            after_pan,
+            re.IGNORECASE,
+        ) or re.search(
+            r"(?:Account\s+Number\s+)?(?:नाम\s*)?(?:[A-Z]?\s*Name\s+)?"
+            r"([A-Za-z][A-Za-z ]{2,60}?)(?=\s+(?:[\u0900-\u097f]|Date\b|Father\b))",
+            after_pan,
+            re.IGNORECASE,
         )
         inline_name = _clean_name_like_value(name_match.group(1)) if name_match else None
     dob = _extract_date_near(text.lower(), "date of birth", "dob")
     if dob is None:
-        damaged_date = re.search(r"(?:date|fafuDate)\s+(\d{2})7(\d{2})/(\d{4})", text, re.IGNORECASE)
+        damaged_date = re.search(
+            r"(?:date|fafuDate)\s+(\d{2})7(\d{2})/(\d{4})", text, re.IGNORECASE
+        )
         if damaged_date:
             dob = _parse_date("/".join(damaged_date.groups()))
     return {
@@ -1245,7 +1500,8 @@ def _extract_pan(text: str) -> dict[str, Any]:
             "name",
             "applicant name",
             "card holder name",
-        ) or inline_name,
+        )
+        or inline_name,
         "pan_number": pan_match.group(1) if pan_match else None,
         "dob": dob,
     }
@@ -1255,9 +1511,7 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
     """Extract fields from an Aadhaar card."""
     if is_aadhaar_verification_appendix(text):
         return {"_aadhaar_verification_appendix": True}
-    heading = " ".join(
-        line.strip() for line in str(text or "").splitlines()[:6] if line.strip()
-    )
+    heading = " ".join(line.strip() for line in str(text or "").splitlines()[:6] if line.strip())
     if re.search(
         r"\bself[\s-]*declaration\b[\s\S]{0,80}\bcurrent\s+address\b",
         heading,
@@ -1268,17 +1522,21 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
     text = _xml_cleaner(text)
     digilocker_fields = _extract_digilocker_aadhaar_summary(text)
     aadhaar_match = re.search(r"(?<!\d)(\d{4}[ \t]?\d{4}[ \t]?\d{4})(?!\d)", text)
-    authority_evidence = bool(re.search(
-        r"unique\s+identification\s+authority|\buidai\b|e-?aadhaar|"
-        r"भारतीय\s+विशिष्ट\s+पहचान|मेरा\s+आधार",
-        text,
-        re.IGNORECASE,
-    ))
-    form_kyc_section = bool(re.search(
-        r"(?:applicant|co[\s-]*applicant|guarantor)\s+kyc\s+details",
-        text,
-        re.IGNORECASE,
-    ))
+    authority_evidence = bool(
+        re.search(
+            r"unique\s+identification\s+authority|\buidai\b|e-?aadhaar|"
+            r"भारतीय\s+विशिष्ट\s+पहचान|मेरा\s+आधार",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    form_kyc_section = bool(
+        re.search(
+            r"(?:applicant|co[\s-]*applicant|guarantor)\s+kyc\s+details",
+            text,
+            re.IGNORECASE,
+        )
+    )
     if form_kyc_section and not authority_evidence:
         return {}
     aadhaar_number = plausible_aadhaar_digits(aadhaar_match.group(1)) if aadhaar_match else None
@@ -1288,7 +1546,9 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
         re.IGNORECASE,
     )
     qualifier = re.sub(r"\s+", "", relation_match.group(1)).upper() if relation_match else None
-    qualifier = {"SONOF": "S/O", "DAUGHTEROF": "D/O", "WIFEOF": "W/O", "CAREOF": "C/O"}.get(qualifier or "", qualifier)
+    qualifier = {"SONOF": "S/O", "DAUGHTEROF": "D/O", "WIFEOF": "W/O", "CAREOF": "C/O"}.get(
+        qualifier or "", qualifier
+    )
     result = {
         "applicant_name": (
             xml_fields.get("applicant_name")
@@ -1315,11 +1575,9 @@ def _extract_aadhaar(text: str) -> dict[str, Any]:
             or qualifier
         ),
         "related_person_name": (
-            xml_fields.get("related_person_name")
-            or digilocker_fields.get("related_person_name")
-        ) or (
-            _clean_name_like_value(relation_match.group(2)) if relation_match else None
-        ),
+            xml_fields.get("related_person_name") or digilocker_fields.get("related_person_name")
+        )
+        or (_clean_name_like_value(relation_match.group(2)) if relation_match else None),
     }
     return result
 
@@ -1382,13 +1640,15 @@ def _extract_digilocker_aadhaar_summary(text: str) -> dict[str, Any]:
         pin = re.search(r"\b([1-8]\d{5})\b", address)
         if not pin:
             continue
-        address = address[:pin.end()]
+        address = address[: pin.end()]
         combined_relationship = relationship_pattern.match(address)
         if combined_relationship:
             combined_name = _clean_name_like_value(combined_relationship.group(2))
-            if combined_name and len(combined_name) > len(str(fields.get("related_person_name") or "")):
+            if combined_name and len(combined_name) > len(
+                str(fields.get("related_person_name") or "")
+            ):
                 fields["related_person_name"] = combined_name
-            address = address[combined_relationship.end():].lstrip(" ,")
+            address = address[combined_relationship.end() :].lstrip(" ,")
         fields["pin_code"] = pin.group(1)
         fields["address"] = address
         break
@@ -1435,20 +1695,34 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
         co_value = poa.get("co", "").strip()
         relation_match = re.match(r"\s*(S/O|D/O|W/O|C/O)\s*:\s*(.+)", co_value, re.IGNORECASE)
         address_parts = [
-            poa.get("house"), poa.get("street"), poa.get("lm"), poa.get("loc"),
-            poa.get("vtc"), poa.get("po"), poa.get("subdist"), poa.get("dist"),
-            poa.get("state"), poa.get("country"), poa.get("pc"),
+            poa.get("house"),
+            poa.get("street"),
+            poa.get("lm"),
+            poa.get("loc"),
+            poa.get("vtc"),
+            poa.get("po"),
+            poa.get("subdist"),
+            poa.get("dist"),
+            poa.get("state"),
+            poa.get("country"),
+            poa.get("pc"),
         ]
-        address = ", ".join(dict.fromkeys(part.strip() for part in address_parts if part and part.strip()))
+        address = ", ".join(
+            dict.fromkeys(part.strip() for part in address_parts if part and part.strip())
+        )
         return {
             "applicant_name": poi.get("name") or ldata.get("name") or None,
             "aadhaar_last4": _digits_only(uid)[-4:] if len(_digits_only(uid)) >= 4 else None,
             "dob": _parse_date(poi.get("dob")) if poi.get("dob") else None,
-            "gender": {"M": "MALE", "F": "FEMALE", "T": "TRANSGENDER"}.get(poi.get("gender", "").upper()),
+            "gender": {"M": "MALE", "F": "FEMALE", "T": "TRANSGENDER"}.get(
+                poi.get("gender", "").upper()
+            ),
             "address": address or None,
             "pin_code": poa.get("pc") or None,
             "relationship_qualifier": relation_match.group(1).upper() if relation_match else None,
-            "related_person_name": _clean_name_like_value(relation_match.group(2)) if relation_match else None,
+            "related_person_name": _clean_name_like_value(relation_match.group(2))
+            if relation_match
+            else None,
             "_aadhaar_xml_demographic_fields": sorted(set(poi) | set(ldata) | set(poa)),
         }
     except (AttributeError, ValueError):
@@ -1487,8 +1761,10 @@ def _clean_aadhaar_address_value(value: Any) -> str | None:
 def _extract_application_form(text: str) -> dict[str, Any]:
     """Extract identity fields commonly repeated in a loan application form."""
     is_coapplicant_kyc_table = "CO-APPLICANT KYC DETAILS" in text.upper()
-    pan_match = None if is_coapplicant_kyc_table else re.search(
-        r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper()
+    pan_match = (
+        None
+        if is_coapplicant_kyc_table
+        else re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
     )
     aadhaar_match = next(
         (
@@ -1520,43 +1796,38 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         text,
         re.IGNORECASE,
     )
-    applicant_section = text[text.upper().find("APPLICANT DETAILS"):] if "APPLICANT DETAILS" in text.upper() else text
+    applicant_section = (
+        text[text.upper().find("APPLICANT DETAILS") :]
+        if "APPLICANT DETAILS" in text.upper()
+        else text
+    )
     name_match = re.search(
         r"(?:^|\n)\s*NAME\s*\n(?:[^A-Za-z0-9\n]*\n){0,3}\s*([A-Za-z][A-Za-z .'-]{2,70})\s*\n"
         r"\s*DATE\s+OF\s+BIRTH",
         applicant_section,
         re.IGNORECASE,
     )
-    current_address = (
-        _extract_application_address_block(
-            text, "COMMUNICATION ADDRESS", ("PERMANENT ADDRESS", "OFFICE ADDRESS")
-        )
-        or _extract_residential_address_alias(
-            text,
-            "current address",
-            "current resi. address",
-            "current resi address",
-            "current residential address",
-        )
+    current_address = _extract_application_address_block(
+        text, "COMMUNICATION ADDRESS", ("PERMANENT ADDRESS", "OFFICE ADDRESS")
+    ) or _extract_residential_address_alias(
+        text,
+        "current address",
+        "current resi. address",
+        "current resi address",
+        "current residential address",
     )
-    permanent_address = (
-        _extract_application_address_block(
-            text, "PERMANENT ADDRESS", ("OFFICE ADDRESS", "APPLICANT EMPLOYEMENT")
-        )
-        or _extract_residential_address_alias(
-            text,
-            "permanent address",
-            "permanent resi. address",
-            "permanent resi address",
-            "permanent residential address",
-        )
+    permanent_address = _extract_application_address_block(
+        text, "PERMANENT ADDRESS", ("OFFICE ADDRESS", "APPLICANT EMPLOYEMENT")
+    ) or _extract_residential_address_alias(
+        text,
+        "permanent address",
+        "permanent resi. address",
+        "permanent resi address",
+        "permanent residential address",
     )
-    communication_address = (
-        _extract_application_address_block(
-            text, "COMMUNICATION ADDRESS", ("PERMANENT ADDRESS", "OFFICE ADDRESS")
-        )
-        or _extract_residential_address_alias(text, "communication address")
-    )
+    communication_address = _extract_application_address_block(
+        text, "COMMUNICATION ADDRESS", ("PERMANENT ADDRESS", "OFFICE ADDRESS")
+    ) or _extract_residential_address_alias(text, "communication address")
     person_records = [
         *_extract_application_coapplicant_records(text),
         *_extract_application_kyc_records(text),
@@ -1570,7 +1841,8 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         address_name = str(coapplicant_address_record.get("applicant_name") or "").casefold()
         matching_record = next(
             (
-                record for record in person_records
+                record
+                for record in person_records
                 if isinstance(record, dict)
                 and str(record.get("applicant_name") or "").casefold() == address_name
             ),
@@ -1590,11 +1862,15 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         if coapplicant_address_record.get("communication_address") == communication_address:
             communication_address = None
     return {
-        "applicant_name": (name_match.group(1).strip() if name_match else _line_after_label(
-            text, "applicant name", "borrower name", "name of applicant"
-        )),
+        "applicant_name": (
+            name_match.group(1).strip()
+            if name_match
+            else _line_after_label(text, "applicant name", "borrower name", "name of applicant")
+        ),
         "pan_number": pan_match.group(1) if pan_match else None,
-        "aadhaar_number": plausible_aadhaar_digits(aadhaar_match.group(1)) if aadhaar_match else None,
+        "aadhaar_number": plausible_aadhaar_digits(aadhaar_match.group(1))
+        if aadhaar_match
+        else None,
         "date_of_birth": _extract_date_near(text.lower(), "date of birth", "dob"),
         "loan_amount": _normalize_amount(_numeric_line_after_label(text, "loan amount")),
         "phone_number": phone_match.group(1) if phone_match else None,
@@ -1669,22 +1945,22 @@ def _extract_application_layout_addresses(
         except (TypeError, ValueError):
             confidence = 0.0
         x0, y0, x1, y1 = geometry
-        regions.append({
-            "text": text,
-            "normalized": _normalized_layout_text(text),
-            "confidence": confidence,
-            "x0": x0,
-            "y0": y0,
-            "x1": x1,
-            "y1": y1,
-        })
+        regions.append(
+            {
+                "text": text,
+                "normalized": _normalized_layout_text(text),
+                "confidence": confidence,
+                "x0": x0,
+                "y0": y0,
+                "x1": x1,
+                "y1": y1,
+            }
+        )
 
     extracted: dict[str, str] = {}
     for field_name, labels in _APPLICATION_LAYOUT_ADDRESS_LABELS.items():
         anchors = [
-            region
-            for region in regions
-            if any(label in region["normalized"] for label in labels)
+            region for region in regions if any(label in region["normalized"] for label in labels)
         ]
         for anchor in anchors:
             value = _layout_address_value(regions, anchor)
@@ -1775,13 +2051,22 @@ def _layout_address_value(regions: list[dict[str, Any]], anchor: dict[str, Any])
 
 
 def _is_layout_address_piece(text: str, normalized: str) -> bool:
-    if not normalized or any(normalized.startswith(prefix) for prefix in _LAYOUT_ADDRESS_REJECT_PREFIXES):
+    if not normalized or any(
+        normalized.startswith(prefix) for prefix in _LAYOUT_ADDRESS_REJECT_PREFIXES
+    ):
         return False
     if any(re.search(pattern, normalized) for pattern in _ADDRESS_FORM_NOISE_PATTERNS):
         return False
     if normalized in {
-        "address", "current", "permanent", "office", "others", "pin",
-        "residence", "yes", "no",
+        "address",
+        "current",
+        "permanent",
+        "office",
+        "others",
+        "pin",
+        "residence",
+        "yes",
+        "no",
     }:
         return False
     if len(text) > 120 or not re.search(r"[A-Za-z0-9]", text):
@@ -1811,16 +2096,23 @@ def _extract_application_address_block(
         "CO-APPLICANT KYC DETAILS",
         "APPLICANT DETAILS",
     )
-    ends = [
-        upper.find(stop.upper(), start + len(heading))
-        for stop in section_boundaries
-    ]
+    ends = [upper.find(stop.upper(), start + len(heading)) for stop in section_boundaries]
     end = min((value for value in ends if value >= 0), default=len(text))
     lines = [line.strip() for line in text[start:end].splitlines() if line.strip()]
     label_names = {
-        "address", "type", "address type", "sub type", "address sub type",
-        "years at current address", "landmark", "tehsil", "district",
-        "pincode", "pin code", "state", "country",
+        "address",
+        "type",
+        "address type",
+        "sub type",
+        "address sub type",
+        "years at current address",
+        "landmark",
+        "tehsil",
+        "district",
+        "pincode",
+        "pin code",
+        "state",
+        "country",
     }
 
     def normalized(value: str) -> str:
@@ -1923,9 +2215,15 @@ def _extract_residential_address_alias(text: str, *labels: str) -> str | None:
             text,
             label,
             stop_labels={
-                "current address", "current resi. address", "permanent address",
-                "permanent resi. address", "office address", "mobile number",
-                "date of birth", "pan", "aadhaar",
+                "current address",
+                "current resi. address",
+                "permanent address",
+                "permanent resi. address",
+                "office address",
+                "mobile number",
+                "date of birth",
+                "pan",
+                "aadhaar",
             },
             max_lines=4,
         )
@@ -1950,17 +2248,36 @@ def _extract_jumbled_residential_block(text: str, label: str) -> str | None:
         return None
 
     stop_prefixes = (
-        "permanent resi", "current resi", "permanent residential",
-        "current residential", "occupation details", "preferred mailing",
+        "permanent resi",
+        "current resi",
+        "permanent residential",
+        "current residential",
+        "occupation details",
+        "preferred mailing",
     )
     ignored_exact = {
-        "city", "telephone", "email id", "e mail id", "residence",
-        "post graduate", "graduate", "non graduate", "pin", "fax",
-        "whatsapp available", "yes", "no",
+        "city",
+        "telephone",
+        "email id",
+        "e mail id",
+        "residence",
+        "post graduate",
+        "graduate",
+        "non graduate",
+        "pin",
+        "fax",
+        "whatsapp available",
+        "yes",
+        "no",
     }
     ignored_prefixes = (
-        "mobile ", "owned rented", "years at ", "years in ",
-        "preferred contact", "current office address", "additional office address",
+        "mobile ",
+        "owned rented",
+        "years at ",
+        "years in ",
+        "preferred contact",
+        "current office address",
+        "additional office address",
     )
     pieces: list[str] = []
     for index, line in enumerate(lines[start + 1 : start + 23], start=start + 1):
@@ -1975,7 +2292,9 @@ def _extract_jumbled_residential_block(text: str, label: str) -> str | None:
             if pin:
                 pieces.append(pin)
             continue
-        if normalized in ignored_exact or any(normalized.startswith(prefix) for prefix in ignored_prefixes):
+        if normalized in ignored_exact or any(
+            normalized.startswith(prefix) for prefix in ignored_prefixes
+        ):
             continue
         cleaned = re.sub(r"^if\s+different\s+from\s+above\)?\s*", "", line, flags=re.IGNORECASE)
         if cleaned and re.search(r"[A-Za-z0-9]", cleaned):
@@ -1993,10 +2312,26 @@ def _extract_jumbled_residential_block(text: str, label: str) -> str | None:
 
 
 def _ocr_normalized_pin(value: str) -> str | None:
-    translated = str(value or "").upper().translate(str.maketrans({
-        "O": "0", "Q": "0", "D": "0", "I": "1", "L": "1",
-        "Z": "2", "M": "4", "S": "5", "G": "6", "B": "8",
-    }))
+    translated = (
+        str(value or "")
+        .upper()
+        .translate(
+            str.maketrans(
+                {
+                    "O": "0",
+                    "Q": "0",
+                    "D": "0",
+                    "I": "1",
+                    "L": "1",
+                    "Z": "2",
+                    "M": "4",
+                    "S": "5",
+                    "G": "6",
+                    "B": "8",
+                }
+            )
+        )
+    )
     return translated if re.fullmatch(r"[1-8]\d{5}", translated) else None
 
 
@@ -2012,18 +2347,23 @@ def _extract_coapplicant_address_record(
     # Search only inside the co-applicant address section. Whole-document
     # extraction previously walked back to the lender's corporate header and
     # manufactured a company-as-person record.
-    scoped_text = text[section_start.start():]
+    scoped_text = text[section_start.start() :]
     section_end = re.search(
         r"(?:^|\n)\s*(?:GUARANTOR\s+(?:DETAILS|ADDRESS)|"
         r"APPLICANT\s+DETAILS|DECLARATION|BANK\s+ACCOUNT\s+DETAILS)\b",
-        scoped_text[len(section_start.group(0)):],
+        scoped_text[len(section_start.group(0)) :],
         re.IGNORECASE,
     )
     if section_end:
         scoped_text = scoped_text[: len(section_start.group(0)) + section_end.start()]
     excluded = {
-        "co applicant address", "communication address", "permanent address",
-        "office address", "name", "address", "current",
+        "co applicant address",
+        "communication address",
+        "permanent address",
+        "office address",
+        "name",
+        "address",
+        "current",
     }
     person_name = None
     for line in scoped_text.splitlines():
@@ -2041,13 +2381,13 @@ def _extract_coapplicant_address_record(
         _extract_application_address_block(
             scoped_text, "COMMUNICATION ADDRESS", ("PERMANENT ADDRESS", "OFFICE ADDRESS")
         )
-        or _extract_residential_address_alias(scoped_text, "current address", "communication address")
+        or _extract_residential_address_alias(
+            scoped_text, "current address", "communication address"
+        )
         or current_address
     )
     co_permanent = (
-        _extract_application_address_block(
-            scoped_text, "PERMANENT ADDRESS", ("OFFICE ADDRESS",)
-        )
+        _extract_application_address_block(scoped_text, "PERMANENT ADDRESS", ("OFFICE ADDRESS",))
         or _extract_residential_address_alias(scoped_text, "permanent address")
         or permanent_address
     )
@@ -2071,11 +2411,13 @@ def _extract_application_kyc_records(text: str) -> list[dict[str, Any]]:
         re.IGNORECASE,
     )
     for match in pattern.finditer(text):
-        records.append({
-            "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
-            "aadhaar_last4": match.group(2)[-4:],
-            "pan_number": match.group(3).upper(),
-        })
+        records.append(
+            {
+                "applicant_name": re.sub(r"\s+", " ", match.group(1)).strip(),
+                "aadhaar_last4": match.group(2)[-4:],
+                "pan_number": match.group(3).upper(),
+            }
+        )
     return records
 
 
@@ -2120,7 +2462,11 @@ def _extract_utility_bill(text: str) -> dict[str, Any]:
                 inline_address.group(0),
                 re.IGNORECASE,
             )
-            address = inline_address.group(0)[relation_start.start():].strip() if relation_start else None
+            address = (
+                inline_address.group(0)[relation_start.start() :].strip()
+                if relation_start
+                else None
+            )
     pin_match = re.search(r"(?<!\d)([1-8]\d{5})(?!\d)", address or "")
     if pin_match is None:
         pin_match = re.search(
@@ -2197,7 +2543,7 @@ def _extract_voter_id(text: str) -> dict[str, Any]:
     t = text.lower()
 
     # Voter ID number: 3 uppercase letters + 7 digits  e.g. ABC1234567
-    vid_match = re.search(r'\b([A-Z]{3}[0-9]{7})\b', text)
+    vid_match = re.search(r"\b([A-Z]{3}[0-9]{7})\b", text)
 
     # DOB
     dob_raw = _extract_date_near(t, "dob", "date of birth")
@@ -2244,7 +2590,7 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
 
     # DL number: 2 uppercase letters + 2 digits + optional space + 11 digits
     # (\b does not work between \d and \D reliably, so we anchor with lookahead/lookbehind)
-    dl_match = re.search(r'(?<![A-Z0-9])([A-Z]{2}\d{2}\s?\d{11})(?![A-Z0-9])', text)
+    dl_match = re.search(r"(?<![A-Z0-9])([A-Z]{2}\d{2}\s?\d{11})(?![A-Z0-9])", text)
 
     # Read dates only from their own labels.  A proximity window is unsafe on
     # DLs because Date of Issue, DOB and Valid Till are commonly printed beside
@@ -2254,26 +2600,25 @@ def _extract_driving_license(text: str) -> dict[str, Any]:
     )
     is_expired = _is_past_date(validity_date)
 
-    dob_raw = (
-        _extract_date_after_label(text, "date of birth", "dob", "d.o.b")
-        or _extract_date_below_label(
-            text,
-            "date of birth",
-            "dob",
-            "d.o.b",
-            max_lines=6,
-            stop_labels=(
-                "name",
-                "address",
-                "permanent address",
-                "date of issue",
-                "validity",
-                "valid till",
-                "licence no",
-                "license no",
-                "dl no",
-            ),
-        )
+    dob_raw = _extract_date_after_label(
+        text, "date of birth", "dob", "d.o.b"
+    ) or _extract_date_below_label(
+        text,
+        "date of birth",
+        "dob",
+        "d.o.b",
+        max_lines=6,
+        stop_labels=(
+            "name",
+            "address",
+            "permanent address",
+            "date of issue",
+            "validity",
+            "valid till",
+            "licence no",
+            "license no",
+            "dl no",
+        ),
     )
     date_of_issue = _extract_date_after_label(
         text, "date of issue", "issue date", "issued on", "date issued"
@@ -2341,12 +2686,12 @@ def _extract_pdc(text: str) -> dict[str, Any]:
     MICR lines normally contain the six-digit cheque number followed by nine
     routing digits. OCR may repeat the same leaf, so return unique numbers.
     """
-    cheque_numbers = list(dict.fromkeys(
-        match.group(1)
-        for match in re.finditer(
-            r"(?<!\d)(\d{6})[\s'\"*]*(\d{9})(?!\d)", text or ""
+    cheque_numbers = list(
+        dict.fromkeys(
+            match.group(1)
+            for match in re.finditer(r"(?<!\d)(\d{6})[\s'\"*]*(\d{9})(?!\d)", text or "")
         )
-    ))
+    )
     return {
         "cheque_numbers": cheque_numbers,
         "cheque_count": len(cheque_numbers) or None,
@@ -2360,7 +2705,7 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
     # Credit score: 3-digit number near the word "score"
     score: str | None = None
     score_match = re.search(
-        r'(?:credit\s+)?score\s*[:\-–]?\s*\b(0|[3-9]\d{2})\b',
+        r"(?:credit\s+)?score\s*[:\-–]?\s*\b(0|[3-9]\d{2})\b",
         t,
     )
     if score_match:
@@ -2373,8 +2718,8 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
         # Broader fallback: any 3-digit number 300-900 near "score" in a 60-char window
         idx = t.find("score")
         if idx != -1:
-            window = t[max(0, idx - 10): idx + 50]
-            fb = re.search(r'\b(0|[3-9]\d{2})\b', window)
+            window = t[max(0, idx - 10) : idx + 50]
+            fb = re.search(r"\b(0|[3-9]\d{2})\b", window)
             if fb:
                 score = fb.group(1)
     if score is None and has_explicit_no_score_evidence(text):
@@ -2388,7 +2733,11 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
 
     account_count = re.search(r"(?:total|number\s+of)\s+accounts?\s*[:\-–]?\s*(\d+)", t)
     overdue_count = re.search(r"(?:overdue|past\s+due)\s+accounts?\s*[:\-–]?\s*(\d+)", t)
-    report_id = re.search(r"(?:report|reference|document)\s*(?:id|no\.?|number)\s*[:\-–]?\s*([A-Z0-9\-/]+)", text, re.IGNORECASE)
+    report_id = re.search(
+        r"(?:report|reference|document)\s*(?:id|no\.?|number)\s*[:\-–]?\s*([A-Z0-9\-/]+)",
+        text,
+        re.IGNORECASE,
+    )
     return {
         "applicant_name": applicant_name,
         "credit_score": score,
@@ -2449,16 +2798,22 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         period_start, period_end = transaction_dates[0], transaction_dates[-1]
         period_source = "transaction_dates"
     pan_match = re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", text.upper())
-    is_internal_approval = bool(re.search(
-        r"request\s+for\s+approval|designation\s*:\s*|department\s*:\s*",
-        text,
-        re.IGNORECASE,
-    ))
-    phone_match = None if is_internal_approval else re.search(
-        r"(?:registered\s+mobile|customer\s+mobile|mobile\s+(?:number|no\.?))"
-        r"\s*[:\-–]?\s*([6-9]\d{9})(?!\d)",
-        text,
-        re.IGNORECASE,
+    is_internal_approval = bool(
+        re.search(
+            r"request\s+for\s+approval|designation\s*:\s*|department\s*:\s*",
+            text,
+            re.IGNORECASE,
+        )
+    )
+    phone_match = (
+        None
+        if is_internal_approval
+        else re.search(
+            r"(?:registered\s+mobile|customer\s+mobile|mobile\s+(?:number|no\.?))"
+            r"\s*[:\-–]?\s*([6-9]\d{9})(?!\d)",
+            text,
+            re.IGNORECASE,
+        )
     )
     # CAMS profile pages often present field labels in one column and their
     # values in another.  Prefer the value immediately following CKYC and a
@@ -2475,18 +2830,26 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
     statement_title_name = _statement_holder_after_title(text)
     fallback_name = _line_after_label(text, "account holder", "customer name", "name")
     if fallback_name and fallback_name.casefold() in {
-        "holding nature", "dob", "mobile", "landline", "email", "pan",
-        "address", "nominee", "ckyc", "profile",
+        "holding nature",
+        "dob",
+        "mobile",
+        "landline",
+        "email",
+        "pan",
+        "address",
+        "nominee",
+        "ckyc",
+        "profile",
     }:
         fallback_name = None
     return {
         "account_holder_name": (
             _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1))).title()
-            if profile_name else header_name or statement_title_name or fallback_name
+            if profile_name
+            else header_name or statement_title_name or fallback_name
         ),
         "account_number": (
-            _digits_only(account_match.group(1))
-            if account_match else stacked_account_number
+            _digits_only(account_match.group(1)) if account_match else stacked_account_number
         ),
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
         "bank_name": bank_match.group(1).strip() if bank_match else None,
@@ -2495,7 +2858,8 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         "pan_number": pan_match.group(1) if pan_match else None,
         "phone_number": phone_match.group(1) if phone_match else None,
         "nach_status": (
-            "done" if re.search(r"\be\s*-?\s*nach\s+(?:status\s*[-–:]*)?done\b", text, re.IGNORECASE)
+            "done"
+            if re.search(r"\be\s*-?\s*nach\s+(?:status\s*[-–:]*)?done\b", text, re.IGNORECASE)
             else None
         ),
         "statement_period_start": period_start,
@@ -2505,7 +2869,8 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
                 "source": period_source,
                 "transaction_dates": transaction_dates,
             }
-            if period_source or transaction_dates else {}
+            if period_source or transaction_dates
+            else {}
         ),
     }
 
@@ -2521,7 +2886,7 @@ def _stacked_bank_statement_account_number(text: str) -> str | None:
     for cif_index, line in enumerate(lines):
         if not re.fullmatch(r"CIF\s+(?:Number|No\.?)\s*:?\s*", line, re.I):
             continue
-        window = lines[cif_index:cif_index + 10]
+        window = lines[cif_index : cif_index + 10]
         account_offsets = [
             offset
             for offset, candidate in enumerate(window[1:], start=1)
@@ -2534,13 +2899,13 @@ def _stacked_bank_statement_account_number(text: str) -> str | None:
         if not account_offsets:
             continue
         account_offset = account_offsets[0]
-        remaining_labels = " ".join(window[account_offset + 1:])
+        remaining_labels = " ".join(window[account_offset + 1 :])
         if not re.search(r"\bA/C\s+Type\b", remaining_labels, re.I) or not re.search(
             r"\bAddress\b", remaining_labels, re.I
         ):
             continue
         values: list[str] = []
-        for candidate in lines[cif_index + account_offset + 1:cif_index + 24]:
+        for candidate in lines[cif_index + account_offset + 1 : cif_index + 24]:
             if re.match(
                 r"^(?:Code|MICR|CKYCR|Statement\s+From|Date\s+of\s+Statement)\b",
                 candidate,
@@ -2581,7 +2946,7 @@ def _bank_statement_header_holder_name(text: str) -> str | None:
         match = label_pattern.match(line)
         if not match:
             continue
-        candidates = [match.group(1), *lines[index + 1:index + 4]]
+        candidates = [match.group(1), *lines[index + 1 : index + 4]]
         for raw_candidate in candidates:
             candidate = _clean_name_like_value(raw_candidate)
             if candidate:
@@ -2674,7 +3039,9 @@ def _extract_passbook(text: str) -> dict[str, Any]:
     )
     ifsc_match = re.search(r"\b([A-Z]{4}0[A-Z0-9]{6})\b", text.upper())
     branch_match = re.search(r"\bbranch[ \t]*[:\-–]?[ \t]*([^\n\r]{2,70})", text, re.IGNORECASE)
-    bank_match = re.search(r"\b(?:bank\s+name|name\s+of\s+bank)\s*[:\-–]?\s*([^\n\r]{2,70})", text, re.IGNORECASE)
+    bank_match = re.search(
+        r"\b(?:bank\s+name|name\s+of\s+bank)\s*[:\-–]?\s*([^\n\r]{2,70})", text, re.IGNORECASE
+    )
     type_match = re.search(r"\baccount\s+type\s*[:\-–]?\s*([^\n\r]{2,30})", text, re.IGNORECASE)
     passbook_name = re.search(
         r"\b(?:SHRI|SMT|SRI|MR|MRS)\.?[^A-Za-z\n]{0,6}([A-Z][A-Z ]{2,60})\b",
@@ -2684,19 +3051,20 @@ def _extract_passbook(text: str) -> dict[str, Any]:
     return {
         "account_holder_name": (
             _clean_name_like_value(passbook_name.group(1)) if passbook_name else None
-        ) or (
-            _clean_name_like_value(stacked_name_branch.group(2))
-            if stacked_name_branch else None
-        ) or _line_after_label(text, "account holder", "customer name", "name", "नाम"),
+        )
+        or (_clean_name_like_value(stacked_name_branch.group(2)) if stacked_name_branch else None)
+        or _line_after_label(text, "account holder", "customer name", "name", "नाम"),
         "account_number": (
             _digits_only(stacked_name_branch.group(1))
-            if stacked_name_branch else (_digits_only(account_match.group(1)) if account_match else None)
+            if stacked_name_branch
+            else (_digits_only(account_match.group(1)) if account_match else None)
         ),
         "ifsc": ifsc_match.group(1) if ifsc_match else None,
         "bank_name": bank_match.group(1).strip() if bank_match else None,
         "branch": (
             stacked_name_branch.group(3).strip()
-            if stacked_name_branch else (branch_match.group(1).strip() if branch_match else None)
+            if stacked_name_branch
+            else (branch_match.group(1).strip() if branch_match else None)
         ),
         "account_type": type_match.group(1).strip() if type_match else None,
     }
@@ -2751,7 +3119,11 @@ def _extract_cheque_signature_holder(text: str) -> str | None:
 
 
 def _extract_cheque_number(text: str) -> str | None:
-    labeled = re.search(r"(?:cheque\s*(?:number|no\.?)|chq\s*(?:number|no\.?))\s*[:\-\u2013]?\s*(\d{6})", text, re.IGNORECASE)
+    labeled = re.search(
+        r"(?:cheque\s*(?:number|no\.?)|chq\s*(?:number|no\.?))\s*[:\-\u2013]?\s*(\d{6})",
+        text,
+        re.IGNORECASE,
+    )
     if labeled:
         return labeled.group(1)
     candidates = re.findall(r"\b\d{6}\b", text)
@@ -2796,7 +3168,7 @@ def _extract_bank_transaction_dates(text: str) -> list[str]:
         r"|\d{1,2}[-\s]+[A-Za-z]+[-\s]+\d{4})\b"
     )
     observed: list[str] = []
-    for match in date_pattern.finditer(str(text or "")[table_anchor.end():]):
+    for match in date_pattern.finditer(str(text or "")[table_anchor.end() :]):
         parsed = _parse_date(match.group(0))
         if parsed:
             observed.append(parsed)
@@ -2855,7 +3227,9 @@ def _extract_stamp_duty(text: str) -> dict[str, Any]:
             text, "certificate no", "certificate number", "e-stamp number"
         ),
         "stamp_jurisdiction_state": state_match.group(1).strip(" .") if state_match else None,
-        "stamp_duty_amount": _normalize_amount(duty_amount_match.group(1)) if duty_amount_match else None,
+        "stamp_duty_amount": _normalize_amount(duty_amount_match.group(1))
+        if duty_amount_match
+        else None,
         "stamp_consideration_amount": (
             _normalize_amount(consideration_match.group(1)) if consideration_match else None
         ),
@@ -2899,35 +3273,46 @@ def _extract_insurance_form(text: str) -> dict[str, Any]:
 
     return {
         "insurer_name": (
-            re.sub(r"\s+", " ", insurer_match.group(1)).strip()
-            if insurer_match else None
+            re.sub(r"\s+", " ", insurer_match.group(1)).strip() if insurer_match else None
         ),
         "insurance_application_number": _inline_identifier_after_label(
-            text, "insurance application number", "insurance application no",
-            "application number", "application no",
+            text,
+            "insurance application number",
+            "insurance application no",
+            "application number",
+            "application no",
         ),
         "insurance_proposal_number": _inline_identifier_after_label(
-            text, "proposal number", "proposal no",
+            text,
+            "proposal number",
+            "proposal no",
         ),
         "insurance_policy_number": _inline_identifier_after_label(
-            text, "policy number", "policy no",
+            text,
+            "policy number",
+            "policy no",
         ),
         "loan_application_number": _inline_identifier_after_label(
-            text, "loan application number", "loan application no",
+            text,
+            "loan application number",
+            "loan application no",
         ),
         "loan_account_number": _inline_identifier_after_label(
-            text, "loan account number", "loan account no", "loan a/c no",
+            text,
+            "loan account number",
+            "loan account no",
+            "loan a/c no",
         ),
         "proposer_name": _inline_text_after_label(text, "proposer name"),
         "insured_person_name": _inline_text_after_label(
-            text, "insured person name", "name of person to be insured",
+            text,
+            "insured person name",
+            "name of person to be insured",
         ),
         "nominee_name": _inline_text_after_label(text, "nominee name"),
         "policy_tenure_months": policy_tenure_months,
         "sum_insured": _extract_amount(text.casefold(), "sum insured"),
-        "total_premium": _extract_amount(
-            text.casefold(), "total premium", "premium amount"
-        ),
+        "total_premium": _extract_amount(text.casefold(), "total premium", "premium amount"),
     }
 
 
@@ -2958,9 +3343,7 @@ def _inline_text_after_label(text: str, *labels: str) -> str | None:
 
 def _extract_insurance_consent(text: str) -> dict[str, Any]:
     lower = text.lower()
-    tenure_match = re.search(
-        r"insurance\s+tenure\s*[:\-–]?\s*(\d+)\s*(months?|years?)?", lower
-    )
+    tenure_match = re.search(r"insurance\s+tenure\s*[:\-–]?\s*(\d+)\s*(months?|years?)?", lower)
     insurance_tenure: int | None = None
     if tenure_match:
         insurance_tenure = int(tenure_match.group(1))
@@ -2977,7 +3360,11 @@ def _extract_clearance_report(text: str) -> dict[str, Any]:
     status_window = _clearance_status_window(text)
     status_lower = status_window.lower()
     rejected = next(
-        (status for status in ("not cleared", "not clear", "negative", "rejected", "pending") if status in status_lower),
+        (
+            status
+            for status in ("not cleared", "not clear", "negative", "rejected", "pending")
+            if status in status_lower
+        ),
         None,
     )
     accepted = next(
@@ -3005,7 +3392,13 @@ def _extract_clearance_report(text: str) -> dict[str, Any]:
 
 
 def _clearance_status_window(text: str) -> str:
-    for label in ("clearance status", "technical status", "report status", "recommendation", "remarks"):
+    for label in (
+        "clearance status",
+        "technical status",
+        "report status",
+        "recommendation",
+        "remarks",
+    ):
         value = _lines_after_label(text, label, max_lines=3)
         if value:
             return value
@@ -3039,7 +3432,8 @@ def _extract_nach_form(text: str) -> dict[str, Any]:
         "registration_status": registration_status,
         "account_holder_name": (
             _clean_name_like_value(status_screen_name.group(1))
-            if status_screen_name else _line_after_label(text, "account holder", "customer name", "name")
+            if status_screen_name
+            else _line_after_label(text, "account holder", "customer name", "name")
         ),
         "account_number": _digits_only(account_match.group(1)) if account_match else None,
     }

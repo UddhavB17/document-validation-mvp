@@ -82,7 +82,9 @@ def check_presence_any(pages: list[dict], document_types: list[str]) -> dict:
     return {"passed": True, "found_value": matched[0]}
 
 
-def check_field_match(extracted_fields: dict, system_data: dict, field_names: list[str]) -> list[dict]:
+def check_field_match(
+    extracted_fields: dict, system_data: dict, field_names: list[str]
+) -> list[dict]:
     anomalies = []
 
     for field in field_names:
@@ -101,7 +103,9 @@ def check_field_match(extracted_fields: dict, system_data: dict, field_names: li
                 ext_num = float(str(extracted_val).replace(",", ""))
                 tolerance = sys_num * 0.01
                 if abs(sys_num - ext_num) > tolerance:
-                    anomalies.append({"field": field, "expected": system_val, "found": extracted_val})
+                    anomalies.append(
+                        {"field": field, "expected": system_val, "found": extracted_val}
+                    )
             except Exception:
                 continue
         elif field == "pan_number":
@@ -196,9 +200,7 @@ def _statement_account_key(page: dict, known_accounts: set[str]) -> tuple[str, s
         return "account", next(iter(known_accounts))
 
     instance_id = str(
-        page.get("source_document_id")
-        or page.get("document_instance_id")
-        or ""
+        page.get("source_document_id") or page.get("document_instance_id") or ""
     ).strip()
     if instance_id:
         return "document", instance_id
@@ -206,7 +208,9 @@ def _statement_account_key(page: dict, known_accounts: set[str]) -> tuple[str, s
     return "unknown", person_id
 
 
-def _statement_date_evidence(page: dict) -> tuple[list[tuple[date, date]], set[tuple[int, int]], bool]:
+def _statement_date_evidence(
+    page: dict,
+) -> tuple[list[tuple[date, date]], set[tuple[int, int]], bool]:
     """Return explicit ranges, transaction months, and whether date evidence was invalid."""
     fields = page.get("extracted_fields") or {}
     metadata = fields.get("_statement_date_evidence")
@@ -282,10 +286,7 @@ def bank_statement_required_month_labels(
     if anchor is None:
         return []
     required_start, required_end = _completed_month_window(anchor, minimum_months)
-    return [
-        _month_label(month)
-        for month in sorted(_required_months(required_start, required_end))
-    ]
+    return [_month_label(month) for month in sorted(_required_months(required_start, required_end))]
 
 
 def _bank_period_anomaly(
@@ -299,11 +300,7 @@ def _bank_period_anomaly(
     expected_label = f"{minimum:g} complete months immediately before the application date"
     first_page = pages[0] if pages else {}
     if anchor is None:
-        found = (
-            f"Invalid {anchor_field}"
-            if anchor_field
-            else "Application date not available"
-        )
+        found = f"Invalid {anchor_field}" if anchor_field else "Application date not available"
         return build_anomaly(
             rule_id=f"PERIOD_DATE_UNVERIFIABLE_S{item.get('s_no')}",
             s_no=item.get("s_no"),
@@ -369,19 +366,15 @@ def _bank_period_anomaly(
             + ", ".join(_month_label(month) for month in sorted(missing_months))
         )
     else:
-        found_value = (
-            "No required-month coverage found; missing months: "
-            + ", ".join(_month_label(month) for month in ordered_required_months)
+        found_value = "No required-month coverage found; missing months: " + ", ".join(
+            _month_label(month) for month in ordered_required_months
         )
 
     has_date_evidence = any(
-        group["ranges"] or group["transaction_months"]
-        for group in groups.values()
+        group["ranges"] or group["transaction_months"] for group in groups.values()
     )
     rule_prefix = (
-        "PERIOD_DATE_UNVERIFIABLE"
-        if invalid_evidence or not has_date_evidence
-        else "PERIOD_CHECK"
+        "PERIOD_DATE_UNVERIFIABLE" if invalid_evidence or not has_date_evidence else "PERIOD_CHECK"
     )
     reason = (
         "Bank-statement dates could not be verified; manual review is required."
@@ -517,7 +510,9 @@ def condition_applies(condition: dict | None, system_data: dict) -> bool | None:
         right = _numeric(expected)
         if left is None or right is None:
             return None
-        return {">": left > right, ">=": left >= right, "<": left < right, "<=": left <= right}[operator]
+        return {">": left > right, ">=": left >= right, "<": left < right, "<=": left <= right}[
+            operator
+        ]
     if operator in {"in", "not_in"}:
         values = {str(item).strip().lower() for item in (expected or [])}
         result = str(value).strip().lower() in values
@@ -551,7 +546,8 @@ def _scoped_people(scope: str | None, system_data: dict) -> dict[str, dict]:
             person_id: person
             for person_id, person in people.items()
             if person_id == "primary"
-            or str(person.get("role") or "").lower() in {"applicant", "primary", "primary_applicant"}
+            or str(person.get("role") or "").lower()
+            in {"applicant", "primary", "primary_applicant"}
             or bool(person.get("income_earner"))
             or bool(person.get("repayment_contributor"))
         }
@@ -602,7 +598,14 @@ def system_flag_state(item: dict, system_data: dict) -> bool | None:
     if value in (None, ""):
         return None
     return str(value).strip().lower() in {
-        "1", "true", "yes", "y", "on", "checked", "complete", "completed"
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+        "checked",
+        "complete",
+        "completed",
     }
 
 
@@ -625,17 +628,23 @@ def _system_flag_anomaly(item: dict, system_data: dict) -> dict | None:
         return anomaly
     if state:
         return None
-    return _missing_presence_anomaly(item, document_type=str(item.get("document_type") or item.get("description") or "System check"))
+    return _missing_presence_anomaly(
+        item,
+        document_type=str(item.get("document_type") or item.get("description") or "System check"),
+    )
 
 
 def _pages_for_person(pages: list[dict], person_id: str) -> list[dict]:
     return [
-        page for page in pages
+        page
+        for page in pages
         if str(page.get("person_id") or page.get("applicant_role") or "") == person_id
     ]
 
 
-def _missing_presence_anomaly(item: dict, *, document_type: str, person_id: str | None = None) -> dict:
+def _missing_presence_anomaly(
+    item: dict, *, document_type: str, person_id: str | None = None
+) -> dict:
     s_no = item.get("s_no")
     expected = "Document present"
     if person_id:
@@ -679,7 +688,9 @@ def _run_presence_checks(
 
         applies = condition_applies(item.get("applies_when"), system_data)
         if applies is None:
-            document_label = " / ".join(str(value) for value in _document_types(document_type) if value)
+            document_label = " / ".join(
+                str(value) for value in _document_types(document_type) if value
+            )
             anomalies.append(_applicability_unknown_anomaly(item, document_type=document_label))
             continue
         if applies is False:
@@ -697,9 +708,15 @@ def _run_presence_checks(
             for person_id in scoped_people:
                 person_pages = _pages_for_person(pages, person_id)
                 if item.get("check_type") == "presence_all":
-                    missing_types = [doc_type for doc_type in types if not _find_pages(person_pages, doc_type)]
+                    missing_types = [
+                        doc_type for doc_type in types if not _find_pages(person_pages, doc_type)
+                    ]
                     for missing_type in missing_types:
-                        anomalies.append(_missing_presence_anomaly(item, document_type=missing_type, person_id=person_id))
+                        anomalies.append(
+                            _missing_presence_anomaly(
+                                item, document_type=missing_type, person_id=person_id
+                            )
+                        )
                 elif item.get("check_type") == "presence_min_count":
                     minimum = int(item.get("min_count") or 1)
                     found_count = sum(
@@ -707,18 +724,25 @@ def _run_presence_checks(
                         for doc_type in types
                     )
                     if found_count < minimum:
-                        anomalies.append(build_anomaly(
-                            rule_id=f"MISSING_DOC_S{s_no}_{person_id}", s_no=s_no,
-                            severity=severity,
-                            expected_value=f"At least {minimum} document(s) for {person_id}",
-                            found_value=f"{found_count} found", reason=description,
-                            document_type=", ".join(types), person_id=person_id,
-                        ))
+                        anomalies.append(
+                            build_anomaly(
+                                rule_id=f"MISSING_DOC_S{s_no}_{person_id}",
+                                s_no=s_no,
+                                severity=severity,
+                                expected_value=f"At least {minimum} document(s) for {person_id}",
+                                found_value=f"{found_count} found",
+                                reason=description,
+                                document_type=", ".join(types),
+                                person_id=person_id,
+                            )
+                        )
                 elif item.get("check_type") == "consistency_only":
                     continue
                 elif not check_presence_any(person_pages, types)["passed"]:
                     anomalies.append(
-                        _missing_presence_anomaly(item, document_type=", ".join(types), person_id=person_id)
+                        _missing_presence_anomaly(
+                            item, document_type=", ".join(types), person_id=person_id
+                        )
                     )
             continue
 
@@ -739,10 +763,12 @@ def _run_presence_checks(
 
         elif check_type == "consistency_only":
             if not _matching_pages(pages, document_type):
-                anomalies.append(_missing_presence_anomaly(
-                    item,
-                    document_type=" / ".join(_document_types(document_type)),
-                ))
+                anomalies.append(
+                    _missing_presence_anomaly(
+                        item,
+                        document_type=" / ".join(_document_types(document_type)),
+                    )
+                )
             continue
 
         elif check_type == "presence_any":
@@ -784,7 +810,9 @@ def _run_presence_checks(
         elif check_type == "requirements":
             applicability_unknown_reported = False
             for requirement in item.get("requirements") or []:
-                requirement_applies = condition_applies(requirement.get("applies_when"), system_data)
+                requirement_applies = condition_applies(
+                    requirement.get("applies_when"), system_data
+                )
                 if requirement_applies is None:
                     if not applicability_unknown_reported:
                         anomalies.append(
@@ -816,7 +844,8 @@ def _run_presence_checks(
                                     severity=requirement_item.get("severity_if_missing", severity),
                                     expected_value=(
                                         f"At least {minimum} {required_type} document(s) for {person_id}"
-                                        if requirement_check_type == "presence_min_count" or minimum > 1
+                                        if requirement_check_type == "presence_min_count"
+                                        or minimum > 1
                                         else f"Document present for {person_id}"
                                     ),
                                     found_value=f"{found_count} found",
@@ -897,7 +926,9 @@ def _page_status(page: dict, field_names: list[str]) -> str:
     return _normalized_status(text)
 
 
-def _is_positive_status(page: dict, accepted: list[str], rejected: list[str], fields: list[str]) -> bool:
+def _is_positive_status(
+    page: dict, accepted: list[str], rejected: list[str], fields: list[str]
+) -> bool:
     status = _page_status(page, fields)
     if any(term.lower() in status for term in rejected):
         return False
@@ -1009,7 +1040,9 @@ def _run_accuracy_checks(
         elif check_type == "date_range":
             doc_pages = _matching_pages(pages, document_type)
             if doc_pages:
-                result = check_date_range(doc_pages[0].get("extracted_fields", {}), item["min_months"])
+                result = check_date_range(
+                    doc_pages[0].get("extracted_fields", {}), item["min_months"]
+                )
                 if not result["passed"]:
                     anomalies.append(
                         build_anomaly(
@@ -1051,10 +1084,14 @@ def _run_accuracy_checks(
                 if date_value in (None, ""):
                     anomalies.append(
                         build_anomaly(
-                            rule_id=f"FIELD_VALUE_MISSING_S{s_no}", s_no=s_no,
-                            severity="LOW", expected_value="Utility-bill date available",
-                            found_value="Date not extracted", reason=description,
-                            page_number=page.get("page_number"), document_type=str(page.get("document_type")),
+                            rule_id=f"FIELD_VALUE_MISSING_S{s_no}",
+                            s_no=s_no,
+                            severity="LOW",
+                            expected_value="Utility-bill date available",
+                            found_value="Date not extracted",
+                            reason=description,
+                            page_number=page.get("page_number"),
+                            document_type=str(page.get("document_type")),
                         )
                     )
                     continue
@@ -1065,11 +1102,13 @@ def _run_accuracy_checks(
                 if age_months > maximum:
                     anomalies.append(
                         build_anomaly(
-                            rule_id=f"DATE_CHECK_S{s_no}", s_no=s_no,
+                            rule_id=f"DATE_CHECK_S{s_no}",
+                            s_no=s_no,
                             severity=item.get("severity_if_fail", "HIGH"),
                             expected_value=f"Not older than {maximum:g} months",
                             found_value=f"{max(0, age_months):.1f} months old",
-                            reason=description, page_number=page.get("page_number"),
+                            reason=description,
+                            page_number=page.get("page_number"),
                             document_type=str(page.get("document_type")),
                         )
                     )
@@ -1086,10 +1125,13 @@ def _run_accuracy_checks(
                 if not passed:
                     anomalies.append(
                         build_anomaly(
-                            rule_id=f"DATE_CHECK_S{s_no}", s_no=s_no,
+                            rule_id=f"DATE_CHECK_S{s_no}",
+                            s_no=s_no,
                             severity=item.get("severity_if_fail", "HIGH"),
-                            expected_value=f"On or before {expected_value}", found_value=found_value,
-                            reason=description, page_number=(found_page or {}).get("page_number"),
+                            expected_value=f"On or before {expected_value}",
+                            found_value=found_value,
+                            reason=description,
+                            page_number=(found_page or {}).get("page_number"),
                             document_type=" / ".join(_document_types(document_type)),
                         )
                     )
@@ -1099,26 +1141,46 @@ def _run_accuracy_checks(
             found_value, found_page = _field_from_pages(doc_pages, *item.get("document_fields", []))
             expected_value = system_data.get(item.get("system_field"))
             found_number, expected_number = _numeric(found_value), _numeric(expected_value)
-            if found_number is not None and expected_number is not None and found_number >= expected_number:
+            if (
+                found_number is not None
+                and expected_number is not None
+                and found_number >= expected_number
+            ):
                 anomalies.append(
                     build_anomaly(
-                        rule_id=f"FIELD_RELATION_S{s_no}", s_no=s_no,
+                        rule_id=f"FIELD_RELATION_S{s_no}",
+                        s_no=s_no,
                         severity=item.get("severity_if_fail", "MEDIUM"),
-                        expected_value=f"Less than {expected_value}", found_value=found_value,
-                        reason=description, page_number=(found_page or {}).get("page_number"),
+                        expected_value=f"Less than {expected_value}",
+                        found_value=found_value,
+                        reason=description,
+                        page_number=(found_page or {}).get("page_number"),
                         document_type=" / ".join(_document_types(document_type)),
                     )
                 )
 
         elif check_type == "required_status":
             doc_pages = _matching_pages(pages, document_type)
-            accepted = item.get("accepted_statuses") or ["clear", "cleared", "positive", "approved", "registered"]
-            rejected = item.get("rejected_statuses") or ["not clear", "not cleared", "negative", "rejected", "pending"]
+            accepted = item.get("accepted_statuses") or [
+                "clear",
+                "cleared",
+                "positive",
+                "approved",
+                "registered",
+            ]
+            rejected = item.get("rejected_statuses") or [
+                "not clear",
+                "not cleared",
+                "negative",
+                "rejected",
+                "pending",
+            ]
             status_fields = item.get("status_fields") or ["status"]
 
             # Partition pages: those that pass vs those that fail the status check.
             passing_pages = [
-                page for page in doc_pages
+                page
+                for page in doc_pages
                 if _is_positive_status(page, accepted, rejected, status_fields)
             ]
             # If ANY page in the document group has a passing status, treat the
@@ -1138,7 +1200,10 @@ def _run_accuracy_checks(
                     # Do not HIGH-fail just because whole-page OCR lacks those tokens.
                     unverifiable_fallback = (
                         not first_has_status_field
-                        and all(_status_looks_like_full_page_fallback(page, status_fields) for page in failing_pages)
+                        and all(
+                            _status_looks_like_full_page_fallback(page, status_fields)
+                            for page in failing_pages
+                        )
                         and not any(
                             term.lower() in _page_status(page, status_fields)
                             for page in failing_pages
@@ -1147,7 +1212,9 @@ def _run_accuracy_checks(
                     )
 
                     page_preview = ", ".join(
-                        str(page.get("page_number")) for page in failing_pages[:6] if page.get("page_number") is not None
+                        str(page.get("page_number"))
+                        for page in failing_pages[:6]
+                        if page.get("page_number") is not None
                     )
                     if len(failing_pages) > 6:
                         page_preview += f", … (+{len(failing_pages) - 6} more)"
@@ -1156,7 +1223,8 @@ def _run_accuracy_checks(
                         # Cannot verify status reliably — emit a softer warning instead
                         anomalies.append(
                             build_anomaly(
-                                rule_id=f"STATUS_UNVERIFIABLE_S{s_no}", s_no=s_no,
+                                rule_id=f"STATUS_UNVERIFIABLE_S{s_no}",
+                                s_no=s_no,
                                 severity="LOW",
                                 expected_value=" / ".join(accepted),
                                 found_value=(
@@ -1165,7 +1233,11 @@ def _run_accuracy_checks(
                                         if low_conf_fallback
                                         else "No explicit clearance status field on valuation/report pages"
                                     )
-                                    + (f" across {len(failing_pages)} page(s): {page_preview}" if len(failing_pages) > 1 else "")
+                                    + (
+                                        f" across {len(failing_pages)} page(s): {page_preview}"
+                                        if len(failing_pages) > 1
+                                        else ""
+                                    )
                                 ),
                                 reason=f"{description} (status not explicitly extractable; manual review)",
                                 page_number=first.get("page_number"),
@@ -1175,27 +1247,34 @@ def _run_accuracy_checks(
                     else:
                         anomalies.append(
                             build_anomaly(
-                                rule_id=f"STATUS_CHECK_S{s_no}", s_no=s_no,
+                                rule_id=f"STATUS_CHECK_S{s_no}",
+                                s_no=s_no,
                                 severity=item.get("severity_if_fail", "HIGH"),
                                 expected_value=" / ".join(accepted),
                                 found_value=(
                                     f"{_page_status(first, status_fields)[:120] or 'Status not found'}"
-                                    + (f" across {len(failing_pages)} page(s): {page_preview}" if len(failing_pages) > 1 else "")
+                                    + (
+                                        f" across {len(failing_pages)} page(s): {page_preview}"
+                                        if len(failing_pages) > 1
+                                        else ""
+                                    )
                                 ),
-                                reason=description, page_number=first.get("page_number"),
+                                reason=description,
+                                page_number=first.get("page_number"),
                                 document_type=str(first.get("document_type") or document_type),
                             )
                         )
 
-
         elif check_type == "distinct_positive_count":
             doc_pages = _matching_pages(pages, document_type)
             positive_pages = [
-                page for page in doc_pages
+                page
+                for page in doc_pages
                 if _is_positive_status(
                     page,
                     item.get("accepted_statuses") or ["positive", "clear", "cleared", "approved"],
-                    item.get("rejected_statuses") or ["negative", "rejected", "not clear", "not cleared"],
+                    item.get("rejected_statuses")
+                    or ["negative", "rejected", "not clear", "not cleared"],
                     item.get("status_fields") or ["status", "report_status"],
                 )
             ]
@@ -1204,16 +1283,17 @@ def _run_accuracy_checks(
             if distinct_count < minimum:
                 anomalies.append(
                     build_anomaly(
-                        rule_id=f"COUNT_STATUS_CHECK_S{s_no}", s_no=s_no,
+                        rule_id=f"COUNT_STATUS_CHECK_S{s_no}",
+                        s_no=s_no,
                         severity=item.get("severity_if_fail", "HIGH"),
                         expected_value=f"At least {minimum} distinct positive report(s)",
                         found_value=f"{distinct_count} distinct positive report(s)",
-                        reason=description, document_type=" / ".join(_document_types(document_type)),
+                        reason=description,
+                        document_type=" / ".join(_document_types(document_type)),
                     )
                 )
 
     return anomalies
-
 
 
 def run_checks(
@@ -1370,7 +1450,11 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
             )
 
         confidence = page.get("ocr_confidence", page.get("confidence"))
-        if page.get("page_type") == "scanned" and confidence is not None and confidence < ocr_threshold:
+        if (
+            page.get("page_type") == "scanned"
+            and confidence is not None
+            and confidence < ocr_threshold
+        ):
             anomalies.append(
                 build_anomaly(
                     "LOW_OCR_CONFIDENCE",

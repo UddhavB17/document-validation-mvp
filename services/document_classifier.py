@@ -39,10 +39,17 @@ OCRRoute = Literal["fast", "structured"]
 # accepted identity document ("AADHAAR / PAN / VOTER ID / DRIVING LICENCE /
 # RATION CARD").  A real identity card never lists several other card types,
 # so those pages must not be classified as the cards they merely mention.
-IDENTITY_CARD_TYPES = frozenset({
-    "Aadhaar", "PAN", "PAN Card", "Voter ID", "Driving License", "Passport",
-    "Ration Card",
-})
+IDENTITY_CARD_TYPES = frozenset(
+    {
+        "Aadhaar",
+        "PAN",
+        "PAN Card",
+        "Voter ID",
+        "Driving License",
+        "Passport",
+        "Ration Card",
+    }
+)
 _ID_DOC_MENTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\baadhaa?r\b|आधार", re.IGNORECASE),
     re.compile(r"\bpan\b|पैन", re.IGNORECASE),
@@ -253,7 +260,9 @@ def classify_page_with_candidates(text: str) -> dict[str, Any]:
     candidates.sort(
         key=lambda item: (
             -item["confidence"],
-            -int(any(signal.get("kind") == "opening_heading" for signal in item["matched_signals"])),
+            -int(
+                any(signal.get("kind") == "opening_heading" for signal in item["matched_signals"])
+            ),
             item["priority"],
         )
     )
@@ -348,16 +357,22 @@ def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
                 0.0,
                 [{"kind": "suppressed", "value": "missing_document_boundary_evidence"}],
             )
-    negative_hits = [term for term in rule.get("negative_keywords", []) if _contains(normalized, term)]
+    negative_hits = [
+        term for term in rule.get("negative_keywords", []) if _contains(normalized, term)
+    ]
     if negative_hits and not explicit_opening_heading:
-        return _candidate(rule, 0.0, [{"kind": "negative_keyword", "value": term} for term in negative_hits])
+        return _candidate(
+            rule, 0.0, [{"kind": "negative_keyword", "value": term} for term in negative_hits]
+        )
 
     required_any = rule.get("required_any", [])
     if required_any and not any(_contains(normalized, term) for term in required_any):
         return _candidate(rule, 0.0, [])
 
     required_regex = rule.get("required_regex", [])
-    if required_regex and not any(re.search(pattern, text or "", re.IGNORECASE | re.MULTILINE) for pattern in required_regex):
+    if required_regex and not any(
+        re.search(pattern, text or "", re.IGNORECASE | re.MULTILINE) for pattern in required_regex
+    ):
         return _candidate(rule, 0.0, [])
 
     heading_score, heading_matches = _heading_score(heading_area, rule.get("headings", []))
@@ -370,15 +385,21 @@ def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
     score += keyword_score
     matched.extend(keyword_matches)
 
-    field_score, field_matches = _regex_score(text or "", rule.get("field_patterns", []), "field_pattern", 0.25)
+    field_score, field_matches = _regex_score(
+        text or "", rule.get("field_patterns", []), "field_pattern", 0.25
+    )
     score += field_score
     matched.extend(field_matches)
 
-    required_score, required_matches = _keyword_score(normalized, required_any, max_score=0.10, kind="required_keyword")
+    required_score, required_matches = _keyword_score(
+        normalized, required_any, max_score=0.10, kind="required_keyword"
+    )
     score += required_score
     matched.extend(required_matches)
 
-    required_regex_score, required_regex_matches = _regex_score(text or "", required_regex, "required_regex", 0.10)
+    required_regex_score, required_regex_matches = _regex_score(
+        text or "", required_regex, "required_regex", 0.10
+    )
     score += required_regex_score
     matched.extend(required_regex_matches)
 
@@ -411,10 +432,8 @@ def _has_explicit_opening_heading(
     An explicit opening title is stronger evidence than such body references.
     """
     opening_lines = [
-        _normalize_text(line)
-        for line in str(text or "").splitlines()
-        if _normalize_text(line)
-    ][:max(1, max_lines)]
+        _normalize_text(line) for line in str(text or "").splitlines() if _normalize_text(line)
+    ][: max(1, max_lines)]
     for line in opening_lines:
         for heading in headings:
             normalized_heading = _normalize_text(heading)
@@ -423,7 +442,7 @@ def _has_explicit_opening_heading(
             if line == normalized_heading:
                 return True
             if line.startswith(f"{normalized_heading} "):
-                remainder = line[len(normalized_heading):].strip(" -:|")
+                remainder = line[len(normalized_heading) :].strip(" -:|")
                 if remainder.startswith(
                     ("this ", "made ", "executed ", "dated ", "between ", "by ", "at ")
                 ):
@@ -497,7 +516,9 @@ def _regex_score(
     return max_score * min(1.0, len(hits) / max(len(patterns), 1) * 2.0), hits[:4]
 
 
-def _candidate(rule: dict[str, Any], confidence: float, matched: list[dict[str, Any]]) -> dict[str, Any]:
+def _candidate(
+    rule: dict[str, Any], confidence: float, matched: list[dict[str, Any]]
+) -> dict[str, Any]:
     return {
         "document_type": str(rule["type"]),
         "confidence": confidence,
@@ -530,9 +551,7 @@ def _normalize_text(value: str) -> str:
     lowered = unicodedata.normalize("NFKC", str(value or "")).casefold()
     lowered = lowered.replace("\u2013", "-").replace("\u2014", "-")
     normalized = "".join(
-        character
-        if character.isalnum() or unicodedata.category(character).startswith("M")
-        else " "
+        character if character.isalnum() or unicodedata.category(character).startswith("M") else " "
         for character in lowered
     )
     return re.sub(r"\s+", " ", normalized).strip()

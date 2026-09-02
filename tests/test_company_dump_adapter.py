@@ -72,18 +72,20 @@ def test_converts_malformed_company_dump_to_automatic_manifest() -> None:
 
 
 def test_converts_valid_database_json_object() -> None:
-    manifest = convert_company_database_dump({
-        "applicantdetails": {
-            "loanId": 42,
-            "entityName": "Ramesh Kumar",
-            "dob": "01-January-1990",
-        },
-        "camdetails": {
-            "loanId": 42,
-            "loanamount": "500000",
-            "loginDate": "17-August-2026",
-        },
-    })
+    manifest = convert_company_database_dump(
+        {
+            "applicantdetails": {
+                "loanId": 42,
+                "entityName": "Ramesh Kumar",
+                "dob": "01-January-1990",
+            },
+            "camdetails": {
+                "loanId": 42,
+                "loanamount": "500000",
+                "loginDate": "17-August-2026",
+            },
+        }
+    )
 
     assert manifest["loan_id"] == "42"
     assert manifest["application_date"] == "17-August-2026"
@@ -92,21 +94,23 @@ def test_converts_valid_database_json_object() -> None:
 
 
 def test_converts_single_object_coapplicant_sections() -> None:
-    manifest = convert_company_database_dump({
-        "applicantdetails": {
-            "loanId": 30765,
-            "entityName": "Suthar Anupkumar",
-        },
-        "coapplicantdetails": {
-            "entityName": "Aaratiben Anupkumar Suthar",
-            "mobileNo": "9876543210",
-        },
-        "coapplicantkyc": {
-            "entityName": "Aaratiben Anupkumar Suthar",
-            "panNumber": "SXPPS4453F",
-            "aadhaarNumber": "XXXXXXXX8196",
-        },
-    })
+    manifest = convert_company_database_dump(
+        {
+            "applicantdetails": {
+                "loanId": 30765,
+                "entityName": "Suthar Anupkumar",
+            },
+            "coapplicantdetails": {
+                "entityName": "Aaratiben Anupkumar Suthar",
+                "mobileNo": "9876543210",
+            },
+            "coapplicantkyc": {
+                "entityName": "Aaratiben Anupkumar Suthar",
+                "panNumber": "SXPPS4453F",
+                "aadhaarNumber": "XXXXXXXX8196",
+            },
+        }
+    )
 
     assert manifest["people"]["coapplicant_1"] == {
         "role": "coapplicant",

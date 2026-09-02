@@ -85,95 +85,114 @@ def infer_document_type_from_evidence(text: str) -> dict[str, Any] | None:
     from services.document_classifier import is_insurance_application_context
 
     if is_insurance_application_context(raw):
-        candidates.append({
-            "document_type": "Insurance Form",
-            "confidence": 0.99,
-            "evidence": ["insurer_anchor", "insurance_proposal_fields"],
-            "authoritative_override": True,
-        })
+        candidates.append(
+            {
+                "document_type": "Insurance Form",
+                "confidence": 0.99,
+                "evidence": ["insurer_anchor", "insurance_proposal_fields"],
+                "authoritative_override": True,
+            }
+        )
 
     if re.search(r"\b(?:request\s+for\s+disburs(?:al|ement)|drawdown\s+request)\b", lowered):
-        candidates.append({
-            "document_type": "Disbursement Request",
-            "confidence": 0.98,
-            "evidence": ["disbursement_request_heading"],
-            "authoritative_override": True,
-        })
+        candidates.append(
+            {
+                "document_type": "Disbursement Request",
+                "confidence": 0.98,
+                "evidence": ["disbursement_request_heading"],
+                "authoritative_override": True,
+            }
+        )
 
     bureau = classify_credit_bureau_by_anchors(raw)
     if bureau.get("document_type") and float(bureau.get("confidence") or 0.0) >= 0.75:
-        candidates.append({
-            "document_type": str(bureau["document_type"]),
-            "confidence": float(bureau["confidence"]),
-            "evidence": ["bureau_header_and_score_anchors"],
-        })
+        candidates.append(
+            {
+                "document_type": str(bureau["document_type"]),
+                "confidence": float(bureau["confidence"]),
+                "evidence": ["bureau_header_and_score_anchors"],
+            }
+        )
 
     pan_numbers = _PAN_RE.findall(raw.upper())
-    pan_heading = bool(re.search(
-        r"\b(?:permanent\s+account\s+number|income\s+tax\s+department|pan\s+card)\b",
-        lowered,
-    ))
+    pan_heading = bool(
+        re.search(
+            r"\b(?:permanent\s+account\s+number|income\s+tax\s+department|pan\s+card)\b",
+            lowered,
+        )
+    )
     pan_card_context = bool(re.search(r"\b(?:father(?:'s)?\s+name|date\s+of\s+birth)\b", lowered))
     if kyc_checklist:
         pan_heading = False
     if pan_numbers and pan_heading:
         confidence = 0.92 if pan_card_context else 0.82
-        candidates.append({
-            "document_type": "PAN",
-            "confidence": confidence,
-            "evidence": ["pan_format", "pan_card_heading"] + (["pan_card_identity_fields"] if pan_card_context else []),
-        })
+        candidates.append(
+            {
+                "document_type": "PAN",
+                "confidence": confidence,
+                "evidence": ["pan_format", "pan_card_heading"]
+                + (["pan_card_identity_fields"] if pan_card_context else []),
+            }
+        )
 
     aadhaar_numbers = [
-        digits
-        for item in _AADHAAR_RE.findall(raw)
-        if (digits := plausible_aadhaar_digits(item))
+        digits for item in _AADHAAR_RE.findall(raw) if (digits := plausible_aadhaar_digits(item))
     ]
-    aadhaar_authority = bool(re.search(
-        r"\b(?:uidai|aadhaar|aadhar|unique\s+identification\s+authority)\b|"
-        r"भारतीय\s+विशिष्ट\s+पहचान|मेरा\s+आधार",
-        lowered,
-        re.IGNORECASE,
-    ))
+    aadhaar_authority = bool(
+        re.search(
+            r"\b(?:uidai|aadhaar|aadhar|unique\s+identification\s+authority)\b|"
+            r"भारतीय\s+विशिष्ट\s+पहचान|मेरा\s+आधार",
+            lowered,
+            re.IGNORECASE,
+        )
+    )
     if (
         not kyc_checklist
         and aadhaar_authority
         and (aadhaar_numbers or re.search(r"\b(?:vid|virtual\s+id)\b", lowered))
     ):
-        candidates.append({
-            "document_type": "Aadhaar",
-            "confidence": 0.93 if aadhaar_numbers else 0.80,
-            "evidence": ["aadhaar_authority_anchor", "aadhaar_identifier"],
-        })
+        candidates.append(
+            {
+                "document_type": "Aadhaar",
+                "confidence": 0.93 if aadhaar_numbers else 0.80,
+                "evidence": ["aadhaar_authority_anchor", "aadhaar_identifier"],
+            }
+        )
 
     if re.search(r"\b(?:loan\s+application\s+form|application\s+form)\b", lowered) or (
         "applicant details" in lowered and "co-applicant" in lowered
     ):
-        candidates.append({
-            "document_type": "Application Form",
-            "confidence": 0.90,
-            "evidence": ["application_form_heading"],
-        })
+        candidates.append(
+            {
+                "document_type": "Application Form",
+                "confidence": 0.90,
+                "evidence": ["application_form_heading"],
+            }
+        )
 
     if not kyc_checklist and re.search(
         r"\b(?:election\s+commission|elector(?:'s)?\s+photo\s+identity|epic\s+no)\b", lowered
     ):
-        candidates.append({
-            "document_type": "Voter ID",
-            "confidence": 0.86,
-            "evidence": ["voter_identity_anchor"],
-        })
+        candidates.append(
+            {
+                "document_type": "Voter ID",
+                "confidence": 0.86,
+                "evidence": ["voter_identity_anchor"],
+            }
+        )
 
-    if not kyc_checklist and re.search(
-        r"\b(?:driving\s+licen[cs]e|transport\s+department)\b", lowered
-    ) and re.search(
-        r"\b[A-Z]{2}[ -]?\d{2}[ -]?\d{4}[ -]?\d{7}\b", raw.upper()
+    if (
+        not kyc_checklist
+        and re.search(r"\b(?:driving\s+licen[cs]e|transport\s+department)\b", lowered)
+        and re.search(r"\b[A-Z]{2}[ -]?\d{2}[ -]?\d{4}[ -]?\d{7}\b", raw.upper())
     ):
-        candidates.append({
-            "document_type": "Driving License",
-            "confidence": 0.88,
-            "evidence": ["driving_licence_heading", "driving_licence_number"],
-        })
+        candidates.append(
+            {
+                "document_type": "Driving License",
+                "confidence": 0.88,
+                "evidence": ["driving_licence_heading", "driving_licence_number"],
+            }
+        )
 
     if not candidates:
         return None
@@ -187,11 +206,13 @@ def _attach_generic_evidence(page: dict[str, Any]) -> None:
         fields = {}
     generic = {
         "pan_numbers": list(dict.fromkeys(_PAN_RE.findall(text.upper()))),
-        "aadhaar_numbers": list(dict.fromkeys(
-            digits
-            for item in _AADHAAR_RE.findall(text)
-            if (digits := plausible_aadhaar_digits(item))
-        )),
+        "aadhaar_numbers": list(
+            dict.fromkeys(
+                digits
+                for item in _AADHAAR_RE.findall(text)
+                if (digits := plausible_aadhaar_digits(item))
+            )
+        ),
         "phone_numbers": list(dict.fromkeys(_PHONE_RE.findall(text))),
     }
     generic = {key: value for key, value in generic.items() if value}
@@ -210,12 +231,14 @@ def _promote_page_type(page: dict[str, Any], candidate: dict[str, Any]) -> None:
     if not isinstance(fields, dict):
         fields = {}
     resolution = dict(fields.get("_evidence_resolution") or {})
-    resolution.update({
-        "original_document_type": current_type,
-        "candidate_document_type": candidate_type,
-        "candidate_confidence": round(candidate_confidence, 3),
-        "type_evidence": list(candidate.get("evidence") or []),
-    })
+    resolution.update(
+        {
+            "original_document_type": current_type,
+            "candidate_document_type": candidate_type,
+            "candidate_confidence": round(candidate_confidence, 3),
+            "type_evidence": list(candidate.get("evidence") or []),
+        }
+    )
 
     can_promote = (
         bool(candidate.get("authoritative_override"))
@@ -228,12 +251,14 @@ def _promote_page_type(page: dict[str, Any], candidate: dict[str, Any]) -> None:
         page["classification_confidence"] = max(current_confidence, candidate_confidence)
         page["detection_method"] = "intrinsic_evidence_resolution"
         classification = dict(fields.get("_classification") or {})
-        classification.update({
-            "assigned_type": candidate_type,
-            "detection_method": "intrinsic_evidence_resolution",
-            "pre_resolution_document_type": current_type,
-            "resolution_evidence": list(candidate.get("evidence") or []),
-        })
+        classification.update(
+            {
+                "assigned_type": candidate_type,
+                "detection_method": "intrinsic_evidence_resolution",
+                "pre_resolution_document_type": current_type,
+                "resolution_evidence": list(candidate.get("evidence") or []),
+            }
+        )
         fields["_classification"] = classification
         resolution["document_type_changed"] = current_type != candidate_type
         resolution["resolved_document_type"] = candidate_type
@@ -295,9 +320,7 @@ def _build_groups(
                 type_key in MULTI_PERSON_DOCUMENT_TYPES
                 or (
                     type_key == "cersai report"
-                    and not cersai_starts_new_report(
-                        list(current.get("pages") or []), page
-                    )
+                    and not cersai_starts_new_report(list(current.get("pages") or []), page)
                 )
                 or (
                     type_key == "aadhaar"
@@ -345,9 +368,13 @@ def _looks_like_continuation(page: dict[str, Any], document_type: str) -> bool:
     if not text.strip():
         return False
     if document_type.casefold() == "aadhaar":
-        return bool(re.search(r"\b(?:address|pin\s*code|vid|w\s*/\s*o|s\s*/\s*o|d\s*/\s*o)\b", text))
+        return bool(
+            re.search(r"\b(?:address|pin\s*code|vid|w\s*/\s*o|s\s*/\s*o|d\s*/\s*o)\b", text)
+        )
     if document_type.casefold() == "application form":
-        return bool(re.search(r"\b(?:applicant|co-applicant|kyc\s+details|declaration|signature)\b", text))
+        return bool(
+            re.search(r"\b(?:applicant|co-applicant|kyc\s+details|declaration|signature)\b", text)
+        )
     if document_type.casefold() == "cersai report":
         return bool(
             re.search(
@@ -365,11 +392,7 @@ def _aadhaar_pages_belong_together(
     """Join adjacent Aadhaar front/back evidence without merging two cards."""
     if not current_pages:
         return False
-    current_numbers = {
-        number
-        for page in current_pages
-        for number in _page_aadhaar_numbers(page)
-    }
+    current_numbers = {number for page in current_pages for number in _page_aadhaar_numbers(page)}
     next_numbers = _page_aadhaar_numbers(next_page)
     if current_numbers and next_numbers:
         return bool(current_numbers & next_numbers)
@@ -389,11 +412,14 @@ def _aadhaar_pages_belong_together(
     )
     current_has_identity = any(
         _page_aadhaar_numbers(page)
-        or (isinstance(page.get("extracted_fields"), dict) and (
-            page["extracted_fields"].get("applicant_name")
-            or page["extracted_fields"].get("date_of_birth")
-            or page["extracted_fields"].get("dob")
-        ))
+        or (
+            isinstance(page.get("extracted_fields"), dict)
+            and (
+                page["extracted_fields"].get("applicant_name")
+                or page["extracted_fields"].get("date_of_birth")
+                or page["extracted_fields"].get("dob")
+            )
+        )
         for page in current_pages
     )
     return bool(current_has_identity and has_address_side and not has_holder_identity)
@@ -406,19 +432,15 @@ def _page_aadhaar_numbers(page: dict[str, Any]) -> set[str]:
     generic = fields.get("_generic_evidence")
     if isinstance(generic, dict):
         values.extend(generic.get("aadhaar_numbers") or [])
-    return {
-        digits
-        for value in values
-        if (digits := plausible_aadhaar_digits(value))
-    }
+    return {digits for value in values if (digits := plausible_aadhaar_digits(value))}
 
 
-def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _resolve_group(
+    group: dict[str, Any], reference_data: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
     pages = list(group.get("pages") or [])
     text = "\n".join(
-        cleaned
-        for page in pages
-        if (cleaned := _document_page_text(page.get("ocr_text")))
+        cleaned for page in pages if (cleaned := _document_page_text(page.get("ocr_text")))
     )
     document_type, type_confidence, type_evidence = _group_document_type(pages, text)
     document_id = str(group.get("document_id") or "document")
@@ -432,11 +454,14 @@ def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, An
             current = str(page.get("document_type") or "Unknown")
             confidence = float(page.get("classification_confidence") or 0.0)
             if current.casefold() in UNKNOWN_TYPES or confidence < 0.50:
-                _promote_page_type(page, {
-                    "document_type": document_type,
-                    "confidence": type_confidence,
-                    "evidence": [*type_evidence, "document_group_continuity"],
-                })
+                _promote_page_type(
+                    page,
+                    {
+                        "document_type": document_type,
+                        "confidence": type_confidence,
+                        "evidence": [*type_evidence, "document_group_continuity"],
+                    },
+                )
 
     document_fields = extract_fields(document_type, text) if document_type and text else {}
     if document_type.casefold() in MULTI_PERSON_DOCUMENT_TYPES:
@@ -476,17 +501,19 @@ def _resolve_group(group: dict[str, Any], reference_data: dict[str, dict[str, An
         if not isinstance(fields, dict):
             fields = {}
         resolution = dict(fields.get("_evidence_resolution") or {})
-        resolution.update({
-            "document_id": document_id,
-            "resolved_document_type": document_type,
-            "document_type_confidence": round(type_confidence, 3),
-            "type_evidence": type_evidence,
-            "resolved_person_id": resolved_person_id,
-            "owner_confidence": round(float(owner.get("confidence") or 0.0), 3),
-            "owner_evidence": list(owner.get("evidence") or []),
-            "multi_person_document": multi_person,
-            "trusted_values_replaced": False,
-        })
+        resolution.update(
+            {
+                "document_id": document_id,
+                "resolved_document_type": document_type,
+                "document_type_confidence": round(type_confidence, 3),
+                "type_evidence": type_evidence,
+                "resolved_person_id": resolved_person_id,
+                "owner_confidence": round(float(owner.get("confidence") or 0.0), 3),
+                "owner_evidence": list(owner.get("evidence") or []),
+                "multi_person_document": multi_person,
+                "trusted_values_replaced": False,
+            }
+        )
         fields["_evidence_resolution"] = resolution
         page["extracted_fields"] = fields
         attach_field_provenance(
@@ -525,19 +552,17 @@ def _document_page_text(value: Any) -> str:
         if not _PAGE_COUNTER_LINE_RE.fullmatch(line):
             continue
         leading = [item for item in lines[:index] if item.strip()]
-        trailing = [item for item in lines[index + 1:] if item.strip()]
+        trailing = [item for item in lines[index + 1 :] if item.strip()]
         if not trailing or (
             len(leading) >= 3
             and any(_DIGITAL_SIGNATURE_FOOTER_RE.match(item) for item in trailing[:8])
         ):
             return "\n".join(lines[:index]).rstrip()
-        return "\n".join([*lines[:index], *lines[index + 1:]]).strip()
+        return "\n".join([*lines[:index], *lines[index + 1 :]]).strip()
     return "\n".join(lines).strip()
 
 
-def _group_document_type(
-    pages: list[dict[str, Any]], text: str
-) -> tuple[str, float, list[str]]:
+def _group_document_type(pages: list[dict[str, Any]], text: str) -> tuple[str, float, list[str]]:
     votes: Counter[str] = Counter()
     confidence_by_type: dict[str, list[float]] = {}
     for page in pages:
@@ -550,7 +575,9 @@ def _group_document_type(
     intrinsic = infer_document_type_from_evidence(text)
     if intrinsic:
         votes[str(intrinsic["document_type"])] += float(intrinsic["confidence"]) * 1.5
-        confidence_by_type.setdefault(str(intrinsic["document_type"]), []).append(float(intrinsic["confidence"]))
+        confidence_by_type.setdefault(str(intrinsic["document_type"]), []).append(
+            float(intrinsic["confidence"])
+        )
     if not votes:
         return "Unknown", 0.0, []
     document_type = votes.most_common(1)[0][0]
@@ -616,7 +643,7 @@ def _trusted_person_records_from_observed_text(
         if pan and re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", pan):
             match = re.search(rf"\b{re.escape(pan)}\b", text.upper())
             if match:
-                record["pan_number"] = text[match.start():match.end()]
+                record["pan_number"] = text[match.start() : match.end()]
                 evidence.append("exact_pan_match")
 
         aadhaar = re.sub(r"\D", "", str(trusted.get("aadhaar_number") or ""))
@@ -649,7 +676,12 @@ def _trusted_person_records_from_observed_text(
                 record["applicant_name"] = name_match.group(0)
                 evidence.append("exact_name_text_match")
 
-        strong = {"exact_pan_match", "exact_aadhaar_match", "aadhaar_last4_match", "exact_phone_match"}
+        strong = {
+            "exact_pan_match",
+            "exact_aadhaar_match",
+            "aadhaar_last4_match",
+            "exact_phone_match",
+        }
         if strong.intersection(evidence):
             record["_resolved_person_id"] = person_id
             record["_resolution_evidence"] = evidence
@@ -667,7 +699,9 @@ def _merge_person_records(*record_sets: Any) -> list[dict[str, Any]]:
             if not isinstance(record, dict):
                 continue
             pan = str(record.get("pan_number") or "").upper()
-            aadhaar = re.sub(r"\D", "", str(record.get("aadhaar_number") or record.get("aadhaar_last4") or ""))
+            aadhaar = re.sub(
+                r"\D", "", str(record.get("aadhaar_number") or record.get("aadhaar_last4") or "")
+            )
             phone = re.sub(r"\D", "", str(record.get("phone_number") or ""))
             person_id = str(record.get("_resolved_person_id") or "")
             name = str(record.get("applicant_name") or "").casefold()
@@ -684,7 +718,12 @@ def _merge_person_records(*record_sets: Any) -> list[dict[str, Any]]:
             if key in positions:
                 existing = merged[positions[key]]
                 for field, value in record.items():
-                    if existing.get(field) in (None, "", [], {}) and value not in (None, "", [], {}):
+                    if existing.get(field) in (None, "", [], {}) and value not in (
+                        None,
+                        "",
+                        [],
+                        {},
+                    ):
                         existing[field] = value
                 continue
             positions[key] = len(merged)

@@ -80,7 +80,9 @@ def test_low_memory_force_fast_skips_structured_even_for_bank_statement(monkeypa
     structured_calls: list[str] = []
     router = OCRRouter(
         fast_processor=lambda _path: _fast_result(0.55),
-        structured_processor=lambda path: structured_calls.append(str(path)) or _structured_result(),
+        structured_processor=lambda path: (
+            structured_calls.append(str(path)) or _structured_result()
+        ),
         confidence_threshold=0.85,
         event_recorder=lambda **_event: None,
     )
@@ -96,7 +98,9 @@ def test_pan_uses_fast_path_from_registry() -> None:
     structured_calls: list[str] = []
     router = OCRRouter(
         fast_processor=lambda _path: _fast_result(),
-        structured_processor=lambda path: structured_calls.append(str(path)) or _structured_result(),
+        structured_processor=lambda path: (
+            structured_calls.append(str(path)) or _structured_result()
+        ),
         event_recorder=lambda **_event: None,
     )
 
@@ -197,7 +201,10 @@ def test_llm_classification_cannot_select_fast_route() -> None:
     )
 
     assert routing_type == "Unknown"
-    assert OCRRouter(event_recorder=lambda **_event: None).decide_route(routing_type).route == "structured"
+    assert (
+        OCRRouter(event_recorder=lambda **_event: None).decide_route(routing_type).route
+        == "structured"
+    )
 
 
 def test_google_vision_provider_offloads_all_ocr(monkeypatch) -> None:
@@ -207,13 +214,18 @@ def test_google_vision_provider_offloads_all_ocr(monkeypatch) -> None:
     google_calls: list[str] = []
     router = OCRRouter(
         fast_processor=lambda path: fast_calls.append(str(path)) or _fast_result(),
-        structured_processor=lambda path: structured_calls.append(str(path)) or _structured_result(),
-        google_vision_processor=lambda path: google_calls.append(str(path)) or {
-            "ocr_text": "Google Vision text",
-            "confidence": 0.93,
-            "bounding_boxes": [{"text": "Google", "bbox": []}],
-            "layout_blocks": [{"type": "TEXT", "text": "Google Vision text"}],
-        },
+        structured_processor=lambda path: (
+            structured_calls.append(str(path)) or _structured_result()
+        ),
+        google_vision_processor=lambda path: (
+            google_calls.append(str(path))
+            or {
+                "ocr_text": "Google Vision text",
+                "confidence": 0.93,
+                "bounding_boxes": [{"text": "Google", "bbox": []}],
+                "layout_blocks": [{"type": "TEXT", "text": "Google Vision text"}],
+            }
+        ),
         event_recorder=lambda **_event: None,
     )
 
@@ -236,10 +248,13 @@ def test_google_vision_reuses_classification_result_for_final_routing(monkeypatc
     router = OCRRouter(
         fast_processor=lambda _path: pytest.fail("local fast OCR must not run"),
         structured_processor=lambda _path: pytest.fail("local structured OCR must not run"),
-        google_vision_processor=lambda path: google_calls.append(str(path)) or {
-            "ocr_text": "Loan Application Form Applicant Name Ramesh Kumar",
-            "confidence": 0.94,
-        },
+        google_vision_processor=lambda path: (
+            google_calls.append(str(path))
+            or {
+                "ocr_text": "Loan Application Form Applicant Name Ramesh Kumar",
+                "confidence": 0.94,
+            }
+        ),
         event_recorder=lambda **event: events.append(event),
     )
 

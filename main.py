@@ -90,7 +90,9 @@ def shutdown() -> dict[str, str]:
                         parts = line.split()
                         if len(parts) >= 5:
                             pid = parts[-1]
-                            subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
+                            subprocess.run(
+                                f"taskkill /F /PID {pid}", shell=True, capture_output=True
+                            )
             else:
                 output = subprocess.check_output("lsof -i :3000 -t", shell=True).decode().strip()
                 if output:

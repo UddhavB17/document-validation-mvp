@@ -53,7 +53,9 @@ def create_decision(payload: DecisionRequest) -> dict[str, object]:
     reviewer_note = payload.reviewer_note.strip()
 
     if decision not in VALID_DECISIONS:
-        raise HTTPException(status_code=400, detail="Decision must be ACCEPT, OVERRIDE, or REQUEST_DOCS")
+        raise HTTPException(
+            status_code=400, detail="Decision must be ACCEPT, OVERRIDE, or REQUEST_DOCS"
+        )
 
     if len(reviewer_note) <= 10:
         raise HTTPException(status_code=400, detail="Reviewer note must be more than 10 characters")
