@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date, datetime
+from datetime import date
 from typing import Any, cast
 
 from services.bureau_scores import has_explicit_no_score_evidence
@@ -1714,7 +1714,9 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
             "applicant_name": poi.get("name") or ldata.get("name") or None,
             "aadhaar_last4": _digits_only(uid)[-4:] if len(_digits_only(uid)) >= 4 else None,
             "dob": _parse_date(cast(str, poi.get("dob"))) if poi.get("dob") else None,
-            "gender": {"M": "MALE", "F": "FEMALE", "T": "TRANSGENDER"}.get(poi.get("gender", "").upper()),
+            "gender": {"M": "MALE", "F": "FEMALE", "T": "TRANSGENDER"}.get(
+                poi.get("gender", "").upper()
+            ),
             "address": address or None,
             "pin_code": poa.get("pc") or None,
             "relationship_qualifier": relation_match.group(1).upper() if relation_match else None,

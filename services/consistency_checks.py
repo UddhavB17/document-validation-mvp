@@ -1174,6 +1174,7 @@ def _relationship_name_matches(left: Any, right: Any) -> bool:
     def token_matches(short_token: str, long_token: str) -> bool:
         if _similarity(short_token, long_token) >= 0.80:
             return True
+
         # Transliteration often changes only the written vowel (Tika/Teeka,
         # Mohammad/Mohammed). A shared two-character consonant skeleton is
         # acceptable here only because the full relationship comparison also

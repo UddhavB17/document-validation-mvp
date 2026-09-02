@@ -62,6 +62,10 @@ jobs:
         # mypy success.
         run: mypy services/paths.py services/review
 
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test
+
       - name: Check frontend types
         working-directory: frontend
         run: npm run typecheck

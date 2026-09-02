@@ -75,7 +75,11 @@ def aggregate(
         }
     )
     pages_with_issues = sorted(
-        {cast(int, anomaly.get("page_number")) for anomaly in sorted_anomalies if anomaly.get("page_number") is not None}
+        {
+            cast(int, anomaly.get("page_number"))
+            for anomaly in sorted_anomalies
+            if anomaly.get("page_number") is not None
+        }
     )
 
     # Filter out missing document presence anomalies from active anomalies and flags list

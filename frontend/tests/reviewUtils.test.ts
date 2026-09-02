@@ -8,7 +8,7 @@ import {
   rejectionReasons,
   statusLabels,
   summarizeFields,
-} from "../components/applications/reviewUtils.ts";
+} from "../components/applications/reviewUtils";
 
 test("averagePageTime ignores pages without elapsed time", () => {
   assert.equal(averagePageTime([{ elapsed_seconds: 2 }, { elapsed_seconds: null }, { elapsed_seconds: 4 }] as never), 3);

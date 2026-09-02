@@ -5,7 +5,6 @@ asserts both the document_type and that confidence == 1.0 (or 0.0 for
 the unclassified fallback).
 """
 
-
 from services.document_classifier import classify_page
 
 # ── Helper ────────────────────────────────────────────────────────────────────

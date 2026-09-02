@@ -191,23 +191,23 @@ def extract_ground_truth(pdf_path: str | Path) -> _GroundTruth:
             "applicant_name": _json_value(
                 flattened_json, "applicant_name", "applicant.name", "borrower_name", "name"
             )
-        or _extract_applicant_name_full(layout_cells, raw_text),
-        "pan_number": _json_value(
-            flattened_json, "pan_number", "pan", "applicant.pan_number", "applicant.pan"
-        )
-        or _safe_extract(_extract_pan_number, raw_text),
-        "loan_amount": _json_value(
-            flattened_json, "loan_amount", "amount", "requested_amount", "sanctioned_amount"
-        )
-        or _safe_extract(_extract_loan_amount, raw_text),
-        "phone": _json_value(flattened_json, "phone", "phone_number", "mobile", "mobile_number")
-        or _safe_extract(_extract_phone, raw_text),
-        "address": _json_value(flattened_json, "address", "applicant.address")
-        or _safe_extract(_extract_address, raw_text),
-        "product_type": _json_value(flattened_json, "product_type", "loan_type", "product")
-        or _safe_extract(_extract_product_type, raw_text),
-        "raw_text": raw_text,
-        "db_data_json": json_payload,
+            or _extract_applicant_name_full(layout_cells, raw_text),
+            "pan_number": _json_value(
+                flattened_json, "pan_number", "pan", "applicant.pan_number", "applicant.pan"
+            )
+            or _safe_extract(_extract_pan_number, raw_text),
+            "loan_amount": _json_value(
+                flattened_json, "loan_amount", "amount", "requested_amount", "sanctioned_amount"
+            )
+            or _safe_extract(_extract_loan_amount, raw_text),
+            "phone": _json_value(flattened_json, "phone", "phone_number", "mobile", "mobile_number")
+            or _safe_extract(_extract_phone, raw_text),
+            "address": _json_value(flattened_json, "address", "applicant.address")
+            or _safe_extract(_extract_address, raw_text),
+            "product_type": _json_value(flattened_json, "product_type", "loan_type", "product")
+            or _safe_extract(_extract_product_type, raw_text),
+            "raw_text": raw_text,
+            "db_data_json": json_payload,
         }
     )
     return cast(_GroundTruth, result)

@@ -1,4 +1,3 @@
-
 import database.db as db
 from database.db import get_connection, init_db
 from services.automatic_document_index import build_automatic_document_index

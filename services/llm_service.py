@@ -8,6 +8,9 @@ from toon import encode
 
 from database.db import get_connection
 from services.llm_client import call_llm_api
+from services.llm_client import (
+    extract_response_text as _extract_response_text,  # noqa: F401 - compatibility export
+)
 
 logger = logging.getLogger(__name__)
 

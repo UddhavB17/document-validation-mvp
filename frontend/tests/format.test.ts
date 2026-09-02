@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { asText, formatNumber, formatSeconds, statusTone } from "../lib/format.ts";
+import { asText, formatNumber, formatSeconds, statusTone } from "../lib/format";
 
 test("asText uses the display fallback for empty values", () => {
   assert.equal(asText(null), "-");

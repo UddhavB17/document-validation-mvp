@@ -340,9 +340,7 @@ def _heartbeat_is_recent(value: Any, *, seconds: int | None = None) -> bool:
         return False
     if heartbeat.tzinfo is None:
         heartbeat = heartbeat.replace(tzinfo=UTC)
-    grace_seconds = seconds or get_int(
-        "DMEF_JOB_HEARTBEAT_GRACE_SECONDS", 180, minimum=30
-    )
+    grace_seconds = seconds or get_int("DMEF_JOB_HEARTBEAT_GRACE_SECONDS", 180, minimum=30)
     return (datetime.now(UTC) - heartbeat).total_seconds() <= grace_seconds
 
 
