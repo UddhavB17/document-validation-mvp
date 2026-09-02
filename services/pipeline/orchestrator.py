@@ -41,12 +41,13 @@ from services.pipeline.persistence import (
     _update_uploaded_file_counts,
 )
 from services.pipeline.verification import _run_document_verification, _stamp_pages_from_document_index
+from services.paths import processed_output_dir
 from services.text_extractor import extract_ground_truth
 
 def run_pipeline(
     pdf_path: str | Path,
     application_id: int,
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
     system_data: dict[str, Any] | None = None,
     product_type: str = "LAP",
     generate_llm_summary: bool | None = None,
@@ -58,7 +59,8 @@ def run_pipeline(
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
     pdf_path = Path(pdf_path)
-    application_output_dir = Path(output_dir) / f"application_{application_id}"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    application_output_dir = resolved_output_dir / f"application_{application_id}"
     image_output_dir = application_output_dir / "pages"
 
     cooperate(job_id, application_id)
@@ -258,7 +260,7 @@ def run_pipeline(
     ocr_json_path = save_ocr_document_json(
         application_id,
         pages,
-        output_dir=output_dir,
+        output_dir=resolved_output_dir,
         document_page_numbers=document_page_numbers,
         page_events=progress_snapshot["completed_pages"],
     )

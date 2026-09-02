@@ -27,6 +27,7 @@ from services.field_verification import (
     verify_pincode,
 )
 from services.ocr_router import OCRRouter, run_fast_ocr_on_page
+from services.paths import processed_output_dir
 from services.pdf_processor import convert_page_to_image, open_pdf
 from services.person_names import is_person_name_candidate
 from services.reviewer import build_reviewer_summary, save_reviewer_summary
@@ -262,11 +263,12 @@ def run_mapped_verification(
     application_id: int,
     manifest: dict[str, Any],
     *,
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Extract mapped pages and compare their fields with trusted reference JSON."""
     pdf_path = Path(pdf_path)
-    target = Path(output_dir) / f"application_{application_id}" / "mapped_pages"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    target = resolved_output_dir / f"application_{application_id}" / "mapped_pages"
     document = open_pdf(pdf_path)
     total_pages = len(document)
     reference_data = _verification_reference_data(manifest)

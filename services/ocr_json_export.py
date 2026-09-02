@@ -36,10 +36,13 @@ def build_ocr_document_json(
     }
 
 
+from services.paths import processed_output_dir
+
+
 def save_ocr_document_json(
     application_id: int,
     pages: list[dict[str, Any]],
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
     *,
     document_page_numbers: set[int] | None = None,
     page_events: list[dict[str, Any]] | None = None,
@@ -51,7 +54,8 @@ def save_ocr_document_json(
         document_page_numbers=document_page_numbers,
         page_events=page_events,
     )
-    target_dir = Path(output_dir) / f"application_{application_id}"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    target_dir = resolved_output_dir / f"application_{application_id}"
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / "document_ocr_data.json"
     with target_path.open("w", encoding="utf-8") as file:

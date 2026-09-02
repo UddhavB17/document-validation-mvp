@@ -27,6 +27,8 @@ Build an exception-based document validation workflow:
 
 The Python UI has been removed. The browser interface is now the Next.js app in `frontend/`.
 
+For repository layout, configuration, and contributor workflows, see [docs/MAINTAINING.md](docs/MAINTAINING.md).
+
 ## Prerequisites
 
 | Requirement | Version | Notes |
@@ -84,6 +86,10 @@ cp .env.example .env
 
 ## Run Locally
 
+Copy `.env.example` to `.env` and adjust paths if needed. The backend reads
+`DATABASE_PATH` (default `data/dmef.db`), `UPLOAD_DIR`, and related variables
+through `services/paths.py`; see [docs/MAINTAINING.md](docs/MAINTAINING.md).
+
 The default `.env.example` uses Google Vision for scanned-page OCR. Configure
 an API key or Application Default Credentials before processing scans. Digital
 PDF pages continue to use embedded text without an OCR API call.
@@ -95,11 +101,25 @@ Terminal 1, backend:
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+On macOS or Linux:
+
+```bash
+source .venv/bin/activate
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
 Terminal 2, frontend:
 
 ```powershell
 cd frontend
 npm.cmd run dev -- -p 3000
+```
+
+On macOS or Linux:
+
+```bash
+cd frontend
+npm run dev -- -p 3000
 ```
 
 Open:
@@ -340,6 +360,8 @@ With the Python environment active:
 pytest
 ```
 
+On macOS or Linux, use the same `pytest` command inside the activated virtualenv.
+
 Frontend checks:
 
 ```powershell
@@ -348,6 +370,11 @@ npm.cmd run typecheck
 npm.cmd run lint
 npm.cmd run build
 ```
+
+On macOS or Linux, replace `npm.cmd` with `npm`.
+
+Contributor checklist (compile check, diff whitespace, what not to commit):
+[docs/MAINTAINING.md](docs/MAINTAINING.md).
 
 ## Data Safety
 

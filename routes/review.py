@@ -15,6 +15,7 @@ from database.db import get_connection, init_db
 from services.checklist_service import get_ai_checkable_items, get_all_checklist_items, get_human_review_items
 from services.checklist_status import build_checklist_status
 from services.ocr_json_export import build_ocr_document_json
+from services.paths import processed_output_dir
 from services.progress_tracker import get_progress
 from services.job_control import JobControlError, request_control
 from services.reprocessing import (
@@ -875,7 +876,7 @@ def _coerce_json_row(row: Any) -> dict[str, Any]:
 
 
 def _load_saved_document_ocr_json(application_id: int) -> dict[str, Any] | None:
-    path = Path("data/processed") / f"application_{application_id}" / "document_ocr_data.json"
+    path = processed_output_dir() / f"application_{application_id}" / "document_ocr_data.json"
     if not path.exists():
         return None
     try:

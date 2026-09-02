@@ -30,22 +30,31 @@ The run script starts the backend and frontend and writes logs to `data/logs/`.
 
 ## Manual Run
 
-Backend terminal:
+Backend terminal (from the project root):
 
 ```powershell
-cd C:\Users\siddd\Documents\MS-fincap\document-validation-mvp
 .\.venv\Scripts\Activate.ps1
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+```bash
+source .venv/bin/activate
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Frontend terminal:
 
 ```powershell
-cd C:\Users\siddd\Documents\MS-fincap\document-validation-mvp\frontend
+cd frontend
 npm.cmd run dev -- -p 3000
 ```
 
-Open `http://localhost:3000`.
+```bash
+cd frontend
+npm run dev -- -p 3000
+```
+
+For setup details and what not to commit, see [docs/MAINTAINING.md](docs/MAINTAINING.md).
 
 ## Useful Links
 

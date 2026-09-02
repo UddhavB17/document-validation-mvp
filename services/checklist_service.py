@@ -3,7 +3,9 @@
 import json
 from pathlib import Path
 
-CHECKLIST_PATH = Path("data/checklist.json")
+from services.paths import checklist_json_path
+
+CHECKLIST_PATH = checklist_json_path()
 
 
 def _read_checklist(path: str | Path = CHECKLIST_PATH) -> dict:

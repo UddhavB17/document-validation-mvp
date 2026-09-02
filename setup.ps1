@@ -81,9 +81,8 @@ Write-Step "Creating local data folders"
 $Folders = @(
     "data",
     "data\uploads",
-    "data\pages",
-    "data\reports",
     "data\processed",
+    "data\reports",
     "data\logs"
 )
 foreach ($Folder in $Folders) {

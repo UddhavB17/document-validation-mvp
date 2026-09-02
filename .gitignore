@@ -20,6 +20,8 @@ data/pages/*
 data/reports/*
 data/dmef.db
 data/dmef.db-*
+data/*.db
+data/*.db.bak
 data/*.db*-shm
 data/*.db*-wal
 data/.job_input.key

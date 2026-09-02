@@ -41,10 +41,11 @@ from services.progress_tracker import (
 )
 from services.pipeline import run_pipeline
 from services.verification_manifest import VerificationManifest
+from services.paths import upload_dir as resolve_upload_dir
 from services.zip_package import PackageValidationError, load_package_metadata, normalize_zip_package
 
 router = APIRouter(prefix="/upload", tags=["upload"])
-UPLOAD_DIR = Path("data/uploads")
+UPLOAD_DIR = resolve_upload_dir()
 LOGGER = logging.getLogger(__name__)
 
 

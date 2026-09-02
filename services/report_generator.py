@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from database.db import get_connection
+from services.paths import report_output_dir
 from services.processing_policy import is_internal_document_type
 
-REPORTS_DIR = Path("data/reports")
+REPORTS_DIR = report_output_dir()
 REPORT_DIR = REPORTS_DIR
 
 
