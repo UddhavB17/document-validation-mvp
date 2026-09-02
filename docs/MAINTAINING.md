@@ -1,67 +1,106 @@
-# Backend maintenance note
+# Maintaining DMEF
 
-This note is the short map for contributors working on the Python backend.
+This note is the backend contributor map. Start with the
+[`README.md`](../README.md) quickstart, then use this file for ownership,
+runtime paths, and quality checks. Keep the MVP behavior-preserving: prefer a
+small focused change over a broad package move.
 
-## Module map
+## Backend architecture
 
-```text
-main.py
-  └── routes/                 HTTP validation, orchestration, and response serialization
-        └── services/review/  review domain assembly and read-only repository boundary
-services/pipeline/            extraction pipeline orchestration and persistence
-services/{checklist_engine,consistency_checks,field_extractor,person_ownership}.py
-                              compatibility facades for the existing validation imports
-database/                     SQLite schema, migrations, connection lifecycle, and queries
-services/paths.py             environment-driven database and filesystem locations
+```mermaid
+flowchart TD
+    Main[main.py\nFastAPI app and lifespan] --> Routes[routes/\nHTTP boundaries]
+    Routes --> Upload[routes/upload.py\nintake and job queue]
+    Routes --> ReviewRoutes[routes/review.py\nworklist and evidence]
+    Routes --> Verify[routes/verification.py\nreports and checklist]
+    Routes --> Decisions[routes/decisions.py]
+    Routes --> Settings[routes/settings.py]
+    Upload --> Pipeline[services/pipeline/\npage pipeline and persistence]
+    ReviewRoutes --> ReviewServices[services/review/\nrepository, worklist, summaries, comparison]
+    Pipeline --> Domain[services/\nOCR, extraction, classification, checklist, reports]
+    Pipeline --> Database[(database/\nSQLite schema and connections)]
+    ReviewServices --> Database
+    Pipeline --> Runtime[(data/\nuploads, processed pages, reports)]
 ```
 
-Routes should stay thin: validate request parameters, call a service, translate
-expected domain errors to HTTP responses, and preserve the existing payload
-keys. Review SQL belongs in `services/review/repository.py`; comparison,
-document-summary, and worklist assembly belong in their matching service
-modules. Keep the compatibility facades when moving implementation code so
-older imports and monkeypatch targets continue to work.
+### Ownership rules
 
-The generated domain split from Cursor PR #21 is intentionally not part of the
-maintained tree. Its generated extraction helper redeclared functions and the
-large package move changed too much algorithm code for a safe consolidation.
-The current pipeline and validation facades remain the behavior-preserving
-source of truth. The safe parts of that proposal are retained: installable
-Ruff/mypy guardrails, compatibility-facade tests, explicit logging around
-ownership fallbacks, and an AST regression check that prevents duplicate
-top-level helpers in maintained service modules.
+- `main.py` owns application wiring, lifespan initialization, CORS, and the
+  small `/health` endpoint. It should not own document-processing logic.
+- `routes/` validates request parameters, calls a service, and translates
+  expected domain errors to HTTP responses. Preserve existing response keys
+  when changing a route.
+- `services/pipeline/` is the current source of truth for processing order,
+  checkpoints, persistence, and pipeline outcomes.
+- `services/review/repository.py` owns review SQL. Worklist, comparison, and
+  document-summary assembly belongs in the matching `services/review/` module.
+- The top-level validation modules such as `services/checklist_engine.py`,
+  `services/consistency_checks.py`, `services/field_extractor.py`, and
+  `services/person_ownership.py` remain compatibility facades for existing
+  imports and monkeypatch targets. Keep them unless the migration is proved
+  behavior-preserving.
+- `database/` owns schema statements, connections, and shared data models.
+  `services/paths.py` is the single source for environment-driven filesystem
+  locations.
+- `frontend/` is a separate Next.js application. Backend changes that alter a
+  payload must be checked against `frontend/lib/api.ts` and its consumers.
+
+The generated domain split described in older planning notes is not the
+maintained source of truth. Do not reintroduce a large generated package move
+without a separate, tested migration plan.
 
 ## Runtime paths
 
-All defaults are relative to the repository root and are resolved by
+Paths default relative to the repository root and are resolved by
 `services.paths`:
 
 | Purpose | Environment variable | Default |
 |---|---|---|
 | SQLite database | `DATABASE_PATH` | `data/dmef.db` |
-| Uploaded PDFs/packages | `UPLOAD_DIR` | `data/uploads` |
+| Uploaded PDFs and ZIP packages | `UPLOAD_DIR` | `data/uploads` |
 | Rendered pages and OCR JSON | `PAGE_OUTPUT_DIR` | `data/processed` |
 | Reports | `REPORT_OUTPUT_DIR` | `data/reports` |
 | Checklist definition | `CHECKLIST_JSON_PATH` | `data/checklist.json` |
 
-The historical `DATABASE_URL=sqlite:///...` setting is still accepted for
-older local `.env` files. Never commit real databases, credentials, uploaded
-documents, or generated output. Existing sample and database files are kept
-unless their disposal is explicitly proven safe.
+The legacy `DATABASE_URL=sqlite:///...` value is still accepted for older local
+`.env` files. Runtime databases, uploads, rendered pages, OCR output, reports,
+logs, credential files, and `.env` are ignored by Git, but they still need
+careful handling. Existing sample/data artifacts are not disposable merely
+because they are local; confirm ownership before removing anything.
 
-## Setup and quality checks
+## Configuration boundaries
 
-Use the project-supported Python 3.11 environment:
+- Google Vision is the normal OCR provider for scanned pages. Digital PDF text
+  is extracted without an OCR API call.
+- Local PaddleOCR is intentionally isolated behind
+  `DMEF_LOCAL_OCR_TEST_MODE=true` and is not installed by `requirements.txt`.
+- LLM providers are optional. `LLM_PROVIDER=none` is the explicit no-LLM mode;
+  `auto` chooses an API-compatible provider when a key exists and otherwise
+  chooses Ollama. Do not put keys in source, tests, fixtures, or documentation.
+- The Settings UI writes selected settings to the local SQLite table. Secret
+  values are masked in API responses; do not infer that masking makes the local
+  database safe to share.
+- When changing a setting, check both `.env.example` and the database-backed
+  setting path. UI-managed settings can take precedence over copied `.env`
+  values.
+
+## Setup and health check
+
+Use the root README quickstart. For a backend-only check with an active Python
+3.11 environment:
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-cp .env.example .env
-python -m services.local_health --no-ollama
+python -m services.local_health --no-ollama --fail-on-error
 ```
 
-Before committing backend work, run:
+This checks the Python minor version, importable PyMuPDF and Google Vision
+modules, configured paths, and the checklist file. It does not authenticate to
+Google Vision, run OCR, or validate an Ollama model. A fresh checkout may show
+warnings until FastAPI creates the SQLite schema and processed-page directory.
+
+## Quality checks before a backend commit
+
+Run from the repository root with `.venv` active:
 
 ```bash
 python -m pytest -q
@@ -72,5 +111,28 @@ mypy services/paths.py services/review
 git diff --check
 ```
 
-The quality tools are listed in `requirements.txt`, so the documented install
-and `setup.ps1` install the same tools used by these checks.
+For frontend-facing changes, also run from the repository root:
+
+```bash
+npm --prefix frontend run typecheck
+npm --prefix frontend run lint
+npm --prefix frontend run build
+```
+
+On Windows PowerShell, use `npm.cmd --prefix frontend ...` and
+`python -m ...` after activating `.venv`. These checks use the tools listed in
+`requirements.txt` and the scripts listed in `frontend/package.json`.
+
+## Safe change workflow
+
+1. Read the relevant route/service and its tests before editing.
+2. Keep observed document values, resolved metadata, and trusted input separate.
+   Do not make trusted JSON overwrite observed OCR evidence.
+3. Add or update focused tests for runtime behavior; do not use live Google,
+   Ollama, or other external services in tests.
+4. Run the smallest relevant check while iterating, then run the full checks
+   above before committing.
+5. Inspect `git status --short --ignored`, `git diff --check`, and staged diff
+   content for documents, identifiers, secrets, and generated output.
+
+See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the contributor checklist.
