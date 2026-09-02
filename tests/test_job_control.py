@@ -188,7 +188,7 @@ def test_page_builder_skips_completed_checkpoint(tmp_path, monkeypatch) -> None:
             "confidence": 0.95,
         }
 
-    monkeypatch.setattr("services.pipeline.run_ocr_on_page", fake_ocr)
+    monkeypatch.setattr("services.pipeline.page_processing.run_ocr_on_page", fake_ocr)
     structure = [
         {"page_number": 1, "page_type": "scanned", "image_path": "page_1.png"},
         {"page_number": 2, "page_type": "scanned", "image_path": "page_2.png"},

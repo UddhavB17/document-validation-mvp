@@ -4,7 +4,8 @@ Run with:
     uvicorn main:app --reload --host 127.0.0.1 --port 8000
 """
 
-import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from services.python_runtime import require_python_311
 
@@ -22,6 +23,15 @@ from services.low_memory import apply_low_memory_defaults
 load_dotenv()
 apply_low_memory_defaults()
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Initialise application resources during the FastAPI lifespan."""
+    initialize_schema()
+    log_effective_config()
+    yield
+
+
 app = FastAPI(
     title="Document Matching Early Finder",
     description=(
@@ -29,6 +39,7 @@ app = FastAPI(
         "and surfaces exceptions for human review."
     ),
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -42,14 +53,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Startup ───────────────────────────────────
-@app.on_event("startup")
-def on_startup() -> None:
-    """Initialise the SQLite schema on first run."""
-    initialize_schema()
-    log_effective_config()
-
 
 # ── Routers ───────────────────────────────────
 app.include_router(upload.router)
