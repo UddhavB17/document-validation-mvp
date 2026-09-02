@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from services.field_assignment_refiner import is_suspicious_assignment
+from services.paths import processed_output_dir
 
 
 def build_ocr_document_json(
@@ -27,7 +28,7 @@ def build_ocr_document_json(
     combined_fields = merge_public_extracted_fields(selected_pages)
     return {
         "application_id": application_id,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "document_page_count": len(documents),
         "combined_extracted_fields": combined_fields,
         "structured_extracted_data": build_structured_extracted_data(selected_pages, combined_fields),
@@ -39,7 +40,7 @@ def build_ocr_document_json(
 def save_ocr_document_json(
     application_id: int,
     pages: list[dict[str, Any]],
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
     *,
     document_page_numbers: set[int] | None = None,
     page_events: list[dict[str, Any]] | None = None,
@@ -51,7 +52,8 @@ def save_ocr_document_json(
         document_page_numbers=document_page_numbers,
         page_events=page_events,
     )
-    target_dir = Path(output_dir) / f"application_{application_id}"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    target_dir = resolved_output_dir / f"application_{application_id}"
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / "document_ocr_data.json"
     with target_path.open("w", encoding="utf-8") as file:

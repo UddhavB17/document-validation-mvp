@@ -2,13 +2,14 @@
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from database.db import get_connection
+from services.paths import report_output_dir
 from services.processing_policy import is_internal_document_type
 
-REPORTS_DIR = Path("data/reports")
+REPORTS_DIR = report_output_dir()
 REPORT_DIR = REPORTS_DIR
 
 
@@ -100,7 +101,7 @@ def build_report(
     report = {
         "application_id": application_id,
         "loan_id": loan_id,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "total_exceptions": len(exceptions),
         "actionable_exception_count": len(actionable),
         "high_severity_count": sum(1 for e in actionable if str(e.get("severity")).upper() == "HIGH"),

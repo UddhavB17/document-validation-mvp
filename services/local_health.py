@@ -16,6 +16,13 @@ from typing import Any
 from dotenv import load_dotenv
 
 from services.llm_client import has_api_key_configured, llm_endpoint_label, llm_model, llm_provider
+from services.paths import (
+    checklist_json_path,
+    database_path,
+    processed_output_dir,
+    report_output_dir,
+    upload_dir,
+)
 from services.python_runtime import REQUIRED_MAJOR, REQUIRED_MINOR
 
 load_dotenv()
@@ -43,10 +50,11 @@ def collect_local_health(*, check_ollama: bool = True) -> dict[str, Any]:
         _python_item(),
         _module_item("PyMuPDF", "fitz"),
         _module_item("Google Cloud Vision", "google.cloud.vision"),
-        _path_item("Database path", _database_path(), must_exist=False, parent_required=True),
-        _path_item("Upload folder", _env_path("UPLOAD_DIR", "data/uploads"), must_exist=False, parent_required=False),
-        _path_item("Page output folder", _env_path("PAGE_OUTPUT_DIR", "data/pages"), must_exist=False, parent_required=False),
-        _path_item("Report output folder", _env_path("REPORT_OUTPUT_DIR", "data/reports"), must_exist=False, parent_required=False),
+        _path_item("Database path", database_path(), must_exist=False, parent_required=True),
+        _path_item("Upload folder", upload_dir(), must_exist=False, parent_required=False),
+        _path_item("Page output folder", processed_output_dir(), must_exist=False, parent_required=False),
+        _path_item("Report output folder", report_output_dir(), must_exist=False, parent_required=False),
+        _path_item("Checklist JSON", checklist_json_path(), must_exist=True, parent_required=True),
         _llm_config_item(),
     ]
     if check_ollama and llm_provider() == "ollama":
@@ -64,10 +72,11 @@ def collect_local_health(*, check_ollama: bool = True) -> dict[str, Any]:
         "status": status,
         "items": [item.as_dict() for item in items],
         "paths": {
-            "database": str(_database_path()),
-            "upload_dir": str(_env_path("UPLOAD_DIR", "data/uploads")),
-            "page_output_dir": str(_env_path("PAGE_OUTPUT_DIR", "data/pages")),
-            "report_output_dir": str(_env_path("REPORT_OUTPUT_DIR", "data/reports")),
+            "database": str(database_path()),
+            "upload_dir": str(upload_dir()),
+            "page_output_dir": str(processed_output_dir()),
+            "report_output_dir": str(report_output_dir()),
+            "checklist_json": str(checklist_json_path()),
         },
         "llm": {
             "provider": llm_provider(),
@@ -117,14 +126,6 @@ def _path_item(
     if not resolved.exists():
         return HealthItem(label, "warning", f"Will be created when needed: {resolved}", required=False)
     return HealthItem(label, "ok", str(resolved), required=False)
-
-
-def _env_path(name: str, default: str) -> Path:
-    return Path(os.getenv(name, default))
-
-
-def _database_path() -> Path:
-    return Path(os.getenv("DATABASE_PATH", "data/dmef.db"))
 
 
 def _llm_config_item() -> HealthItem:

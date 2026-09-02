@@ -4,17 +4,17 @@ The database file lives at DATABASE_PATH (default: data/dmef.db).
 Override by setting DATABASE_PATH in your .env file.
 """
 
-import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 
 from dotenv import load_dotenv
 
+from services.paths import database_path
+
 load_dotenv()
 
-DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/dmef.db"))
+DATABASE_PATH = database_path()
 
 
 @contextmanager

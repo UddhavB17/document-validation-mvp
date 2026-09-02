@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from database.models import FieldVerificationResult
 from services.cersai import (
     ASSET_BASED as CERSAI_ASSET_BASED,
+)
+from services.cersai import (
     DEBTOR_BASED as CERSAI_DEBTOR_BASED,
+)
+from services.cersai import (
     UNKNOWN as CERSAI_UNKNOWN,
+)
+from services.cersai import (
     report_search_type as cersai_report_search_type,
 )
 from services.exception_aggregator import aggregate
@@ -27,18 +35,21 @@ from services.field_verification import (
     verify_pincode,
 )
 from services.ocr_router import OCRRouter, run_fast_ocr_on_page
+from services.paths import processed_output_dir
 from services.pdf_processor import convert_page_to_image, open_pdf
 from services.person_names import is_person_name_candidate
-from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
+from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.text_extractor import extract_digital_text
 from services.trusted_candidate_resolver import (
     RECOVERABLE_TRUSTED_FIELDS,
     resolve_trusted_candidate,
 )
-from services.validation_gates import attach_field_provenance, canonical_field, field_reliable_for_validation
-from database.models import FieldVerificationResult
-
+from services.validation_gates import (
+    attach_field_provenance,
+    canonical_field,
+    field_reliable_for_validation,
+)
 
 # Backward-compatible seam used by existing mapped-verification integrations.
 run_ocr_on_page = run_fast_ocr_on_page
@@ -262,11 +273,12 @@ def run_mapped_verification(
     application_id: int,
     manifest: dict[str, Any],
     *,
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Extract mapped pages and compare their fields with trusted reference JSON."""
     pdf_path = Path(pdf_path)
-    target = Path(output_dir) / f"application_{application_id}" / "mapped_pages"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    target = resolved_output_dir / f"application_{application_id}" / "mapped_pages"
     document = open_pdf(pdf_path)
     total_pages = len(document)
     reference_data = _verification_reference_data(manifest)

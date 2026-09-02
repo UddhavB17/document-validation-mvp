@@ -25,6 +25,9 @@ Build an exception-based document validation workflow:
 - `database/`: SQLite schema and connection helpers.
 - `frontend/`: Next.js 14 App Router UI with TypeScript, Tailwind CSS, TanStack Query, and Zod.
 
+Backend module ownership, filesystem configuration, and Python quality commands
+are documented in [`docs/MAINTAINING.md`](docs/MAINTAINING.md).
+
 The Python UI has been removed. The browser interface is now the Next.js app in `frontend/`.
 
 ## Prerequisites
