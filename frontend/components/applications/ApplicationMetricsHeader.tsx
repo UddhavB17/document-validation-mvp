@@ -1,4 +1,4 @@
-import { ApplicationReview } from "@/lib/api";
+import { ApplicationReview, FieldComparison } from "@/lib/api";
 import { asText } from "@/lib/format";
 
 export function ApplicationMetricsHeader({
@@ -10,7 +10,7 @@ export function ApplicationMetricsHeader({
 }) {
   const coreParamsList = data.comparison_matrix?.core_parameters || [];
   const getParamVal = (fieldName: string, fallback: string) => {
-    const item = coreParamsList.find((p: { field_name?: string; expected_value?: string; extracted_value?: string }) => p.field_name === fieldName);
+    const item = coreParamsList.find((parameter: FieldComparison) => parameter.field_name === fieldName);
     return item?.expected_value || item?.extracted_value || fallback;
   };
 

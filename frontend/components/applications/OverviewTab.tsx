@@ -2,21 +2,18 @@ import { ProgressPanel } from "@/components/ProgressPanel";
 import { ManualReviewAndDecision } from "@/components/applications/ManualReviewAndDecision";
 import { ReviewerSummary } from "@/components/applications/ReviewerSummary";
 import { statusLabels } from "@/components/applications/reviewUtils";
-import { ApplicationReview } from "@/lib/api";
+import { ApplicantComparison, ApplicationReview } from "@/lib/api";
 import { asText } from "@/lib/format";
 
-export function getApplicantList(data: ApplicationReview) {
-  const applicantsRaw = data.comparison_matrix?.applicants;
-  return Array.isArray(applicantsRaw)
-    ? applicantsRaw
-    : (applicantsRaw && typeof applicantsRaw === "object" ? Object.values(applicantsRaw) : []);
+export function getApplicantList(data: ApplicationReview): ApplicantComparison[] {
+  return data.comparison_matrix?.applicants ?? [];
 }
 
 export function getAnomalyCount(data: ApplicationReview) {
   const coreParams = data.comparison_matrix?.core_parameters || [];
   const applicantList = getApplicantList(data);
-  const allFields = [...coreParams, ...applicantList.flatMap((a: { fields?: { status?: string }[] }) => a.fields || [])];
-  return allFields.filter((f: { status?: string }) => f.status === "mismatch" || f.status === "attention").length;
+  const allFields = [...coreParams, ...applicantList.flatMap((applicant) => applicant.fields)];
+  return allFields.filter((field) => field.status === "mismatch" || field.status === "attention").length;
 }
 
 export function OverviewTab({
@@ -72,16 +69,16 @@ export function OverviewTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E1E5EB] text-[#16202E]">
-            {applicantList.map((a: { person_name: string; applicant_label: string; fields: { status?: string }[] }) => {
-              const hasMismatch = a.fields.some((f) => f.status === "mismatch");
-              const hasAttention = a.fields.some((f) => f.status === "attention");
+            {applicantList.map((applicant) => {
+              const hasMismatch = applicant.fields.some((field) => field.status === "mismatch");
+              const hasAttention = applicant.fields.some((field) => field.status === "attention");
               const status = hasMismatch ? "mismatch" : (hasAttention ? "attention" : "match");
               const label = hasMismatch ? "Failed" : (hasAttention ? "Needs Review" : "Verified");
 
               return (
-                <tr key={a.person_name} className="hover:bg-slate-50/50 transition-colors duration-150">
-                  <td className="px-3.5 py-3 font-bold text-[#16202E]">{a.person_name}</td>
-                  <td className="px-3.5 py-3 text-[#5C6B7A] font-semibold">{a.applicant_label}</td>
+                <tr key={applicant.person_name} className="hover:bg-slate-50/50 transition-colors duration-150">
+                  <td className="px-3.5 py-3 font-bold text-[#16202E]">{applicant.person_name}</td>
+                  <td className="px-3.5 py-3 text-[#5C6B7A] font-semibold">{applicant.applicant_label}</td>
                   <td className="px-3.5 py-3">
                     <span className={`stamp ${status} mr-2`}>
                       {statusLabels[status]}

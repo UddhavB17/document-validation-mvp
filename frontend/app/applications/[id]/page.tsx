@@ -20,12 +20,18 @@ import { Verdict } from "@/components/applications/Verdict";
 import { Anomaly } from "@/lib/api";
 import { useApplicationReview } from "@/lib/queries";
 
+const activeTabs: readonly ActiveTab[] = ["overview", "extracted", "anomalies", "checklist", "logs", "downloads"];
+
+function getActiveTab(value: string | null): ActiveTab {
+  return activeTabs.find((tab) => tab === value) ?? "overview";
+}
+
 export default function ApplicationReviewPage() {
   const params = useParams<{ id: string }>();
   const applicationId = Number(params.id);
   const review = useApplicationReview(Number.isFinite(applicationId) ? applicationId : null);
   const searchParams = useSearchParams();
-  const activeTab = (searchParams.get("tab") as ActiveTab) || "overview";
+  const activeTab = getActiveTab(searchParams.get("tab"));
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceSelection | null>(null);
 
   if (!Number.isFinite(applicationId)) {
@@ -119,7 +125,7 @@ export default function ApplicationReviewPage() {
                 rule_id: row.s_no ? `CHECK_${row.s_no}` : "CHECKLIST_PREVIEW",
                 severity: "INFO",
                 reason: row.description || "Verification List Preview",
-                document_type: row.looked || row.description || "Document Preview",
+                document_type: row.document_types || row.description || "Document Preview",
                 expected_value: "-",
                 found_value: allPages ? `Combined pages: ${allPages.join(", ")}` : `Page ${pageNo}`
               };

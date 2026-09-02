@@ -1,6 +1,39 @@
 import { Anomaly, ApplicationReview } from "@/lib/api";
 import { getSeverityBadgeColor } from "@/components/applications/reviewUtils";
 
+interface PageSummary {
+  page_number?: number | null;
+  document_type?: string | null;
+  rule_id?: string | null;
+  summary_points?: string[];
+  problem_description?: string;
+}
+
+interface LlmSummary {
+  overall_summary: string;
+  final_recommendation: string;
+  page_summaries?: PageSummary[];
+}
+
+function isPageSummary(value: unknown): value is PageSummary {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+
+  return (!('page_number' in value) || value.page_number === undefined || value.page_number === null || typeof value.page_number === "number")
+    && (!('document_type' in value) || value.document_type === undefined || value.document_type === null || typeof value.document_type === "string")
+    && (!('rule_id' in value) || value.rule_id === undefined || value.rule_id === null || typeof value.rule_id === "string")
+    && (!('summary_points' in value) || value.summary_points === undefined || (Array.isArray(value.summary_points) && value.summary_points.every((item) => typeof item === "string")))
+    && (!('problem_description' in value) || value.problem_description === undefined || typeof value.problem_description === "string");
+}
+
+function isLlmSummary(value: unknown): value is LlmSummary {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (!("overall_summary" in value) || !("final_recommendation" in value)) return false;
+  const pageSummaries = "page_summaries" in value ? value.page_summaries : undefined;
+  return typeof value.overall_summary === "string"
+    && typeof value.final_recommendation === "string"
+    && (pageSummaries === undefined || (Array.isArray(pageSummaries) && pageSummaries.every(isPageSummary)));
+}
+
 export function AiAuditInsights({
   data,
   onSelectEvidence,
@@ -13,23 +46,10 @@ export function AiAuditInsights({
     return null;
   }
 
-  interface PageSummary {
-    page_number?: number | null;
-    document_type?: string | null;
-    rule_id?: string | null;
-    summary_points?: string[];
-    problem_description?: string;
-  }
-
-  interface LlmSummarySchema {
-    overall_summary: string;
-    final_recommendation: string;
-    page_summaries?: PageSummary[];
-  }
-
-  let parsed: LlmSummarySchema | null = null;
+  let parsed: LlmSummary | null = null;
   try {
-    parsed = JSON.parse(rawSummary) as LlmSummarySchema;
+    const payload: unknown = JSON.parse(rawSummary);
+    parsed = isLlmSummary(payload) ? payload : null;
   } catch {
     parsed = null;
   }

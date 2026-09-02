@@ -1,9 +1,9 @@
 import { Metric } from "@/components/Metric";
 import { SortableTable } from "@/components/SortableTable";
 import { StatusBadge } from "@/components/StatusBadge";
-import { ApplicationReview } from "@/lib/api";
+import { ApplicationReview, ChecklistRow } from "@/lib/api";
 
-export function Checklist({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (row: any, pageNo: number, allPages?: number[]) => void }) {
+export function Checklist({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (row: ChecklistRow, pageNo: number, allPages?: number[]) => void }) {
   return (
     <section className="space-y-4">
       <h2 className="text-base font-bold text-slate-800">MSFC Checklist ({data.checklist.total} items)</h2>

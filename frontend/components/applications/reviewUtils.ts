@@ -36,8 +36,8 @@ export function formatLlmDocument(fields: Record<string, unknown> | undefined): 
   if (!fields) {
     return "-";
   }
-  const llmResult = fields._structured_llm_classification as Record<string, unknown> | undefined;
-  if (!llmResult || typeof llmResult !== "object") {
+  const llmResult = fields._structured_llm_classification;
+  if (!isRecord(llmResult)) {
     return "-";
   }
   const documentType = String(llmResult.document_type || "").trim();
@@ -49,6 +49,10 @@ export function formatLlmDocument(fields: Record<string, unknown> | undefined): 
     return `${documentType} (${Math.round(confidence * 100)}%)`;
   }
   return documentType;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function getSeverityBadgeColor(severity: string | null | undefined): string {

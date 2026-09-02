@@ -14,6 +14,10 @@ import { useWorklist } from "@/lib/queries";
 const filters = ["All", "Pending", "Recovery", "Needs Review", "Auto Clean", "Verified"] as const;
 type Filter = (typeof filters)[number];
 
+function isFilter(value: string): value is Filter {
+  return filters.some((filter) => filter === value);
+}
+
 export default function WorklistPage() {
   const worklist = useWorklist();
   const [filter, setFilter] = useState<Filter>("All");
@@ -23,8 +27,8 @@ export default function WorklistPage() {
   // 1. Session Storage Caching for Scroll and Filter
   useEffect(() => {
     const cachedFilter = sessionStorage.getItem("worklist_filter");
-    if (cachedFilter && filters.includes(cachedFilter as any)) {
-      setFilter(cachedFilter as Filter);
+    if (cachedFilter && isFilter(cachedFilter)) {
+      setFilter(cachedFilter);
     }
   }, []);
 

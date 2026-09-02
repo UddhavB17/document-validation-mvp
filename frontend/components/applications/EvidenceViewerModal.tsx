@@ -3,6 +3,7 @@ import { EvidenceValue } from "@/components/applications/EvidenceValue";
 import { EvidenceSelection } from "@/components/applications/types";
 import { api, ApplicationReview } from "@/lib/api";
 import { asText } from "@/lib/format";
+import Image from "next/image";
 
 export function EvidenceViewerModal({
   applicationId,
@@ -77,14 +78,16 @@ export function EvidenceViewerModal({
                 <div className="absolute top-2 left-2 rounded bg-black/75 px-2 py-0.5 text-[9px] font-mono text-white z-10">
                   Pg {pageNo}
                 </div>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
+                <Image
                   src={api.sourcePageImageUrl(
                     applicationId,
                     pageNo,
                     selectedEvidence.anomaly.found_value || selectedEvidence.anomaly.expected_value || ""
                   )}
                   alt={`Original source PDF page ${pageNo}`}
+                  width={500}
+                  height={700}
+                  unoptimized
                   className="h-auto w-full bg-white shadow border border-slate-200 rounded-sm"
                 />
               </div>
