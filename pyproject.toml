@@ -3,3 +3,34 @@ name = "document-validation-mvp"
 version = "0.1.0"
 requires-python = ">=3.11,<3.12"
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["services/extraction", "services/checklist", "services/consistency", "services/ownership", "tests/test_domain_packages.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501", "E731"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["services.extraction", "services.checklist", "services.consistency", "services.ownership"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+
+[dependency-groups]
+dev = [
+  "pytest>=8.2.0",
+  "ruff>=0.9.0",
+  "mypy>=1.14.0",
+]
