@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 SMART_QUOTES = str.maketrans({"\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'"})
 MISSING_VALUES = {"", "-", "na", "n/a", "none", "null", "not provided"}
@@ -206,7 +206,7 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
         people[person_id] = person
 
     loan_id = _loan_id(text, applicant, cam)
-    manifest = {
+    manifest: dict[str, Any] = {
         "schema_version": "1.0",
         "loan_id": loan_id,
         "product_type": "LAP",
@@ -460,7 +460,7 @@ def _loan_id(text: str, applicant: str, cam: str) -> str:
     if global_loan_id:
         val = global_loan_id.group(1) or global_loan_id.group(2)
         if val:
-            return _clean_text(val)
+            return cast(str, _clean_text(val))
 
     digits = re.search(r"\b\d{5,10}\b", text)
     if digits:

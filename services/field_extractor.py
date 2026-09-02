@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import date
-from typing import Any
+from datetime import date, datetime
+from typing import Any, cast
 
 from services.bureau_scores import has_explicit_no_score_evidence
 from services.cersai import DEBTOR_BASED, search_criteria_text, search_type
@@ -1713,10 +1713,8 @@ def _extract_aadhaar_xml(text: str) -> dict[str, Any]:
         return {
             "applicant_name": poi.get("name") or ldata.get("name") or None,
             "aadhaar_last4": _digits_only(uid)[-4:] if len(_digits_only(uid)) >= 4 else None,
-            "dob": _parse_date(poi.get("dob")) if poi.get("dob") else None,
-            "gender": {"M": "MALE", "F": "FEMALE", "T": "TRANSGENDER"}.get(
-                poi.get("gender", "").upper()
-            ),
+            "dob": _parse_date(cast(str, poi.get("dob"))) if poi.get("dob") else None,
+            "gender": {"M": "MALE", "F": "FEMALE", "T": "TRANSGENDER"}.get(poi.get("gender", "").upper()),
             "address": address or None,
             "pin_code": poa.get("pc") or None,
             "relationship_qualifier": relation_match.group(1).upper() if relation_match else None,
@@ -2312,26 +2310,19 @@ def _extract_jumbled_residential_block(text: str, label: str) -> str | None:
 
 
 def _ocr_normalized_pin(value: str) -> str | None:
-    translated = (
-        str(value or "")
-        .upper()
-        .translate(
-            str.maketrans(
-                {
-                    "O": "0",
-                    "Q": "0",
-                    "D": "0",
-                    "I": "1",
-                    "L": "1",
-                    "Z": "2",
-                    "M": "4",
-                    "S": "5",
-                    "G": "6",
-                    "B": "8",
-                }
-            )
-        )
-    )
+    translation_table: dict[str, str | int | None] = {
+        "O": "0",
+        "Q": "0",
+        "D": "0",
+        "I": "1",
+        "L": "1",
+        "Z": "2",
+        "M": "4",
+        "S": "5",
+        "G": "6",
+        "B": "8",
+    }
+    translated = str(value or "").upper().translate(str.maketrans(translation_table))
     return translated if re.fullmatch(r"[1-8]\d{5}", translated) else None
 
 
@@ -2841,7 +2832,7 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         fallback_name = None
     return {
         "account_holder_name": (
-            _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1))).title()
+            cast(str, _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1)))).title()
             if profile_name
             else header_name or statement_title_name or fallback_name
         ),

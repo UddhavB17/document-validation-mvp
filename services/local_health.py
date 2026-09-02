@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 
@@ -164,7 +164,7 @@ def _ollama_connection_item() -> HealthItem:
             "Ollama connection", "warning", f"Unavailable at {base_url}: {exc}", required=False
         )
 
-    models = payload.get("models") if isinstance(payload, dict) else []
+    models = cast(list[Any], payload.get("models") if isinstance(payload, dict) else [])
     names = {
         str(item.get("name") or item.get("model") or "")
         for item in models

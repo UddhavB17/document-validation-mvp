@@ -100,9 +100,9 @@ def attach_field_provenance(
     fields = page.get("extracted_fields")
     if not isinstance(fields, dict):
         return
-    classification = (
-        fields.get("_classification") if isinstance(fields.get("_classification"), dict) else {}
-    )
+    classification = fields.get("_classification")
+    if not isinstance(classification, dict):
+        classification = {}
     source_segment = None
     if source_document:
         start = source_document.get("internal_page_start")

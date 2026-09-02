@@ -4,6 +4,7 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from database.db import get_connection
 from services.paths import report_output_dir
@@ -98,7 +99,7 @@ def build_report(
     from services.reviewer import collapse_for_reviewer
 
     actionable = collapse_for_reviewer(exceptions)
-    report = {
+    report: dict[str, Any] = {
         "application_id": application_id,
         "loan_id": loan_id,
         "generated_at": datetime.now(UTC).isoformat(),

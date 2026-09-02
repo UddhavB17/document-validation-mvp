@@ -77,7 +77,7 @@ def parse_repayment_schedule_rows(text: Any) -> list[dict[str, Any]]:
         values = [_number(value) for value in match.groups()[1:]]
         if any(value is None for value in values):
             continue
-        opening, emi, principal, interest, closing = (float(value) for value in values)
+        opening, emi, principal, interest, closing = (float(value) for value in values if value is not None)
         installment = int(match.group(1))
         if not _plausible_row(installment, opening, emi, principal, interest, closing):
             continue

@@ -6,7 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, cast
 
 NAME_FIELD_ALIASES = {
     "name",
@@ -321,7 +321,7 @@ def is_name_field(field: Any) -> bool:
 
 def comparable_name(value: Any) -> str:
     candidate = canonicalize_person_name(value)
-    text = candidate.value if candidate.valid else str(value or "")
+    text = cast(str, candidate.value) if candidate.valid else str(value or "")
     return _compact_unicode(_HONORIFIC_RE.sub("", text).casefold())
 
 

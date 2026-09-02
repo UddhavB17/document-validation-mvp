@@ -21,10 +21,13 @@ from pydantic import BaseModel, ConfigDict
 
 from services.validation_gates import has_intrinsic_aadhaar_evidence
 
+fuzz: Any
 try:  # pragma: no cover - exercised when rapidfuzz is installed
-    from rapidfuzz import fuzz
+    from rapidfuzz import fuzz as rapidfuzz_fuzz
 except Exception:  # pragma: no cover - tiny fallback for lean test envs
     fuzz = None
+else:
+    fuzz = rapidfuzz_fuzz
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

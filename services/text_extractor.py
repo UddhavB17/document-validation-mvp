@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import fitz  # PyMuPDF
 
@@ -185,11 +185,12 @@ def extract_ground_truth(pdf_path: str | Path) -> _GroundTruth:
     json_payload = _extract_json_payload(raw_text)
     flattened_json = _flatten_json_payload(json_payload)
 
-    return {
-        **flattened_json,
-        "applicant_name": _json_value(
-            flattened_json, "applicant_name", "applicant.name", "borrower_name", "name"
-        )
+    result: dict[str, Any] = dict(flattened_json)
+    result.update(
+        {
+            "applicant_name": _json_value(
+                flattened_json, "applicant_name", "applicant.name", "borrower_name", "name"
+            )
         or _extract_applicant_name_full(layout_cells, raw_text),
         "pan_number": _json_value(
             flattened_json, "pan_number", "pan", "applicant.pan_number", "applicant.pan"
@@ -207,7 +208,9 @@ def extract_ground_truth(pdf_path: str | Path) -> _GroundTruth:
         or _safe_extract(_extract_product_type, raw_text),
         "raw_text": raw_text,
         "db_data_json": json_payload,
-    }
+        }
+    )
+    return cast(_GroundTruth, result)
 
 
 # ---------------------------------------------------------------------------
