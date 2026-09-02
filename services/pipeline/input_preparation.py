@@ -11,7 +11,6 @@ from services.pipeline.page_details import _build_db_data_fields, _is_starting_j
 from services.text_extractor import extract_digital_text
 
 
-
 def _mapped_ground_truth(
     manifest: dict[str, Any],
     system_data: dict[str, Any] | None,

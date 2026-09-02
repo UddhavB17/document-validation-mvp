@@ -17,7 +17,6 @@ from services.progress_tracker import mark_completed
 from services.report_generator import build_report, save_report_json
 
 
-
 def _finalize_pipeline_result(
     *,
     application_id: int,
