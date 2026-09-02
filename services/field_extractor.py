@@ -22,6 +22,7 @@ Field names and types MUST NOT change without updating the engine:
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, datetime
 from typing import Any
@@ -36,6 +37,8 @@ from services.validation_gates import (
     is_amortization_schedule,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 # python-dateutil – graceful import with informative error
 try:
     from dateutil import parser as _dateutil_parser
@@ -49,7 +52,8 @@ def _xml_cleaner(text: str) -> str:
     try:
         from services.text_extractor import clean_xml_and_metadata  # noqa: PLC0415
         return clean_xml_and_metadata(text)
-    except Exception:  # pragma: no cover
+    except ImportError as exc:  # pragma: no cover
+        LOGGER.warning("XML cleaner is unavailable; extracting from original text: %s", exc)
         return text
 
 

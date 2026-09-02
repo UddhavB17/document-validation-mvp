@@ -26,7 +26,10 @@ The generated domain split from Cursor PR #21 is intentionally not part of the
 maintained tree. Its generated extraction helper redeclared functions and the
 large package move changed too much algorithm code for a safe consolidation.
 The current pipeline and validation facades remain the behavior-preserving
-source of truth.
+source of truth. The safe parts of that proposal are retained: installable
+Ruff/mypy guardrails, compatibility-facade tests, explicit logging around
+ownership fallbacks, and an AST regression check that prevents duplicate
+top-level helpers in maintained service modules.
 
 ## Runtime paths
 

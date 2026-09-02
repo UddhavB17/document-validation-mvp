@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict
 from difflib import SequenceMatcher
@@ -25,6 +26,8 @@ from services.language_detection import (
     analyze_text_languages,
     normalize_language_code,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 EXACT_FIELDS = {
@@ -103,8 +106,14 @@ def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
         from services.person_ownership import assign_page_owners
 
         assign_page_owners(pages, {"people": people, **(trusted or {})})
-    except Exception:
-        pass
+    except (ImportError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        # Ownership is best-effort here so consistency checks still run, but
+        # an unexpected assignment failure must remain visible to operators.
+        LOGGER.warning(
+            "assign_page_owners failed before consistency checks; continuing without "
+            "person stamps",
+            exc_info=exc,
+        )
     observations = _observations(pages, people)
 
     anomalies.extend(_trusted_matches(observations, people, trusted))
@@ -361,8 +370,14 @@ def _is_garbage_extracted_value(field: str, value: Any) -> bool:
 
         if is_suspicious_assignment(field, text):
             return True
-    except Exception:
-        pass
+    except (ImportError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        # The built-in checks below remain available if refinement is absent or
+        # cannot handle a malformed persisted value.
+        LOGGER.warning(
+            "Field-assignment refinement failed for %s; using built-in checks",
+            field,
+            exc_info=exc,
+        )
 
     compact = re.sub(r"[^a-z0-9]", "", text.lower())
     if field in NAME_FIELDS | {"applicant_name"}:
@@ -485,8 +500,14 @@ def _infer_person(fields: dict, people: dict[str, dict], document_type: str = ""
         )
         person_id = owner.get("person_id")
         return str(person_id) if person_id else ""
-    except Exception:
-        pass
+    except (ImportError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        # Name similarity is a deliberately narrower fallback for malformed or
+        # unavailable ownership inputs; keep the failure observable.
+        LOGGER.warning(
+            "Person ownership resolution failed for %s; using name similarity fallback",
+            document_type or "unknown document",
+            exc_info=exc,
+        )
     observed = fields.get("applicant_name") or fields.get("borrower_name") or fields.get("account_holder_name")
     if observed and is_person_name_candidate(observed):
         ranked = [(_similarity(observed, person.get("applicant_name")), person_id) for person_id, person in people.items()]
@@ -594,7 +615,11 @@ def _name_matches_with_relatives(observed: Any, person: dict) -> bool:
         from services.person_ownership import name_matches_trusted_person
 
         return name_matches_trusted_person(observed, person)
-    except Exception:
+    except (ImportError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        LOGGER.warning(
+            "Trusted-person name matching failed; treating the value as unmatched",
+            exc_info=exc,
+        )
         return False
 
 

@@ -1,5 +1,6 @@
 """Checklist matching logic."""
 
+import logging
 import os
 from datetime import date, datetime, timedelta
 from math import ceil
@@ -13,10 +14,14 @@ from services.page_quality import confident_pages_for_types, is_confident_docume
 from services.person_names import is_person_name_candidate
 from services.processing_policy import is_ocr_skipped_page
 
+LOGGER = logging.getLogger(__name__)
+
 try:
     from rapidfuzz import fuzz
-except Exception:
+except ImportError as exc:
     from difflib import SequenceMatcher
+
+    LOGGER.warning("rapidfuzz is unavailable; using the slower checklist scorer fallback: %s", exc)
 
     class fuzz:
         @staticmethod

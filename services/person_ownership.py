@@ -7,6 +7,7 @@ is compared against primary.  Ownership is resolved from identity evidence
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from datetime import datetime
@@ -26,10 +27,14 @@ from services.validation_gates import (
     has_labeled_aadhaar_value,
 )
 
+LOGGER = logging.getLogger(__name__)
+
 try:  # pragma: no cover - rapidfuzz is the preferred scorer
     from rapidfuzz import fuzz
-except Exception:  # pragma: no cover
+except ImportError as exc:  # pragma: no cover
     from difflib import SequenceMatcher
+
+    LOGGER.warning("rapidfuzz is unavailable; using the slower ownership scorer fallback: %s", exc)
 
     class fuzz:  # type: ignore[no-redef]
         @staticmethod
