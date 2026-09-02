@@ -11,30 +11,35 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { WorklistItem } from "@/lib/api";
 import { useWorklist } from "@/lib/queries";
 
-const filters = ["All", "Pending", "Recovery", "Needs Review", "Auto Clean", "Verified"] as const;
-type Filter = (typeof filters)[number];
+// This page owns the reviewer queue: persisted filter/scroll state, summary
+// counts, and the small set of statuses that can enter the review sequence.
+const WORKLIST_FILTERS = ["All", "Pending", "Recovery", "Needs Review", "Auto Clean", "Verified"] as const;
+const WORKLIST_STORAGE_KEYS = {
+  filter: "worklist_filter",
+  scrollY: "worklist_scroll_y",
+} as const;
+type WorklistFilter = (typeof WORKLIST_FILTERS)[number];
 
-function isFilter(value: string): value is Filter {
-  return filters.some((filter) => filter === value);
+function isWorklistFilter(value: string): value is WorklistFilter {
+  return WORKLIST_FILTERS.some((filter) => filter === value);
 }
 
 export default function WorklistPage() {
   const worklist = useWorklist();
-  const [filter, setFilter] = useState<Filter>("All");
+  const [selectedFilter, setSelectedFilter] = useState<WorklistFilter>("All");
   const [queue, setQueue] = useState<number[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
 
-  // 1. Session Storage Caching for Scroll and Filter
   useEffect(() => {
-    const cachedFilter = sessionStorage.getItem("worklist_filter");
-    if (cachedFilter && isFilter(cachedFilter)) {
-      setFilter(cachedFilter);
+    const cachedFilter = sessionStorage.getItem(WORKLIST_STORAGE_KEYS.filter);
+    if (cachedFilter && isWorklistFilter(cachedFilter)) {
+      setSelectedFilter(cachedFilter);
     }
   }, []);
 
   useEffect(() => {
     if (worklist.data) {
-      const cachedScrollY = sessionStorage.getItem("worklist_scroll_y");
+      const cachedScrollY = sessionStorage.getItem(WORKLIST_STORAGE_KEYS.scrollY);
       if (cachedScrollY) {
         setTimeout(() => {
           window.scrollTo(0, Number(cachedScrollY));
@@ -43,39 +48,32 @@ export default function WorklistPage() {
     }
   }, [worklist.data]);
 
-  // Listener to capture scroll position changes
   useEffect(() => {
     const handleScroll = () => {
-      sessionStorage.setItem("worklist_scroll_y", String(window.scrollY));
+      sessionStorage.setItem(WORKLIST_STORAGE_KEYS.scrollY, String(window.scrollY));
     };
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const handleFilterChange = (newFilter: Filter) => {
-    setFilter(newFilter);
-    sessionStorage.setItem("worklist_filter", newFilter);
-    sessionStorage.setItem("worklist_scroll_y", "0");
+  const handleFilterChange = (newFilter: WorklistFilter) => {
+    setSelectedFilter(newFilter);
+    sessionStorage.setItem(WORKLIST_STORAGE_KEYS.filter, newFilter);
+    sessionStorage.setItem(WORKLIST_STORAGE_KEYS.scrollY, "0");
     window.scrollTo(0, 0);
   };
 
-  const stats = useMemo(() => {
-    const items = worklist.data?.items ?? [];
-    return {
-      total: items.length,
-      needsReview: items.filter(i => i.business_issues > 0).length,
-      qualityWarnings: items.filter(i => i.processing_warnings > 0).length,
-      clean: items.filter(i => i.status === "CLEAN").length,
-      recovery: items.filter(i => i.pipeline_retryable).length,
-    };
-  }, [worklist.data?.items]);
+  const worklistStats = useMemo(
+    () => getWorklistStats(worklist.data?.items ?? []),
+    [worklist.data?.items],
+  );
 
-  const filtered = useMemo(() => {
+  const filteredItems = useMemo(() => {
     const items = worklist.data?.items ?? [];
-    return items.filter((item) => matchesFilter(item, filter));
-  }, [filter, worklist.data?.items]);
+    return items.filter((item) => matchesFilter(item, selectedFilter));
+  }, [selectedFilter, worklist.data?.items]);
 
-  const queueApplicationId = queue[queueIndex];
+  const currentQueueApplicationId = queue[queueIndex];
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto">
@@ -86,11 +84,11 @@ export default function WorklistPage() {
         <div className="space-y-6">
           {/* Dashboard Summary Cards */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <Metric label="Total Files" value={stats.total} />
-            <Metric label="Business Exceptions" value={stats.needsReview} />
-            <Metric label="Quality Warnings" value={stats.qualityWarnings} />
-            <Metric label="Auto-Verified Clean" value={stats.clean} />
-            <Metric label="Recovery Needed" value={stats.recovery} />
+            <Metric label="Total Files" value={worklistStats.total} />
+            <Metric label="Business Exceptions" value={worklistStats.needsReview} />
+            <Metric label="Quality Warnings" value={worklistStats.qualityWarnings} />
+            <Metric label="Auto-Verified Clean" value={worklistStats.clean} />
+            <Metric label="Recovery Needed" value={worklistStats.recovery} />
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-2">
@@ -98,7 +96,7 @@ export default function WorklistPage() {
               type="button"
               className="px-5 py-2.5 text-sm font-semibold rounded-lg bg-[#2B4C7E] hover:bg-[#1E3559] text-white transition-all duration-150 shadow-3xs active:scale-[0.98] select-none cursor-pointer border-none"
               onClick={() => {
-                const pending = queueCandidates(worklist.data.items);
+                const pending = getQueueCandidates(worklist.data.items);
                 setQueue(pending.map((item) => item.id));
                 setQueueIndex(0);
               }}
@@ -106,13 +104,13 @@ export default function WorklistPage() {
               Start Review Queue
             </button>
             <div className="flex flex-wrap gap-2">
-              {filters.map((item) => (
+              {WORKLIST_FILTERS.map((item) => (
                 <button
                   type="button"
                   key={item}
                   onClick={() => handleFilterChange(item)}
                   className={`rounded-lg border px-4 py-2 text-sm font-semibold transition-all duration-150 cursor-pointer ${
-                    filter === item
+                    selectedFilter === item
                       ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E] shadow-3xs"
                       : "border-[#E1E5EB] bg-white text-[#5C6B7A] hover:bg-slate-50 hover:text-[#16202E]"
                   }`}
@@ -127,16 +125,16 @@ export default function WorklistPage() {
               <InfoMessage message={`Review queue: file ${queueIndex + 1} of ${queue.length}.`} />
             </div>
           ) : null}
-          {queueApplicationId ? (
-            <Link className="inline-block rounded-lg bg-[#EAF0F8] border border-[#E1E5EB] hover:bg-[#2B4C7E] hover:text-white px-4 py-2 text-sm font-bold text-[#2B4C7E] shadow-3xs transition-all duration-150" href={`/applications/${queueApplicationId}`}>
+          {currentQueueApplicationId ? (
+            <Link className="inline-block rounded-lg bg-[#EAF0F8] border border-[#E1E5EB] hover:bg-[#2B4C7E] hover:text-white px-4 py-2 text-sm font-bold text-[#2B4C7E] shadow-3xs transition-all duration-150" href={`/applications/${currentQueueApplicationId}`}>
               Open queue item
             </Link>
           ) : null}
-          {filtered.length === 0 ? (
+          {filteredItems.length === 0 ? (
             <InfoMessage message="No applications found matching the selected filter status." />
           ) : (
             <SortableTable
-              rows={filtered}
+              rows={filteredItems}
               columns={[
                 {
                   key: "loan",
@@ -216,29 +214,39 @@ export default function WorklistPage() {
   );
 }
 
-function matchesFilter(item: WorklistItem, filter: Filter): boolean {
-  if (filter === "All") {
+function getWorklistStats(items: WorklistItem[]) {
+  return {
+    total: items.length,
+    needsReview: items.filter((item) => item.business_issues > 0).length,
+    qualityWarnings: items.filter((item) => item.processing_warnings > 0).length,
+    clean: items.filter((item) => item.status === "CLEAN").length,
+    recovery: items.filter((item) => item.pipeline_retryable).length,
+  };
+}
+
+function matchesFilter(item: WorklistItem, selectedFilter: WorklistFilter): boolean {
+  if (selectedFilter === "All") {
     return true;
   }
-  if (filter === "Pending") {
+  if (selectedFilter === "Pending") {
     return ["queued", "processing"].includes(item.pipeline_status);
   }
-  if (filter === "Recovery") {
+  if (selectedFilter === "Recovery") {
     return item.pipeline_retryable;
   }
-  if (filter === "Needs Review") {
+  if (selectedFilter === "Needs Review") {
     return ["NEEDS_REVIEW", "CRITICAL"].includes(item.status);
   }
-  if (filter === "Auto Clean") {
+  if (selectedFilter === "Auto Clean") {
     return item.status === "CLEAN";
   }
-  if (filter === "Verified") {
+  if (selectedFilter === "Verified") {
     return ["verified", "verified_with_override"].includes(item.status);
   }
   return true;
 }
 
-function queueCandidates(items: WorklistItem[]): WorklistItem[] {
+function getQueueCandidates(items: WorklistItem[]): WorklistItem[] {
   return items
     .filter((item) => ["NEEDS_REVIEW", "CRITICAL", "ocr_completed", "checklist_run"].includes(item.status))
     .sort((left, right) => left.created_at.localeCompare(right.created_at));

@@ -1,11 +1,17 @@
 import { z } from "zod";
 
+// The API module owns two concerns: validating backend payloads and exposing
+// the small set of requests used by the frontend. Keeping both here makes the
+// request/response contract easy to find when adding a new screen.
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+// Shared schema pieces used by several response shapes.
 const nullableString = z.string().nullable().optional();
 const dynamicFieldsSchema = z.record(z.unknown());
 const nullableValue = z.union([z.string(), z.number()]).nullable().optional();
 
+// ZIP preparation and upload responses.
 export const zipDocumentSchema = z.object({
   source_document_id: z.string(),
   original_filename: z.string(),
@@ -56,6 +62,7 @@ export type ZipDocument = z.infer<typeof zipDocumentSchema>;
 export type ZipPreparationProgress = z.infer<typeof zipPreparationProgressSchema>;
 export type ZipPackageUploadResponse = z.infer<typeof zipPackageUploadResponseSchema>;
 
+// Core upload, processing, worklist, and review responses.
 export const healthSchema = z.object({
   status: z.string(),
   version: z.string().optional(),
@@ -156,7 +163,8 @@ export const decisionSchema = z.object({
   restored_status: nullableString,
 });
 
-const settingFields = {
+// Settings responses share this shape; the update response adds a status.
+const settingSchemaShape = {
   config_key: z.string(),
   config_value: z.string(),
   value_type: z.string(),
@@ -167,11 +175,11 @@ const settingFields = {
   has_value: z.boolean().optional(),
 };
 
-export const settingSchema = z.object(settingFields);
+export const settingSchema = z.object(settingSchemaShape);
 
 export const settingUpdateResponseSchema = z.object({
   status: z.string(),
-  ...settingFields,
+  ...settingSchemaShape,
 });
 
 export const checklistRowSchema = z.object({
@@ -409,6 +417,7 @@ export type ReviewDocument = z.infer<typeof reviewDocumentSchema>;
 export type ReviewItem = z.infer<typeof reviewItemSchema>;
 export type ZipProgressEvent = z.infer<typeof zipProgressEventSchema>;
 
+// Transport errors are normalized before a response is parsed by its Zod schema.
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -418,7 +427,7 @@ export class ApiError extends Error {
   }
 }
 
-async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
+async function parseApiResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
   const text = await response.text();
   let payload: unknown = {};
   try {
@@ -427,56 +436,58 @@ async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promi
     throw new ApiError(text || "Backend returned a non-JSON response", response.status);
   }
   if (!response.ok) {
-    const detailPayload = getErrorDetail(payload);
+    const detailPayload = getApiErrorDetail(payload);
     const detail = typeof detailPayload === "string" ? detailPayload : JSON.stringify(detailPayload);
     throw new ApiError(detail || "Request failed", response.status);
   }
   return schema.parse(payload);
 }
 
-function getErrorDetail(payload: unknown): unknown {
+function getApiErrorDetail(payload: unknown): unknown {
   if (typeof payload === "object" && payload !== null && "detail" in payload) {
     return payload.detail;
   }
   return payload;
 }
 
-async function getJson<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+async function getJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`);
-  return parseResponse(response, schema);
+  return parseApiResponse(response, schema);
 }
 
-async function postJson<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return parseResponse(response, schema);
+  return parseApiResponse(response, schema);
 }
 
-async function patchJson<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+async function patchJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return parseResponse(response, schema);
+  return parseApiResponse(response, schema);
 }
 
+// Public request methods. Endpoint paths and payload field names stay aligned
+// with the backend contract; callers should not build these requests directly.
 export const api = {
-  health: () => getJson("/health", healthSchema),
-  worklist: () => getJson("/review/worklist", worklistSchema),
-  activityToday: () => getJson("/review/activity/today", activitySchema),
-  settings: () => getJson("/settings", z.array(settingSchema)),
+  health: () => getJsonResponse("/health", healthSchema),
+  worklist: () => getJsonResponse("/review/worklist", worklistSchema),
+  activityToday: () => getJsonResponse("/review/activity/today", activitySchema),
+  settings: () => getJsonResponse("/settings", z.array(settingSchema)),
   updateSetting: (configKey: string, configValue: string, clearSecret = false) =>
-    patchJson(
+    patchJsonResponse(
       `/settings/${configKey}`,
       { config_value: configValue, clear_secret: clearSecret },
       settingUpdateResponseSchema,
     ),
-  applicationReview: (applicationId: number) => getJson(`/review/applications/${applicationId}`, applicationReviewSchema),
-  progress: (applicationId: number) => getJson(`/upload/${applicationId}/progress`, progressSchema),
+  applicationReview: (applicationId: number) => getJsonResponse(`/review/applications/${applicationId}`, applicationReviewSchema),
+  progress: (applicationId: number) => getJsonResponse(`/upload/${applicationId}/progress`, progressSchema),
   uploadPdf: async (payload: {
     loanId: string;
     applicantName: string;
@@ -497,7 +508,7 @@ export const api = {
     formData.append("application_date", payload.applicationDate);
     formData.append("file", payload.file);
     const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", body: formData });
-    return parseResponse(response, uploadResponseSchema);
+    return parseApiResponse(response, uploadResponseSchema);
   },
   uploadMapped: async (payload: { manifest?: string; caseType: "Normal Case" | "BT Case"; file: File }) => {
     const formData = new FormData();
@@ -507,9 +518,9 @@ export const api = {
     formData.append("case_type", payload.caseType);
     formData.append("file", payload.file);
     const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", body: formData });
-    return parseResponse(response, uploadResponseSchema);
+    return parseApiResponse(response, uploadResponseSchema);
   },
-  uploadPartnerJson: (payload: unknown) => postJson("/upload/json", payload, uploadResponseSchema),
+  uploadPartnerJson: (payload: unknown) => postJsonResponse("/upload/json", payload, uploadResponseSchema),
   prepareZipPackage: async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -517,10 +528,10 @@ export const api = {
       method: "POST",
       body: formData,
     });
-    return parseResponse(response, zipPackageUploadResponseSchema);
+    return parseApiResponse(response, zipPackageUploadResponseSchema);
   },
   getZipPreparationProgress: (packageId: string) =>
-    getJson(`/upload/package/${packageId}/preparation`, zipPreparationProgressSchema),
+    getJsonResponse(`/upload/package/${packageId}/preparation`, zipPreparationProgressSchema),
   verifyZipPackage: async (packageId: string, manifest: string, caseType: "Normal Case" | "BT Case") => {
     const formData = new FormData();
     formData.append("manifest", manifest);
@@ -529,13 +540,13 @@ export const api = {
       method: "POST",
       body: formData,
     });
-    return parseResponse(response, uploadResponseSchema);
+    return parseApiResponse(response, uploadResponseSchema);
   },
   createDecision: (payload: { application_id: number; decision: string; reviewer_note: string }) =>
-    postJson("/decision", payload, decisionSchema),
-  undoDecision: (decisionId: number) => postJson(`/decision/${decisionId}/undo`, {}, decisionSchema),
+    postJsonResponse("/decision", payload, decisionSchema),
+  undoDecision: (decisionId: number) => postJsonResponse(`/decision/${decisionId}/undo`, {}, decisionSchema),
   reprocessApplication: (applicationId: number) =>
-    postJson(`/review/applications/${applicationId}/reprocess`, {}, reprocessResponseSchema),
+    postJsonResponse(`/review/applications/${applicationId}/reprocess`, {}, reprocessResponseSchema),
   sourcePdfUrl: (applicationId: number, pageNumber?: number) => {
     const base = `${API_BASE_URL}/review/applications/${applicationId}/source-pdf`;
     return pageNumber ? `${base}#page=${pageNumber}&zoom=page-width` : base;

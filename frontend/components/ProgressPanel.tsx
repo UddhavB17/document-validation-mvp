@@ -6,6 +6,8 @@ import { ErrorMessage, InfoMessage, LoadingMessage } from "./Message";
 import { Metric } from "./Metric";
 import { SortableTable } from "./SortableTable";
 
+// Shows live processing state for an uploaded application and exposes the
+// existing recovery action when the backend marks that job retryable.
 export function ProgressPanel({ applicationId }: { applicationId: number }) {
   const progress = useProgress(applicationId);
   const reprocess = useReprocessApplication(applicationId);
@@ -17,32 +19,32 @@ export function ProgressPanel({ applicationId }: { applicationId: number }) {
     return null;
   }
 
-  const data = progress.data;
-  if (!data) {
+  const progressData = progress.data;
+  if (!progressData) {
     return null;
   }
-  const completedPages = data.completed_pages ?? [];
-  const operationalStatus = data.operational_status ?? data.status ?? "unknown";
+  const completedPages = progressData.completed_pages ?? [];
+  const operationalStatus = progressData.operational_status ?? progressData.status ?? "unknown";
 
   return (
     <section className="space-y-4">
       <div>
         <h2 className="text-lg font-semibold text-slate-950">Page Processing</h2>
         <p className="text-sm text-slate-600">
-          {(data.message ?? "Processing your loan file") +
-            `: ${data.processed_pages ?? 0}/${data.total_pages ?? 0} pages processed`}
+          {(progressData.message ?? "Processing your loan file") +
+            `: ${progressData.processed_pages ?? 0}/${progressData.total_pages ?? 0} pages processed`}
         </p>
       </div>
       {operationalStatus === "stale" ? (
         <ErrorMessage message="Processing has not reported progress within the expected window. The job is marked stale and can be safely retried." />
       ) : null}
       {operationalStatus === "failed" ? (
-        <ErrorMessage message={data.error ?? "Processing failed. The original PDF is available for a recovery run."} />
+        <ErrorMessage message={progressData.error ?? "Processing failed. The original PDF is available for a recovery run."} />
       ) : null}
       {operationalStatus === "completed_with_warnings" ? (
         <InfoMessage message="Processing completed with page-level warnings. Review the quality warnings below or run the file again." />
       ) : null}
-      {data.retryable ? (
+      {progressData.retryable ? (
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -57,12 +59,12 @@ export function ProgressPanel({ applicationId }: { applicationId: number }) {
       ) : null}
       {reprocess.isError ? <ErrorMessage message={reprocess.error.message} /> : null}
       <div className="h-2 rounded bg-slate-200">
-        <div className="h-2 rounded bg-blue-600" style={{ width: `${Math.min(data.percentage ?? 0, 100)}%` }} />
+        <div className="h-2 rounded bg-blue-600" style={{ width: `${Math.min(progressData.percentage ?? 0, 100)}%` }} />
       </div>
       <div className="grid grid-cols-4 gap-3">
-        <Metric label="Completed" value={`${completedPages.length}/${data.total_pages ?? "-"}`} />
-        <Metric label="Digital" value={data.digital_pages ?? "-"} />
-        <Metric label="Scanned" value={data.scanned_pages ?? "-"} />
+        <Metric label="Completed" value={`${completedPages.length}/${progressData.total_pages ?? "-"}`} />
+        <Metric label="Digital" value={progressData.digital_pages ?? "-"} />
+        <Metric label="Scanned" value={progressData.scanned_pages ?? "-"} />
         <Metric label="Pipeline Status" value={operationalStatus} />
       </div>
       {completedPages.length > 0 ? (
@@ -88,9 +90,9 @@ function summarizeFields(fields: Record<string, unknown> | undefined): string {
   if (!fields || Object.keys(fields).length === 0) {
     return "-";
   }
-  const visible = Object.fromEntries(
+  const visibleFields = Object.fromEntries(
     Object.entries(fields).filter(([key, value]) => !key.startsWith("_") && value !== null && value !== ""),
   );
-  const text = JSON.stringify(Object.keys(visible).length ? visible : fields);
+  const text = JSON.stringify(Object.keys(visibleFields).length ? visibleFields : fields);
   return text.length > 160 ? `${text.slice(0, 157)}...` : text;
 }

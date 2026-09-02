@@ -2,30 +2,39 @@
 
 import { useMemo, useState } from "react";
 
-type Column<T> = {
+// Generic table used across worklists and review panels. It owns sorting state
+// while callers provide rendering and optional values for comparison.
+type SortDirection = "asc" | "desc";
+
+type SortState = {
+  key: string;
+  direction: SortDirection;
+};
+
+type SortableColumn<T> = {
   key: string;
   header: string;
   value: (row: T) => React.ReactNode;
   sortValue?: (row: T) => string | number | null | undefined;
 };
 
-export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column<T>[] }) {
-  const [sort, setSort] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: SortableColumn<T>[] }) {
+  const [sortState, setSortState] = useState<SortState | null>(null);
   const sortedRows = useMemo(() => {
-    if (!sort) {
+    if (!sortState) {
       return rows;
     }
-    const column = columns.find((item) => item.key === sort.key);
-    if (!column) {
+    const sortColumn = columns.find((item) => item.key === sortState.key);
+    if (!sortColumn) {
       return rows;
     }
     return [...rows].sort((a, b) => {
-      const left = column.sortValue?.(a);
-      const right = column.sortValue?.(b);
+      const left = sortColumn.sortValue?.(a);
+      const right = sortColumn.sortValue?.(b);
       const result = String(left ?? "").localeCompare(String(right ?? ""), undefined, { numeric: true });
-      return sort.direction === "asc" ? result : -result;
+      return sortState.direction === "asc" ? result : -result;
     });
-  }, [columns, rows, sort]);
+  }, [columns, rows, sortState]);
 
   return (
     <div className="overflow-auto rounded-xl border border-[#E1E5EB] bg-white shadow-3xs max-h-[600px]">
@@ -38,17 +47,17 @@ export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column
                   type="button"
                   className="font-bold hover:text-[#16202E] transition-colors duration-150 flex items-center gap-1.5 border-none bg-transparent cursor-pointer"
                   onClick={() =>
-                    setSort((current) =>
-                      current?.key === column.key
-                        ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" }
+                    setSortState((currentSort) =>
+                      currentSort?.key === column.key
+                        ? { key: column.key, direction: currentSort.direction === "asc" ? "desc" : "asc" }
                         : { key: column.key, direction: "asc" },
                     )
                   }
                 >
                   {column.header}
-                  {sort?.key === column.key ? (
+                  {sortState?.key === column.key ? (
                     <span className="text-[10px] text-[#2B4C7E] font-mono font-bold">
-                      {sort.direction === "asc" ? " ▲" : " ▼"}
+                      {sortState.direction === "asc" ? " ▲" : " ▼"}
                     </span>
                   ) : null}
                 </button>

@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { useHealth, useApplicationReview } from "@/lib/queries";
-import { FieldComparison } from "@/lib/api";
+import type { FieldComparison } from "@/lib/api";
+
+// AppShell owns global navigation, the application-review submenu, and the
+// lightweight API health indicator visible on every page.
 
 const navItems = [
   {
@@ -51,9 +54,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const health = useHealth();
   const [isSidebarHidden, setIsSidebarHidden] = useState(false);
-
-  const appDetailMatch = pathname.match(/^\/applications\/(\d+)/);
-  const appId = appDetailMatch ? Number(appDetailMatch[1]) : null;
+  const applicationId = getApplicationIdFromPath(pathname);
 
   return (
     <div className="flex min-h-screen bg-[#F6F7FA] text-[#16202E]">
@@ -72,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {navItems.map((item) => {
               const active = pathname.startsWith(item.href);
               const isWorklist = item.label === "Worklist";
-              const showSubmenu = isWorklist && appId !== null;
+              const showSubmenu = isWorklist && applicationId !== null;
 
               return (
                 <div key={item.href} className="space-y-1">
@@ -90,7 +91,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
                   {showSubmenu && (
                     <Suspense fallback={<div className="pl-7 text-xs text-slate-400 italic">Loading tabs...</div>}>
-                      <AppSidebarSubmenu appId={appId} />
+                      <AppSidebarSubmenu applicationId={applicationId} />
                     </Suspense>
                   )}
                 </div>
@@ -175,15 +176,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AppSidebarSubmenu({ appId }: { appId: number }) {
+function getApplicationIdFromPath(pathname: string): number | null {
+  const applicationPathMatch = pathname.match(/^\/applications\/(\d+)/);
+  return applicationPathMatch ? Number(applicationPathMatch[1]) : null;
+}
+
+function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "overview";
-  const review = useApplicationReview(appId);
+  const applicationReview = useApplicationReview(applicationId);
 
-  const coreParams = review.data?.comparison_matrix?.core_parameters ?? [];
-  const applicantList = review.data?.comparison_matrix?.applicants ?? [];
-  const allFields: FieldComparison[] = [...coreParams, ...applicantList.flatMap((applicant) => applicant.fields)];
-  const anomCount = allFields.filter((field) => field.status === "mismatch" || field.status === "attention").length;
+  const coreParameters = applicationReview.data?.comparison_matrix?.core_parameters ?? [];
+  const applicants = applicationReview.data?.comparison_matrix?.applicants ?? [];
+  const comparisonFields: FieldComparison[] = [
+    ...coreParameters,
+    ...applicants.flatMap((applicant) => applicant.fields),
+  ];
+  const anomalyCount = comparisonFields.filter((field) => field.status === "mismatch" || field.status === "attention").length;
 
   return (
     <div className="pl-6 pr-2 py-1 space-y-1 border-l border-slate-100 ml-5 mt-1 animate-fade-in flex flex-col">
@@ -248,7 +257,7 @@ function AppSidebarSubmenu({ appId }: { appId: number }) {
         return (
           <Link
             key={sub.key}
-            href={`/applications/${appId}?tab=${sub.key}`}
+            href={`/applications/${applicationId}?tab=${sub.key}`}
             className={`flex items-center justify-between w-full text-left px-2.5 py-1.5 rounded text-[11.5px] font-semibold transition-all cursor-pointer ${
               subActive
                 ? "bg-[#EAF0F8] text-[#2B4C7E]"
@@ -259,11 +268,11 @@ function AppSidebarSubmenu({ appId }: { appId: number }) {
               {sub.icon}
               <span>{sub.label}</span>
             </div>
-            {sub.badge && anomCount > 0 && (
+            {sub.badge && anomalyCount > 0 && (
               <span className={`font-mono text-[9px] px-1 py-0.5 rounded ${
                 subActive ? "bg-[#2B4C7E] text-white" : "bg-[#FBEBE8] text-[#AF3B2E]"
               }`}>
-                {anomCount}
+                {anomalyCount}
               </span>
             )}
           </Link>

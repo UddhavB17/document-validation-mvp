@@ -1,3 +1,9 @@
+// Small display-only formatters shared by tables, metrics, and review panels.
+
+const POSITIVE_STATUSES = new Set(["CLEAN", "verified", "verified_with_override"]);
+const NEGATIVE_STATUSES = new Set(["CRITICAL", "pipeline_failed", "incomplete"]);
+const IN_PROGRESS_STATUSES = new Set(["NEEDS_REVIEW", "processing", "ocr_completed"]);
+
 export function asText(value: unknown): string {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -23,13 +29,13 @@ export function formatSeconds(value: unknown): string {
 }
 
 export function statusTone(status: string): string {
-  if (["CLEAN", "verified", "verified_with_override"].includes(status)) {
+  if (POSITIVE_STATUSES.has(status)) {
     return "text-emerald-700";
   }
-  if (["CRITICAL", "pipeline_failed", "incomplete"].includes(status)) {
+  if (NEGATIVE_STATUSES.has(status)) {
     return "text-red-700";
   }
-  if (["NEEDS_REVIEW", "processing", "ocr_completed"].includes(status)) {
+  if (IN_PROGRESS_STATUSES.has(status)) {
     return "text-amber-700";
   }
   return "text-slate-700";

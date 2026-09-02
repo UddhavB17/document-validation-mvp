@@ -20,16 +20,18 @@ import { Verdict } from "@/components/applications/Verdict";
 import { Anomaly } from "@/lib/api";
 import { useApplicationReview } from "@/lib/queries";
 
-const activeTabs: readonly ActiveTab[] = ["overview", "extracted", "anomalies", "checklist", "logs", "downloads"];
+// This route coordinates the application review tabs and the shared evidence
+// viewer; the tab content itself lives in components/applications.
+const APPLICATION_TABS: readonly ActiveTab[] = ["overview", "extracted", "anomalies", "checklist", "logs", "downloads"];
 
 function getActiveTab(value: string | null): ActiveTab {
-  return activeTabs.find((tab) => tab === value) ?? "overview";
+  return APPLICATION_TABS.find((tab) => tab === value) ?? "overview";
 }
 
 export default function ApplicationReviewPage() {
   const params = useParams<{ id: string }>();
   const applicationId = Number(params.id);
-  const review = useApplicationReview(Number.isFinite(applicationId) ? applicationId : null);
+  const applicationReview = useApplicationReview(Number.isFinite(applicationId) ? applicationId : null);
   const searchParams = useSearchParams();
   const activeTab = getActiveTab(searchParams.get("tab"));
   const [selectedEvidence, setSelectedEvidence] = useState<EvidenceSelection | null>(null);
@@ -38,13 +40,13 @@ export default function ApplicationReviewPage() {
     return <ErrorMessage message="Invalid application ID." />;
   }
 
-  if (review.isLoading) {
+  if (applicationReview.isLoading) {
     return <LoadingMessage />;
   }
-  if (review.isError) {
+  if (applicationReview.isError) {
     return <ErrorMessage message="Unable to load application review." />;
   }
-  if (!review.data) {
+  if (!applicationReview.data) {
     return null;
   }
 
@@ -70,7 +72,7 @@ export default function ApplicationReviewPage() {
     handleSelectEvidence(mockAnomaly, pageNumber);
   };
 
-  const applicantList = getApplicantList(review.data);
+  const applicants = getApplicantList(applicationReview.data);
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto">
@@ -78,40 +80,40 @@ export default function ApplicationReviewPage() {
         <Link href="/worklist" className="hover:text-[#2B4C7E] transition-colors">← Applications</Link>
       </div>
 
-      <ApplicationMetricsHeader applicationId={applicationId} data={review.data} />
+      <ApplicationMetricsHeader applicationId={applicationId} data={applicationReview.data} />
 
-      <Verdict data={review.data} />
+      <Verdict data={applicationReview.data} />
 
       <div className="bg-white border border-[#E1E5EB] rounded-2xl p-6 shadow-2xs space-y-6 min-h-[500px]">
         {activeTab === "overview" && (
           <OverviewTab
             applicationId={applicationId}
-            data={review.data}
+            data={applicationReview.data}
             onSelectPage={handleSelectPageOnly}
           />
         )}
 
         {activeTab === "extracted" && (
-          <ExtractedDataTab data={review.data} />
+          <ExtractedDataTab data={applicationReview.data} />
         )}
 
         {activeTab === "anomalies" && (
           <div className="space-y-6">
             <ComparisonTable
-              coreParameters={review.data.comparison_matrix?.core_parameters}
-              applicants={applicantList}
+              coreParameters={applicationReview.data.comparison_matrix?.core_parameters}
+              applicants={applicants}
               onSelectPage={handleSelectPageOnly}
             />
 
             <h2 className="font-serif text-[16px] font-semibold mb-3">Borrower relationship graph</h2>
             <div className="border border-[#E1E5EB] rounded-xl p-2 shadow-2xs overflow-x-auto bg-[#F6F7FA]/30">
-              <RelationshipGraph relationships={review.data.relationships} />
+              <RelationshipGraph relationships={applicationReview.data.relationships} />
             </div>
 
             <h2 className="font-serif text-[16px] font-semibold mb-3 pt-4 border-t border-slate-100">Exceptions &amp; Warnings Details</h2>
             <Anomalies
               applicationId={applicationId}
-              data={review.data}
+              data={applicationReview.data}
               onSelectEvidence={handleSelectEvidence}
             />
           </div>
@@ -119,7 +121,7 @@ export default function ApplicationReviewPage() {
 
         {activeTab === "checklist" && (
           <Checklist
-            data={review.data}
+            data={applicationReview.data}
             onSelectPage={(row, pageNo, allPages) => {
               const mockAnomaly: Anomaly = {
                 rule_id: row.s_no ? `CHECK_${row.s_no}` : "CHECKLIST_PREVIEW",
@@ -136,7 +138,7 @@ export default function ApplicationReviewPage() {
 
         {activeTab === "logs" && (
           <PageProcessing
-            data={review.data}
+            data={applicationReview.data}
             onSelectPage={(pageNo, docType) => handleSelectPageOnly(pageNo, docType || "Processing Page", "Processing log validation review")}
           />
         )}
@@ -149,7 +151,7 @@ export default function ApplicationReviewPage() {
       {selectedEvidence && (
         <EvidenceViewerModal
           applicationId={applicationId}
-          data={review.data}
+          data={applicationReview.data}
           selectedEvidence={selectedEvidence}
           onClose={() => setSelectedEvidence(null)}
         />
