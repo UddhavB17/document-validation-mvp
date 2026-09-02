@@ -2,13 +2,7 @@
 
 import React, { useState } from "react";
 
-interface RelationshipNode {
-  id: string;
-  name: string;
-  role: "primary" | "co_applicant" | "guarantor" | "family_member";
-  relation_to_primary: string | null;
-  status: "match" | "mismatch" | "attention" | "n/a";
-}
+import { RelationshipNode } from "@/lib/types";
 
 interface RelationshipGraphProps {
   relationships?: RelationshipNode[] | null;

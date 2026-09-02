@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { useHealth, useApplicationReview } from "@/lib/queries";
+import { countAttentionFields } from "@/lib/types";
 
 const navItems = [
   {
@@ -178,14 +179,7 @@ function AppSidebarSubmenu({ appId }: { appId: number }) {
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "overview";
   const review = useApplicationReview(appId);
-
-  const coreParams = review.data?.comparison_matrix?.core_parameters || [];
-  const applicantsRaw = review.data?.comparison_matrix?.applicants;
-  const applicantList = Array.isArray(applicantsRaw)
-    ? applicantsRaw
-    : (applicantsRaw && typeof applicantsRaw === "object" ? Object.values(applicantsRaw) : []);
-  const allFields = [...coreParams, ...applicantList.flatMap((a: any) => a.fields || [])];
-  const anomCount = allFields.filter((f: any) => f.status === "mismatch" || f.status === "attention").length;
+  const anomCount = countAttentionFields(review.data?.comparison_matrix);
 
   return (
     <div className="pl-6 pr-2 py-1 space-y-1 border-l border-slate-100 ml-5 mt-1 animate-fade-in flex flex-col">

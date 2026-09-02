@@ -10,7 +10,7 @@ export function ApplicationMetricsHeader({
 }) {
   const coreParamsList = data.comparison_matrix?.core_parameters || [];
   const getParamVal = (fieldName: string, fallback: string) => {
-    const item = coreParamsList.find((p: { field_name?: string; expected_value?: string; extracted_value?: string }) => p.field_name === fieldName);
+    const item = coreParamsList.find((p) => p.field_name === fieldName);
     return item?.expected_value || item?.extracted_value || fallback;
   };
 

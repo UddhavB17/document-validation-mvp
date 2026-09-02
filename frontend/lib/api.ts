@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+import {
+  applicationPageSchema,
+  applicationRecordSchema,
+  comparisonMatrixSchema,
+  documentSummarySchema,
+  groundTruthSchema,
+  manualReviewItemSchema,
+  relationshipNodeSchema,
+  uploadedFileSchema,
+} from "@/lib/types";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const nullableString = z.string().nullable().optional();
@@ -163,6 +174,8 @@ export const checklistRowSchema = z.object({
   pages: z.string(),
 });
 
+export type ChecklistRow = z.infer<typeof checklistRowSchema>;
+
 export const anomalySchema = z.object({
   id: z.number().optional(),
   application_id: z.number().optional(),
@@ -180,11 +193,11 @@ export const anomalySchema = z.object({
 });
 
 export const applicationReviewSchema = z.object({
-  application: recordSchema,
-  uploaded_file: recordSchema,
-  ground_truth: recordSchema,
+  application: applicationRecordSchema,
+  uploaded_file: uploadedFileSchema,
+  ground_truth: groundTruthSchema,
   anomalies: z.array(anomalySchema),
-  pages: z.array(recordSchema),
+  pages: z.array(applicationPageSchema),
   page_events: z.array(pageEventSchema),
   documents_found: z.array(z.string()),
   document_pages: z.record(z.array(z.number())),
@@ -200,7 +213,7 @@ export const applicationReviewSchema = z.object({
     processing_warnings: z.array(anomalySchema),
   }),
   reviewer_summary: recordSchema.nullable(),
-  manual_review_items: z.array(recordSchema),
+  manual_review_items: z.array(manualReviewItemSchema),
   checklist: z.object({
     total: z.number(),
     found: z.number(),
@@ -214,9 +227,9 @@ export const applicationReviewSchema = z.object({
   }),
   latest_decision: decisionSchema.nullable(),
   progress: progressSchema.nullable(),
-  comparison_matrix: z.any().optional(),
-  relationships: z.any().optional(),
-  documents: z.any().optional(),
+  comparison_matrix: comparisonMatrixSchema.optional(),
+  relationships: z.array(relationshipNodeSchema).optional(),
+  documents: z.array(documentSummarySchema).optional(),
 });
 
 export const reprocessResponseSchema = z.object({
@@ -245,6 +258,15 @@ export class ApiError extends Error {
   }
 }
 
+function formatSchemaError(error: z.ZodError): string {
+  return error.errors
+    .map((item) => {
+      const path = item.path.length > 0 ? item.path.join(".") : "response";
+      return `${path}: ${item.message}`;
+    })
+    .join("; ");
+}
+
 async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
   const text = await response.text();
   let payload: unknown = {};
@@ -258,7 +280,11 @@ async function parseResponse<T>(response: Response, schema: z.ZodType<T>): Promi
     const detail = typeof errorPayload.detail === "string" ? errorPayload.detail : JSON.stringify(errorPayload.detail ?? payload);
     throw new ApiError(detail || "Request failed", response.status);
   }
-  return schema.parse(payload);
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    throw new ApiError(`Unexpected API response shape — ${formatSchemaError(parsed.error)}`, response.status);
+  }
+  return parsed.data;
 }
 
 async function getJson<T>(path: string, schema: z.ZodType<T>): Promise<T> {

@@ -119,7 +119,7 @@ export default function ApplicationReviewPage() {
                 rule_id: row.s_no ? `CHECK_${row.s_no}` : "CHECKLIST_PREVIEW",
                 severity: "INFO",
                 reason: row.description || "Verification List Preview",
-                document_type: row.looked || row.description || "Document Preview",
+                document_type: row.document_types || row.description || "Document Preview",
                 expected_value: "-",
                 found_value: allPages ? `Combined pages: ${allPages.join(", ")}` : `Page ${pageNo}`
               };

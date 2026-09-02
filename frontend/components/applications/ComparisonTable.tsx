@@ -2,21 +2,7 @@
 
 import React from "react";
 
-interface FieldComparison {
-  field_name: string;
-  label: string;
-  expected_value: string | null;
-  extracted_value: string | null;
-  status: "match" | "mismatch" | "attention";
-  source_pages: number[];
-}
-
-interface ApplicantComparison {
-  applicant_role: "primary" | "co_applicant" | "guarantor";
-  applicant_label: string;
-  person_name: string;
-  fields: FieldComparison[];
-}
+import { ApplicantComparison, FieldComparison } from "@/lib/types";
 
 interface ComparisonTableProps {
   coreParameters?: FieldComparison[] | null;
