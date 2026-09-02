@@ -22,10 +22,11 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _mapped_role(role: object, person_id: str) -> ApplicantRole:
-    role_name = str(role or ("primary" if person_id == "primary" else "coapplicant"))
-    if role_name == "primary":
+    """Normalize persisted applicant roles to the review API's role values."""
+    normalized_role = str(role or ("primary" if person_id == "primary" else "coapplicant"))
+    if normalized_role == "primary":
         return "primary"
-    if role_name == "guarantor":
+    if normalized_role == "guarantor":
         return "guarantor"
     return "co_applicant"
 
@@ -37,49 +38,50 @@ def find_source_pages_for_value(
     person_id: str | None = None,
     page_to_person: dict[int, str] | None = None,
 ) -> list[int]:
+    """Find pages that contain a field value in extracted data or OCR text."""
     if not value or len(value.strip()) < 3:
         return []
-    val_clean = value.strip().replace(" ", "").lower()
+    normalized_value = value.strip().replace(" ", "").lower()
     source_pages: list[int] = []
 
     for page in pages:
-        page_no = page.get("page_number")
-        if page_no is None:
+        page_number = page.get("page_number")
+        if page_number is None:
             continue
-        page_no = int(page_no)
+        page_number = int(page_number)
 
         if person_id and page_to_person:
-            mapped_person = page_to_person.get(page_no)
-            if mapped_person and mapped_person != person_id:
-                doc_type = str(page.get("document_type") or "").strip().lower()
-                if doc_type not in {"application form", "cam"}:
+            mapped_person_id = page_to_person.get(page_number)
+            if mapped_person_id and mapped_person_id != person_id:
+                document_type = str(page.get("document_type") or "").strip().lower()
+                if document_type not in {"application form", "cam"}:
                     continue
 
         is_match = False
-        extracted = page.get("extracted_fields") or {}
+        extracted_fields = page.get("extracted_fields") or {}
 
-        field_value = extracted.get(field_name)
-        mapped_extraction = extracted.get("_mapped_extraction")
-        if not field_value and isinstance(mapped_extraction, dict):
-            field_value = mapped_extraction.get(field_name)
+        field_value = extracted_fields.get(field_name)
+        mapped_fields = extracted_fields.get("_mapped_extraction")
+        if not field_value and isinstance(mapped_fields, dict):
+            field_value = mapped_fields.get(field_name)
         if field_value:
-            if str(field_value).strip().replace(" ", "").lower() == val_clean:
+            if str(field_value).strip().replace(" ", "").lower() == normalized_value:
                 is_match = True
 
         if not is_match:
-            for key, extracted_value in extracted.items():
-                if key.startswith("_"):
+            for extracted_key, extracted_value in extracted_fields.items():
+                if extracted_key.startswith("_"):
                     continue
-                if str(extracted_value).strip().replace(" ", "").lower() == val_clean:
+                if str(extracted_value).strip().replace(" ", "").lower() == normalized_value:
                     is_match = True
                     break
 
         if not is_match and page.get("_ocr_clean"):
-            if val_clean in page["_ocr_clean"]:
+            if normalized_value in page["_ocr_clean"]:
                 is_match = True
 
         if is_match:
-            source_pages.append(page_no)
+            source_pages.append(page_number)
 
     return sorted(list(set(source_pages)))
 
@@ -92,6 +94,7 @@ def resolve_field_status(
     anomalies: list[dict[str, Any]],
     page_to_person: dict[int, str],
 ) -> FieldStatus:
+    """Resolve one applicant field's status from values and related anomalies."""
     if not expected_value or expected_value == "None":
         return "match"
     if not actual_value or actual_value == "None":
@@ -102,7 +105,7 @@ def resolve_field_status(
 
     for anomaly in anomalies:
         rule_id = str(anomaly.get("rule_id", "")).upper()
-        page_no = anomaly.get("page_number")
+        page_number = anomaly.get("page_number")
 
         is_field_related = False
         if field_name == "applicant_name" and "NAME" in rule_id:
@@ -122,8 +125,8 @@ def resolve_field_status(
 
         if is_field_related:
             applies_to_person = False
-            if page_no is not None:
-                if page_to_person.get(page_no) == person_id:
+            if page_number is not None:
+                if page_to_person.get(page_number) == person_id:
                     applies_to_person = True
             else:
                 reason = str(anomaly.get("reason", "")).lower()
@@ -149,8 +152,10 @@ def build_comparison_matrix_and_relationships(
     *,
     ocr_data: Mapping[str, object] | None = None,
 ) -> ComparisonAndRelationships:
+    """Build comparison rows and relationship nodes for an application review."""
+    # Initialize the stable empty response used for missing or invalid ground truth.
     ground_truth = data.get("ground_truth") or {}
-    raw_json_str = ground_truth.get("raw_json")
+    raw_ground_truth_json = ground_truth.get("raw_json")
 
     comparison_matrix: ComparisonMatrix = {
         "core_parameters": [],
@@ -158,11 +163,11 @@ def build_comparison_matrix_and_relationships(
     }
     relationships: list[RelationshipNode] = []
 
-    if not raw_json_str:
+    if not raw_ground_truth_json:
         return {"comparison_matrix": comparison_matrix, "relationships": relationships}
 
     try:
-        decoded_ground_truth = json.loads(str(raw_json_str))
+        decoded_ground_truth = json.loads(str(raw_ground_truth_json))
     except (TypeError, json.JSONDecodeError) as exc:
         LOGGER.warning(
             "Application %s has invalid ground-truth JSON; comparison matrix is empty",
@@ -176,24 +181,25 @@ def build_comparison_matrix_and_relationships(
             application_id,
         )
         return {"comparison_matrix": comparison_matrix, "relationships": relationships}
-    gt_json = decoded_ground_truth
+    ground_truth_json = decoded_ground_truth
 
-    people = gt_json.get("people") or gt_json.get("reference_data") or {}
-    if not people and gt_json.get("applicant_name"):
+    # Support both the multi-person and legacy single-applicant ground-truth shapes.
+    people = ground_truth_json.get("people") or ground_truth_json.get("reference_data") or {}
+    if not people and ground_truth_json.get("applicant_name"):
         people = {
             "primary": {
                 "person_id": "primary",
                 "role": "primary",
-                "applicant_name": gt_json.get("applicant_name"),
-                "pan_number": gt_json.get("pan_number"),
-                "date_of_birth": gt_json.get("date_of_birth"),
-                "phone_number": gt_json.get("phone_number"),
-                "address": gt_json.get("address"),
-                "pin_code": gt_json.get("pin_code"),
-                "aadhaar_last4": gt_json.get("aadhaar_last4"),
-                "gender": gt_json.get("gender"),
-                "father_name": gt_json.get("father_name"),
-                "mother_name": gt_json.get("mother_name"),
+                "applicant_name": ground_truth_json.get("applicant_name"),
+                "pan_number": ground_truth_json.get("pan_number"),
+                "date_of_birth": ground_truth_json.get("date_of_birth"),
+                "phone_number": ground_truth_json.get("phone_number"),
+                "address": ground_truth_json.get("address"),
+                "pin_code": ground_truth_json.get("pin_code"),
+                "aadhaar_last4": ground_truth_json.get("aadhaar_last4"),
+                "gender": ground_truth_json.get("gender"),
+                "father_name": ground_truth_json.get("father_name"),
+                "mother_name": ground_truth_json.get("mother_name"),
                 "relationship": "Self",
             }
         }
@@ -201,35 +207,37 @@ def build_comparison_matrix_and_relationships(
     raw_pages = data.get("pages") or []
     anomalies = data.get("anomalies") or []
 
+    # Load OCR once and map each persisted page to its applicant where available.
     if ocr_data is None:
         ocr_data = load_saved_document_ocr_json(application_id) or {}
-    combined_extracted = ocr_data.get("combined_extracted_fields") or {}
-    if not isinstance(combined_extracted, dict):
-        combined_extracted = {}
+    combined_extracted_fields = ocr_data.get("combined_extracted_fields") or {}
+    if not isinstance(combined_extracted_fields, dict):
+        combined_extracted_fields = {}
 
     page_to_person: dict[int, str] = {}
     document_mappings = ocr_data.get("documents", [])
     if not isinstance(document_mappings, list):
         document_mappings = []
-    for doc_mapping in document_mappings:
-        if not isinstance(doc_mapping, dict):
+    for document_mapping in document_mappings:
+        if not isinstance(document_mapping, dict):
             continue
-        person_id = doc_mapping.get("applicant_role") or doc_mapping.get("person_id")
+        person_id = document_mapping.get("applicant_role") or document_mapping.get("person_id")
         if person_id:
-            page_numbers = doc_mapping.get("pages", [])
+            page_numbers = document_mapping.get("pages", [])
             if not isinstance(page_numbers, list):
                 continue
-            for page_num in page_numbers:
-                page_to_person[int(page_num)] = str(person_id)
+            for page_number in page_numbers:
+                page_to_person[int(page_number)] = str(person_id)
 
     pages: list[dict[str, Any]] = []
     for page in raw_pages:
-        page_dict = dict(page)
-        ocr_text = page_dict.get("ocr_text")
-        page_dict["_ocr_clean"] = str(ocr_text).replace(" ", "").lower() if ocr_text else ""
-        pages.append(page_dict)
+        page_row = dict(page)
+        ocr_text = page_row.get("ocr_text")
+        page_row["_ocr_clean"] = str(ocr_text).replace(" ", "").lower() if ocr_text else ""
+        pages.append(page_row)
 
-    core_fields = [
+    # Build application-level comparison rows.
+    core_field_definitions = [
         ("loan_id", "Loan ID / Application Number"),
         ("sanction_amount", "Sanction Amount"),
         ("loan_amount", "Loan Amount"),
@@ -242,13 +250,13 @@ def build_comparison_matrix_and_relationships(
         ("case_type", "Case Type"),
     ]
 
-    for field_name, label in core_fields:
-        expected = gt_json.get(field_name)
+    for field_name, label in core_field_definitions:
+        expected = ground_truth_json.get(field_name)
         if expected is None:
             continue
         expected = str(expected)
 
-        extracted = combined_extracted.get(field_name)
+        extracted = combined_extracted_fields.get(field_name)
         if extracted is None:
             extracted = data.get("application", {}).get(field_name)
 
@@ -292,7 +300,8 @@ def build_comparison_matrix_and_relationships(
             }
         )
 
-    dem_fields = [
+    # Build applicant-level comparison rows before constructing relationship nodes.
+    applicant_field_definitions = [
         ("applicant_name", "Applicant Name"),
         ("pan_number", "PAN Number"),
         ("date_of_birth", "Date of Birth"),
@@ -312,23 +321,23 @@ def build_comparison_matrix_and_relationships(
     comparison_matrix["applicants"] = []
     coapplicant_count = 0
 
-    for person_id, profile in sorted_people:
-        person_name = profile.get("applicant_name")
+    for person_id, person_profile in sorted_people:
+        person_name = person_profile.get("applicant_name")
         if not person_name:
             continue
 
-        role_mapped = _mapped_role(profile.get("role"), person_id)
+        mapped_role = _mapped_role(person_profile.get("role"), person_id)
 
-        if role_mapped == "primary":
+        if mapped_role == "primary":
             applicant_label = "Primary Applicant"
-        elif role_mapped == "guarantor":
+        elif mapped_role == "guarantor":
             applicant_label = "Guarantor"
         else:
             coapplicant_count += 1
             applicant_label = f"Co-applicant {coapplicant_count}"
 
-        applicant_entry: ApplicantComparisonSection = {
-            "applicant_role": role_mapped,
+        applicant_section: ApplicantComparisonSection = {
+            "applicant_role": mapped_role,
             "applicant_label": applicant_label,
             "person_name": person_name,
             "fields": [],
@@ -337,13 +346,13 @@ def build_comparison_matrix_and_relationships(
         has_any_mismatch = False
         has_any_attention = False
 
-        for field_name, label_field in dem_fields:
-            expected = profile.get(field_name)
+        for field_name, field_label in applicant_field_definitions:
+            expected = person_profile.get(field_name)
             if expected is not None:
                 expected = str(expected)
             else:
                 if field_name == "father_name":
-                    expected = profile.get("related_person_name")
+                    expected = person_profile.get("related_person_name")
                 if expected is not None:
                     expected = str(expected)
 
@@ -376,7 +385,7 @@ def build_comparison_matrix_and_relationships(
                         break
 
             if extracted is None and person_id == "primary":
-                extracted = combined_extracted.get(field_name)
+                extracted = combined_extracted_fields.get(field_name)
                 if extracted is not None:
                     extracted = str(extracted)
 
@@ -399,10 +408,10 @@ def build_comparison_matrix_and_relationships(
             elif field_status == "attention":
                 has_any_attention = True
 
-            applicant_entry["fields"].append(
+            applicant_section["fields"].append(
                 {
                     "field_name": field_name,
-                    "label": label_field,
+                    "label": field_label,
                     "expected_value": expected,
                     "extracted_value": extracted,
                     "status": field_status,
@@ -410,92 +419,93 @@ def build_comparison_matrix_and_relationships(
                 }
             )
 
-        profile["_computed_status"] = (
+        person_profile["_computed_status"] = (
             "mismatch" if has_any_mismatch else ("attention" if has_any_attention else "match")
         )
-        comparison_matrix["applicants"].append(applicant_entry)
+        comparison_matrix["applicants"].append(applicant_section)
 
+    # Deduplicate applicant and family members into relationship graph nodes.
     node_lookup: dict[str, RelationshipNode] = {}
-    primary_profile = people.get("primary")
-    if primary_profile:
-        name = primary_profile.get("applicant_name")
-        status = primary_profile.get("_computed_status", "match")
-        node_lookup[name.lower().strip()] = {
+    primary_person_profile = people.get("primary")
+    if primary_person_profile:
+        primary_name = primary_person_profile.get("applicant_name")
+        primary_status = primary_person_profile.get("_computed_status", "match")
+        node_lookup[primary_name.lower().strip()] = {
             "id": "p1",
-            "name": name,
+            "name": primary_name,
             "role": "primary",
             "relation_to_primary": None,
-            "status": status,
+            "status": primary_status,
         }
 
-    co_index = 0
-    fam_index = 0
-    for person_id, profile in sorted_people:
-        name = profile.get("applicant_name")
-        if not name:
+    coapplicant_index = 0
+    family_member_index = 0
+    for person_id, person_profile in sorted_people:
+        person_name = person_profile.get("applicant_name")
+        if not person_name:
             continue
-        name_key = name.lower().strip()
-        role_mapped = _mapped_role(profile.get("role"), person_id)
-        relation = profile.get("relationship") or (
-            None if role_mapped == "primary" else "co-applicant"
+        name_key = person_name.lower().strip()
+        mapped_role = _mapped_role(person_profile.get("role"), person_id)
+        relation = person_profile.get("relationship") or (
+            None if mapped_role == "primary" else "co-applicant"
         )
-        status = profile.get("_computed_status", "match")
+        person_status = person_profile.get("_computed_status", "match")
 
         if name_key not in node_lookup:
-            if role_mapped in ("co_applicant", "guarantor"):
-                co_index += 1
-                node_id = f"c{co_index}"
+            if mapped_role in ("co_applicant", "guarantor"):
+                coapplicant_index += 1
+                node_id = f"c{coapplicant_index}"
             else:
-                fam_index += 1
-                node_id = f"f{fam_index}"
+                family_member_index += 1
+                node_id = f"f{family_member_index}"
 
             node_lookup[name_key] = {
                 "id": node_id,
-                "name": name,
-                "role": role_mapped,
+                "name": person_name,
+                "role": mapped_role,
                 "relation_to_primary": relation
                 if relation and relation.lower() != "self"
                 else None,
-                "status": status,
+                "status": person_status,
             }
         else:
             if relation and relation.lower() != "self":
                 node_lookup[name_key]["relation_to_primary"] = relation
-            if status != "match":
-                node_lookup[name_key]["status"] = status
+            if person_status != "match":
+                node_lookup[name_key]["status"] = person_status
 
-        father = profile.get("father_name")
+        father = person_profile.get("father_name")
         if father and father.lower() != "none" and father.strip():
             father_key = father.lower().strip()
             if father_key not in node_lookup:
-                fam_index += 1
+                family_member_index += 1
                 node_lookup[father_key] = {
-                    "id": f"f{fam_index}",
+                    "id": f"f{family_member_index}",
                     "name": father,
                     "role": "family_member",
                     "relation_to_primary": (
                         "father"
-                        if role_mapped == "primary"
+                        if mapped_role == "primary"
                         else ("father-in-law" if relation == "WIFE" else "father")
                     ),
                     "status": "n/a",
                 }
-            elif role_mapped == "primary":
+            elif mapped_role == "primary":
                 node_lookup[father_key]["relation_to_primary"] = "father"
 
-        mother = profile.get("mother_name")
+        mother = person_profile.get("mother_name")
         if mother and mother.lower() != "none" and mother.strip():
             mother_key = mother.lower().strip()
             if mother_key not in node_lookup:
-                fam_index += 1
+                family_member_index += 1
                 node_lookup[mother_key] = {
-                    "id": f"f{fam_index}",
+                    "id": f"f{family_member_index}",
                     "name": mother,
                     "role": "family_member",
-                    "relation_to_primary": "mother" if role_mapped == "primary" else "mother",
+                    "relation_to_primary": "mother" if mapped_role == "primary" else "mother",
                     "status": "n/a",
                 }
-            elif role_mapped == "primary":
+            elif mapped_role == "primary":
                 node_lookup[mother_key]["relation_to_primary"] = "mother"
 
     relationships = list(node_lookup.values())

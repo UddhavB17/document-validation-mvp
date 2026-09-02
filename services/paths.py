@@ -15,18 +15,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _env_path(name: str, default: str) -> Path:
-    value = os.getenv(name)
-    if isinstance(value, str) and value.strip():
-        return Path(value.strip())
-    return Path(default)
+def _env_path(environment_name: str, default_path: str) -> Path:
+    """Resolve a non-empty environment override, falling back to a default path."""
+    environment_value = os.getenv(environment_name)
+    if isinstance(environment_value, str) and environment_value.strip():
+        return Path(environment_value.strip())
+    return Path(default_path)
 
 
 def database_path() -> Path:
-    """Return the SQLite path, accepting the historical ``DATABASE_URL``."""
-    explicit = os.getenv("DATABASE_PATH")
-    if isinstance(explicit, str) and explicit.strip():
-        return Path(explicit.strip())
+    """Return the SQLite path, including support for historical ``DATABASE_URL``."""
+    configured_path = os.getenv("DATABASE_PATH")
+    if isinstance(configured_path, str) and configured_path.strip():
+        return Path(configured_path.strip())
 
     legacy_url = os.getenv("DATABASE_URL", "").strip()
     if legacy_url.startswith("sqlite:///"):

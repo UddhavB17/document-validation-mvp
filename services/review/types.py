@@ -12,7 +12,10 @@ RelationshipStatus = Literal["match", "mismatch", "attention", "n/a"]
 DocumentStatus = Literal["Extracted", "Flagged"]
 
 
+# Comparison matrix and relationship graph payloads.
 class ComparisonFieldRow(TypedDict):
+    """One expected-versus-extracted field comparison and its source pages."""
+
     field_name: str
     label: str
     expected_value: str | None
@@ -22,6 +25,8 @@ class ComparisonFieldRow(TypedDict):
 
 
 class ApplicantComparisonSection(TypedDict):
+    """Comparison fields grouped under one applicant label."""
+
     applicant_role: ApplicantRole
     applicant_label: str
     person_name: str
@@ -29,11 +34,15 @@ class ApplicantComparisonSection(TypedDict):
 
 
 class ComparisonMatrix(TypedDict):
+    """Application-level and applicant-level comparison sections."""
+
     core_parameters: list[ComparisonFieldRow]
     applicants: list[ApplicantComparisonSection]
 
 
 class RelationshipNode(TypedDict, total=False):
+    """One applicant or related family member in the relationship graph."""
+
     id: str
     name: str
     role: RelationshipRole
@@ -42,11 +51,16 @@ class RelationshipNode(TypedDict, total=False):
 
 
 class ComparisonAndRelationships(TypedDict):
+    """Combined response returned by comparison and relationship construction."""
+
     comparison_matrix: ComparisonMatrix
     relationships: list[RelationshipNode]
 
 
+# Worklist payloads.
 class WorklistItem(TypedDict):
+    """One application row displayed in the reviewer worklist."""
+
     id: int
     loan_id: str
     applicant_name: str | None
@@ -62,10 +76,15 @@ class WorklistItem(TypedDict):
 
 
 class WorklistResponse(TypedDict):
+    """Top-level reviewer worklist response."""
+
     items: list[WorklistItem]
 
 
+# Database-backed review rows.
 class AnomalyRow(TypedDict, total=False):
+    """Validation anomaly row with optional persisted metadata."""
+
     id: int
     application_id: int
     rule_id: str
@@ -84,6 +103,8 @@ class AnomalyRow(TypedDict, total=False):
 
 
 class PageRow(TypedDict, total=False):
+    """Persisted page row with decoded extracted fields."""
+
     id: int
     application_id: int
     page_number: int
@@ -95,6 +116,8 @@ class PageRow(TypedDict, total=False):
 
 
 class DocumentSummary(TypedDict):
+    """Document overview row used by the application review page."""
+
     name: str
     type: str
     pages: str
@@ -103,6 +126,8 @@ class DocumentSummary(TypedDict):
 
 
 class ApplicationReviewData(TypedDict):
+    """Repository result containing all data needed by review services."""
+
     # These rows contain persisted JSON with schema that varies by document
     # type. Keep the dynamic part at this repository boundary; service outputs
     # below remain explicitly typed.

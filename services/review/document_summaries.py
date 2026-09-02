@@ -11,33 +11,35 @@ def build_document_summaries(
     document_pages: dict[str, list[int]],
     anomalies: list[dict[str, Any]],
 ) -> list[DocumentSummary]:
-    documents: list[DocumentSummary] = []
-    for doc_type, pages_arr in document_pages.items():
-        if not pages_arr:
+    """Build sorted document summary rows and flag documents with anomalies."""
+    summaries: list[DocumentSummary] = []
+    for document_type, page_numbers in document_pages.items():
+        if not page_numbers:
             continue
-        sorted_pages = sorted(int(page) for page in pages_arr)
-        first_page = sorted_pages[0]
-        if len(sorted_pages) > 1:
-            page_range = f"{sorted_pages[0]}–{sorted_pages[-1]}"
+        sorted_page_numbers = sorted(int(page) for page in page_numbers)
+        first_page = sorted_page_numbers[0]
+        if len(sorted_page_numbers) > 1:
+            page_range = f"{sorted_page_numbers[0]}–{sorted_page_numbers[-1]}"
         else:
-            page_range = str(sorted_pages[0])
+            page_range = str(sorted_page_numbers[0])
 
-        doc_status: DocumentStatus = "Extracted"
+        # A document is flagged when any validation anomaly points to one of its pages.
+        document_status: DocumentStatus = "Extracted"
         for anomaly in anomalies:
-            vr_page = anomaly.get("page_number")
-            if vr_page is not None and int(vr_page) in sorted_pages:
-                doc_status = "Flagged"
+            anomaly_page_number = anomaly.get("page_number")
+            if anomaly_page_number is not None and int(anomaly_page_number) in sorted_page_numbers:
+                document_status = "Flagged"
                 break
 
-        filename = f"{doc_type.lower().replace(' ', '_')}.pdf"
-        documents.append(
+        document_filename = f"{document_type.lower().replace(' ', '_')}.pdf"
+        summaries.append(
             {
-                "name": filename,
-                "type": doc_type,
+                "name": document_filename,
+                "type": document_type,
                 "pages": page_range,
-                "status": doc_status,
+                "status": document_status,
                 "firstPage": first_page,
             }
         )
-    documents.sort(key=lambda document: document["firstPage"])
-    return documents
+    summaries.sort(key=lambda summary: summary["firstPage"])
+    return summaries

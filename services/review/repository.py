@@ -18,47 +18,50 @@ JsonRow = dict[str, object]
 
 
 def _required_int(value: object) -> int:
+    """Convert a database scalar known to represent an integer."""
     if isinstance(value, (int, str)):
         return int(value)
     raise ValueError(f"Expected an integer-compatible database value, got {value!r}")
 
 
 def coerce_json_row(row: sqlite3.Row) -> JsonRow:
-    payload = dict(row)
-    raw_fields = payload.get("extracted_fields")
+    """Convert a SQLite row into a mapping with decoded extracted fields."""
+    row_payload = dict(row)
+    raw_extracted_fields = row_payload.get("extracted_fields")
     try:
-        decoded = json.loads(raw_fields) if raw_fields else {}
+        decoded_fields = json.loads(raw_extracted_fields) if raw_extracted_fields else {}
     except (TypeError, json.JSONDecodeError):
-        decoded = {}
-    payload["extracted_fields"] = decoded if isinstance(decoded, dict) else {}
-    return {str(key): value for key, value in payload.items()}
+        decoded_fields = {}
+    row_payload["extracted_fields"] = decoded_fields if isinstance(decoded_fields, dict) else {}
+    return {str(key): value for key, value in row_payload.items()}
 
 
 def load_application_review_data(application_id: int) -> ApplicationReviewData | None:
+    """Load the persisted rows needed by the application review detail view."""
     with get_connection() as connection:
-        application = connection.execute(
+        application_row = connection.execute(
             "SELECT * FROM applications WHERE id = ?",
             (application_id,),
         ).fetchone()
-        if application is None:
+        if application_row is None:
             return None
-        uploaded_file = connection.execute(
+        uploaded_file_row = connection.execute(
             "SELECT * FROM uploaded_files WHERE application_id = ? ORDER BY uploaded_at DESC LIMIT 1",
             (application_id,),
         ).fetchone()
-        ground_truth = connection.execute(
+        ground_truth_row = connection.execute(
             "SELECT * FROM ground_truth WHERE application_id = ? ORDER BY extracted_at DESC LIMIT 1",
             (application_id,),
         ).fetchone()
-        anomalies = connection.execute(
+        anomaly_rows = connection.execute(
             "SELECT * FROM validation_results WHERE application_id = ?",
             (application_id,),
         ).fetchall()
-        pages = connection.execute(
+        page_rows = connection.execute(
             "SELECT * FROM pages WHERE application_id = ? ORDER BY page_number",
             (application_id,),
         ).fetchall()
-        page_events = connection.execute(
+        page_event_rows = connection.execute(
             """
             SELECT page_number, total_pages, page_type, document_type, status,
                    elapsed_seconds, error, extracted_fields, completed_at
@@ -69,27 +72,28 @@ def load_application_review_data(application_id: int) -> ApplicationReviewData |
             (application_id,),
         ).fetchall()
 
-    page_dicts: list[JsonRow] = [coerce_json_row(row) for row in pages]
-    anomaly_dicts: list[JsonRow] = [dict(row) for row in anomalies]
+    # Normalize database rows before deriving the document index and response payload.
+    normalized_page_rows: list[JsonRow] = [coerce_json_row(row) for row in page_rows]
+    normalized_anomaly_rows: list[JsonRow] = [dict(row) for row in anomaly_rows]
     document_pages: dict[str, list[int]] = {}
-    for page in page_dicts:
-        doc_type = page.get("document_type")
-        page_number = page.get("page_number")
-        if doc_type and doc_type != "Unknown" and page_number is not None:
-            document_pages.setdefault(str(doc_type), []).append(_required_int(page_number))
+    for page_row in normalized_page_rows:
+        document_type = page_row.get("document_type")
+        page_number = page_row.get("page_number")
+        if document_type and document_type != "Unknown" and page_number is not None:
+            document_pages.setdefault(str(document_type), []).append(_required_int(page_number))
 
     return {
-        "application": dict(application),
-        "uploaded_file": dict(uploaded_file) if uploaded_file else {},
-        "ground_truth": dict(ground_truth) if ground_truth else {},
-        "anomalies": anomaly_dicts,
-        "pages": page_dicts,
-        "page_events": [coerce_json_row(row) for row in page_events],
+        "application": dict(application_row),
+        "uploaded_file": dict(uploaded_file_row) if uploaded_file_row else {},
+        "ground_truth": dict(ground_truth_row) if ground_truth_row else {},
+        "anomalies": normalized_anomaly_rows,
+        "pages": normalized_page_rows,
+        "page_events": [coerce_json_row(row) for row in page_event_rows],
         "documents_found": sorted(document_pages),
         "document_pages": document_pages,
         "documents_missing": [
             anomaly.get("document_type")
-            for anomaly in anomaly_dicts
+            for anomaly in normalized_anomaly_rows
             if str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
             and anomaly.get("document_type")
         ],
@@ -97,8 +101,9 @@ def load_application_review_data(application_id: int) -> ApplicationReviewData |
 
 
 def load_latest_decision(application_id: int) -> JsonRow | None:
+    """Load the most recent reviewer decision for an application."""
     with get_connection() as connection:
-        row = connection.execute(
+        decision_row = connection.execute(
             """
             SELECT id, application_id, decision, reviewer_note, decided_at
             FROM reviewer_decisions
@@ -108,16 +113,17 @@ def load_latest_decision(application_id: int) -> JsonRow | None:
             """,
             (application_id,),
         ).fetchone()
-    return dict(row) if row else None
+    return dict(decision_row) if decision_row else None
 
 
 def load_saved_document_ocr_json(application_id: int) -> JsonRow | None:
+    """Load the saved per-document OCR JSON, if it is readable and object-shaped."""
     path = processed_output_dir() / f"application_{application_id}" / "document_ocr_data.json"
     if not path.exists():
         return None
     try:
-        with path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
+        with path.open("r", encoding="utf-8") as json_file:
+            payload = json.load(json_file)
     except (OSError, json.JSONDecodeError) as exc:
         LOGGER.warning(
             "Saved OCR JSON could not be read from %s; rebuilding it", path, exc_info=exc
@@ -127,25 +133,27 @@ def load_saved_document_ocr_json(application_id: int) -> JsonRow | None:
 
 
 def list_application_rows_ordered_by_created_at() -> list[JsonRow]:
+    """Load application rows in the existing newest-first worklist order."""
     with get_connection() as connection:
-        rows = connection.execute(
+        application_rows = connection.execute(
             """
             SELECT id, loan_id, applicant_name, product_type, status, created_at
             FROM applications
             ORDER BY created_at DESC
             """
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [dict(row) for row in application_rows]
 
 
 def load_validation_results_by_application_ids(
     application_ids: list[int],
 ) -> dict[int, list[JsonRow]]:
+    """Load and group validation results for the supplied application IDs."""
     if not application_ids:
         return {}
     placeholders = ",".join("?" for _ in application_ids)
     with get_connection() as connection:
-        rows = connection.execute(
+        validation_rows = connection.execute(
             f"""
             SELECT application_id, severity, rule_id, page_number, reason,
                    document_type, expected_value, found_value
@@ -155,21 +163,22 @@ def load_validation_results_by_application_ids(
             application_ids,
         ).fetchall()
 
-    grouped: dict[int, list[JsonRow]] = defaultdict(list)
-    for row in rows:
+    results_by_application: dict[int, list[JsonRow]] = defaultdict(list)
+    for row in validation_rows:
         application_id = _required_int(row["application_id"])
-        grouped[application_id].append(dict(row))
-    return grouped
+        results_by_application[application_id].append(dict(row))
+    return results_by_application
 
 
 def load_pipeline_progress_by_application_ids(
     application_ids: list[int],
 ) -> dict[int, dict[str, object]]:
+    """Load operational pipeline status and retryability by application ID."""
     if not application_ids:
         return {}
     placeholders = ",".join("?" for _ in application_ids)
     with get_connection() as connection:
-        rows = connection.execute(
+        progress_rows = connection.execute(
             f"""
             SELECT application_id, status, updated_at
             FROM pipeline_progress
@@ -178,22 +187,22 @@ def load_pipeline_progress_by_application_ids(
             application_ids,
         ).fetchall()
 
-    progress_by_id: dict[int, dict[str, object]] = {}
-    for row in rows:
+    progress_by_application: dict[int, dict[str, object]] = {}
+    for row in progress_rows:
         payload = dict(row)
         application_id = _required_int(payload.pop("application_id"))
         operational_status = operational_progress_status(payload)
-        progress_by_id[application_id] = {
+        progress_by_application[application_id] = {
             "operational_status": operational_status,
             "retryable": operational_status in RETRYABLE_PROGRESS_STATES,
         }
-    return progress_by_id
+    return progress_by_application
 
 
 def load_today_activity() -> list[JsonRow]:
     """Load today's reviewer decisions in the API's existing order."""
     with get_connection() as connection:
-        rows = connection.execute(
+        activity_rows = connection.execute(
             """
             SELECT
                 reviewer_decisions.id,
@@ -207,7 +216,7 @@ def load_today_activity() -> list[JsonRow]:
             ORDER BY reviewer_decisions.decided_at DESC
             """
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [dict(row) for row in activity_rows]
 
 
 def load_latest_uploaded_file(application_id: int) -> JsonRow | None:
