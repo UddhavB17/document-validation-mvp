@@ -24,6 +24,7 @@ from services.validation_gates import attach_field_provenance
 from services.pipeline.classification import (
     _assign_sequential_document_type,
     _content_category_for_image_type,
+    _deterministic_routing_document_type,
     _filename_type_contradicted_by_text,
     _image_evidence_type_from_text,
     _infer_document_type_from_filename,
@@ -35,6 +36,7 @@ from services.pipeline.classification import (
     _source_filename_override_allowed,
 )
 from services.pipeline.logging_helpers import (
+    _flush_log_handlers,
     _log_page_phase_done,
     _log_page_phase_failed,
     _log_page_phase_start,

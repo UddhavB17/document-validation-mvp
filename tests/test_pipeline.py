@@ -129,6 +129,9 @@ def test_google_provider_uses_one_api_ocr_and_no_local_ocr(
     assert google_calls == ["page.png"]
     assert local_calls == []
     assert pages[0]["ocr_route"] == "google_vision"
+    expected_document_type = "KYC Card Photo" if source_documents else "Application Form"
+    assert pages[0]["document_type"] == expected_document_type
+    assert "_processing_error" not in pages[0]["extracted_fields"]
 
 
 def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
