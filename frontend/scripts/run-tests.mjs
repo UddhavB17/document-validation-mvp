@@ -5,7 +5,14 @@ import path from "node:path";
 
 import ts from "typescript";
 
-const testFiles = ["tests/format.test.ts", "tests/reviewUtils.test.ts", "tests/decisionPolicy.test.ts"];
+const testFiles = [
+  "tests/format.test.ts",
+  "tests/reviewUtils.test.ts",
+  "tests/decisionPolicy.test.ts",
+  "tests/reviewQueue.test.ts",
+  "tests/worklistPolicy.test.ts",
+  "tests/reviewSession.test.ts",
+];
 const outputDirectory = mkdtempSync(path.join(os.tmpdir(), "dmef-frontend-tests-"));
 
 try {

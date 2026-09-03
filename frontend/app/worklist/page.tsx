@@ -16,6 +16,7 @@ import {
 import type { WorklistItem } from "@/lib/api";
 import { useWorklist } from "@/lib/queries";
 import { startReviewQueue } from "@/lib/reviewQueue";
+import { getActionableReviewItems, matchesWorklistFilter, sortWorklistItems } from "@/lib/worklistPolicy";
 
 const PAGE_SIZE = 50;
 const EMPTY_WORKLIST: WorklistItem[] = [];
@@ -82,22 +83,22 @@ function WorklistContent() {
   );
 
   const filteredItems = useMemo(() => {
-    return sortItems(
-      items.filter((item) => matchesFilter(item, selectedFilter) && matchesSearch(item, search)),
+    return sortWorklistItems(
+      items.filter((item) => matchesWorklistFilter(item, selectedFilter) && matchesSearch(item, search)),
       selectedSort,
     );
   }, [items, search, selectedFilter, selectedSort]);
 
   const queueItems = useMemo(
-    () => sortItems(items.filter((item) => matchesFilter(item, "review") && matchesSearch(item, search)), "priority"),
+    () => getActionableReviewItems(items, search),
     [items, search],
   );
 
   const counts = useMemo(
     () => ({
-      review: items.filter((item) => matchesFilter(item, "review")).length,
-      recovery: items.filter((item) => matchesFilter(item, "recovery")).length,
-      processing: items.filter((item) => matchesFilter(item, "processing")).length,
+      review: items.filter((item) => matchesWorklistFilter(item, "review")).length,
+      recovery: items.filter((item) => matchesWorklistFilter(item, "recovery")).length,
+      processing: items.filter((item) => matchesWorklistFilter(item, "processing")).length,
     }),
     [items],
   );
@@ -199,7 +200,7 @@ function WorklistContent() {
             <InfoMessage message={search ? "No cases match this search and filter." : "No cases are in this view."} />
           ) : (
             <>
-              <WorklistRows items={filteredItems.slice(0, visibleCount)} />
+              <WorklistRows items={filteredItems.slice(0, visibleCount)} queueIds={queueItems.map((item) => item.id)} />
               {filteredItems.length > visibleCount ? (
                 <div className="flex items-center justify-between gap-3 border-t border-[#E1E5EB] pt-3">
                   <p className="text-xs text-[#5C6B7A]">
@@ -222,7 +223,7 @@ function WorklistContent() {
   );
 }
 
-function WorklistRows({ items }: { items: WorklistItem[] }) {
+function WorklistRows({ items, queueIds }: { items: WorklistItem[]; queueIds: number[] }) {
   return (
     <div className="overflow-hidden rounded-xl border border-[#E1E5EB] bg-white shadow-3xs">
       <div className="hidden grid-cols-[minmax(220px,1.4fr)_minmax(135px,.8fr)_minmax(190px,1.2fr)_minmax(130px,.8fr)_minmax(145px,.9fr)_minmax(160px,.9fr)] gap-4 border-b border-[#E1E5EB] bg-[#F6F7FA] px-4 py-3 text-[10px] font-bold uppercase tracking-[0.08em] text-[#5C6B7A] md:grid">
@@ -238,6 +239,10 @@ function WorklistRows({ items }: { items: WorklistItem[] }) {
           <li key={item.id}>
             <Link
               href={`/applications/${item.id}`}
+              onClick={() => {
+                const position = queueIds.indexOf(item.id);
+                if (position >= 0) startReviewQueue(queueIds, position);
+              }}
               className="group block px-4 py-3 transition-colors hover:bg-[#EAF0F8]/35 focus-visible:bg-[#EAF0F8]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2B4C7E]"
               aria-label={`Open ${item.loan_id}, ${item.applicant_name ?? "unnamed applicant"}`}
             >
@@ -310,65 +315,4 @@ function matchesSearch(item: WorklistItem, search: string): boolean {
     humanizeReviewState(item.status, "case"),
     humanizeReviewState(item.pipeline_status, "processing"),
   ].some((value) => String(value ?? "").toLowerCase().includes(query));
-}
-
-function matchesFilter(item: WorklistItem, filter: WorklistFilter): boolean {
-  const caseState = item.status.toLowerCase();
-  const processingState = item.pipeline_status.toLowerCase();
-  const isClosed = ["verified", "verified_with_override", "incomplete"].includes(caseState);
-
-  if (filter === "all") {
-    return true;
-  }
-  if (filter === "recovery") {
-    return item.pipeline_retryable;
-  }
-  if (filter === "processing") {
-    return ["queued", "processing", "pause_requested"].includes(processingState);
-  }
-  if (filter === "closed") {
-    return isClosed;
-  }
-  return item.pipeline_retryable || ["critical", "needs_review"].includes(caseState) || (!isClosed && item.business_issues > 0);
-}
-
-function sortItems(items: WorklistItem[], sort: WorklistSort): WorklistItem[] {
-  return [...items].sort((left, right) => {
-    if (sort === "priority") {
-      const priorityDifference = getPriorityRank(left) - getPriorityRank(right);
-      if (priorityDifference !== 0) {
-        return priorityDifference;
-      }
-    } else {
-      const receivedDifference = getTimestamp(left.created_at) - getTimestamp(right.created_at);
-      if (receivedDifference !== 0) {
-        return sort === "received_asc" ? receivedDifference : -receivedDifference;
-      }
-    }
-
-    const tieBreakDifference = getTimestamp(left.created_at) - getTimestamp(right.created_at);
-    if (tieBreakDifference !== 0) {
-      return tieBreakDifference;
-    }
-    return left.id - right.id;
-  });
-}
-
-function getPriorityRank(item: WorklistItem): number {
-  if (item.pipeline_retryable) {
-    return 0;
-  }
-  const caseState = item.status.toLowerCase();
-  if (caseState === "critical") {
-    return 1;
-  }
-  if (caseState === "needs_review") {
-    return 2;
-  }
-  return 3;
-}
-
-function getTimestamp(value: string): number {
-  const timestamp = new Date(value).getTime();
-  return Number.isNaN(timestamp) ? Number.MAX_SAFE_INTEGER : timestamp;
 }

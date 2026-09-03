@@ -104,7 +104,7 @@ export function AiAuditInsights({
   onSelectEvidence,
 }: {
   data: ApplicationReview;
-  onSelectEvidence?: (anomaly: Anomaly, pageNumber: number) => void;
+  onSelectEvidence?: (anomaly: Anomaly, pageNumber: number | null) => void;
 }) {
   const rawSummary = data.application.llm_summary;
   if (!rawSummary || !rawSummary.trim()) return null;

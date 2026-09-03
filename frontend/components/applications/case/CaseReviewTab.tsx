@@ -8,7 +8,7 @@ import type { Anomaly, ApplicationReview } from "@/lib/api";
 type CaseReviewTabProps = {
   applicationId: number;
   data: ApplicationReview;
-  onSelectEvidence: (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => void;
+  onSelectEvidence: (anomaly: Anomaly, pageNumber: number | null, allPageNumbers?: number[], decisionTaskIds?: string[]) => void;
   onSelectPage: (pageNumber: number, title: string, reason: string) => void;
 };
 

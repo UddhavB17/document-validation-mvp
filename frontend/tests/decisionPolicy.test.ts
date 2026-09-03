@@ -102,10 +102,34 @@ test("Request documents needs a reason and borrower-facing preview", () => {
   assert.equal(valid.allowed, true);
 });
 
+test("every decision action denies non-complete processing statuses", () => {
+  for (const processingStatus of [undefined, "unknown", "queued", "processing", "paused", "stale", "failed", "completed_partial"]) {
+    for (const action of ["ACCEPT", "OVERRIDE", "REQUEST_DOCS"] as const) {
+      const result = evaluateDecisionPolicy({
+        action,
+        processingStatus,
+        rationale: "Reviewed",
+        requestReasons: ["Document missing"],
+        borrowerMessage: "Please upload the missing document.",
+      });
+      assert.equal(result.processingComplete, false, `${String(processingStatus)} should not be complete`);
+      assert.equal(result.allowed, false, `${String(processingStatus)} should deny ${action}`);
+      assert.ok(result.reasons.some((reason) => reason.toLowerCase().includes("processing")));
+    }
+  }
+});
+
 test("persisted reviewer note identifies local completion and remaining checks", () => {
   const tasks = buildDecisionTasks({ manualReviewItems, checklistRows });
   const note = buildPersistedReviewerNote("Accept after review.", tasks, [tasks[0].id]);
   assert.match(note, /Accept after review\./);
   assert.match(note, /Decision safety checks \(this session\): 1\/3/);
   assert.match(note, /CERSAI/);
+});
+
+test("persisted reviewer note names checked high-severity exception tasks", () => {
+  const tasks = buildDecisionTasks({ businessExceptions: [{ id: 88, severity: "HIGH", reason: "Identity mismatch" }] });
+  const note = buildPersistedReviewerNote("Override after review.", tasks, [tasks[0].id]);
+  assert.match(note, /Checked high-severity review task\(s\):/);
+  assert.match(note, /Identity mismatch/);
 });

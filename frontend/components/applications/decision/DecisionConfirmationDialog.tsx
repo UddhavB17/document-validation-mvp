@@ -1,6 +1,13 @@
 "use client";
 
 import { DecisionAction } from "@/lib/decisionPolicy";
+import { useEffect, useRef } from "react";
+
+function focusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(
+    "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+  ));
+}
 
 const actionLabels: Record<DecisionAction, string> = {
   ACCEPT: "Accept",
@@ -46,13 +53,57 @@ export function DecisionConfirmationDialog({
   error?: string | null;
 }) {
   const requiresLoanConfirmation = action === "OVERRIDE" && Boolean(criticalLoanId);
+  const dialogRef = useRef<HTMLElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const loanInputRef = useRef<HTMLInputElement>(null);
+  const cancelHandlerRef = useRef(onCancel);
+  const submittingRef = useRef(isSubmitting);
+  cancelHandlerRef.current = onCancel;
+  submittingRef.current = isSubmitting;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    (requiresLoanConfirmation ? loanInputRef.current : cancelRef.current)?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (!submittingRef.current) {
+          event.preventDefault();
+          cancelHandlerRef.current();
+        }
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const elements = focusableElements(dialog);
+      if (elements.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [action, requiresLoanConfirmation]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" role="presentation">
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="decision-confirmation-title"
+        aria-describedby="decision-confirmation-description"
         className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
       >
         <div className="space-y-5">
@@ -61,7 +112,7 @@ export function DecisionConfirmationDialog({
             <h2 id="decision-confirmation-title" className="mt-1 text-xl font-bold text-slate-950">
               {actionLabels[action]}
             </h2>
-            <p className="mt-1 text-sm text-slate-600">This will record the following resulting state: <strong>{resultingStates[action]}</strong>.</p>
+            <p id="decision-confirmation-description" className="mt-1 text-sm text-slate-600">This will record the following resulting state: <strong>{resultingStates[action]}</strong>.</p>
           </div>
 
           <dl className="grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-4 text-sm sm:grid-cols-2">
@@ -103,7 +154,7 @@ export function DecisionConfirmationDialog({
                 value={typedLoanId}
                 onChange={(event) => onTypedLoanIdChange(event.target.value)}
                 className="w-full rounded-lg border border-red-300 bg-white px-3 py-2 text-base text-slate-900 outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20"
-                autoFocus
+                ref={loanInputRef}
                 autoComplete="off"
               />
             </div>
@@ -117,6 +168,7 @@ export function DecisionConfirmationDialog({
 
           <div className="flex flex-wrap justify-end gap-2">
             <button
+              ref={cancelRef}
               type="button"
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={onCancel}

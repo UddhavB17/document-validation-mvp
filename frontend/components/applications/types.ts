@@ -10,6 +10,7 @@ export type ActiveTab = CaseTab | LegacyCaseTab;
 
 export type EvidenceSelection = {
   anomaly: Anomaly;
-  pageNumber: number;
+  pageNumber: number | null;
   allPageNumbers?: number[];
+  decisionTaskIds?: string[];
 };

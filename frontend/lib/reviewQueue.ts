@@ -1,8 +1,15 @@
 export const REVIEW_QUEUE_STORAGE_KEY = "dmef_review_queue";
+export const REVIEW_QUEUE_EVENT = "dmef-review-queue-change";
 
 export type ReviewQueueSnapshot = {
   caseIds: number[];
   position: number;
+};
+
+export type ReviewQueueNeighbors = {
+  position: number | null;
+  previousId: number | null;
+  nextId: number | null;
 };
 
 function normalizeCaseIds(caseIds: number[]): number[] {
@@ -29,6 +36,7 @@ export function startReviewQueue(caseIds: number[], position = 0): ReviewQueueSn
     } catch {
       // Session storage can be unavailable in privacy-restricted browser contexts.
     }
+    window.dispatchEvent(new CustomEvent(REVIEW_QUEUE_EVENT, { detail: snapshot }));
   }
 
   return snapshot;
@@ -61,6 +69,16 @@ export function updateReviewQueuePosition(position: number): ReviewQueueSnapshot
     return null;
   }
   return startReviewQueue(current.caseIds, position);
+}
+
+export function getReviewQueueNeighbors(snapshot: ReviewQueueSnapshot | null, applicationId: number): ReviewQueueNeighbors {
+  if (!snapshot) return { position: null, previousId: null, nextId: null };
+  const position = snapshot.caseIds.indexOf(applicationId);
+  return {
+    position: position >= 0 ? position : null,
+    previousId: position > 0 ? snapshot.caseIds[position - 1] : null,
+    nextId: position >= 0 && position < snapshot.caseIds.length - 1 ? snapshot.caseIds[position + 1] : null,
+  };
 }
 
 function isReviewQueueSnapshot(value: unknown): value is ReviewQueueSnapshot {

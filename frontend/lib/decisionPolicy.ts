@@ -95,17 +95,23 @@ function mergeSeverity(current: string | null, next: string | null): string | nu
   return severityRank(next) > severityRank(current) ? next : current;
 }
 
-function taskIdForChecklistItem(sNo: unknown, description: unknown, prefix: string, index: number): string {
-  const serial = nonEmpty(sNo);
-  if (serial) return `checklist:${serial}`;
-  const slug = nonEmpty(description).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  return `${prefix}:${slug || index + 1}`;
+function slug(value: unknown): string {
+  return nonEmpty(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-function taskIdForException(exception: DecisionBusinessException, index: number): string {
+export function buildManualTaskId(sNo: unknown, description?: unknown, index = 0): string {
+  const serial = nonEmpty(sNo);
+  return `manual:${serial || slug(description) || index + 1}`;
+}
+
+export function buildChecklistTaskId(sNo: unknown, description?: unknown, index = 0): string {
+  const serial = nonEmpty(sNo);
+  return `checklist:${serial || slug(description) || index + 1}`;
+}
+
+export function buildExceptionTaskId(exception: DecisionBusinessException, index = 0): string {
   const serial = nonEmpty(exception.s_no);
-  if (serial) return `checklist:${serial}`;
-  const stablePart = nonEmpty(exception.id) || [exception.rule_id, exception.page_number, index + 1].filter(Boolean).join(":");
+  const stablePart = nonEmpty(exception.id) || [serial, exception.rule_id, exception.page_number, slug(exception.reason)].filter(Boolean).join(":") || index + 1;
   return `exception:${stablePart}`;
 }
 
@@ -154,7 +160,7 @@ export function buildDecisionTasks({
   manualReviewItems.forEach((item, index) => {
     if (checklistStatusBySerial.get(nonEmpty(item.s_no)) === "not_applicable") return;
     addOrMergeTask(tasks, {
-      id: taskIdForChecklistItem(item.s_no, item.description, "manual", index),
+      id: buildManualTaskId(item.s_no, item.description, index),
       kind: "manual",
       label: nonEmpty(item.description) || `Manual review item ${index + 1}`,
       reason: nonEmpty(item.reason) || "Required manual verification",
@@ -167,7 +173,7 @@ export function buildDecisionTasks({
   checklistRows.forEach((row, index) => {
     if (normalize(row.status) !== "not_checked") return;
     addOrMergeTask(tasks, {
-      id: taskIdForChecklistItem(row.s_no, row.description, "checklist", index),
+      id: buildChecklistTaskId(row.s_no, row.description, index),
       kind: "checklist",
       label: nonEmpty(row.description) || `Checklist item ${index + 1}`,
       reason: "Checklist item was not checked automatically",
@@ -180,7 +186,7 @@ export function buildDecisionTasks({
   businessExceptions.forEach((exception, index) => {
     const severity = nonEmpty(exception.severity) || null;
     addOrMergeTask(tasks, {
-      id: taskIdForException(exception, index),
+      id: buildExceptionTaskId(exception, index),
       kind: "exception",
       label: nonEmpty(exception.document_type) || nonEmpty(exception.rule_id) || `Business exception ${index + 1}`,
       reason: nonEmpty(exception.reason) || "Business exception requires reviewer attention",
@@ -218,7 +224,16 @@ function processingReason(status: unknown, isStale: boolean | undefined): string
   const normalized = normalize(status);
   if (isStale || normalized === "stale") return "Processing is stale; recover the run before making a decision.";
   if (normalized === "failed" || normalized === "pipeline_failed") return "Processing failed; retry processing before making a decision.";
-  return "Processing is still running; wait until it completes before making a decision.";
+  if (!normalized) return "Processing status is unknown; wait for a verified completed status before making a decision.";
+  if (normalized === "paused" || normalized === "pause_requested") return "Processing is paused; resume or complete processing before making a decision.";
+  if (normalized === "queued") return "Processing is queued; wait until it completes before making a decision.";
+  if (normalized === "processing") return "Processing is still running; wait until it completes before making a decision.";
+  if (processingStateIsRecognizedIncomplete(normalized)) return `Processing is ${normalized.replace(/_/g, " ")}; complete it before making a decision.`;
+  return `Processing status “${normalized}” is not recognized as complete; verify the pipeline before making a decision.`;
+}
+
+function processingStateIsRecognizedIncomplete(status: string): boolean {
+  return status === "uploaded" || status === "ocr_completed" || status === "classified" || status === "mapping";
 }
 
 /**
@@ -238,12 +253,9 @@ export function evaluateDecisionPolicy(input: DecisionPolicyInput): DecisionPoli
   const reasons: string[] = [];
   const rationale = nonEmpty(input.rationale);
 
-  if (processingBlocked) {
-    reasons.push(processingReason(input.processingStatus, input.processingIsStale));
-  }
+  if (!processingComplete) reasons.push(processingReason(input.processingStatus, input.processingIsStale));
 
   if (input.action === "ACCEPT") {
-    if (!processingComplete) reasons.push("Processing must be complete before accepting this loan file.");
     if ((input.businessExceptions ?? []).some((exception) => severityRank(nonEmpty(exception.severity)) >= 3)) {
       reasons.push("A high-severity business exception must be resolved or overridden before accepting.");
     }
@@ -303,5 +315,9 @@ export function buildPersistedReviewerNote(
   const remainder = remaining.length
     ? `Remaining in-session checks: ${remaining.map((task) => task.label).join("; ")}.`
     : "All required review checks were completed in this session.";
-  return `${note}\n\n${completion} ${remainder}`;
+  const checkedHighSeverity = tasks.filter((task) => severityRank(task.severity) >= 3 && checked.has(task.id));
+  const highSummary = checkedHighSeverity.length > 0
+    ? `Checked high-severity review task(s): ${checkedHighSeverity.map((task) => `${task.label} — ${task.reason}`).join("; ")}.`
+    : "No high-severity review tasks were checked in this session.";
+  return `${note}\n\n${completion} ${remainder}\n${highSummary}`;
 }

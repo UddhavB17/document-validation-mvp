@@ -4,11 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { InfoMessage } from "@/components/Message";
 import { Anomaly, ApplicationReview } from "@/lib/api";
+import { buildExceptionTaskId, buildManualTaskId } from "@/lib/decisionPolicy";
 import { asText } from "@/lib/format";
 
 import {
   getReviewIssueState,
-  markReviewIssueViewed,
   REVIEW_STATE_EVENT,
   type ReviewIssueState,
 } from "./sessionState";
@@ -24,6 +24,7 @@ export interface ReviewIssue {
   anomaly: Anomaly;
   group: IssueGroupId;
   pages: number[];
+  decisionTaskIds: string[];
 }
 
 export const ISSUE_GROUPS: ReadonlyArray<{
@@ -170,22 +171,22 @@ export function buildReviewIssues(data: ApplicationReview, applicationId: number
   const issues: ReviewIssue[] = [];
   const seen = new Set<string>();
 
-  const add = (anomaly: Anomaly, group: IssueGroupId) => {
+  const add = (anomaly: Anomaly, group: IssueGroupId, decisionTaskIds: string[] = []) => {
     const key = getReviewIssueKey(applicationId, anomaly);
     if (seen.has(key)) return;
     seen.add(key);
-    issues.push({ key, anomaly, group, pages: getAffectedPages(anomaly) });
+    issues.push({ key, anomaly, group, pages: getAffectedPages(anomaly), decisionTaskIds });
   };
 
   for (const anomaly of data.summary.business_anomalies) {
-    add(anomaly, isDecisionBlocker(anomaly) ? "decision-blockers" : "business-exceptions");
+    add(anomaly, isDecisionBlocker(anomaly) ? "decision-blockers" : "business-exceptions", [buildExceptionTaskId(anomaly)]);
   }
   for (const anomaly of data.summary.processing_warnings) {
     add(anomaly, "processing-quality");
   }
 
   if (data.manual_review_items.length > 0) {
-    data.manual_review_items.forEach((item, index) => add(makeManualCheckAnomaly(item, index), "manual-checks"));
+    data.manual_review_items.forEach((item, index) => add(makeManualCheckAnomaly(item, index), "manual-checks", [buildManualTaskId(item.s_no, item.description, index)]));
   } else {
     const manualPageReview = makeManualPageReviewAnomaly(data);
     if (manualPageReview) add(manualPageReview, "manual-checks");
@@ -216,7 +217,7 @@ export function IssueQueue({
 }: {
   applicationId: number;
   data: ApplicationReview;
-  onSelectEvidence: (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => void;
+  onSelectEvidence: (anomaly: Anomaly, pageNumber: number | null, allPageNumbers?: number[], decisionTaskIds?: string[]) => void;
 }) {
   const issues = useMemo(() => buildReviewIssues(data, applicationId), [applicationId, data]);
   const [sessionRevision, setSessionRevision] = useState(0);
@@ -236,16 +237,9 @@ export function IssueQueue({
     ?? issues.find((issue) => issue.group === "business-exceptions")
     ?? issues[0];
   const [selectedKey, setSelectedKey] = useState(defaultIssue?.key ?? null);
-  const firstAvailablePage = data.pages
-    .map((page) => page.page_number)
-    .filter((page): page is number => typeof page === "number" && page > 0)
-    .sort((a, b) => a - b)[0] ?? 1;
-
   const selectIssue = (issue: ReviewIssue) => {
     setSelectedKey(issue.key);
-    markReviewIssueViewed(issue.key);
-    const firstPage = issue.pages[0] ?? firstAvailablePage;
-    onSelectEvidence(issue.anomaly, firstPage, issue.pages.length > 1 ? issue.pages : undefined);
+    onSelectEvidence(issue.anomaly, issue.pages[0] ?? null, issue.pages.length > 1 ? issue.pages : undefined, issue.decisionTaskIds);
   };
 
   useEffect(() => {

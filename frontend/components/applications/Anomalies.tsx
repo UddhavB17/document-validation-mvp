@@ -10,7 +10,7 @@ export function Anomalies({
 }: {
   applicationId: number;
   data: ApplicationReview;
-  onSelectEvidence: (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => void;
+  onSelectEvidence: (anomaly: Anomaly, pageNumber: number | null, allPageNumbers?: number[], decisionTaskIds?: string[]) => void;
 }) {
   return (
     <div className="space-y-6">

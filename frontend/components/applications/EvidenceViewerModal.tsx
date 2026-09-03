@@ -10,7 +10,7 @@ import { EvidenceValue } from "@/components/applications/EvidenceValue";
 import { getAffectedPages, getReviewIssueKey } from "@/components/applications/review/issueQueue";
 import {
   getReviewIssueState,
-  markReviewIssueChecked,
+  markReviewIssueCheckedWithTasks,
   markReviewIssueViewed,
 } from "@/components/applications/review/sessionState";
 import { EvidenceSelection } from "@/components/applications/types";
@@ -42,47 +42,53 @@ export function EvidenceViewerModal({
   const pages = useMemo(() => {
     const selectedPages = selectedEvidence.allPageNumbers?.length
       ? selectedEvidence.allPageNumbers
-      : [selectedEvidence.pageNumber];
+      : selectedEvidence.pageNumber === null ? [] : [selectedEvidence.pageNumber];
     return [...new Set(selectedPages.filter((page) => Number.isFinite(page) && page > 0))].sort((a, b) => a - b);
   }, [selectedEvidence]);
-  const [activePage, setActivePage] = useState(selectedEvidence.pageNumber);
+  const hasPageEvidence = pages.length > 0;
+  const [activePage, setActivePage] = useState<number | null>(selectedEvidence.pageNumber);
   const [jumpValue, setJumpValue] = useState("1");
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [imageReady, setImageReady] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [fileLevelDetailsReady, setFileLevelDetailsReady] = useState(false);
   const [showFullOcr, setShowFullOcr] = useState(false);
   const issueKey = getReviewIssueKey(applicationId, selectedEvidence.anomaly);
   const [isChecked, setIsChecked] = useState(() => getReviewIssueState(issueKey) === "Checked");
 
   useEffect(() => {
-    const nextPage = pages.includes(selectedEvidence.pageNumber) ? selectedEvidence.pageNumber : pages[0];
-    setActivePage(nextPage ?? selectedEvidence.pageNumber);
-    setJumpValue(String(Math.max(1, pages.indexOf(nextPage ?? selectedEvidence.pageNumber) + 1)));
+    const nextPage = selectedEvidence.pageNumber !== null && pages.includes(selectedEvidence.pageNumber) ? selectedEvidence.pageNumber : pages[0] ?? null;
+    setActivePage(nextPage);
+    setJumpValue(String(Math.max(1, pages.indexOf(nextPage ?? -1) + 1)));
     setZoom(1);
     setRotation(0);
     setImageReady(false);
     setImageError(false);
+    setFileLevelDetailsReady(false);
     setShowFullOcr(false);
     setIsChecked(getReviewIssueState(issueKey) === "Checked");
   }, [issueKey, pages, selectedEvidence]);
 
-  const activeIndex = Math.max(0, pages.indexOf(activePage));
-  const renderedPage = pages[activeIndex] ?? activePage;
-  const activePageData = data.pages.find((page) => Number(page.page_number) === renderedPage);
+  const activeIndex = Math.max(0, activePage === null ? 0 : pages.indexOf(activePage));
+  const renderedPage = activePage === null ? null : pages[activeIndex] ?? activePage;
+  const activePageData = renderedPage === null ? undefined : data.pages.find((page) => Number(page.page_number) === renderedPage);
   const ocrText = typeof activePageData?.ocr_text === "string" ? activePageData.ocr_text.trim() : "";
   const ocrIsTruncated = ocrText.length > MAX_OCR_PREVIEW;
   const visibleOcrText = showFullOcr ? ocrText : ocrText.slice(0, MAX_OCR_PREVIEW);
-  const adjacentPage = pages.length > 1 ? pages[activeIndex + 1] ?? pages[activeIndex - 1] : undefined;
+  const adjacentPage = renderedPage !== null && pages.length > 1 ? pages[activeIndex + 1] ?? pages[activeIndex - 1] : undefined;
   const imageHighlight = String(selectedEvidence.anomaly.found_value || selectedEvidence.anomaly.expected_value || "").slice(0, 160);
   const adjacentImageUrl = adjacentPage
     ? api.sourcePageImageUrl(applicationId, adjacentPage, imageHighlight)
     : null;
-  const evidenceReady = imageReady || imageError;
+  const evidenceReady = hasPageEvidence ? imageReady : fileLevelDetailsReady;
 
   useEffect(() => {
-    markReviewIssueViewed(issueKey);
-  }, [issueKey]);
+    if (!hasPageEvidence) {
+      setFileLevelDetailsReady(true);
+      markReviewIssueViewed(issueKey);
+    }
+  }, [hasPageEvidence, issueKey]);
 
   useEffect(() => {
     setImageReady(false);
@@ -146,7 +152,7 @@ export function EvidenceViewerModal({
   };
 
   const markChecked = () => {
-    markReviewIssueChecked(issueKey);
+    markReviewIssueCheckedWithTasks(issueKey, applicationId, selectedEvidence.decisionTaskIds ?? []);
     setIsChecked(true);
   };
 
@@ -172,7 +178,7 @@ export function EvidenceViewerModal({
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#5C6B7A]">Evidence workspace</p>
             <h1 id="evidence-workspace-heading" className="mt-1 truncate text-sm font-bold text-[#16202E] sm:text-base">
-              Affected page {activeIndex + 1} of {Math.max(1, pages.length)} · PDF page {renderedPage}
+              {hasPageEvidence ? `Affected page ${activeIndex + 1} of ${pages.length} · PDF page ${renderedPage}` : "File-level evidence details"}
             </h1>
             <p id="evidence-workspace-description" className="mt-1 max-w-3xl truncate text-xs font-medium text-slate-600">
               {asText(selectedEvidence.anomaly.reason ?? selectedEvidence.anomaly.rule_id)}
@@ -189,7 +195,7 @@ export function EvidenceViewerModal({
           </button>
         </header>
 
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+        {hasPageEvidence ? <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
           <nav aria-label="Affected page navigation" className="flex items-center gap-2">
             <button
               type="button"
@@ -229,9 +235,10 @@ export function EvidenceViewerModal({
           <div aria-live="polite" className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
             Showing PDF page {renderedPage} · active page only
           </div>
-        </div>
+        </div> : null}
 
-        <div className="min-h-0 flex-1 overflow-hidden md:grid md:grid-cols-[minmax(0,1fr)_360px]">
+        <div className={`min-h-0 flex-1 overflow-hidden ${hasPageEvidence ? "md:grid md:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
+          {hasPageEvidence ? <>
           <section aria-labelledby="source-image-heading" className="flex min-h-[32vh] min-w-0 flex-col overflow-hidden border-b border-slate-200 bg-slate-800/10 md:min-h-0 md:border-b-0 md:border-r">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white/90 px-4 py-2.5">
               <h2 id="source-image-heading" className="text-xs font-bold uppercase tracking-wider text-slate-600">Source image</h2>
@@ -279,7 +286,7 @@ export function EvidenceViewerModal({
                   <h3 className="text-sm font-bold text-amber-900">Page image could not be rendered</h3>
                   <p className="mt-2 text-xs font-medium leading-relaxed text-amber-800">Use the original PDF for this page. The review workspace remains available for the rule details and OCR returned by the review API.</p>
                   <a
-                    href={api.sourcePdfUrl(applicationId, renderedPage)}
+                    href={api.sourcePdfUrl(applicationId, renderedPage!)}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-4 rounded-lg bg-[#2B4C7E] px-4 py-2 text-xs font-bold text-white hover:bg-[#1E3559] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2B4C7E]"
@@ -295,14 +302,17 @@ export function EvidenceViewerModal({
                       key={renderedPage}
                       src={api.sourcePageImageUrl(
                         applicationId,
-                        renderedPage,
+                        renderedPage!,
                         imageHighlight,
                       )}
                       alt={`Original source PDF page ${renderedPage}`}
                       width={720}
                       height={1020}
                       unoptimized
-                      onLoad={() => setImageReady(true)}
+                      onLoad={() => {
+                        setImageReady(true);
+                        markReviewIssueViewed(issueKey);
+                      }}
                       onError={() => {
                         setImageReady(false);
                         setImageError(true);
@@ -314,8 +324,9 @@ export function EvidenceViewerModal({
               )}
             </div>
           </section>
+          </> : null}
 
-          <aside className="min-h-0 overflow-y-auto bg-white p-4 sm:p-5">
+          <aside className={`min-h-0 overflow-y-auto bg-white p-4 sm:p-5 ${hasPageEvidence ? "" : "max-w-3xl"}`}>
             <section aria-labelledby="rule-detail-heading" className="space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <h2 id="rule-detail-heading" className="text-sm font-bold text-slate-900">Deterministic rule detail</h2>
@@ -325,7 +336,7 @@ export function EvidenceViewerModal({
                 <EvidenceValue label="Rule ID" value={selectedEvidence.anomaly.rule_id} />
                 <EvidenceValue label="Severity" value={selectedEvidence.anomaly.severity} />
                 <EvidenceValue label="Document type" value={activePageData?.document_type ?? selectedEvidence.anomaly.document_type ?? "File-level"} />
-                <EvidenceValue label="PDF page" value={renderedPage} />
+                {hasPageEvidence ? <EvidenceValue label="PDF page" value={renderedPage} /> : null}
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Why this is flagged</div>
@@ -337,7 +348,7 @@ export function EvidenceViewerModal({
               </div>
             </section>
 
-            <div ref={ocrSectionRef} id="evidence-ocr" className="mt-5 space-y-2">
+            {hasPageEvidence ? <div ref={ocrSectionRef} id="evidence-ocr" className="mt-5 space-y-2">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">Active-page OCR</h2>
                 <span className="text-[10px] font-semibold text-slate-400">PDF page {renderedPage} only</span>
@@ -359,11 +370,11 @@ export function EvidenceViewerModal({
                   {showFullOcr ? "Show preview" : "Show full text"}
                 </button>
               ) : null}
-            </div>
+            </div> : <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs font-medium leading-relaxed text-blue-900">This issue is file-level and has no explicit source page. Review the metadata and rule details above; page and PDF controls are unavailable.</div>}
 
-            <div className="mt-5">
+            {hasPageEvidence && renderedPage !== null ? <div className="mt-5">
               <AiExplanationDisclosure data={data} anomaly={selectedEvidence.anomaly} pageNumber={renderedPage} />
-            </div>
+            </div> : null}
           </aside>
         </div>
 
@@ -373,14 +384,14 @@ export function EvidenceViewerModal({
             {!evidenceReady ? <span className="ml-1 text-amber-700">Waiting for evidence to load.</span> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <a
+            {hasPageEvidence && renderedPage !== null ? <a
               href={api.sourcePdfUrl(applicationId, renderedPage)}
               target="_blank"
               rel="noreferrer"
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2B4C7E]"
             >
               Open full PDF
-            </a>
+            </a> : null}
             <button
               type="button"
               onClick={markChecked}

@@ -93,8 +93,8 @@ export default function ApplicationReviewPage() {
     );
   }
 
-  const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number, allPageNumbers?: number[]) => {
-    setSelectedEvidence({ anomaly, pageNumber, allPageNumbers });
+  const handleSelectEvidence = (anomaly: Anomaly, pageNumber: number | null, allPageNumbers?: number[], decisionTaskIds?: string[]) => {
+    setSelectedEvidence({ anomaly, pageNumber, allPageNumbers, decisionTaskIds });
     setTimeout(() => {
       const viewer = document.getElementById("evidence-viewer");
       if (viewer) {

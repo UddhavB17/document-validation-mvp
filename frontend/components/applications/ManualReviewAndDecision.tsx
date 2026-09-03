@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { InfoMessage } from "@/components/Message";
@@ -11,13 +11,18 @@ import {
   DecisionAction,
   DecisionTask,
   evaluateDecisionPolicy,
-  isDecisionProcessingBlocked,
 } from "@/lib/decisionPolicy";
 import { ApplicationReview, Decision } from "@/lib/api";
 import { asText } from "@/lib/format";
 import { decisionNoteSchema } from "@/lib/forms";
 import { useCreateDecision, useUndoDecision } from "@/lib/queries";
 import { rejectionReasons } from "@/components/applications/reviewUtils";
+import {
+  getCheckedReviewTaskIds,
+  REVIEW_STATE_EVENT,
+  setReviewTaskChecked,
+} from "@/components/applications/review/sessionState";
+import { getReviewQueueNeighbors, readReviewQueue, updateReviewQueuePosition } from "@/lib/reviewQueue";
 
 const UNDO_WINDOW_SECONDS = 10 * 60;
 const reasonLabels = Object.keys(rejectionReasons) as Array<keyof typeof rejectionReasons>;
@@ -58,14 +63,10 @@ function formatCountdown(seconds: number): string {
   return `${minutes}:${remainder}`;
 }
 
-function sourcePageForTask(task: DecisionTask, data: ApplicationReview): number | null {
-  if (task.pageNumber) return task.pageNumber;
-  if (task.kind !== "manual" || !task.id.startsWith("checklist:")) return null;
-  const serial = task.id.slice("checklist:".length);
-  const item = data.manual_review_items.find((candidate) => String(candidate.s_no ?? "").trim() === serial);
-  if (!item?.document_type) return null;
-  const pages = data.document_pages[String(item.document_type)] ?? [];
-  return pages.find((page) => page > 0) ?? null;
+function sourcePageForTask(task: DecisionTask): number | null {
+  // A task may open source evidence only when the API explicitly attached a
+  // page. Document type mappings are not proof of the source page.
+  return task.pageNumber;
 }
 
 export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applicationId: number; data: ApplicationReview; onSelectPage?: (pageNo: number) => void }) {
@@ -83,9 +84,9 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
   const [undoneDecisionId, setUndoneDecisionId] = useState<number | null>(null);
   const createDecision = useCreateDecision(applicationId);
   const undoDecision = useUndoDecision(applicationId);
+  const router = useRouter();
 
   const processingStatus = data.progress?.operational_status ?? data.progress?.status ?? data.application.status;
-  const processingBlocked = isDecisionProcessingBlocked(processingStatus, data.progress?.is_stale);
   const tasks = useMemo(
     () => buildDecisionTasks({
       manualReviewItems: data.manual_review_items,
@@ -97,12 +98,20 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
   const taskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
 
   useEffect(() => {
-    setCheckedTaskIds((current) => {
-      const validIds = new Set(taskIds);
-      const next = new Set([...current].filter((id) => validIds.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [taskIds]);
+    setCheckedTaskIds(getCheckedReviewTaskIds(applicationId, taskIds));
+    const reconcile = (event: Event) => {
+      const detail = (event as CustomEvent<{ applicationId?: number }>).detail;
+      if (detail?.applicationId === applicationId || event.type === "storage") {
+        setCheckedTaskIds(getCheckedReviewTaskIds(applicationId, taskIds));
+      }
+    };
+    window.addEventListener(REVIEW_STATE_EVENT, reconcile);
+    window.addEventListener("storage", reconcile);
+    return () => {
+      window.removeEventListener(REVIEW_STATE_EVENT, reconcile);
+      window.removeEventListener("storage", reconcile);
+    };
+  }, [applicationId, taskIds]);
 
   const requiredTasks = tasks.filter((task) => task.required);
   const reviewTasks = tasks.filter((task) => task.required || task.severity?.toUpperCase() === "HIGH");
@@ -144,12 +153,15 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
     processing: data.summary.processing_warning_count,
   };
   const mutationBusy = isSubmitting || createDecision.isPending || undoDecision.isPending;
+  const nextQueuedCase = getReviewQueueNeighbors(readReviewQueue(), applicationId).nextId;
 
   function toggleTask(taskId: string): void {
     setCheckedTaskIds((current) => {
       const next = new Set(current);
-      if (next.has(taskId)) next.delete(taskId);
-      else next.add(taskId);
+      const checked = !next.has(taskId);
+      if (checked) next.add(taskId);
+      else next.delete(taskId);
+      setReviewTaskChecked(applicationId, taskId, checked);
       return next;
     });
     setActionError(null);
@@ -237,6 +249,13 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
     }
   }
 
+  function openNextQueuedCase(): void {
+    const queue = readReviewQueue();
+    const neighbors = getReviewQueueNeighbors(queue, applicationId);
+    if (neighbors.position !== null) updateReviewQueuePosition(neighbors.position);
+    router.push(neighbors.nextId !== null ? `/applications/${neighbors.nextId}` : "/worklist");
+  }
+
   return (
     <section className="space-y-5" aria-labelledby="manual-review-heading">
       <div>
@@ -252,9 +271,9 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
           <strong>{data.summary.business_count} business exception(s)</strong> affect the review. High-severity business exceptions block Accept; processing warnings do not.
         </div>
       ) : null}
-      {processingBlocked && !currentDecision ? (
+      {!acceptPolicy.processingComplete && !currentDecision ? (
         <div role="status" aria-live="polite" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">
-          Decisions are disabled while processing is {String(processingStatus ?? "blocked").replace(/_/g, " ")}. Recover or complete processing before deciding.
+          Decisions are disabled: {acceptPolicy.reasons.find((reason) => reason.toLowerCase().includes("processing")) ?? "processing must be complete before deciding."}
         </div>
       ) : null}
 
@@ -271,7 +290,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
           <div className="mt-3 space-y-3">
             {reviewTasks.map((task, index) => {
               const inputId = `manual-review-task-${index}`;
-              const sourcePage = sourcePageForTask(task, data);
+              const sourcePage = sourcePageForTask(task);
               return (
                 <div key={task.id} className="rounded-lg border border-slate-200 bg-white p-3">
                   <div className="flex items-start gap-3">
@@ -335,9 +354,9 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
             >
               {undoDecision.isPending ? "Undoing…" : "Undo decision"}
             </button>
-            <Link href="/worklist" className="rounded-lg bg-emerald-800 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
-              Open next case
-            </Link>
+            <button type="button" onClick={openNextQueuedCase} className="rounded-lg bg-emerald-800 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+              {nextQueuedCase !== null ? "Open next case" : "Return to worklist"}
+            </button>
           </div>
         </div>
       ) : (
@@ -360,7 +379,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={mutationBusy || processingBlocked || !acceptPolicy.allowed}
+              disabled={mutationBusy || !acceptPolicy.processingComplete || !acceptPolicy.allowed}
               onClick={() => openConfirmation("ACCEPT")}
               className="rounded-lg bg-emerald-700 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
             >
@@ -368,7 +387,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
             </button>
             <button
               type="button"
-              disabled={mutationBusy || processingBlocked || !overridePolicy.allowed}
+              disabled={mutationBusy || !overridePolicy.processingComplete || !overridePolicy.allowed}
               onClick={() => openConfirmation("OVERRIDE")}
               className="rounded-lg bg-blue-700 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500"
             >
@@ -376,7 +395,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
             </button>
             <button
               type="button"
-              disabled={mutationBusy || processingBlocked}
+              disabled={mutationBusy || !requestDocsPolicy.processingComplete}
               onClick={() => { setShowRequestDocs((current) => !current); setActionError(null); }}
               className="rounded-lg border border-slate-300 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
             >
