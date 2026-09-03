@@ -6,6 +6,7 @@ import {
   buildPersistedReviewerNote,
   evaluateDecisionPolicy,
   getDecisionProcessingState,
+  resolveDecisionProcessingStatus,
   taskNeedsEvidence,
 } from "../lib/decisionPolicy";
 
@@ -23,6 +24,13 @@ test("processing gate distinguishes completed warnings from blocked states", () 
   assert.equal(getDecisionProcessingState("completed_with_warnings"), "completed");
   assert.equal(getDecisionProcessingState("queued"), "blocked");
   assert.equal(getDecisionProcessingState("completed", true), "blocked");
+});
+
+test("decision processing status never falls back to the case status domain", () => {
+  assert.equal(resolveDecisionProcessingStatus(null), undefined);
+  assert.equal(resolveDecisionProcessingStatus({ status: undefined }), undefined);
+  assert.equal(resolveDecisionProcessingStatus({ status: "processing" }), "processing");
+  assert.equal(resolveDecisionProcessingStatus({ operational_status: "completed", status: "processing" }), "completed");
 });
 
 test("page-backed tasks require evidence before they can be acknowledged", () => {

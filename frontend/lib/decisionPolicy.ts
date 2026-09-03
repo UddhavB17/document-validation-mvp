@@ -79,6 +79,12 @@ export function taskNeedsEvidence(task: Pick<DecisionTask, "pageNumber">): boole
   return typeof task.pageNumber === "number" && Number.isFinite(task.pageNumber) && task.pageNumber > 0;
 }
 
+export function resolveDecisionProcessingStatus(
+  progress: { operational_status?: unknown; status?: unknown } | null | undefined,
+): unknown {
+  return progress?.operational_status ?? progress?.status;
+}
+
 const COMPLETED_PROCESSING_STATUSES = new Set(["completed", "completed_with_warnings"]);
 const BLOCKED_PROCESSING_STATUSES = new Set(["queued", "processing", "stale", "failed", "pipeline_failed"]);
 

@@ -11,6 +11,7 @@ import {
   DecisionAction,
   DecisionTask,
   evaluateDecisionPolicy,
+  resolveDecisionProcessingStatus,
   taskNeedsEvidence,
 } from "@/lib/decisionPolicy";
 import { ApplicationReview, Decision } from "@/lib/api";
@@ -88,7 +89,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
   const undoDecision = useUndoDecision(applicationId);
   const router = useRouter();
 
-  const processingStatus = data.progress?.operational_status ?? data.progress?.status ?? data.application.status;
+  const processingStatus = resolveDecisionProcessingStatus(data.progress);
   const tasks = useMemo(
     () => buildDecisionTasks({
       manualReviewItems: data.manual_review_items,
