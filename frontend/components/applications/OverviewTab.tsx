@@ -29,8 +29,8 @@ export function OverviewTab({
   const anomCount = getAnomalyCount(data);
 
   return (
-    <div className="space-y-6">
-      <h2 className="font-serif text-[16px] font-semibold mb-3">Application summary</h2>
+    <div className="min-w-0 space-y-6">
+      <h2 className="font-serif text-[16px] font-semibold mb-3">Review summary</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">
           <div className="text-[#5C6B7A] text-[12.5px] font-medium">Purpose of Loan</div>
@@ -59,8 +59,8 @@ export function OverviewTab({
       </div>
 
       <h2 className="font-serif text-[16px] font-semibold mb-3 mt-6">Applicant roster</h2>
-      <div className="border border-[#E1E5EB] rounded-xl overflow-hidden shadow-3xs">
-        <table className="w-full border-collapse text-left text-[13px]">
+      <div className="min-w-0 max-w-full overflow-x-auto rounded-xl border border-[#E1E5EB] shadow-3xs">
+        <table className="min-w-[520px] w-full border-collapse text-left text-[13px]">
           <thead>
             <tr className="bg-[#F6F7FA] border-b border-[#E1E5EB]">
               <th className="text-[#5C6B7A] font-semibold text-[11px] uppercase tracking-wider px-3.5 py-2.5">Name</th>

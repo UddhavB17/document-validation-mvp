@@ -18,6 +18,95 @@ export const statusLabels = {
   attention: "Attention",
 } as const;
 
+export type ReviewErrorPresentation = {
+  title: string;
+  message: string;
+};
+
+export function getReviewErrorPresentation(error: unknown, applicationId: number): ReviewErrorPresentation {
+  const status = getErrorStatus(error);
+  if (status === 404) {
+    return {
+      title: "Application not found",
+      message: `Application ${applicationId} does not exist or is no longer available in the review service.`,
+    };
+  }
+  if (isSchemaError(error)) {
+    return {
+      title: "Review data could not be read",
+      message: "The API returned application data in an unexpected shape. Retry the request; if it persists, check the backend and frontend versions together.",
+    };
+  }
+  if (status !== null) {
+    return {
+      title: "Review API error",
+      message: `The review API returned HTTP ${status}. Retry the request and check the local API health if it continues.`,
+    };
+  }
+  return {
+    title: "Unable to load application review",
+    message: error instanceof Error && error.message
+      ? error.message
+      : "The application review could not be loaded. Retry the request and check the local API health if it continues.",
+  };
+}
+
+export function displayValue(value: unknown, maxLength = 220): string {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+  }
+  if (!text) {
+    return "-";
+  }
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+export function isSensitiveFieldName(fieldName: string): boolean {
+  return /(?:pan|aadhaar|aadhar|account(?:_number|_no| number| no)?|ifsc|phone|mobile)/i.test(fieldName);
+}
+
+export function maskSensitiveValue(value: unknown): string {
+  const text = displayValue(value, 160);
+  if (text === "-") {
+    return text;
+  }
+  const compact = text.replace(/\s+/g, "");
+  if (compact.length <= 4) {
+    return "••••";
+  }
+  return `•••• •••• ${compact.slice(-4)}`;
+}
+
+export function isProcessingIssue(status: unknown, error: unknown): boolean {
+  if (typeof error === "string" && error.trim()) {
+    return true;
+  }
+  const normalized = String(status ?? "").toLowerCase().replace(/\s+/g, "_");
+  return !["completed", "complete", "success", "ok", "processed", "done"].includes(normalized);
+}
+
+function getErrorStatus(error: unknown): number | null {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === "number" ? status : null;
+  }
+  return null;
+}
+
+function isSchemaError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "ZodError" || error.name === "ValidationError");
+}
+
 export function averagePageTime(pageEvents: ApplicationReview["page_events"]): number {
   const pageDurations = pageEvents
     .map((page) => page.elapsed_seconds)
@@ -35,6 +124,19 @@ export function summarizeFields(fields: Record<string, unknown> | undefined): st
   const visibleFields = Object.fromEntries(Object.entries(fields).filter(([key, value]) => !key.startsWith("_") && value));
   const text = JSON.stringify(Object.keys(visibleFields).length ? visibleFields : fields);
   return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+}
+
+export function summarizePublicFields(fields: Record<string, unknown> | undefined): string {
+  if (!fields || Object.keys(fields).length === 0) {
+    return "-";
+  }
+  const visibleFields = Object.fromEntries(
+    Object.entries(fields).filter(([key, value]) => !key.startsWith("_") && value !== null && value !== undefined && value !== ""),
+  );
+  if (Object.keys(visibleFields).length === 0) {
+    return "-";
+  }
+  return displayValue(visibleFields, 220);
 }
 
 export function formatLlmDocument(fields: Record<string, unknown> | undefined): string {

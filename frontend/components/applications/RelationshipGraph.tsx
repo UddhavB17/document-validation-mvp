@@ -269,7 +269,7 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
         }
       `}} />
 
-      <svg id="relGraph" width="100%" height="260" viewBox="0 0 960 260" className="mx-auto block">
+      <svg id="relGraph" width="100%" height="260" viewBox="0 0 960 260" className="mx-auto block min-w-[680px]">
         {edges}
         {nodeCards}
       </svg>
