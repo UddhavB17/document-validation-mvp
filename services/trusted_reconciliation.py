@@ -14,7 +14,6 @@ from services.consistency_checks import (
     _people,
 )
 
-
 _GLOBAL_COMPARABLE_FIELDS = LOAN_FIELDS | {
     "branch",
     "case_type",
@@ -90,10 +89,7 @@ def build_trusted_reconciliation(
             )
 
     counts = Counter(entry["status"] for entry in entries)
-    checked = sum(
-        counts[status]
-        for status in ("MATCH", "MATCH_WITH_CONFLICTS", "MISMATCH")
-    )
+    checked = sum(counts[status] for status in ("MATCH", "MATCH_WITH_CONFLICTS", "MISMATCH"))
     return {
         "summary": {
             "trusted_fields": len(entries),

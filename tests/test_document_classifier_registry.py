@@ -17,7 +17,10 @@ def test_fuzzy_ocr_noisy_heading_classified() -> None:
         ("Certificate of Marriage Registrar of Marriages Bride Groom", "Marriage Certificate"),
         ("Death Certificate date of death deceased registrar", "Death Certificate"),
         ("GST Registration Certificate GSTIN 27ABCDE1234F1Z5", "GST Certificate"),
-        ("Board Resolution resolved that board of directors authorised signatory", "Board Resolution"),
+        (
+            "Board Resolution resolved that board of directors authorised signatory",
+            "Board Resolution",
+        ),
         ("No Objection Certificate NOC from previous lender", "NOC"),
         ("TransUnion CIBIL Credit Information Report CIBIL Score Control Number", "CIBIL Report"),
         ("CRIF High Mark Credit Information Report Credit Score", "CRIF Report"),
@@ -30,7 +33,10 @@ def test_expanded_registry_document_types(text: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("MGNREGA Job Card National Rural Employment Guarantee Job Card Number 123", "MNREGA Job Card"),
+        (
+            "MGNREGA Job Card National Rural Employment Guarantee Job Card Number 123",
+            "MNREGA Job Card",
+        ),
         ("National Population Register NPR Letter issued to resident", "NPR Letter"),
         ("FORM 97 Declaration in lieu of PAN Form No 97", "Form 97"),
         ("Pension Payment Order PPO Number 12345 Pensioner Name", "Pension Payment Order"),
@@ -85,7 +91,9 @@ def test_stamp_and_utility_pages_classify_correctly() -> None:
     load_document_type_registry.cache_clear()
     stamp = classify_page("INDIA NON JUDICIAL FIVE HUNDRED RUPEES stamp paper RAJASTHAN")
     assert stamp["document_type"] == "Stamp Duty"
-    utility = classify_page("Jaipur Vidyut Vitran Nigam Limited विद्युत bill month due date consumer no")
+    utility = classify_page(
+        "Jaipur Vidyut Vitran Nigam Limited विद्युत bill month due date consumer no"
+    )
     assert utility["document_type"] == "Utility Bill"
 
 

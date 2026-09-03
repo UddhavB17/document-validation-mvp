@@ -7,9 +7,9 @@ need a short actionable list, not one row per scanned page or document fragment.
 
 from __future__ import annotations
 
-from collections import Counter
 import json
 import re
+from collections import Counter
 from typing import Any
 
 from database.db import get_connection
@@ -103,9 +103,10 @@ def collapse_for_reviewer(anomalies: list[dict]) -> list[dict]:
     for anomaly in unique_anomalies:
         rule_id = str(anomaly.get("rule_id") or "")
         cross_match = re.match(r"^CROSS_DOCUMENT_(.+?)_MISMATCH$", rule_id)
-        if cross_match and (
-            str(anomaly.get("person_id") or ""), cross_match.group(1)
-        ) in trusted_mismatch_keys:
+        if (
+            cross_match
+            and (str(anomaly.get("person_id") or ""), cross_match.group(1)) in trusted_mismatch_keys
+        ):
             continue
         bucket_key = _collapse_bucket_key(rule_id, anomaly)
         if bucket_key is None:
@@ -190,15 +191,13 @@ def build_reviewer_summary(
     """Return an auditable, non-LLM recommendation for the final reviewer."""
     collapsed = collapse_for_reviewer(anomalies)
     review_anomalies = [item for item in collapsed if _needs_review(item)]
-    pages = sorted(
-        {
-            int(page)
-            for item in review_anomalies
-            for page in _pages_from_anomaly(item)
-        }
+    pages = sorted({int(page) for item in review_anomalies for page in _pages_from_anomaly(item)})
+    severity_counts = Counter(
+        str(item.get("severity") or "LOW").upper() for item in review_anomalies
     )
-    severity_counts = Counter(str(item.get("severity") or "LOW").upper() for item in review_anomalies)
-    rule_ids = {str(item.get("rule_id") or "").removesuffix("_SUMMARY") for item in review_anomalies}
+    rule_ids = {
+        str(item.get("rule_id") or "").removesuffix("_SUMMARY") for item in review_anomalies
+    }
     high_count = severity_counts["HIGH"]
     processing_failure = bool(
         rule_ids & {"PAGE_PROCESSING_ERROR", "OCR_BUDGET_PARTIAL_SCAN", "DOCUMENT_NOT_READABLE"}
@@ -277,13 +276,7 @@ def _collapse_bucket_key(rule_id: str, anomaly: dict[str, Any] | None = None) ->
 
 def _build_summary(bucket_key: str, items: list[dict]) -> dict:
     rule_id = bucket_key.split("::", 1)[0]
-    pages = sorted(
-        {
-            int(page)
-            for item in items
-            for page in _pages_from_anomaly(item)
-        }
-    )
+    pages = sorted({int(page) for item in items for page in _pages_from_anomaly(item)})
     severities = {str(item.get("severity", "LOW")).upper() for item in items}
     if "HIGH" in severities:
         severity = "HIGH"
@@ -295,7 +288,6 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
     doc_types = Counter(
         str(item.get("document_type") or "Unknown") for item in items if item.get("document_type")
     )
-    doc_preview = ", ".join(f"{name}×{count}" for name, count in doc_types.most_common(4))
     page_preview = ", ".join(map(str, pages[:8]))
     if len(pages) > 8:
         page_preview += f", … (+{len(pages) - 8} more)"

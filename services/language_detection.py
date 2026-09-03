@@ -9,11 +9,10 @@ as candidates unless another source explicitly identifies the language.
 
 from __future__ import annotations
 
-from collections import Counter
-from typing import Any
 import re
 import unicodedata
-
+from collections import Counter
+from typing import Any
 
 _SCRIPT_RANGES: tuple[tuple[str, int, int], ...] = (
     ("latin", 0x0041, 0x024F),

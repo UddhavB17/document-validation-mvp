@@ -11,10 +11,7 @@ from typing import Any
 from services.classification_review_log import log_classification_review_event
 from services.document_classifier import HIGH_CONFIDENCE
 from services.person_names import has_independent_identity_anchor
-from services.progress_tracker import record_page_completed, update_stage
-from services.validation_gates import attach_field_provenance
 from services.pipeline._shared import (
-    DOCUMENT_TYPE_ALIASES,
     _EMAIL_ADDRESS_RE,
     _EMAIL_INFERRED_EVIDENCE_TYPES,
     _FILENAME_IDENTITY_TYPE_ANCHORS,
@@ -24,13 +21,17 @@ from services.pipeline._shared import (
     _NO_PAGE_INHERITANCE_TYPES,
     _NO_SANDWICH_SMOOTHING_TYPES,
     _ONE_PAGE_INHERITANCE_TYPES,
+    DOCUMENT_TYPE_ALIASES,
 )
 from services.pipeline.page_details import _extract_fields_with_layout
+from services.progress_tracker import record_page_completed
+from services.validation_gates import attach_field_provenance
 
 try:  # pragma: no cover - exercised when rapidfuzz is available
     from rapidfuzz import fuzz
 except Exception:  # pragma: no cover - fallback keeps the pipeline dependency-light
     fuzz = None
+
 
 def _deterministic_routing_document_type(
     *,
@@ -47,6 +48,7 @@ def _deterministic_routing_document_type(
     rule_confidence = float(classification_metadata.get("rule_confidence") or 0.0)
     return rule_type if rule_type != "Unknown" and rule_confidence >= HIGH_CONFIDENCE else "Unknown"
 
+
 def _apply_smoothed_document_type(
     page: dict[str, Any],
     document_type: str,
@@ -61,7 +63,6 @@ def _apply_smoothed_document_type(
     page["detection_method"] = method
 
     text = page.get("ocr_text", "")
-    from services.field_extractor import extract_fields
     from services.field_assignment_refiner import refine_field_assignments
 
     extracted_fields = _extract_fields_with_layout(
@@ -104,13 +105,31 @@ def _apply_smoothed_document_type(
             error=None,
         )
 
+
 def _looks_like_loan_agreement_continuation(text: str) -> bool:
     lowered = str(text or "").lower()
     markers = (
-        "borrower", "lender", "repayment", "facility", "event of default",
-        "उधारकर्ता", "उ ारक", "अनुच्छेद", "अनुJेद", "ऋणदा", "ऋण अनुबंध",
-        "ઉધારકર્તા", "લોનદાતા", "લોન કરાર", "ફેસિલિટી એગ્રીમમેન્ટ", "કલમ",
-        "sanction letter", "joint liability", "herein", "hereof", "article ",
+        "borrower",
+        "lender",
+        "repayment",
+        "facility",
+        "event of default",
+        "उधारकर्ता",
+        "उ ारक",
+        "अनुच्छेद",
+        "अनुJेद",
+        "ऋणदा",
+        "ऋण अनुबंध",
+        "ઉધારકર્તા",
+        "લોનદાતા",
+        "લોન કરાર",
+        "ફેસિલિટી એગ્રીમમેન્ટ",
+        "કલમ",
+        "sanction letter",
+        "joint liability",
+        "herein",
+        "hereof",
+        "article ",
     )
     hits = sum(1 for marker in markers if marker in lowered)
     if hits >= 2:
@@ -119,6 +138,7 @@ def _looks_like_loan_agreement_continuation(text: str) -> bool:
     if hits >= 1 and len(str(text or "")) >= 600:
         return True
     return False
+
 
 def _looks_like_multi_page_continuation(document_type: str, text: str) -> bool:
     lowered = str(text or "").lower()
@@ -130,26 +150,61 @@ def _looks_like_multi_page_continuation(document_type: str, text: str) -> bool:
         return any(
             marker in lowered
             for marker in (
-                "applicant", "co-applicant", "kyc", "mobile", "address",
-                "आवेदक", "सह-आवेदक", "पिनकोड", "pincode", "declaration",
-                "અરજદાર", "સહ અરજદાર", "સરનામું", "ઘોષણા",
+                "applicant",
+                "co-applicant",
+                "kyc",
+                "mobile",
+                "address",
+                "आवेदक",
+                "सह-आवेदक",
+                "पिनकोड",
+                "pincode",
+                "declaration",
+                "અરજદાર",
+                "સહ અરજદાર",
+                "સરનામું",
+                "ઘોષણા",
             )
         )
     if document_type == "Bank Statement":
         ledger_markers = (
-            "debit", "credit", "balance", "neft", "upi", "withdrawal",
-            "deposit", "opening balance", "closing balance", "transaction",
-            "brought forward", "end balance", "instrument no", "amount received",
-            "loan allocation amount", "receipt no", "txn date", "value date",
-            "installment amount due", "instalment amount due",
+            "debit",
+            "credit",
+            "balance",
+            "neft",
+            "upi",
+            "withdrawal",
+            "deposit",
+            "opening balance",
+            "closing balance",
+            "transaction",
+            "brought forward",
+            "end balance",
+            "instrument no",
+            "amount received",
+            "loan allocation amount",
+            "receipt no",
+            "txn date",
+            "value date",
+            "installment amount due",
+            "instalment amount due",
         )
         return sum(1 for marker in ledger_markers if marker in lowered) >= 2
     if document_type in {"CIBIL Report", "CRIF Report"}:
         return any(
             marker in lowered
             for marker in (
-                "account", "enquiry", "payment history", "overdue", "score",
-                "credit", "member", "control number", "high mark", "cibil", "crif",
+                "account",
+                "enquiry",
+                "payment history",
+                "overdue",
+                "score",
+                "credit",
+                "member",
+                "control number",
+                "high mark",
+                "cibil",
+                "crif",
             )
         )
     if document_type == "Passbook":
@@ -161,11 +216,18 @@ def _looks_like_multi_page_continuation(document_type: str, text: str) -> bool:
         return any(
             marker in lowered
             for marker in (
-                "deed of guarantee", "guarantee deed", "this guarantee",
-                "guarantor", "guaranteors", "guarantee", "જામીનદાર", "ગેરંટી",
+                "deed of guarantee",
+                "guarantee deed",
+                "this guarantee",
+                "guarantor",
+                "guaranteors",
+                "guarantee",
+                "જામીનદાર",
+                "ગેરંટી",
             )
         )
     return False
+
 
 def _smooth_page_classifications(
     pages: list[dict[str, Any]],
@@ -181,9 +243,8 @@ def _smooth_page_classifications(
         curr_page = sorted_pages[i]
         next_page = sorted_pages[i + 1]
 
-        if (
-            curr_page.get("document_type") == "Unknown"
-            and not _is_email_correspondence(str(curr_page.get("ocr_text") or ""))
+        if curr_page.get("document_type") == "Unknown" and not _is_email_correspondence(
+            str(curr_page.get("ocr_text") or "")
         ):
             prev_type = prev_page.get("document_type")
             next_type = next_page.get("document_type")
@@ -208,7 +269,11 @@ def _smooth_page_classifications(
                     application_id=application_id,
                     total_pages=total_pages,
                 )
-                fields = curr_page.get("extracted_fields") if isinstance(curr_page.get("extracted_fields"), dict) else {}
+                fields = (
+                    curr_page.get("extracted_fields")
+                    if isinstance(curr_page.get("extracted_fields"), dict)
+                    else {}
+                )
                 _mark_unanchored_inherited_identity(
                     fields,
                     detection_method="sandwich_smoothed",
@@ -313,7 +378,11 @@ def _smooth_page_classifications(
             application_id=application_id,
             total_pages=total_pages,
         )
-        fields = curr_page.get("extracted_fields") if isinstance(curr_page.get("extracted_fields"), dict) else {}
+        fields = (
+            curr_page.get("extracted_fields")
+            if isinstance(curr_page.get("extracted_fields"), dict)
+            else {}
+        )
         _mark_unanchored_inherited_identity(
             fields,
             detection_method="run_forward_smoothed",
@@ -336,6 +405,7 @@ def _smooth_page_classifications(
 
     return sorted_pages
 
+
 def _same_source_context(*pages: dict[str, Any]) -> bool:
     """Do not smooth classifications across ZIP-member boundaries."""
     identifiers = [
@@ -346,6 +416,7 @@ def _same_source_context(*pages: dict[str, Any]) -> bool:
         # A plain merged PDF has no source-member metadata.
         return True
     return all(identifiers) and len(set(identifiers)) == 1
+
 
 def _source_document_for_page(
     source_documents: list[dict[str, Any]],
@@ -360,6 +431,7 @@ def _source_document_for_page(
             return source
     return None
 
+
 def _mark_unanchored_inherited_identity(
     fields: dict[str, Any],
     *,
@@ -367,7 +439,10 @@ def _mark_unanchored_inherited_identity(
     raw_document_type: str | None,
 ) -> None:
     raw_type = _normalize_document_type(raw_document_type)
-    if detection_method not in {"inherited", "sandwich_smoothed", "run_forward_smoothed"} or raw_type != "Unknown":
+    if (
+        detection_method not in {"inherited", "sandwich_smoothed", "run_forward_smoothed"}
+        or raw_type != "Unknown"
+    ):
         return
     if has_independent_identity_anchor(fields):
         return
@@ -376,7 +451,10 @@ def _mark_unanchored_inherited_identity(
         for field in ("applicant_name", "borrower_name", "account_holder_name", "customer_name")
     ):
         fields["_identity_extraction_reliable"] = False
-        fields["_identity_extraction_unreliable_reason"] = "inherited_unknown_without_identity_anchor"
+        fields["_identity_extraction_unreliable_reason"] = (
+            "inherited_unknown_without_identity_anchor"
+        )
+
 
 def _log_classification_review_if_needed(
     *,
@@ -411,6 +489,7 @@ def _log_classification_review_if_needed(
             anchor_match_results=anchor_matches,
             llm_document_type=str(llm_type) if llm_type else None,
         )
+
 
 def _assign_sequential_document_type(
     *,
@@ -463,8 +542,7 @@ def _assign_sequential_document_type(
         (
             raw_type in agreement_types
             and (
-                raw_type == current_type
-                or not _looks_like_explicit_agreement_start(text, raw_type)
+                raw_type == current_type or not _looks_like_explicit_agreement_start(text, raw_type)
             )
         )
         or (
@@ -504,9 +582,14 @@ def _assign_sequential_document_type(
     # co-applicant, security, banking and declaration pages in the open form.
     if (
         current_type == "Application Form"
-        and raw_type in {
-            "Unknown", "Application Form", "Loan Agreement", "Facility Agreement",
-            "Property Document", "Aadhaar",
+        and raw_type
+        in {
+            "Unknown",
+            "Application Form",
+            "Loan Agreement",
+            "Facility Agreement",
+            "Property Document",
+            "Aadhaar",
         }
         and _looks_like_multi_page_continuation(current_type, text)
         and not _looks_like_fresh_page_without_match(text)
@@ -663,6 +746,7 @@ def _assign_sequential_document_type(
         "raw_confidence": raw_confidence,
     }
 
+
 def _inherited_sequence_result(
     *,
     current_type: str,
@@ -683,6 +767,7 @@ def _inherited_sequence_result(
         "inheritance_warning": reason,
     }
 
+
 def _identity_inheritance_block_reason(
     *,
     current_type: str,
@@ -696,17 +781,30 @@ def _identity_inheritance_block_reason(
             return "identity-document-inheritance-limit-reached"
     return None
 
+
 def _looks_like_sanction_letter_continuation(text: str) -> bool:
     normalized = _normalize_fresh_document_text(text)
     if not normalized:
         return False
     markers = (
-        "sanction", "sanctioned", "terms and conditions", "disbursement",
-        "credit verification", "interest rate", "loan tenure", "loan amount",
-        "મંજૂરી", "મંજૂર", "વિતરણ", "વ્યાજ દર", "લોનની મુદત", "શરતો",
+        "sanction",
+        "sanctioned",
+        "terms and conditions",
+        "disbursement",
+        "credit verification",
+        "interest rate",
+        "loan tenure",
+        "loan amount",
+        "મંજૂરી",
+        "મંજૂર",
+        "વિતરણ",
+        "વ્યાજ દર",
+        "લોનની મુદત",
+        "શરતો",
     )
     hits = sum(1 for marker in markers if marker in normalized)
     return hits >= 2 or (hits >= 1 and len(normalized) >= 400)
+
 
 def _looks_like_explicit_agreement_start(text: str, document_type: str) -> bool:
     """Recognize a real agreement title without treating body words as a boundary."""
@@ -721,33 +819,39 @@ def _looks_like_explicit_agreement_start(text: str, document_type: str) -> bool:
     ]
     return any(
         line == phrase
-        or (
-            line.startswith(f"{phrase} ")
-            and len(line.split()) <= len(phrase.split()) + 5
-        )
+        or (line.startswith(f"{phrase} ") and len(line.split()) <= len(phrase.split()) + 5)
         for line in header_lines
         for phrase in phrases
     )
+
 
 def _looks_like_explicit_nach_start(text: str) -> bool:
     """Require mandate-form structure, not a NACH transaction narration."""
     header = _normalize_fresh_document_text("\n".join(str(text or "").splitlines()[:20]))
     if not header:
         return False
-    has_title = bool(re.search(
-        r"\b(?:nach|ecs|national automated clearing house)\s+(?:debit\s+)?mandate\b|"
-        r"\b(?:debit|auto debit)\s+mandate\b",
-        header,
-    ))
+    has_title = bool(
+        re.search(
+            r"\b(?:nach|ecs|national automated clearing house)\s+(?:debit\s+)?mandate\b|"
+            r"\b(?:debit|auto debit)\s+mandate\b",
+            header,
+        )
+    )
     form_signals = sum(
         1
         for marker in (
-            "umrn", "sponsor bank", "utility code", "authorize to debit",
-            "authorise to debit", "frequency", "maximum amount",
+            "umrn",
+            "sponsor bank",
+            "utility code",
+            "authorize to debit",
+            "authorise to debit",
+            "frequency",
+            "maximum amount",
         )
         if marker in header
     )
     return has_title or form_signals >= 2
+
 
 def _looks_like_explicit_bureau_report_start(text: str) -> bool:
     """Distinguish a new bureau report cover from its account appendices."""
@@ -757,18 +861,25 @@ def _looks_like_explicit_bureau_report_start(text: str) -> bool:
     has_report_title = any(
         title in header
         for title in (
-            "cibil report", "crif report", "credit information report",
+            "cibil report",
+            "crif report",
+            "credit information report",
             "consumer credit report",
         )
     )
     has_new_subject = any(
         marker in header
         for marker in (
-            "consumer name", "applicant name", "subject name", "report id",
-            "control number", "member reference number",
+            "consumer name",
+            "applicant name",
+            "subject name",
+            "report id",
+            "control number",
+            "member reference number",
         )
     )
     return has_report_title and has_new_subject
+
 
 def _looks_like_kfs_start(text: str) -> bool:
     normalized = _normalize_fresh_document_text(text)
@@ -783,6 +894,7 @@ def _looks_like_kfs_start(text: str) -> bool:
             "annual percentage rate",
         )
     )
+
 
 def _looks_like_kfs_continuation(text: str) -> bool:
     normalized = _normalize_fresh_document_text(text)
@@ -810,11 +922,10 @@ def _looks_like_kfs_continuation(text: str) -> bool:
         ("total interest amount", "total amount to be paid", "sanctioned loan amount"),
     )
     family_hits = sum(
-        1
-        for family in marker_families
-        if sum(1 for marker in family if marker in normalized) >= 2
+        1 for family in marker_families if sum(1 for marker in family if marker in normalized) >= 2
     )
     return family_hits >= 1
+
 
 def _looks_like_fresh_page_without_match(text: str) -> bool:
     raw_text = text or ""
@@ -875,10 +986,7 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
     ]
     if any(
         line == phrase
-        or (
-            line.startswith(f"{phrase} ")
-            and len(line.split()) <= len(phrase.split()) + 5
-        )
+        or (line.startswith(f"{phrase} ") and len(line.split()) <= len(phrase.split()) + 5)
         for line in normalized_header_lines
         for phrase in strong_title_phrases
     ):
@@ -929,20 +1037,23 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
     fuzzy_terms = ("शपथ", "हलफनामा", "पट्टा", "प्रपत्र", "नोटरी", "स्टाम्प", "न्यायिक", "घोषणा")
     header_text = " ".join(extended_header_lines)
     return any(
-        _fuzzy_contains(header_text, _normalize_fresh_document_text(term))
-        for term in fuzzy_terms
+        _fuzzy_contains(header_text, _normalize_fresh_document_text(term)) for term in fuzzy_terms
     )
+
 
 def _normalize_fresh_document_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
     normalized = normalized.replace("\u2013", "-").replace("\u2014", "-")
     cleaned = "".join(
         character
-        if character.isalnum() or character == "-" or unicodedata.category(character).startswith("M")
+        if character.isalnum()
+        or character == "-"
+        or unicodedata.category(character).startswith("M")
         else " "
         for character in normalized
     )
     return re.sub(r"\s+", " ", cleaned).strip()
+
 
 def _fuzzy_contains(text: str, term: str, *, threshold: float = 0.85) -> bool:
     if not text or not term:
@@ -963,10 +1074,12 @@ def _fuzzy_contains(text: str, term: str, *, threshold: float = 0.85) -> bool:
             return True
     return False
 
+
 def _normalize_document_type(document_type: str | None) -> str:
     if not document_type:
         return "Unknown"
     return DOCUMENT_TYPE_ALIASES.get(document_type, document_type)
+
 
 def _infer_document_type_from_filename(filename: str) -> str | None:
     if not filename:
@@ -989,9 +1102,7 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         or re.search(r"\bpan\b", scope)
     ):
         return "KYC Card Photo"
-    if image_suffix and any(
-        folder in lower for folder in ("/collateral/", "/valuation/")
-    ):
+    if image_suffix and any(folder in lower for folder in ("/collateral/", "/valuation/")):
         return "Property Image"
 
     # Direct keyword matches against the file name / immediate parent folder.
@@ -1003,7 +1114,12 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         return "Aadhaar"
     if "passport" in scope:
         return "Passport"
-    if "driving" in scope or re.search(r"\bdl\b", scope) or "licence" in scope or "license" in scope:
+    if (
+        "driving" in scope
+        or re.search(r"\bdl\b", scope)
+        or "licence" in scope
+        or "license" in scope
+    ):
         return "Driving License"
     if "voter" in scope or re.search(r"\bepic\b", scope):
         return "Voter ID"
@@ -1035,7 +1151,13 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
         return "Bank Statement"
     if "statement" in scope or "bank_stmt" in scope or "bank stmt" in scope or "bankstmt" in scope:
         return "Bank Statement"
-    if "utility" in scope or "bill" in scope or "electricity" in scope or "water" in scope or "gas_bill" in scope:
+    if (
+        "utility" in scope
+        or "bill" in scope
+        or "electricity" in scope
+        or "water" in scope
+        or "gas_bill" in scope
+    ):
         return "Utility Bill"
     if "sanction" in scope or "loan_sanction" in scope:
         return "Sanction Letter"
@@ -1055,12 +1177,11 @@ def _infer_document_type_from_filename(filename: str) -> str | None:
     # Unknown and sequence smoothing.
     return None
 
+
 def _source_filename_override_allowed(source_type: str, detected_type: str) -> bool:
     """Do not let a generic KYC-photo folder erase a card's intrinsic type."""
-    return not (
-        source_type == "KYC Card Photo"
-        and detected_type in _INTRINSIC_IDENTITY_TYPES
-    )
+    return not (source_type == "KYC Card Photo" and detected_type in _INTRINSIC_IDENTITY_TYPES)
+
 
 def _is_email_correspondence(text: str) -> bool:
     """Recognize Outlook/Gmail exports and forwarded-message header blocks."""
@@ -1076,13 +1197,11 @@ def _is_email_correspondence(text: str) -> bool:
         or (header_hits >= 2 and len(_EMAIL_ADDRESS_RE.findall(raw)) >= 2)
     )
 
+
 def _filename_type_contradicted_by_text(document_type: str, text: str) -> bool:
     """True when a filename-derived identity type conflicts with page content."""
     raw = str(text or "")
-    if (
-        document_type in _EMAIL_INFERRED_EVIDENCE_TYPES
-        and _is_email_correspondence(raw)
-    ):
+    if document_type in _EMAIL_INFERRED_EVIDENCE_TYPES and _is_email_correspondence(raw):
         # An approval email about insurance/PDC/cheques is correspondence, not
         # the underlying document named in its ZIP member filename.
         return True
@@ -1098,6 +1217,7 @@ def _filename_type_contradicted_by_text(document_type: str, text: str) -> bool:
     lowered = raw.casefold()
     return not any(anchor in lowered for anchor in anchors)
 
+
 def _image_evidence_type_from_text(text: str) -> str | None:
     normalized = _normalize_fresh_document_text(text)
     if not normalized:
@@ -1106,11 +1226,17 @@ def _image_evidence_type_from_text(text: str) -> str | None:
         return "Property Image"
     if any(term in normalized for term in ("ration card", "राशन कार्ड", "परिवार राशन")):
         return "Ration Card Photo"
-    if any(term in normalized for term in ("unique identification authority", "uidai", "aadhaar", "pan card", "voter")):
+    if any(
+        term in normalized
+        for term in ("unique identification authority", "uidai", "aadhaar", "pan card", "voter")
+    ):
         return "KYC Card Photo"
-    if any(term in normalized for term in ("patta", "पट्टा", "lease deed", "allotment order", "khasra")):
+    if any(
+        term in normalized for term in ("patta", "पट्टा", "lease deed", "allotment order", "khasra")
+    ):
         return "Property Document"
     return None
+
 
 def _content_category_for_image_type(document_type: str) -> str:
     return {

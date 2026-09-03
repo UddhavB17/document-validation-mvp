@@ -19,6 +19,8 @@ data/uploads/*
 data/pages/*
 data/reports/*
 data/dmef.db
+data/*.db
+data/*.db.bak
 data/dmef.db-*
 data/*.db*-shm
 data/*.db*-wal
@@ -43,6 +45,7 @@ data/surya_cache/*
 !data/uploads/.gitkeep
 !data/pages/.gitkeep
 !data/reports/.gitkeep
+!data/processed/.gitkeep
 
 # Logs
 data/logs/*

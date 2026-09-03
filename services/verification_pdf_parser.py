@@ -145,9 +145,7 @@ def _extract_graviton_record_and_end_page(pdf_path: str) -> tuple[GravitonRecord
             raise GravitonJsonMalformedError(
                 f"Could not parse Graviton JSON from first {max_pages} page(s): {last_parse_error}"
             ) from last_parse_error
-        raise GravitonJsonNotFoundError(
-            f"No Graviton JSON text found in first {max_pages} page(s)"
-        )
+        raise GravitonJsonNotFoundError(f"No Graviton JSON text found in first {max_pages} page(s)")
     finally:
         doc.close()
 

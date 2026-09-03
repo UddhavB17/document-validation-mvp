@@ -7,6 +7,7 @@ from typing import Any
 from services.checklist_engine import build_anomaly, run_checks
 from services.processing_policy import OCR_SKIPPED_DOCUMENT_TYPE, max_scanned_pages_for_ocr
 
+
 def _processing_error_anomalies(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     anomalies: list[dict[str, Any]] = []
     for page in pages:
@@ -19,7 +20,9 @@ def _processing_error_anomalies(pages: list[dict[str, Any]]) -> list[dict[str, A
                 s_no=None,
                 severity="HIGH",
                 expected_value="Page processed without internal errors",
-                found_value=str(extracted_fields.get("_processing_error") or "Unknown processing error"),
+                found_value=str(
+                    extracted_fields.get("_processing_error") or "Unknown processing error"
+                ),
                 reason="OCR, classification, or field extraction failed for this page.",
                 page_number=page.get("page_number"),
                 document_type=page.get("document_type"),
@@ -27,9 +30,12 @@ def _processing_error_anomalies(pages: list[dict[str, Any]]) -> list[dict[str, A
         )
     return anomalies
 
+
 def _ocr_budget_anomaly(pages: list[dict[str, Any]]) -> dict[str, Any] | None:
     scanned_pages = [page for page in pages if page.get("page_type") == "scanned"]
-    skipped_pages = [page for page in scanned_pages if page.get("document_type") == OCR_SKIPPED_DOCUMENT_TYPE]
+    skipped_pages = [
+        page for page in scanned_pages if page.get("document_type") == OCR_SKIPPED_DOCUMENT_TYPE
+    ]
     if not skipped_pages:
         return None
 
@@ -52,12 +58,16 @@ def _ocr_budget_anomaly(pages: list[dict[str, Any]]) -> dict[str, Any] | None:
         document_type=OCR_SKIPPED_DOCUMENT_TYPE,
     )
 
-def _pipeline_outcome(anomalies: list[dict[str, Any]], processing_errors: list[dict[str, Any]]) -> str:
+
+def _pipeline_outcome(
+    anomalies: list[dict[str, Any]], processing_errors: list[dict[str, Any]]
+) -> str:
     if processing_errors:
         return "partial_failed"
     if any(anomaly.get("rule_id") == "UNSUPPORTED_DOCUMENT_TYPE" for anomaly in anomalies):
         return "unsupported_input"
     return "completed"
+
 
 def _run_checklist_with_fallback(
     pages: list[dict[str, Any]],

@@ -7,7 +7,10 @@ import re
 from toon import encode
 
 from database.db import get_connection
-from services.llm_client import call_llm_api, extract_response_text as _extract_response_text
+from services.llm_client import call_llm_api
+from services.llm_client import (
+    extract_response_text as _extract_response_text,  # noqa: F401 - compatibility export
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +73,7 @@ def parse_llm_summary(text: str) -> dict | None:
 
     try:
         from toon import decode
+
         parsed = decode(cleaned)
         if isinstance(parsed, dict) and "overall_summary" in parsed:
             # Normalize list formatting
@@ -104,13 +108,15 @@ def build_default_summary(anomalies: list[dict], ground_truth: dict) -> dict:
         if found is not None:
             summary_points.append(f"Found value was: {found}.")
 
-        page_summaries.append({
-            "page_number": page_num,
-            "document_type": doc_type,
-            "rule_id": anomaly.get("rule_id"),
-            "summary_points": summary_points,
-            "problem_description": reason
-        })
+        page_summaries.append(
+            {
+                "page_number": page_num,
+                "document_type": doc_type,
+                "rule_id": anomaly.get("rule_id"),
+                "summary_points": summary_points,
+                "problem_description": reason,
+            }
+        )
 
     high = sum(1 for item in anomalies if str(item.get("severity", "")).upper() == "HIGH")
     medium = sum(1 for item in anomalies if str(item.get("severity", "")).upper() == "MEDIUM")
@@ -134,7 +140,7 @@ def build_default_summary(anomalies: list[dict], ground_truth: dict) -> dict:
     return {
         "overall_summary": overall_msg,
         "final_recommendation": rec,
-        "page_summaries": page_summaries
+        "page_summaries": page_summaries,
     }
 
 
@@ -157,7 +163,7 @@ def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
         "overall_summary: A concise summary of the loan file review results.\n"
         "final_recommendation: APPROVE / SEND BACK TO BRANCH / MANUAL REVIEW\n\n"
         "page_summaries[1]{page_number,document_type,rule_id,summary_points,problem_description}:\n"
-        "  3,Bank Statement,TRUSTED_NAME_MISMATCH,[\"Statement is for State Bank of India account\",\"Covers April to June 2026\"],Applicant name does not match the application.\n\n"
+        '  3,Bank Statement,TRUSTED_NAME_MISMATCH,["Statement is for State Bank of India account","Covers April to June 2026"],Applicant name does not match the application.\n\n'
         f"Loan file {loan_id} for {applicant_name}.\n"
         "Ground truth from application form (TOON):\n"
         f"{encode(ground_truth)}\n"

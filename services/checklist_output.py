@@ -11,7 +11,6 @@ from database.models import (
     ChecklistSummary,
     ChecklistVerificationResponse,
 )
-from services.checklist_service import get_all_checklist_items
 from services.checklist_engine import (
     _document_derived_system_data,
     _document_evidence_count,
@@ -19,6 +18,7 @@ from services.checklist_engine import (
     condition_applies,
     system_flag_state,
 )
+from services.checklist_service import get_all_checklist_items
 from services.page_quality import confident_pages_for_types
 
 
@@ -100,9 +100,7 @@ def _build_item(
     else:
         status = "unknown"
         flagged_reason = (
-            "manual_review_required"
-            if not checklist_item.get("ai_checkable")
-            else "not_checked"
+            "manual_review_required" if not checklist_item.get("ai_checkable") else "not_checked"
         )
 
     confidence, confidence_detail = _confidence_for_item(
@@ -118,16 +116,18 @@ def _build_item(
         required_months = bank_statement_required_month_labels(system_data)
         if bank_statement_pages and required_months:
             extracted_fields["required_statement_months"] = ", ".join(required_months)
-            extracted_fields["statement_pages_evaluated_together"] = str(
-                len(bank_statement_pages)
-            )
+            extracted_fields["statement_pages_evaluated_together"] = str(len(bank_statement_pages))
             extracted_fields["coverage_scope"] = "Collective, per bank account"
     if checklist_item.get("check_type") == "system_flag":
         field = str(checklist_item.get("system_field") or "system_status")
         value = system_data.get(field)
         if value not in (None, ""):
             extracted_fields[field] = str(value)
-    extraction_source = "llm_fallback" if any(_used_llm_fallback(page) for page in matched_pages) else "deterministic"
+    extraction_source = (
+        "llm_fallback"
+        if any(_used_llm_fallback(page) for page in matched_pages)
+        else "deterministic"
+    )
 
     item = ChecklistItem(
         item_number=item_number,
@@ -194,7 +194,9 @@ def _confidence_for_item(
             return "low", _anomaly_detail(item_anomalies[0])
         return "low", f"matched {matched_count} of {required_pages} expected {unit}"
     if status == "not_applicable":
-        return "high", str(checklist_item.get("condition_description") or "condition is false; item not applicable")
+        return "high", str(
+            checklist_item.get("condition_description") or "condition is false; item not applicable"
+        )
     if status == "verified" and checklist_item.get("check_type") == "system_flag":
         return "high", "confirmed by system checklist status"
     if status == "unknown":

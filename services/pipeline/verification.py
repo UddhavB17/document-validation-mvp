@@ -11,6 +11,7 @@ from services.field_verification import verify_all_fields
 from services.ocr_json_export import merge_public_extracted_fields
 from services.verification_pdf_parser import VerificationPdfParseError, parse_verification_pdf
 
+
 def _stamp_pages_from_document_index(
     pages: list[dict[str, Any]],
     documents: list[dict[str, Any]],
@@ -43,12 +44,15 @@ def _stamp_pages_from_document_index(
                 ownership = dict(fields.get("_ownership") or {})
                 if not multi_person:
                     ownership["person_id"] = person_id
-                ownership.update({
-                    "document_scope": "multi_person" if multi_person else "single_person",
-                    "evidence": list(ownership.get("evidence") or []) + ["document_index"],
-                })
+                ownership.update(
+                    {
+                        "document_scope": "multi_person" if multi_person else "single_person",
+                        "evidence": list(ownership.get("evidence") or []) + ["document_index"],
+                    }
+                )
                 fields["_ownership"] = ownership
                 page["extracted_fields"] = fields
+
 
 def _run_document_verification(
     pdf_path: Path,
@@ -82,9 +86,7 @@ def _run_document_verification(
         }
 
     document_only_pages = [
-        page
-        for page in pages
-        if int(page.get("page_number") or 0) in document_page_numbers
+        page for page in pages if int(page.get("page_number") or 0) in document_page_numbers
     ]
     extracted_fields = merge_public_extracted_fields(document_only_pages)
     report = verify_all_fields(extracted_fields, graviton_record)

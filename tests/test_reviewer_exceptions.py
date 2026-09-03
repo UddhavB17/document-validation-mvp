@@ -274,4 +274,7 @@ def test_build_summary_found_value_with_multiple_pages() -> None:
 
     collapsed = collapse_for_reviewer(anomalies)
     assert len(collapsed) == 1
-    assert collapsed[0]["found_value"] == "Page 1: 'Statement Header'\nPage 2: 'Statement Header'\nPage 3: 'Salary Details'"
+    assert (
+        collapsed[0]["found_value"]
+        == "Page 1: 'Statement Header'\nPage 2: 'Statement Header'\nPage 3: 'Salary Details'"
+    )

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from database.db import get_connection
+from services.config import get_int
 from services.job_control import (
     JobInputUnavailableError,
     PipelineCancelled,
@@ -16,7 +17,6 @@ from services.job_control import (
     request_control,
 )
 from services.job_runner import submit_job
-from services.config import get_int
 from services.pipeline import run_pipeline
 from services.progress_tracker import (
     RETRYABLE_PROGRESS_STATES,
@@ -54,7 +54,9 @@ def resume_application(application_id: int) -> dict[str, Any]:
     status = str((progress or {}).get("operational_status") or "not_started")
     if status in {"stale", "failed", "cancelled", "completed_with_warnings"}:
         return queue_application_reprocess(application_id, resume=True)
-    raise ReprocessConflictError(f"Application cannot be resumed while pipeline status is {status}.")
+    raise ReprocessConflictError(
+        f"Application cannot be resumed while pipeline status is {status}."
+    )
 
 
 def restart_application(
@@ -171,7 +173,9 @@ def queue_application_reprocess(
         digital_pages=int(uploaded["digital_pages"] or 0),
         scanned_pages=int(uploaded["scanned_pages"] or 0),
         stage="queued",
-        message="Checkpoint recovery accepted and queued" if resume else "Restart accepted and queued",
+        message="Checkpoint recovery accepted and queued"
+        if resume
+        else "Restart accepted and queued",
         resume=resume,
     )
     if not resume:
@@ -335,15 +339,13 @@ def _heartbeat_is_recent(value: Any, *, seconds: int | None = None) -> bool:
     except ValueError:
         return False
     if heartbeat.tzinfo is None:
-        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
-    grace_seconds = seconds or get_int(
-        "DMEF_JOB_HEARTBEAT_GRACE_SECONDS", 180, minimum=30
-    )
-    return (datetime.now(timezone.utc) - heartbeat).total_seconds() <= grace_seconds
+        heartbeat = heartbeat.replace(tzinfo=UTC)
+    grace_seconds = seconds or get_int("DMEF_JOB_HEARTBEAT_GRACE_SECONDS", 180, minimum=30)
+    return (datetime.now(UTC) - heartbeat).total_seconds() <= grace_seconds
 
 
 def _mark_worker_stale(application_id: int) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with get_connection() as connection:
         job = connection.execute(
             "SELECT id, status FROM pipeline_jobs WHERE application_id = ? ORDER BY id DESC LIMIT 1",

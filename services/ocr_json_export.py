@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from services.field_assignment_refiner import is_suspicious_assignment
+from services.paths import processed_output_dir
 
 
 def build_ocr_document_json(
@@ -27,10 +28,12 @@ def build_ocr_document_json(
     combined_fields = merge_public_extracted_fields(selected_pages)
     return {
         "application_id": application_id,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "document_page_count": len(documents),
         "combined_extracted_fields": combined_fields,
-        "structured_extracted_data": build_structured_extracted_data(selected_pages, combined_fields),
+        "structured_extracted_data": build_structured_extracted_data(
+            selected_pages, combined_fields
+        ),
         "raw_ocr_pages": _raw_ocr_pages(documents),
         "documents": documents,
     }
@@ -39,7 +42,7 @@ def build_ocr_document_json(
 def save_ocr_document_json(
     application_id: int,
     pages: list[dict[str, Any]],
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
     *,
     document_page_numbers: set[int] | None = None,
     page_events: list[dict[str, Any]] | None = None,
@@ -51,7 +54,8 @@ def save_ocr_document_json(
         document_page_numbers=document_page_numbers,
         page_events=page_events,
     )
-    target_dir = Path(output_dir) / f"application_{application_id}"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    target_dir = resolved_output_dir / f"application_{application_id}"
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / "document_ocr_data.json"
     with target_path.open("w", encoding="utf-8") as file:
@@ -207,9 +211,7 @@ def _select_document_pages(
     if document_page_numbers is None:
         return sorted_pages
     return [
-        page
-        for page in sorted_pages
-        if int(page.get("page_number") or 0) in document_page_numbers
+        page for page in sorted_pages if int(page.get("page_number") or 0) in document_page_numbers
     ]
 
 
@@ -232,7 +234,9 @@ def _section(
     return section
 
 
-def _first_value(fields: dict[str, Any], candidate_names: tuple[str, ...]) -> tuple[str | None, Any]:
+def _first_value(
+    fields: dict[str, Any], candidate_names: tuple[str, ...]
+) -> tuple[str | None, Any]:
     for field_name in candidate_names:
         value = fields.get(field_name)
         if value not in (None, "", [], {}):
@@ -331,16 +335,22 @@ def _document_page_summary(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     summary: list[dict[str, Any]] = []
     for page in sorted(pages, key=lambda item: int(item.get("page_number") or 0)):
         fields = page.get("extracted_fields") or {}
-        public_fields = {
-            key: value
-            for key, value in fields.items()
-            if not str(key).startswith("_") and value not in (None, "", [], {})
-        } if isinstance(fields, dict) else {}
+        public_fields = (
+            {
+                key: value
+                for key, value in fields.items()
+                if not str(key).startswith("_") and value not in (None, "", [], {})
+            }
+            if isinstance(fields, dict)
+            else {}
+        )
         summary.append(
             {
                 "page_number": page.get("page_number"),
                 "document_type": page.get("document_type") or "Unknown",
-                "llm_document_type": _llm_document_type(fields) if isinstance(fields, dict) else None,
+                "llm_document_type": _llm_document_type(fields)
+                if isinstance(fields, dict)
+                else None,
                 "ocr_confidence": page.get("ocr_confidence"),
                 "field_names": sorted(public_fields),
             }
@@ -371,7 +381,9 @@ def _page_events_by_number(page_events: list[dict[str, Any]]) -> dict[int, dict[
     }
 
 
-def _page_to_document_json(page: dict[str, Any], event: dict[str, Any] | None = None) -> dict[str, Any]:
+def _page_to_document_json(
+    page: dict[str, Any], event: dict[str, Any] | None = None
+) -> dict[str, Any]:
     event = event or {}
     fields = page.get("extracted_fields") or {}
     if not isinstance(fields, dict):

@@ -4,17 +4,17 @@ The database file lives at DATABASE_PATH (default: data/dmef.db).
 Override by setting DATABASE_PATH in your .env file.
 """
 
-import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 
 from dotenv import load_dotenv
 
+from services.paths import database_path
+
 load_dotenv()
 
-DATABASE_PATH = Path(os.getenv("DATABASE_PATH", "data/dmef.db"))
+DATABASE_PATH = database_path()
 
 
 @contextmanager
@@ -73,7 +73,11 @@ def _ocr_route_check_needs_google_vision(table_sql: str) -> bool:
     if not table_sql or "google_vision" in table_sql:
         return False
     normalized = " ".join(table_sql.lower().split())
-    return "check(ocr_route in (" in normalized or "check(requested_route in (" in normalized or "check(route_used in (" in normalized
+    return (
+        "check(ocr_route in (" in normalized
+        or "check(requested_route in (" in normalized
+        or "check(route_used in (" in normalized
+    )
 
 
 def _migrate_ocr_route_events_for_google_vision(connection: sqlite3.Connection) -> None:
@@ -186,37 +190,254 @@ def _migrate_pages_ocr_route_for_google_vision(connection: sqlite3.Connection) -
 
 def seed_settings(connection: sqlite3.Connection) -> None:
     defaults = [
-        ("llm_enabled", "false", "bool", "llm", "Enable LLM Verification", "Enable LLM verification checks and checklist engine queries."),
-        ("llm_provider", "ollama", "str", "llm", "LLM Provider", "Select the LLM backend provider (e.g. ollama, openai, gemini)."),
-        ("llm_model", "llama3.2", "str", "llm", "Model Name", "Name of the LLM model to run queries against."),
-        ("min_confidence", "0.70", "float", "classification", "Min Classification Confidence", "Minimum confidence score required to auto-classify a page."),
-        ("ocr.provider", "google_vision", "str", "ocr", "OCR Provider", "Use Google Vision API OCR for scanned pages."),
-        ("google.vision.auth", "auto", "str", "ocr", "Google Vision Auth Mode", "Use API key, Application Default Credentials, or automatic Google Vision authentication."),
-        ("google.vision.api_key", "", "secret", "ocr", "Google Vision API Key", "Optional Google Vision API key used only for OCR calls."),
-        ("google.vision.feature", "DOCUMENT_TEXT_DETECTION", "str", "ocr", "Google Vision OCR Feature", "Google Vision feature used for OCR."),
-        ("google.vision.timeout.seconds", "60", "int", "ocr", "Google Vision Timeout", "Timeout in seconds for each Google Vision OCR request."),
-        ("google.vision.max_attempts", "3", "int", "ocr", "Google Vision Retry Attempts", "Retry transient Google Vision network and service failures before flagging a page."),
-        ("google.vision.language_hints", "", "str", "ocr", "Google Vision Language Hints", "Optional comma-separated BCP-47 hints such as en,gu; leave blank for automatic multilingual detection."),
-        ("google.vision.api_endpoint", "", "str", "ocr", "Google Vision API Endpoint", "Optional custom client endpoint for Google Vision."),
-        ("google.vision.rest_url", "https://vision.googleapis.com/v1/images:annotate", "str", "ocr", "Google Vision REST URL", "REST endpoint used when authenticating Google Vision with an API key."),
-        ("required_fields.pan", '["pan_number", "applicant_name", "date_of_birth"]', "json", "fields", "PAN Card Required Fields", "Fields required to validate a PAN Card."),
-        ("required_fields.aadhaar", '["aadhaar_number", "applicant_name", "date_of_birth", "address", "pin_code"]', "json", "fields", "Aadhaar Required Fields", "Fields required to validate Aadhaar."),
-        ("required_fields.voter_id", '["voter_id_number", "applicant_name", "date_of_birth", "address"]', "json", "fields", "Voter ID Required Fields", "Fields required to validate a Voter ID."),
-        ("required_fields.driving_license", '["dl_number", "applicant_name", "date_of_birth", "validity_date", "is_expired"]', "json", "fields", "Driving License Required Fields", "Fields required to validate a Driving License."),
-        ("required_fields.sanction_letter", '["applicant_name", "loan_amount"]', "json", "fields", "Sanction Letter Required Fields", "Fields required to validate a Sanction Letter."),
-        ("required_fields.loan_agreement", '["applicant_name", "loan_amount"]', "json", "fields", "Loan Agreement Required Fields", "Fields required to validate a Loan Agreement."),
-        ("required_fields.cibil_report", '["applicant_name"]', "json", "fields", "CIBIL Required Fields", "Fields required to validate a CIBIL report."),
-        ("required_fields.crif_report", '["applicant_name"]', "json", "fields", "CRIF Required Fields", "Fields required to validate a CRIF report."),
-        ("required_fields.bank_statement", '["applicant_name", "account_number", "ifsc"]', "json", "fields", "Bank Statement Required Fields", "Fields required to validate a Bank Statement."),
-        ("required_fields.passbook", '["applicant_name", "account_number", "ifsc"]', "json", "fields", "Passbook Required Fields", "Fields required to validate a Passbook."),
-        ("required_fields.cheque", '["applicant_name", "account_number", "ifsc"]', "json", "fields", "Cheque Required Fields", "Fields required to validate a Cheque."),
-        ("required_fields.salary_slip", '["applicant_name", "salary_month", "net_salary"]', "json", "fields", "Salary Slip Required Fields", "Fields required to validate a Salary Slip."),
-        ("required_fields.stamp_duty", '["stamp_duty_amount", "stamp_certificate_number", "stamp_jurisdiction_state", "stamp_first_party", "stamp_second_party"]', "json", "fields", "Stamp Duty Required Fields", "Fields required to validate a Stamp Duty document."),
-        ("required_fields.insurance_consent", '["is_consent_given", "premium_amount"]', "json", "fields", "Insurance Consent Required Fields", "Fields required to validate Insurance Consent."),
-        ("required_fields.clearance_report", '["search_result", "debtor_name", "pan_number"]', "json", "fields", "Clearance Report Required Fields", "Fields required to validate a Clearance/CERSAI Report."),
-        ("required_fields.nach_form", '["account_number", "ifsc", "mandate_limit"]', "json", "fields", "NACH Form Required Fields", "Fields required to validate a NACH Mandate Form."),
-        ("required_fields.utility_bill", '[]', "json", "fields", "Utility Bill Required Fields", "Utility bills are classified for presence only; their contents are not cross-checked."),
-        ("required_fields.application_form", '["applicant_name", "aadhaar_number", "pan_number", "date_of_birth", "phone_number", "address", "pin_code", "loan_amount"]', "json", "fields", "Application Form Required Fields", "Fields required to validate an Application Form."),
+        (
+            "llm_enabled",
+            "false",
+            "bool",
+            "llm",
+            "Enable LLM Verification",
+            "Enable LLM verification checks and checklist engine queries.",
+        ),
+        (
+            "llm_provider",
+            "ollama",
+            "str",
+            "llm",
+            "LLM Provider",
+            "Select the LLM backend provider (e.g. ollama, openai, gemini).",
+        ),
+        (
+            "llm_model",
+            "llama3.2",
+            "str",
+            "llm",
+            "Model Name",
+            "Name of the LLM model to run queries against.",
+        ),
+        (
+            "min_confidence",
+            "0.70",
+            "float",
+            "classification",
+            "Min Classification Confidence",
+            "Minimum confidence score required to auto-classify a page.",
+        ),
+        (
+            "ocr.provider",
+            "google_vision",
+            "str",
+            "ocr",
+            "OCR Provider",
+            "Use Google Vision API OCR for scanned pages.",
+        ),
+        (
+            "google.vision.auth",
+            "auto",
+            "str",
+            "ocr",
+            "Google Vision Auth Mode",
+            "Use API key, Application Default Credentials, or automatic Google Vision authentication.",
+        ),
+        (
+            "google.vision.api_key",
+            "",
+            "secret",
+            "ocr",
+            "Google Vision API Key",
+            "Optional Google Vision API key used only for OCR calls.",
+        ),
+        (
+            "google.vision.feature",
+            "DOCUMENT_TEXT_DETECTION",
+            "str",
+            "ocr",
+            "Google Vision OCR Feature",
+            "Google Vision feature used for OCR.",
+        ),
+        (
+            "google.vision.timeout.seconds",
+            "60",
+            "int",
+            "ocr",
+            "Google Vision Timeout",
+            "Timeout in seconds for each Google Vision OCR request.",
+        ),
+        (
+            "google.vision.max_attempts",
+            "3",
+            "int",
+            "ocr",
+            "Google Vision Retry Attempts",
+            "Retry transient Google Vision network and service failures before flagging a page.",
+        ),
+        (
+            "google.vision.language_hints",
+            "",
+            "str",
+            "ocr",
+            "Google Vision Language Hints",
+            "Optional comma-separated BCP-47 hints such as en,gu; leave blank for automatic multilingual detection.",
+        ),
+        (
+            "google.vision.api_endpoint",
+            "",
+            "str",
+            "ocr",
+            "Google Vision API Endpoint",
+            "Optional custom client endpoint for Google Vision.",
+        ),
+        (
+            "google.vision.rest_url",
+            "https://vision.googleapis.com/v1/images:annotate",
+            "str",
+            "ocr",
+            "Google Vision REST URL",
+            "REST endpoint used when authenticating Google Vision with an API key.",
+        ),
+        (
+            "required_fields.pan",
+            '["pan_number", "applicant_name", "date_of_birth"]',
+            "json",
+            "fields",
+            "PAN Card Required Fields",
+            "Fields required to validate a PAN Card.",
+        ),
+        (
+            "required_fields.aadhaar",
+            '["aadhaar_number", "applicant_name", "date_of_birth", "address", "pin_code"]',
+            "json",
+            "fields",
+            "Aadhaar Required Fields",
+            "Fields required to validate Aadhaar.",
+        ),
+        (
+            "required_fields.voter_id",
+            '["voter_id_number", "applicant_name", "date_of_birth", "address"]',
+            "json",
+            "fields",
+            "Voter ID Required Fields",
+            "Fields required to validate a Voter ID.",
+        ),
+        (
+            "required_fields.driving_license",
+            '["dl_number", "applicant_name", "date_of_birth", "validity_date", "is_expired"]',
+            "json",
+            "fields",
+            "Driving License Required Fields",
+            "Fields required to validate a Driving License.",
+        ),
+        (
+            "required_fields.sanction_letter",
+            '["applicant_name", "loan_amount"]',
+            "json",
+            "fields",
+            "Sanction Letter Required Fields",
+            "Fields required to validate a Sanction Letter.",
+        ),
+        (
+            "required_fields.loan_agreement",
+            '["applicant_name", "loan_amount"]',
+            "json",
+            "fields",
+            "Loan Agreement Required Fields",
+            "Fields required to validate a Loan Agreement.",
+        ),
+        (
+            "required_fields.cibil_report",
+            '["applicant_name"]',
+            "json",
+            "fields",
+            "CIBIL Required Fields",
+            "Fields required to validate a CIBIL report.",
+        ),
+        (
+            "required_fields.crif_report",
+            '["applicant_name"]',
+            "json",
+            "fields",
+            "CRIF Required Fields",
+            "Fields required to validate a CRIF report.",
+        ),
+        (
+            "required_fields.bank_statement",
+            '["applicant_name", "account_number", "ifsc"]',
+            "json",
+            "fields",
+            "Bank Statement Required Fields",
+            "Fields required to validate a Bank Statement.",
+        ),
+        (
+            "required_fields.passbook",
+            '["applicant_name", "account_number", "ifsc"]',
+            "json",
+            "fields",
+            "Passbook Required Fields",
+            "Fields required to validate a Passbook.",
+        ),
+        (
+            "required_fields.cheque",
+            '["applicant_name", "account_number", "ifsc"]',
+            "json",
+            "fields",
+            "Cheque Required Fields",
+            "Fields required to validate a Cheque.",
+        ),
+        (
+            "required_fields.salary_slip",
+            '["applicant_name", "salary_month", "net_salary"]',
+            "json",
+            "fields",
+            "Salary Slip Required Fields",
+            "Fields required to validate a Salary Slip.",
+        ),
+        (
+            "required_fields.stamp_duty",
+            '["stamp_duty_amount", "stamp_certificate_number", "stamp_jurisdiction_state", "stamp_first_party", "stamp_second_party"]',
+            "json",
+            "fields",
+            "Stamp Duty Required Fields",
+            "Fields required to validate a Stamp Duty document.",
+        ),
+        (
+            "required_fields.insurance_consent",
+            '["is_consent_given", "premium_amount"]',
+            "json",
+            "fields",
+            "Insurance Consent Required Fields",
+            "Fields required to validate Insurance Consent.",
+        ),
+        (
+            "required_fields.clearance_report",
+            '["search_result", "debtor_name", "pan_number"]',
+            "json",
+            "fields",
+            "Clearance Report Required Fields",
+            "Fields required to validate a Clearance/CERSAI Report.",
+        ),
+        (
+            "required_fields.nach_form",
+            '["account_number", "ifsc", "mandate_limit"]',
+            "json",
+            "fields",
+            "NACH Form Required Fields",
+            "Fields required to validate a NACH Mandate Form.",
+        ),
+        (
+            "required_fields.utility_bill",
+            "[]",
+            "json",
+            "fields",
+            "Utility Bill Required Fields",
+            "Utility bills are classified for presence only; their contents are not cross-checked.",
+        ),
+        (
+            "required_fields.application_form",
+            '["applicant_name", "aadhaar_number", "pan_number", "date_of_birth", "phone_number", "address", "pin_code", "loan_amount"]',
+            "json",
+            "fields",
+            "Application Form Required Fields",
+            "Fields required to validate an Application Form.",
+        ),
     ]
     for key, val, val_type, cat, lbl, desc in defaults:
         connection.execute(
@@ -225,7 +446,7 @@ def seed_settings(connection: sqlite3.Connection) -> None:
             (config_key, config_value, value_type, category, label, description) 
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (key, val, val_type, cat, lbl, desc)
+            (key, val, val_type, cat, lbl, desc),
         )
 
     # API OCR is now the supported production path. Upgrade the former seeded

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -50,7 +50,7 @@ def _seed_pdf_application(tmp_path: Path, *, progress_status: str = "failed") ->
 def test_progress_marks_old_processing_job_stale(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id, _ = _seed_pdf_application(tmp_path, progress_status="processing")
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    old_time = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     with get_connection() as connection:
         connection.execute(
             "UPDATE pipeline_progress SET updated_at = ? WHERE application_id = ?",

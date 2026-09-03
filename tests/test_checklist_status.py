@@ -1,6 +1,6 @@
 from services.checklist_engine import check_presence_min_count, run_checks
-from services.checklist_status import build_checklist_status
 from services.checklist_service import get_all_checklist_items
+from services.checklist_status import build_checklist_status
 
 
 def test_presence_min_count_requires_two_pages() -> None:
@@ -16,7 +16,9 @@ def test_presence_min_count_requires_two_pages() -> None:
 def test_run_checks_flags_missing_pan_presence_only() -> None:
     anomalies = run_checks([], {}, {}, "LAP")
     assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
-    assert not any(str(anomaly.get("rule_id", "")).startswith("FIELD_MISMATCH") for anomaly in anomalies)
+    assert not any(
+        str(anomaly.get("rule_id", "")).startswith("FIELD_MISMATCH") for anomaly in anomalies
+    )
 
 
 def test_build_checklist_status_marks_missing_items() -> None:

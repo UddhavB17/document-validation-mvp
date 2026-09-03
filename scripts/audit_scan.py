@@ -2,6 +2,7 @@
 
 Usage: .venv/bin/python scripts/audit_scan.py <application_id>
 """
+
 import json
 import re
 import sqlite3
@@ -9,13 +10,37 @@ import sys
 
 # Strong content markers -> the type they imply.
 MARKERS = [
-    ("Aadhaar", re.compile(r"unique identification authority|uidai|आधार|aadhaar\s*(?:no|number|card)|मेरा\s*आधार", re.I)),
-    ("PAN Card", re.compile(r"income\s*tax\s*department.{0,80}permanent\s*account\s*number|permanent\s*account\s*number\s*card", re.I | re.S)),
+    (
+        "Aadhaar",
+        re.compile(
+            r"unique identification authority|uidai|आधार|aadhaar\s*(?:no|number|card)|मेरा\s*आधार",
+            re.I,
+        ),
+    ),
+    (
+        "PAN Card",
+        re.compile(
+            r"income\s*tax\s*department.{0,80}permanent\s*account\s*number|permanent\s*account\s*number\s*card",
+            re.I | re.S,
+        ),
+    ),
     ("CIBIL Report", re.compile(r"transunion\s*cibil|cibil\s*score|consumer\s*cir\b", re.I)),
     ("CRIF Report", re.compile(r"crif\s*high\s*mark|equifax|experian", re.I)),
-    ("Voter ID", re.compile(r"election\s*commission\s*of\s*india|elector('|)s?\s*photo\s*identity", re.I)),
-    ("Driving License", re.compile(r"driving\s*licen[cs]e|transport\s*department.{0,40}licen[cs]e", re.I | re.S)),
-    ("Bank Statement", re.compile(r"statement\s*of\s*account|account\s*statement\s*for|txn\s*date.{0,40}(withdrawal|deposit)", re.I | re.S)),
+    (
+        "Voter ID",
+        re.compile(r"election\s*commission\s*of\s*india|elector('|)s?\s*photo\s*identity", re.I),
+    ),
+    (
+        "Driving License",
+        re.compile(r"driving\s*licen[cs]e|transport\s*department.{0,40}licen[cs]e", re.I | re.S),
+    ),
+    (
+        "Bank Statement",
+        re.compile(
+            r"statement\s*of\s*account|account\s*statement\s*for|txn\s*date.{0,40}(withdrawal|deposit)",
+            re.I | re.S,
+        ),
+    ),
 ]
 
 GARBAGE_NAME = re.compile(
@@ -47,12 +72,17 @@ def main() -> None:
                 h == label
                 or (h == "PAN Card" and label in ("PAN", "PAN Card", "KYC Card Photo"))
                 or (h == "Aadhaar" and label in ("Aadhaar", "KYC Card Photo"))
-                or (h in ("CIBIL Report", "CRIF Report") and label in ("CIBIL Report", "CRIF Report"))
+                or (
+                    h in ("CIBIL Report", "CRIF Report")
+                    and label in ("CIBIL Report", "CRIF Report")
+                )
             )
             if not fam_ok:
                 snippet = re.sub(r"\s+", " ", text)[:140]
-                print(f"p{r['page_number']:>4} label={label!r} conf={r['classification_confidence']} "
-                      f"method={r['detection_method']} marker={h}\n      {snippet}")
+                print(
+                    f"p{r['page_number']:>4} label={label!r} conf={r['classification_confidence']} "
+                    f"method={r['detection_method']} marker={h}\n      {snippet}"
+                )
 
     print(f"\n### app {app_id}: suspicious extracted fields")
     for r in rows:

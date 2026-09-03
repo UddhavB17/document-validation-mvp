@@ -27,17 +27,16 @@ def test_reconciliation_exposes_matches_conflicts_gaps_and_database_only_fields(
         },
     }
     pages = [
-        _page(1, "Application Form", "primary", applicant_name="Ramesh Kumar", loan_amount="500000"),
+        _page(
+            1, "Application Form", "primary", applicant_name="Ramesh Kumar", loan_amount="500000"
+        ),
         _page(2, "PAN", "primary", pan_number="ABCDE1234F"),
         _page(3, "Bank Statement", "primary", account_number="999999999012"),
         _page(4, "Loan Agreement", "primary", loan_amount="600000"),
     ]
 
     result = build_trusted_reconciliation(pages, trusted)
-    statuses = {
-        (item.get("person_id"), item["field"]): item["status"]
-        for item in result["fields"]
-    }
+    statuses = {(item.get("person_id"), item["field"]): item["status"] for item in result["fields"]}
 
     assert statuses[(None, "loan_amount")] == "MATCH_WITH_CONFLICTS"
     assert statuses[(None, "emi")] == "NOT_OBSERVED"
@@ -64,14 +63,17 @@ def test_reconciliation_ignores_cached_page_counter_address() -> None:
 
     result = build_trusted_reconciliation(pages, trusted)
     address = next(
-        item for item in result["fields"]
+        item
+        for item in result["fields"]
         if item.get("person_id") == "primary" and item["field"] == "address"
     )
 
     assert address["status"] == "MATCH"
-    assert address["evidence"] == [{
-        "value": "S/O: Unkar Lal, Semlibakta 326502",
-        "document_type": "CAM",
-        "page_number": 1,
-        "match": True,
-    }]
+    assert address["evidence"] == [
+        {
+            "value": "S/O: Unkar Lal, Semlibakta 326502",
+            "document_type": "CAM",
+            "page_number": 1,
+            "match": True,
+        }
+    ]

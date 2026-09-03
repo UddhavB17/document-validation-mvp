@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
@@ -94,7 +94,7 @@ class DocumentVerificationReport(BaseModel):
     matched_fields: int = Field(ge=0)
     failed_fields: list[str]
     field_results: list[FieldVerificationResult]
-    verification_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    verification_timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     needs_manual_review: bool
 
     @computed_field
@@ -152,7 +152,10 @@ class ChecklistVerificationResponse(BaseModel):
     loan_file_id: str
     summary: ChecklistSummary
     items: list[ChecklistItem]
-    processing_metadata: ChecklistProcessingMetadata = Field(default_factory=ChecklistProcessingMetadata)
+    processing_metadata: ChecklistProcessingMetadata = Field(
+        default_factory=ChecklistProcessingMetadata
+    )
+
 
 SCHEMA_STATEMENTS = [
     """

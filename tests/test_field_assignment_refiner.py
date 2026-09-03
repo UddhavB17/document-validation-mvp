@@ -111,10 +111,5 @@ def test_parse_field_assignment_accepts_json_and_fenced_json() -> None:
 
 
 def test_parse_field_assignment_still_accepts_toon() -> None:
-    toon = (
-        "fields:\n"
-        "  applicant_name: Peeru Lal\n"
-        "reason: clear name\n"
-        "confidence: 0.91\n"
-    )
+    toon = "fields:\n  applicant_name: Peeru Lal\nreason: clear name\nconfidence: 0.91\n"
     assert _parse_toon_object(toon)["fields"]["applicant_name"] == "Peeru Lal"

@@ -8,7 +8,6 @@ from typing import Any
 from services.cersai import is_debtor_based, search_criteria_text
 from services.person_names import has_independent_identity_anchor, is_person_name_candidate
 
-
 IDENTITY_FIELDS = {
     "applicant_name",
     "borrower_name",
@@ -60,12 +59,14 @@ def is_aadhaar_verification_appendix(text: Any) -> bool:
         re.IGNORECASE,
     ):
         return False
-    return bool(re.search(
-        r"<\s*(?:Certificate|KycRes|UidData)\b|"
-        r"\b(?:X509Certificate|SignatureValue|DigestValue)\b",
-        raw,
-        re.IGNORECASE,
-    ))
+    return bool(
+        re.search(
+            r"<\s*(?:Certificate|KycRes|UidData)\b|"
+            r"\b(?:X509Certificate|SignatureValue|DigestValue)\b",
+            raw,
+            re.IGNORECASE,
+        )
+    )
 
 
 def canonical_field(field: Any) -> str:
@@ -99,7 +100,9 @@ def attach_field_provenance(
     fields = page.get("extracted_fields")
     if not isinstance(fields, dict):
         return
-    classification = fields.get("_classification") if isinstance(fields.get("_classification"), dict) else {}
+    classification = fields.get("_classification")
+    if not isinstance(classification, dict):
+        classification = {}
     source_segment = None
     if source_document:
         start = source_document.get("internal_page_start")
@@ -115,7 +118,9 @@ def attach_field_provenance(
     text_confidence = 1.0 if ocr_confidence in (None, "") else _float(ocr_confidence, 0.0)
     base_confidence = max(0.0, min(type_confidence or 0.0, text_confidence))
     method = str(page.get("detection_method") or classification.get("detection_method") or "")
-    raw_type = str(classification.get("raw_document_type") or page.get("document_type") or "Unknown")
+    raw_type = str(
+        classification.get("raw_document_type") or page.get("document_type") or "Unknown"
+    )
     smoothed = method in WEAK_INHERITED_METHODS
     recovery_metadata = fields.get("_trusted_candidate_recovery")
     if not isinstance(recovery_metadata, dict):
@@ -127,7 +132,11 @@ def attach_field_provenance(
             continue
         field_key = canonical_field(field_name)
         confidence = base_confidence
-        if smoothed and _is_raw_unknown(raw_type) and field_key in IDENTITY_FIELDS | BUREAU_SCORE_FIELDS | BANKING_FIELDS:
+        if (
+            smoothed
+            and _is_raw_unknown(raw_type)
+            and field_key in IDENTITY_FIELDS | BUREAU_SCORE_FIELDS | BANKING_FIELDS
+        ):
             confidence = min(confidence, 0.45)
         if field_key == "applicant_name" and not is_person_name_candidate(value):
             confidence = 0.0
@@ -145,7 +154,9 @@ def attach_field_provenance(
             "source_document_id": page.get("source_document_id"),
             "source_segment": page.get("source_segment") or source_segment,
             "extractor": str(page.get("document_type") or "Unknown"),
-            "schema": str(page.get("provided_document_type") or page.get("document_type") or "Unknown"),
+            "schema": str(
+                page.get("provided_document_type") or page.get("document_type") or "Unknown"
+            ),
             "anchor_evidence": (
                 [recovery.get("anchor"), "trusted_value_present_in_ocr"]
                 if recovery is not None
@@ -158,11 +169,13 @@ def attach_field_provenance(
             "detection_method": method,
         }
         if recovery is not None:
-            item.update({
-                "resolution_method": "trusted_candidate_match",
-                "match_method": recovery.get("match_method"),
-                "ocr_line": recovery.get("ocr_line"),
-            })
+            item.update(
+                {
+                    "resolution_method": "trusted_candidate_match",
+                    "match_method": recovery.get("match_method"),
+                    "ocr_line": recovery.get("ocr_line"),
+                }
+            )
         provenance[field_name] = item
     if provenance:
         fields["_field_provenance"] = provenance
@@ -180,13 +193,11 @@ def field_reliable_for_validation(
         return False
     field_key = canonical_field(field)
     fields = page.get("extracted_fields") or {}
-    if (
-        str(expected_document_type or page.get("document_type") or "").strip().casefold()
-        == "aadhaar"
-        and (
-            (isinstance(fields, dict) and fields.get("_aadhaar_verification_appendix") is True)
-            or is_aadhaar_verification_appendix(page.get("ocr_text"))
-        )
+    if str(
+        expected_document_type or page.get("document_type") or ""
+    ).strip().casefold() == "aadhaar" and (
+        (isinstance(fields, dict) and fields.get("_aadhaar_verification_appendix") is True)
+        or is_aadhaar_verification_appendix(page.get("ocr_text"))
     ):
         # Also protects cached runs that still contain fields extracted before
         # the appendix marker was introduced.
@@ -204,11 +215,20 @@ def field_reliable_for_validation(
         and not has_labeled_aadhaar_value(str(page.get("ocr_text") or ""), value)
     ):
         return False
-    if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False and field_key in IDENTITY_FIELDS:
+    if (
+        isinstance(fields, dict)
+        and fields.get("_identity_extraction_reliable") is False
+        and field_key in IDENTITY_FIELDS
+    ):
         return False
-    if _weak_smoothed_identity_page(page) and field_key in IDENTITY_FIELDS | BUREAU_SCORE_FIELDS | BANKING_FIELDS:
+    if (
+        _weak_smoothed_identity_page(page)
+        and field_key in IDENTITY_FIELDS | BUREAU_SCORE_FIELDS | BANKING_FIELDS
+    ):
         return False
-    if expected_document_type and not compatible_field_for_document(expected_document_type, field_key, page):
+    if expected_document_type and not compatible_field_for_document(
+        expected_document_type, field_key, page
+    ):
         return False
     provenance = _field_provenance(fields, field)
     if provenance:
@@ -234,14 +254,19 @@ def compatible_field_for_document(document_type: str, field: str, page: dict[str
             text, fields.get(field)
         ):
             return False
-    if doc_key in {
-        "insurance form", "life insurance form", "property insurance form"
-    } and field == "application_number":
+    if (
+        doc_key in {"insurance form", "life insurance form", "property insurance form"}
+        and field == "application_number"
+    ):
         from services.document_classifier import is_insurer_local_application_identifier
 
         if is_insurer_local_application_identifier(text, fields.get(field)):
             return False
-    if doc_key in {"pan", "pan card"} and field in {"applicant_name", "date_of_birth", "pan_number"}:
+    if doc_key in {"pan", "pan card"} and field in {
+        "applicant_name",
+        "date_of_birth",
+        "pan_number",
+    }:
         return has_pan_anchor(text, fields)
     if doc_key in {"bank statement"} and field in BANKING_FIELDS | {"applicant_name"}:
         return has_bank_statement_anchor(text, fields)
@@ -249,11 +274,11 @@ def compatible_field_for_document(document_type: str, field: str, page: dict[str
         return has_passbook_anchor(text, fields)
     if doc_key in {"cheque"} and field in BANKING_FIELDS | {"applicant_name"}:
         return has_cheque_anchor(text, fields)
-    if doc_key in {"crif report", "cibil report"} and field in BUREAU_SCORE_FIELDS | {"applicant_name"}:
-        return has_bureau_anchor(text, fields, field)
-    if doc_key == "cersai report" and field in {
-        "applicant_name", "date_of_birth", "pan_number"
+    if doc_key in {"crif report", "cibil report"} and field in BUREAU_SCORE_FIELDS | {
+        "applicant_name"
     }:
+        return has_bureau_anchor(text, fields, field)
+    if doc_key == "cersai report" and field in {"applicant_name", "date_of_birth", "pan_number"}:
         return _has_cersai_debtor_anchor(text, fields, field)
     return True
 
@@ -283,8 +308,15 @@ def _has_cersai_debtor_anchor(text: str, fields: dict[str, Any], field: str) -> 
 def has_pan_anchor(text: str, fields: dict[str, Any]) -> bool:
     return bool(
         re.search(r"\b[A-Z]{5}\d{4}[A-Z]\b", text.upper())
-        and re.search(r"\b(?:permanent\s+account\s+number|income\s+tax|govt\.?\s+of\s+india|pan)\b", text, re.I)
-    ) or bool(fields.get("pan_number") and re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", str(fields.get("pan_number")).upper()))
+        and re.search(
+            r"\b(?:permanent\s+account\s+number|income\s+tax|govt\.?\s+of\s+india|pan)\b",
+            text,
+            re.I,
+        )
+    ) or bool(
+        fields.get("pan_number")
+        and re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", str(fields.get("pan_number")).upper())
+    )
 
 
 def has_labeled_aadhaar_value(text: str, value: Any) -> bool:
@@ -322,15 +354,12 @@ def has_intrinsic_aadhaar_evidence(text: str) -> bool:
             "मेरा आधार",
         )
     )
-    aadhaar_numbers = list(
-        re.finditer(r"(?<!\d)\d{4}[ \t]?\d{4}[ \t]?\d{4}(?!\d)", raw)
-    )
+    aadhaar_numbers = list(re.finditer(r"(?<!\d)\d{4}[ \t]?\d{4}[ \t]?\d{4}(?!\d)", raw))
     for match in aadhaar_numbers:
         if has_labeled_aadhaar_value(raw, match.group(0)):
             return True
     government_heading = any(
-        marker in heading
-        for marker in ("government of india", "govt. of india", "भारत सरकार")
+        marker in heading for marker in ("government of india", "govt. of india", "भारत सरकार")
     )
     aadhaar_xml = bool(
         re.search(r"<\s*PrintLetterBarcodeData\b", raw, re.I)
@@ -373,7 +402,12 @@ def has_passbook_anchor(text: str, fields: dict[str, Any]) -> bool:
     lowered = text.lower()
     if not lowered.strip() and fields:
         return True
-    return bool("passbook" in lowered or "pass book" in lowered or fields.get("account_number") or fields.get("ifsc"))
+    return bool(
+        "passbook" in lowered
+        or "pass book" in lowered
+        or fields.get("account_number")
+        or fields.get("ifsc")
+    )
 
 
 def has_cheque_anchor(text: str, fields: dict[str, Any]) -> bool:
@@ -390,7 +424,10 @@ def has_bureau_anchor(text: str, fields: dict[str, Any], field: str) -> bool:
     if not re.search(r"\b(crif|cibil|credit\s+information|credit\s+report|high\s+mark)\b", lowered):
         return False
     if field in BUREAU_SCORE_FIELDS:
-        return bool(re.search(r"\bscore\s*(?:name|range|score|:)?", lowered) and fields.get(field) not in (None, "", "null", "unknown"))
+        return bool(
+            re.search(r"\bscore\s*(?:name|range|score|:)?", lowered)
+            and fields.get(field) not in (None, "", "null", "unknown")
+        )
     return True
 
 
@@ -400,38 +437,53 @@ def is_amortization_schedule(text: str) -> bool:
     # interest, instalment and balance columns. Its explicit statement title
     # and transaction ledger are stronger semantic evidence than those shared
     # financial terms.
-    statement_evidence = bool(re.search(
-        r"\b(?:bank statement|account statement|statement of account|"
-        r"customer(?:'s)? statement of account|transaction details)\b",
-        lowered,
-    ))
-    transaction_evidence = _has_transaction_table_signature(text) or sum(
-        1
-        for marker in (
-            "particulars", "amount received", "instrument no", "receipt no",
-            "txn date", "value date", "opening balance",
+    statement_evidence = bool(
+        re.search(
+            r"\b(?:bank statement|account statement|statement of account|"
+            r"customer(?:'s)? statement of account|transaction details)\b",
+            lowered,
         )
-        if marker in lowered
-    ) >= 3
+    )
+    transaction_evidence = (
+        _has_transaction_table_signature(text)
+        or sum(
+            1
+            for marker in (
+                "particulars",
+                "amount received",
+                "instrument no",
+                "receipt no",
+                "txn date",
+                "value date",
+                "opening balance",
+            )
+            if marker in lowered
+        )
+        >= 3
+    )
     explicit_schedule = (
-        "repayment schedule" in lowered
-        or "amortisation" in lowered
-        or "amortization" in lowered
+        "repayment schedule" in lowered or "amortisation" in lowered or "amortization" in lowered
     ) and bool(re.search(r"\bemi\b", lowered))
     schedule_table = all(
         re.search(pattern, lowered)
-        for pattern in (r"\bprincipal\b", r"\binterest\b", r"\b(?:emi|instal+ment)\b", r"\bbalance\b")
+        for pattern in (
+            r"\bprincipal\b",
+            r"\binterest\b",
+            r"\b(?:emi|instal+ment)\b",
+            r"\bbalance\b",
+        )
     )
     return bool(
-        (explicit_schedule or schedule_table)
-        and not (statement_evidence and transaction_evidence)
+        (explicit_schedule or schedule_table) and not (statement_evidence and transaction_evidence)
     )
 
 
 def _has_transaction_table_signature(text: str) -> bool:
     """Require a genuine bank-ledger column set, not merely two parsed dates."""
     lowered = str(text or "").lower()
-    has_date = bool(re.search(r"\b(?:txn\.?\s*date|transaction\s+date|value\s+date|date)\b", lowered))
+    has_date = bool(
+        re.search(r"\b(?:txn\.?\s*date|transaction\s+date|value\s+date|date)\b", lowered)
+    )
     has_narration = bool(re.search(r"\b(?:narration|particulars|description|remarks)\b", lowered))
     has_debit = bool(re.search(r"\b(?:debit|withdrawal|withdrawals|dr)\.?\b", lowered))
     has_credit = bool(re.search(r"\b(?:credit|deposit|deposits|cr)\.?\b", lowered))
@@ -453,7 +505,9 @@ def _is_disbursal_continuation(text: str) -> bool:
 def _weak_smoothed_identity_page(page: dict[str, Any]) -> bool:
     fields = page.get("extracted_fields") or {}
     classification = fields.get("_classification") if isinstance(fields, dict) else {}
-    method = str(page.get("detection_method") or (classification or {}).get("detection_method") or "")
+    method = str(
+        page.get("detection_method") or (classification or {}).get("detection_method") or ""
+    )
     raw_type = str((classification or {}).get("raw_document_type") or "")
     if method not in WEAK_INHERITED_METHODS or not _is_raw_unknown(raw_type):
         return False
@@ -464,7 +518,15 @@ def _anchor_evidence(page: dict[str, Any], field: str) -> list[str]:
     fields = page.get("extracted_fields") or {}
     if field == "applicant_name" and isinstance(fields, dict):
         anchors = [
-            anchor for anchor in ("pan_number", "aadhaar_number", "aadhaar_last4", "date_of_birth", "dob", "phone_number")
+            anchor
+            for anchor in (
+                "pan_number",
+                "aadhaar_number",
+                "aadhaar_last4",
+                "date_of_birth",
+                "dob",
+                "phone_number",
+            )
             if fields.get(anchor) not in (None, "", [], {})
         ]
         return anchors or ["label_or_context"]

@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -154,9 +153,7 @@ def test_structure_counts_correct(tmp_path: Path) -> None:
     assert len(scanned_entries) == SCANNED
     for entry in scanned_entries:
         assert entry["image_path"] is not None
-        assert Path(entry["image_path"]).exists(), (
-            f"Expected PNG {entry['image_path']} to exist"
-        )
+        assert Path(entry["image_path"]).exists(), f"Expected PNG {entry['image_path']} to exist"
 
     # Page numbers must be 1-based and sequential
     page_numbers = [p["page_number"] for p in result["pages"]]

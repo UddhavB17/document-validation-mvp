@@ -13,11 +13,8 @@ from services.input_classifier import classify_input_text
 from services.job_control import cooperate
 from services.llm_service import generate_explanation, summarize_exceptions
 from services.ocr_json_export import save_ocr_document_json
+from services.paths import processed_output_dir
 from services.pdf_processor import process_pdf_structure
-from services.progress_tracker import mark_completed, start_tracking, touch_progress, update_stage
-from services.report_generator import build_report, save_report_json
-from services.reviewer import build_reviewer_summary, save_reviewer_summary
-from services.verification_report_store import save_verification_report
 from services.pipeline.anomalies import (
     _ocr_budget_anomaly,
     _pipeline_outcome,
@@ -40,13 +37,21 @@ from services.pipeline.persistence import (
     _should_call_llm,
     _update_uploaded_file_counts,
 )
-from services.pipeline.verification import _run_document_verification, _stamp_pages_from_document_index
+from services.pipeline.verification import (
+    _run_document_verification,
+    _stamp_pages_from_document_index,
+)
+from services.progress_tracker import mark_completed, start_tracking, touch_progress, update_stage
+from services.report_generator import build_report, save_report_json
+from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.text_extractor import extract_ground_truth
+from services.verification_report_store import save_verification_report
+
 
 def run_pipeline(
     pdf_path: str | Path,
     application_id: int,
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
     system_data: dict[str, Any] | None = None,
     product_type: str = "LAP",
     generate_llm_summary: bool | None = None,
@@ -58,7 +63,8 @@ def run_pipeline(
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
     pdf_path = Path(pdf_path)
-    application_output_dir = Path(output_dir) / f"application_{application_id}"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    application_output_dir = resolved_output_dir / f"application_{application_id}"
     image_output_dir = application_output_dir / "pages"
 
     cooperate(job_id, application_id)
@@ -83,7 +89,10 @@ def run_pipeline(
             if "people" not in system_data:
                 system_data["people"] = ground_truth.get("reference_data")
     elif system_data:
-        ground_truth = {**system_data, **{key: value for key, value in ground_truth.items() if value}}
+        ground_truth = {
+            **system_data,
+            **{key: value for key, value in ground_truth.items() if value},
+        }
 
     # Persist validated recovery data before page work begins. This is the same
     # data the completed pipeline stores, but saving it here prevents a crash
@@ -180,7 +189,9 @@ def run_pipeline(
             },
         )
 
-    assign_page_owners(pages, {**(ground_truth or {}), **(system_data or {}), **(mapped_manifest or {})})
+    assign_page_owners(
+        pages, {**(ground_truth or {}), **(system_data or {}), **(mapped_manifest or {})}
+    )
     if mapped_manifest is not None:
         automatic_index: dict[str, Any] | None = None
         if not (mapped_manifest.get("documents") or []):
@@ -227,7 +238,9 @@ def run_pipeline(
         )
     else:
         cooperate(job_id, application_id)
-        update_stage(application_id, "verifying_documents", "Comparing OCR fields with Graviton data")
+        update_stage(
+            application_id, "verifying_documents", "Comparing OCR fields with Graviton data"
+        )
         verification_report, document_page_numbers = _run_document_verification(
             pdf_path, application_id, pages, ground_truth
         )
@@ -258,7 +271,7 @@ def run_pipeline(
     ocr_json_path = save_ocr_document_json(
         application_id,
         pages,
-        output_dir=output_dir,
+        output_dir=resolved_output_dir,
         document_page_numbers=document_page_numbers,
         page_events=progress_snapshot["completed_pages"],
     )

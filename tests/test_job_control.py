@@ -33,7 +33,9 @@ def _seed_job(tmp_path: Path) -> tuple[int, int, Path]:
     return application_id, create_pipeline_job(application_id), source
 
 
-def test_recovery_payload_is_encrypted_and_secret_settings_are_excluded(tmp_path, monkeypatch) -> None:
+def test_recovery_payload_is_encrypted_and_secret_settings_are_excluded(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
     application_id, job_id, source = _seed_job(tmp_path)
@@ -60,6 +62,7 @@ def test_recovery_payload_is_encrypted_and_secret_settings_are_excluded(tmp_path
     assert recovered["system_data"]["pan_number"] == "ABCDE1234F"
     assert "google.vision.api_key" not in recovered["settings_snapshot"]["system_settings"]
     import os
+
     if os.name != "nt":
         assert (tmp_path / "recovery.key").stat().st_mode & 0o777 == 0o600
 
@@ -85,9 +88,7 @@ def test_pause_resume_and_cancel_transitions_are_audited(tmp_path, monkeypatch) 
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id, job_id, _ = _seed_job(tmp_path)
     with get_connection() as connection:
-        connection.execute(
-            "UPDATE pipeline_jobs SET status = 'running' WHERE id = ?", (job_id,)
-        )
+        connection.execute("UPDATE pipeline_jobs SET status = 'running' WHERE id = ?", (job_id,))
 
     assert request_control(application_id, "pause")["status"] == "pause_requested"
     assert request_control(application_id, "resume")["status"] == "running"

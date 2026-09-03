@@ -6,14 +6,14 @@ deduplicated, priority-sorted list ready for the report generator.
 
 from __future__ import annotations
 
-_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
-
 import json
+from typing import cast
 
 from database.db import get_connection
 from services.processing_policy import is_internal_document_type
 from services.reviewer import compute_final_status
 
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
 
@@ -22,7 +22,7 @@ def _sort_anomalies(anomalies: list[dict]) -> list[dict]:
         anomalies,
         key=lambda item: (
             SEVERITY_ORDER.get(str(item.get("severity", "LOW")).upper(), 3),
-            item.get("page_number") or 10**9,
+            cast(int, item.get("page_number") or 10**9),
         ),
     )
 
@@ -57,7 +57,7 @@ def aggregate(
     sorted_anomalies = _sort_anomalies(_dedupe_anomalies(anomalies))
     documents_found = sorted(
         {
-            page.get("document_type")
+            cast(str, page.get("document_type"))
             for page in pages
             if (
                 page.get("document_type")
@@ -68,18 +68,24 @@ def aggregate(
     )
     documents_missing = sorted(
         {
-            anomaly.get("document_type")
+            cast(str, anomaly.get("document_type"))
             for anomaly in sorted_anomalies
-            if str(anomaly.get("rule_id", "")).startswith("MISSING_DOC") and anomaly.get("document_type")
+            if str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
+            and anomaly.get("document_type")
         }
     )
     pages_with_issues = sorted(
-        {anomaly.get("page_number") for anomaly in sorted_anomalies if anomaly.get("page_number") is not None}
+        {
+            cast(int, anomaly.get("page_number"))
+            for anomaly in sorted_anomalies
+            if anomaly.get("page_number") is not None
+        }
     )
 
     # Filter out missing document presence anomalies from active anomalies and flags list
     active_anomalies = [
-        anomaly for anomaly in sorted_anomalies
+        anomaly
+        for anomaly in sorted_anomalies
         if not str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
     ]
 
@@ -108,7 +114,9 @@ def aggregate(
 
 def save_aggregation(application_id: int, anomalies: list[dict], final_status: str) -> None:
     with get_connection() as connection:
-        connection.execute("DELETE FROM validation_results WHERE application_id = ?", (application_id,))
+        connection.execute(
+            "DELETE FROM validation_results WHERE application_id = ?", (application_id,)
+        )
         for anomaly in anomalies:
             connection.execute(
                 """

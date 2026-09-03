@@ -11,6 +11,8 @@ from database.models import FieldVerificationResult
 from services.config import get_bool
 from services.structured_llm_classifier import (
     LOCAL_DEFAULT_URL as _LOCAL_DEFAULT_URL,
+)
+from services.structured_llm_classifier import (
     REMOTE_DEFAULT_URL as _REMOTE_DEFAULT_URL,
 )
 
@@ -23,7 +25,9 @@ _SYSTEM_PROMPT = (
 )
 
 
-def verify_field_with_llm(field_name: str, extracted: str, db_value: str) -> FieldVerificationResult:
+def verify_field_with_llm(
+    field_name: str, extracted: str, db_value: str
+) -> FieldVerificationResult:
     """Verify one low-confidence field using local Ollama and Instructor."""
     fallback = FieldVerificationResult(
         field_name=field_name,
@@ -58,13 +62,21 @@ def verify_field_with_llm(field_name: str, extracted: str, db_value: str) -> Fie
                         f"OCR extracted value: {extracted}\n"
                         f"Graviton ground-truth value: {db_value}\n"
                         "Return only the structured verification result. "
-                        "Set method to \"llm\" and confidence between 0.0 and 1.0."
+                        'Set method to "llm" and confidence between 0.0 and 1.0.'
                     ),
                 },
             ],
             response_model=FieldVerificationResult,
         )
-    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, ValidationError, TypeError):
+    except (
+        ImportError,
+        AttributeError,
+        RuntimeError,
+        OSError,
+        ValueError,
+        ValidationError,
+        TypeError,
+    ):
         return fallback
 
     try:

@@ -70,9 +70,21 @@ Radha  Bai
 """
     records = extract_fields("CAM", text)["person_records"]
     assert records == [
-        {"applicant_name": "Peeru Lal", "phone_number": "9000000001", "date_of_birth": "1994-05-18"},
-        {"applicant_name": "Unkar Lal", "phone_number": "9000000002", "date_of_birth": "1961-06-05"},
-        {"applicant_name": "Radha Bai", "phone_number": "9000000002", "date_of_birth": "1962-01-01"},
+        {
+            "applicant_name": "Peeru Lal",
+            "phone_number": "9000000001",
+            "date_of_birth": "1994-05-18",
+        },
+        {
+            "applicant_name": "Unkar Lal",
+            "phone_number": "9000000002",
+            "date_of_birth": "1961-06-05",
+        },
+        {
+            "applicant_name": "Radha Bai",
+            "phone_number": "9000000002",
+            "date_of_birth": "1962-01-01",
+        },
     ]
 
 
@@ -113,8 +125,14 @@ CRIF
 NA
 """
     records = extract_fields("CAM", text)["person_records"]
-    assert {"applicant_name": "Peeru Lal", "aadhaar_last4": "0001", "pan_number": "TSTAA0001T"} in records
-    assert any(record.get("permanent_address", "").startswith("W/O: Ukar Lal") for record in records)
+    assert {
+        "applicant_name": "Peeru Lal",
+        "aadhaar_last4": "0001",
+        "pan_number": "TSTAA0001T",
+    } in records
+    assert any(
+        record.get("permanent_address", "").startswith("W/O: Ukar Lal") for record in records
+    )
     assert {"applicant_name": "Peeru Lal", "crif_score": "786"} in records
     assert {"applicant_name": "Radha Bai", "cibil_score": "714"} in records
     assert not any(record.get("crif_score") == "NA" for record in records)
@@ -287,12 +305,15 @@ The lease deed or allotment order issued by the Gram Panchayat
 
 
 def test_aadhaar_xml_keeps_relationship_out_of_physical_address() -> None:
-    text = '''<UidData uid="XXXXXXXX0001"><Poi name="Peeru Lal" dob="18-05-1994" gender="M"/><Poa co="S/O: Unkar Lal" lm="mehar basti" loc="semli bakhta" vtc="Semlibakta" dist="Jhalawar" state="Rajasthan" country="India" pc="326502"/></UidData>'''
+    text = """<UidData uid="XXXXXXXX0001"><Poi name="Peeru Lal" dob="18-05-1994" gender="M"/><Poa co="S/O: Unkar Lal" lm="mehar basti" loc="semli bakhta" vtc="Semlibakta" dist="Jhalawar" state="Rajasthan" country="India" pc="326502"/></UidData>"""
     result = extract_fields("Aadhaar", text)
     assert result["applicant_name"] == "Peeru Lal"
     assert result["relationship_qualifier"] == "S/O"
     assert result["related_person_name"] == "Unkar Lal"
-    assert result["address"] == "mehar basti, semli bakhta, Semlibakta, Jhalawar, Rajasthan, India, 326502"
+    assert (
+        result["address"]
+        == "mehar basti, semli bakhta, Semlibakta, Jhalawar, Rajasthan, India, 326502"
+    )
 
 
 def test_crif_address_variation_row_is_not_applicant_name() -> None:
@@ -595,8 +616,8 @@ Please sign abovs
 # SANCTION LETTER
 # ════════════════════════════════════════════
 
-class TestSanctionLetter:
 
+class TestSanctionLetter:
     def _extract(self, text: str) -> dict:
         return extract_fields("Sanction Letter", text)
 
@@ -691,8 +712,8 @@ class TestSanctionLetter:
 # LOAN AGREEMENT
 # ════════════════════════════════════════════
 
-class TestLoanAgreement:
 
+class TestLoanAgreement:
     def _extract(self, text: str) -> dict:
         return extract_fields("Loan Agreement", text)
 
@@ -719,9 +740,7 @@ class TestLoanAgreement:
 
     def test_cross_match_field_names_same_as_sanction(self) -> None:
         """loan_amount / tenure / emi / roi names must match Sanction Letter."""
-        result = self._extract(
-            "Loan Amount: 500000\nTenure: 60 Months\nEMI: 9000\nROI: 8.5%"
-        )
+        result = self._extract("Loan Amount: 500000\nTenure: 60 Months\nEMI: 9000\nROI: 8.5%")
         for key in ("loan_amount", "tenure", "emi", "roi"):
             assert key in result
 
@@ -859,15 +878,17 @@ def test_nach_extracts_not_registered_before_registered_substring() -> None:
 def test_utility_bill_extracts_address_proof_fields() -> None:
     result = extract_fields(
         "Utility Bill",
-        "\n".join([
-            "Electricity Bill",
-            "Consumer Name: Ramesh Kumar",
-            "Service Address",
-            "12 Market Road",
-            "Delhi 110001",
-            "Bill Date: 01/07/2026",
-            "Due Date: 15/07/2026",
-        ]),
+        "\n".join(
+            [
+                "Electricity Bill",
+                "Consumer Name: Ramesh Kumar",
+                "Service Address",
+                "12 Market Road",
+                "Delhi 110001",
+                "Bill Date: 01/07/2026",
+                "Due Date: 15/07/2026",
+            ]
+        ),
     )
 
     assert result["applicant_name"] == "Ramesh Kumar"
@@ -896,8 +917,8 @@ def test_aadhaar_address_stops_at_first_pin_code() -> None:
 # PAN
 # ════════════════════════════════════════════
 
-class TestPAN:
 
+class TestPAN:
     def _extract(self, text: str) -> dict:
         return extract_fields("PAN", text)
 
@@ -920,8 +941,7 @@ class TestPAN:
 
     def test_inline_bilingual_pan_card_extracts_name_and_dob(self) -> None:
         result = self._extract(
-            "Permanent TSTCC0003T Account Number नामWName Radha Bai "
-            "जम fafuDate 01701/1962 ofBnu"
+            "Permanent TSTCC0003T Account Number नामWName Radha Bai जम fafuDate 01701/1962 ofBnu"
         )
         assert result["applicant_name"] == "Radha Bai"
         assert result["dob"] == "1962-01-01"
@@ -931,8 +951,8 @@ class TestPAN:
 # AADHAAR
 # ════════════════════════════════════════════
 
-class TestAadhaar:
 
+class TestAadhaar:
     def _extract(self, text: str) -> dict:
         return extract_fields("Aadhaar", text)
 
@@ -951,7 +971,7 @@ class TestAadhaar:
             '<UidData uid="xxxxxxxx0001"><Poi dob="18-05-1994" gender="M" name="Peeru Lal"/>'
             '<Poa co="S/O: Unkar Lal" country="India" dist="Jhalawar" pc="326502" '
             'state="Rajasthan" street="mehar basti" vtc="Semlibakta"/>'
-            '<X509SubjectName>postalCode=110003,O=DIGITAL INDIA CORPORATION</X509SubjectName>'
+            "<X509SubjectName>postalCode=110003,O=DIGITAL INDIA CORPORATION</X509SubjectName>"
         )
         result = self._extract(text)
         assert result["applicant_name"] == "Peeru Lal"
@@ -966,7 +986,7 @@ class TestAadhaar:
             '<UidData uid="xxxxxxxx1641"><Poa co="W/O: Kala Singh" country="India" '
             'dist="Ganganagar" loc="v p o 27 f kaminpura" pc="335027" '
             'state="Rajasthan"/><LData co="W/O: Kala Singh" name="Seeta" pc="335027"/>'
-            '<X509SubjectName>postalCode=110003,O=DIGITAL INDIA</X509SubjectName>'
+            "<X509SubjectName>postalCode=110003,O=DIGITAL INDIA</X509SubjectName>"
         )
 
         result = self._extract(text)
@@ -995,8 +1015,8 @@ class TestAadhaar:
 # VOTER ID
 # ════════════════════════════════════════════
 
-class TestVoterID:
 
+class TestVoterID:
     def _extract(self, text: str) -> dict:
         return extract_fields("Voter ID", text)
 
@@ -1038,16 +1058,14 @@ class TestVoterID:
 # DRIVING LICENSE
 # ════════════════════════════════════════════
 
-class TestDrivingLicense:
 
+class TestDrivingLicense:
     def _extract(self, text: str) -> dict:
         return extract_fields("Driving License", text)
 
     def test_dl_validity_extracted(self) -> None:
         """Spec: 'Valid Till: 01/01/2030' → validity_date='2030-01-01'"""
-        result = self._extract(
-            "Driving Licence\nName: Rahul Joshi\nValid Till: 01/01/2030"
-        )
+        result = self._extract("Driving Licence\nName: Rahul Joshi\nValid Till: 01/01/2030")
         assert result["validity_date"] == "2030-01-01"
 
     def test_dl_number_extracted(self) -> None:
@@ -1080,9 +1098,7 @@ class TestDrivingLicense:
         assert result["dob"] == "1990-05-10"
 
     def test_issue_date_alone_does_not_create_dob(self) -> None:
-        result = self._extract(
-            "Driving Licence\nDate of Issue: 10/05/2020\nValid Till: 01/01/2030"
-        )
+        result = self._extract("Driving Licence\nDate of Issue: 10/05/2020\nValid Till: 01/01/2030")
         assert result["date_of_issue"] == "2020-05-10"
         assert result["dob"] is None
 
@@ -1116,8 +1132,7 @@ KULDEEP SINGH
 
     def test_address_stops_before_next_dl_field(self) -> None:
         result = self._extract(
-            "Driving Licence\nAddress\n12 Main Street\nPune 411001\n"
-            "Date of Issue\n10/05/2020"
+            "Driving Licence\nAddress\n12 Main Street\nPune 411001\nDate of Issue\n10/05/2020"
         )
         assert result["address"] == "12 Main Street Pune 411001"
 
@@ -1135,8 +1150,8 @@ KULDEEP SINGH
 # CRIF REPORT
 # ════════════════════════════════════════════
 
-class TestCRIFReport:
 
+class TestCRIFReport:
     def _extract(self, text: str) -> dict:
         return extract_fields("CRIF Report", text)
 
@@ -1218,9 +1233,7 @@ def test_application_form_supports_residential_address_aliases() -> None:
         "Permanent Resi. Address: 81 Modi Vas, Harniyav, Ahmedabad 382435",
     )
 
-    assert result["current_address"] == (
-        "B-402 Pandit Dindayal Nagar, Hathijan, Ahmedabad 382445"
-    )
+    assert result["current_address"] == ("B-402 Pandit Dindayal Nagar, Hathijan, Ahmedabad 382445")
     assert result["permanent_address"] == "81 Modi Vas, Harniyav, Ahmedabad 382435"
 
 
@@ -1275,8 +1288,7 @@ Date: 2026-06-20
 def test_real_address_survives_when_page_counter_is_appended() -> None:
     result = extract_fields(
         "Application Form",
-        "Permanent Resi. Address: 12 Market Road Delhi 110001 Page 2 of 128\n"
-        "Signed by: Peeru Lal",
+        "Permanent Resi. Address: 12 Market Road Delhi 110001 Page 2 of 128\nSigned by: Peeru Lal",
     )
 
     assert result["permanent_address"] == "12 Market Road Delhi 110001"
@@ -1303,18 +1315,20 @@ OFFICE ADDRESS
 
     assert result["current_address"] is None
     assert result["permanent_address"] is None
-    assert result["person_records"] == [{
-        "applicant_name": "AARATIBEN ANUPKUMAR SUTHAR",
-        "current_address": (
-            "B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD "
-            "Ahmedabad, Gujarat, India, 382445, HATHIJAN"
-        ),
-        "communication_address": (
-            "B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD "
-            "Ahmedabad, Gujarat, India, 382445, HATHIJAN"
-        ),
-        "permanent_address": "81 MODI VAS, HARNIVAV, AHMEDABAD, Gujarat, India, 382435",
-    }]
+    assert result["person_records"] == [
+        {
+            "applicant_name": "AARATIBEN ANUPKUMAR SUTHAR",
+            "current_address": (
+                "B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD "
+                "Ahmedabad, Gujarat, India, 382445, HATHIJAN"
+            ),
+            "communication_address": (
+                "B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD "
+                "Ahmedabad, Gujarat, India, 382445, HATHIJAN"
+            ),
+            "permanent_address": "81 MODI VAS, HARNIVAV, AHMEDABAD, Gujarat, India, 382435",
+        }
+    ]
 
 
 def test_kfs_boilerplate_clause_number_is_not_roi() -> None:
@@ -1496,8 +1510,8 @@ def test_passbook_holder_allows_ocr_symbols_after_honorific() -> None:
 # BANK STATEMENT
 # ════════════════════════════════════════════
 
-class TestBankStatement:
 
+class TestBankStatement:
     def _extract(self, text: str) -> dict:
         return extract_fields("Bank Statement", text)
 
@@ -1540,8 +1554,8 @@ class TestBankStatement:
 # SALARY SLIP
 # ════════════════════════════════════════════
 
-class TestSalarySlip:
 
+class TestSalarySlip:
     def _extract(self, text: str) -> dict:
         return extract_fields("Salary Slip", text)
 
@@ -1562,6 +1576,7 @@ class TestSalarySlip:
 # FALSE-POSITIVE FIX: Name label rejection
 # ════════════════════════════════════════════
 
+
 class TestNameLabelRejection:
     """Ensure OCR form labels never leak through as extracted applicant names."""
 
@@ -1580,9 +1595,7 @@ class TestNameLabelRejection:
 
     def test_date_of_birth_label_not_extracted_as_name(self) -> None:
         """'Date of Birth' is a form label — must not be returned as applicant_name."""
-        result = self._extract_aadhaar(
-            "Name\nDate of Birth\nS/O: Ram Lal\nAddress: Village, Dist"
-        )
+        result = self._extract_aadhaar("Name\nDate of Birth\nS/O: Ram Lal\nAddress: Village, Dist")
         assert result.get("applicant_name") != "Date of Birth"
 
     def test_institution_label_not_extracted_as_name(self) -> None:
@@ -1594,17 +1607,13 @@ class TestNameLabelRejection:
 
     def test_timestamp_not_extracted_as_name(self) -> None:
         """Timestamps like '21 PM GMT +05:30' must be rejected as names."""
-        result = self._extract_pan(
-            "Name\n21 PM GMT +05:30\nPAN: TSTAA0001T"
-        )
+        result = self._extract_pan("Name\n21 PM GMT +05:30\nPAN: TSTAA0001T")
         assert result.get("applicant_name") is None
 
     def test_xml_namespace_not_extracted_as_name(self) -> None:
         """XML namespace strings from Aadhaar digital signatures must be rejected."""
         xml_noise = 'xmlns="http://www.w3.org/2000/09/xmldsig#">'
-        result = self._extract_aadhaar(
-            f"Name\n{xml_noise}\nAadhaar: 1234 5678 9012"
-        )
+        result = self._extract_aadhaar(f"Name\n{xml_noise}\nAadhaar: 1234 5678 9012")
         assert result.get("applicant_name") is None, (
             f"XML namespace leaked as applicant_name: {result.get('applicant_name')}"
         )
@@ -1612,10 +1621,7 @@ class TestNameLabelRejection:
     def test_valid_name_still_extracted(self) -> None:
         """A genuine name after the Name label must still be extracted correctly."""
         result = self._extract_aadhaar(
-            "Government of India\n"
-            "Name: Peeru Lal\n"
-            "Date of Birth: 18/05/1994\n"
-            "1234 5678 9012"
+            "Government of India\nName: Peeru Lal\nDate of Birth: 18/05/1994\n1234 5678 9012"
         )
         assert result.get("applicant_name") == "Peeru Lal"
 
@@ -1665,12 +1671,14 @@ class TestNameLabelRejection:
 # FALSE-POSITIVE FIX: Date format verification
 # ════════════════════════════════════════════
 
+
 class TestDateVerification:
     """Ensure date format differences do not produce false positive mismatches."""
 
     def test_dd_monthname_yyyy_vs_yyyy_mm_dd_matches(self) -> None:
         """18-May-1994 and 1994-05-18 represent the same date — must be a MATCH."""
         from services.field_verification import verify_date
+
         result = verify_date("1994-05-18", "18-May-1994")
         assert result.match is True, (
             f"Same date in different formats should match, got: {result.mismatch_reason}"
@@ -1679,6 +1687,7 @@ class TestDateVerification:
     def test_dd_slash_mm_yyyy_vs_db_format_matches(self) -> None:
         """18/05/1994 and 18-May-1994 must both parse to the same date."""
         from services.field_verification import verify_date
+
         result = verify_date("18/05/1994", "18-May-1994")
         assert result.match is True
 
@@ -1686,6 +1695,7 @@ class TestDateVerification:
         """When OCR garbles a date (unparseable), confidence must be low (< 0.5)
         so the anomaly is NOT escalated to HIGH severity by _verify_document_fields."""
         from services.field_verification import verify_date
+
         result = verify_date("GARBLED123", "18-May-1994")
         assert result.match is False
         assert result.confidence < 0.5, (
@@ -1710,8 +1720,7 @@ Bill Date 16-05-2026
 """,
     )
     assert fields["address"] == (
-        "B 402 PANDIT DINDAYAL-2 NR V NAGAR HATHIJAN "
-        "VILL: Ahmadabad City DISTRICT: Ahmedabad"
+        "B 402 PANDIT DINDAYAL-2 NR V NAGAR HATHIJAN VILL: Ahmadabad City DISTRICT: Ahmedabad"
     )
     assert "ugvcl" not in fields["address"].lower()
 
@@ -1803,11 +1812,13 @@ ADDRESS
 81 Modi Vas Harnivav Gujarat 382435
 """
     fields = extract_fields("Application Form", text)
-    
+
     assert fields["applicant_name"] == "Batti Lal Meena"
     assert fields["permanent_address"] == "44 Ward 2 Deoli Rajasthan 304023"
-    
-    co_records = [r for r in fields["person_records"] if r.get("applicant_name") == "Aaratiben Suthar"]
+
+    co_records = [
+        r for r in fields["person_records"] if r.get("applicant_name") == "Aaratiben Suthar"
+    ]
     assert len(co_records) == 1
     assert co_records[0]["permanent_address"] == "81 Modi Vas Harnivav Gujarat 382435"
 
@@ -1875,42 +1886,62 @@ Business Constitution
             {
                 "text": "Permanent Resi Address",
                 "confidence": 0.78,
-                "bounding_box": {"vertices": [
-                    {"x": 39, "y": 457}, {"x": 114, "y": 457},
-                    {"x": 114, "y": 464}, {"x": 39, "y": 464},
-                ]},
+                "bounding_box": {
+                    "vertices": [
+                        {"x": 39, "y": 457},
+                        {"x": 114, "y": 457},
+                        {"x": 114, "y": 464},
+                        {"x": 39, "y": 464},
+                    ]
+                },
             },
             {
                 "text": "OFF KAMINPURA",
                 "confidence": 0.70,
-                "bounding_box": {"vertices": [
-                    {"x": 133, "y": 453}, {"x": 308, "y": 453},
-                    {"x": 308, "y": 470}, {"x": 133, "y": 470},
-                ]},
+                "bounding_box": {
+                    "vertices": [
+                        {"x": 133, "y": 453},
+                        {"x": 308, "y": 453},
+                        {"x": 308, "y": 470},
+                        {"x": 133, "y": 470},
+                    ]
+                },
             },
             {
                 "text": "VANWANAUAR",
                 "confidence": 0.63,
-                "bounding_box": {"vertices": [
-                    {"x": 322, "y": 451}, {"x": 457, "y": 451},
-                    {"x": 457, "y": 467}, {"x": 322, "y": 467},
-                ]},
+                "bounding_box": {
+                    "vertices": [
+                        {"x": 322, "y": 451},
+                        {"x": 457, "y": 451},
+                        {"x": 457, "y": 467},
+                        {"x": 322, "y": 467},
+                    ]
+                },
             },
             {
                 "text": "PIN 335027 Tele",
                 "confidence": 0.84,
-                "bounding_box": {"vertices": [
-                    {"x": 221, "y": 497}, {"x": 343, "y": 497},
-                    {"x": 343, "y": 508}, {"x": 221, "y": 508},
-                ]},
+                "bounding_box": {
+                    "vertices": [
+                        {"x": 221, "y": 497},
+                        {"x": 343, "y": 497},
+                        {"x": 343, "y": 508},
+                        {"x": 221, "y": 508},
+                    ]
+                },
             },
             {
                 "text": "Business Constitution",
                 "confidence": 0.88,
-                "bounding_box": {"vertices": [
-                    {"x": 37, "y": 539}, {"x": 108, "y": 539},
-                    {"x": 108, "y": 546}, {"x": 37, "y": 546},
-                ]},
+                "bounding_box": {
+                    "vertices": [
+                        {"x": 37, "y": 539},
+                        {"x": 108, "y": 539},
+                        {"x": 108, "y": 546},
+                        {"x": 37, "y": 546},
+                    ]
+                },
             },
         ],
     }

@@ -6,6 +6,11 @@ import re
 from typing import Any
 
 from services.cersai import starts_new_report as cersai_starts_new_report
+from services.person_names import (
+    has_independent_identity_anchor,
+    is_person_name_candidate,
+    name_similarity,
+)
 from services.person_ownership import (
     MULTI_PERSON_DOCUMENT_TYPES,
     bank_statement_has_holder_evidence,
@@ -13,14 +18,6 @@ from services.person_ownership import (
     document_requires_person_owner,
     resolve_person_owner,
 )
-
-from services.person_names import (
-    has_independent_identity_anchor,
-    is_person_name_candidate,
-    name_similarity,
-)
-from services.validation_gates import field_reliable_for_validation
-
 
 IGNORED_DOCUMENT_TYPES = {
     "",
@@ -35,7 +32,6 @@ IGNORED_DOCUMENT_TYPES = {
     "kyc card photo",
     "ration card photo",
 }
-
 
 
 def build_automatic_document_index(
@@ -88,8 +84,7 @@ def build_automatic_document_index(
             # Person-scoped docs (PAN/Aadhaar/CIBIL/…) must not fall back to primary.
             if requires_person:
                 if type_key == "bank statement" and not any(
-                    bank_statement_has_holder_evidence(page)
-                    for page in group["pages_data"]
+                    bank_statement_has_holder_evidence(page) for page in group["pages_data"]
                 ):
                     # Nameless bank statements are still valid checklist date
                     # evidence, but there is no identity basis for trusted
@@ -110,7 +105,9 @@ def build_automatic_document_index(
                     )
                     anomalies.append(
                         _mapping_anomaly(
-                            "TRUSTED_PERSON_SCOPE_MISSING" if missing_role else "AUTO_OWNER_UNRESOLVED",
+                            "TRUSTED_PERSON_SCOPE_MISSING"
+                            if missing_role
+                            else "AUTO_OWNER_UNRESOLVED",
                             group,
                             (
                                 f"The ZIP contains {missing_role} documents, but trusted JSON has no "
@@ -124,14 +121,18 @@ def build_automatic_document_index(
                     continue
             if not explicit_personless_scope:
                 if is_loan_level and reference_data:
-                    default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+                    default_id = (
+                        "primary" if "primary" in reference_data else next(iter(reference_data))
+                    )
                     person = {
                         "person_id": default_id,
                         "confidence": 0.35,
                         "evidence": ["loan_level_document_default"],
                     }
                 elif reference_data:
-                    default_id = "primary" if "primary" in reference_data else next(iter(reference_data))
+                    default_id = (
+                        "primary" if "primary" in reference_data else next(iter(reference_data))
+                    )
                     person = {
                         "person_id": default_id,
                         "confidence": 1.0,
@@ -141,7 +142,9 @@ def build_automatic_document_index(
         # Loan-level docs are intentionally assigned to primary with modest confidence.
         # Do not emit per-fragment LOW_CONFIDENCE noise for that default.
         loan_level_evidence = {
-            "loan_level_document", "loan_level_document_default", "document_not_person_scoped"
+            "loan_level_document",
+            "loan_level_document_default",
+            "document_not_person_scoped",
         }
         if (
             person["confidence"] < 0.60
@@ -173,7 +176,8 @@ def build_automatic_document_index(
                     "multi_person_document": is_multi_person,
                     "detection_method": (
                         "zip_source_document_classification"
-                        if group.get("zip_source_id") else "automatic_page_classification"
+                        if group.get("zip_source_id")
+                        else "automatic_page_classification"
                     ),
                     "source_document_id": group.get("zip_source_id"),
                     "source_filename": group.get("original_filename"),
@@ -259,9 +263,7 @@ def _group_pages(
             and not (
                 document_type == "CERSAI Report"
                 and (current or {}).get("document_type") == document_type
-                and not cersai_starts_new_report(
-                    (current or {}).get("pages_data") or [], page
-                )
+                and not cersai_starts_new_report((current or {}).get("pages_data") or [], page)
             )
         )
         new_group = (
@@ -329,15 +331,19 @@ def _bureau_page_starts_new_subject(page: dict[str, Any]) -> bool:
     """
     header = " ".join(str(page.get("ocr_text") or "").splitlines()[:24]).casefold()
     header = re.sub(r"\s+", " ", header)
-    has_title = bool(re.search(
-        r"\b(?:cibil|crif|credit information|consumer credit)\s+(?:information\s+)?report\b",
-        header,
-    ))
-    has_subject = bool(re.search(
-        r"\b(?:consumer|applicant|subject)\s+name\b|"
-        r"\b(?:report\s+id|control\s+number|member\s+reference\s+number)\b",
-        header,
-    ))
+    has_title = bool(
+        re.search(
+            r"\b(?:cibil|crif|credit information|consumer credit)\s+(?:information\s+)?report\b",
+            header,
+        )
+    )
+    has_subject = bool(
+        re.search(
+            r"\b(?:consumer|applicant|subject)\s+name\b|"
+            r"\b(?:report\s+id|control\s+number|member\s+reference\s+number)\b",
+            header,
+        )
+    )
     return has_title and has_subject
 
 
@@ -370,10 +376,7 @@ def _identity_page_starts_new_subject(
             return True
 
     next_name = next_fields.get("applicant_name")
-    if not (
-        is_person_name_candidate(next_name)
-        and has_independent_identity_anchor(next_fields)
-    ):
+    if not (is_person_name_candidate(next_name) and has_independent_identity_anchor(next_fields)):
         return False
     previous_names = [
         fields.get("applicant_name")
@@ -403,7 +406,9 @@ def _effective_document_type(page: dict[str, Any]) -> str:
         deterministic_confidence = float(page.get("classification_confidence") or 0.0)
         detection_method = str(page.get("detection_method") or "").strip().casefold()
         weak_methods = {
-            "inherited", "sandwich_smoothed", "sandwich_run_smoothed",
+            "inherited",
+            "sandwich_smoothed",
+            "sandwich_run_smoothed",
             "agreement_context_smoothed",
         }
         # The local structured classifier is advisory.  It must not overwrite a
@@ -452,12 +457,13 @@ def _llm_type_supported_by_page(page: dict[str, Any], llm_type: str) -> bool:
 
     type_key = llm_type.strip().casefold()
     if type_key in {"pan", "pan card"}:
-        return bool(re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", str(fields.get("pan_number") or "").upper()))
+        return bool(
+            re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", str(fields.get("pan_number") or "").upper())
+        )
     if type_key == "aadhaar":
         digits = re.sub(r"\D", "", str(fields.get("aadhaar_number") or ""))
         return len(digits) == 12
     return False
-
 
 
 def _slug(value: str) -> str:

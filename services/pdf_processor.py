@@ -15,10 +15,9 @@ from typing import TypedDict
 
 import fitz  # PyMuPDF
 
-from services.config import get_float, get_int
+from services.config import get_float
 from services.image_limits import downscale_if_needed, max_image_side_px
 from services.processing_policy import selected_scanned_page_numbers
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -101,7 +100,9 @@ def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
     import cv2
     import numpy as np
 
-    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(pixmap.height, pixmap.width, pixmap.n)
+    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
+        pixmap.height, pixmap.width, pixmap.n
+    )
     if pixmap.n == 4:
         image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
     elif pixmap.n == 1:

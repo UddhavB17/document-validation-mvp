@@ -1,4 +1,17 @@
+import os
+
+import pytest
+
 from services.low_memory import apply_low_memory_defaults, low_memory_enabled, ocr_force_fast_path
+
+
+@pytest.fixture(autouse=True)
+def _restore_environment_after_test():
+    """The production helper writes defaults directly to os.environ."""
+    original = os.environ.copy()
+    yield
+    os.environ.clear()
+    os.environ.update(original)
 
 
 def test_low_memory_forces_fast_ocr_but_preserves_explicit_page_llm(monkeypatch) -> None:

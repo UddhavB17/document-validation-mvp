@@ -6,7 +6,6 @@ import os
 
 import requests
 
-
 DEFAULT_OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_LOCAL_MODEL = "llama3.1"
@@ -48,6 +47,7 @@ def call_llm_messages(
 
 def llm_provider() -> str:
     from services.config import get_setting
+
     db_val = get_setting("llm_provider")
     if db_val is not None:
         provider = str(db_val).strip().lower()
@@ -77,10 +77,7 @@ def llm_model() -> str:
         if db_val is not None:
             return str(db_val).strip()
 
-        return (
-            _clean_env_value(os.getenv("LLM_MODEL"))
-            or DEFAULT_LOCAL_MODEL
-        )
+        return _clean_env_value(os.getenv("LLM_MODEL")) or DEFAULT_LOCAL_MODEL
     else:
         env_openai = _clean_env_value(os.getenv("OPENAI_MODEL"))
         if env_openai:
@@ -90,10 +87,7 @@ def llm_model() -> str:
         if db_val is not None:
             return str(db_val).strip()
 
-        return (
-            _clean_env_value(os.getenv("LLM_MODEL"))
-            or DEFAULT_API_MODEL
-        )
+        return _clean_env_value(os.getenv("LLM_MODEL")) or DEFAULT_API_MODEL
 
 
 def llm_endpoint_label() -> str:

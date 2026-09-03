@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
 import shutil
 import stat
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from pathlib import Path, PurePosixPath
+from typing import Any
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
 import fitz
 from openpyxl import load_workbook
 
 from services.config import get_int
-
 
 ALLOWED_PACKAGE_EXTENSIONS = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".xlsx"})
 MACOS_METADATA_NAMES = frozenset({".DS_Store"})
@@ -155,9 +155,7 @@ def normalize_zip_package(
         "total_pages": sum(int(item["page_count"]) for item in inventory),
         "documents": inventory,
     }
-    (package_dir / "package.json").write_text(
-        json.dumps(result, indent=2), encoding="utf-8"
-    )
+    (package_dir / "package.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
 
 
@@ -187,7 +185,9 @@ def _validated_members(archive: ZipFile) -> list[ZipInfo]:
         if info.flag_bits & 0x1:
             raise PackageValidationError(f"Encrypted ZIP member is not supported: {info.filename}")
         if _is_symlink(info):
-            raise PackageValidationError(f"Symbolic links are not allowed in ZIP files: {info.filename}")
+            raise PackageValidationError(
+                f"Symbolic links are not allowed in ZIP files: {info.filename}"
+            )
 
         suffix = Path(info.filename).suffix.lower()
         if suffix == ".zip":
@@ -202,7 +202,9 @@ def _validated_members(archive: ZipFile) -> list[ZipInfo]:
                 f"Expanded ZIP is too large; maximum is {max_extracted_bytes() // (1024 * 1024)}MB"
             )
         if info.file_size and (not info.compress_size or info.file_size / info.compress_size > 200):
-            raise PackageValidationError(f"Suspicious compression ratio in ZIP member: {info.filename}")
+            raise PackageValidationError(
+                f"Suspicious compression ratio in ZIP member: {info.filename}"
+            )
         accepted.append(info)
 
     if unsupported:
@@ -229,7 +231,9 @@ def _validate_member_path(info: ZipInfo) -> None:
 
 def _is_macos_metadata(filename: str) -> bool:
     path = PurePosixPath(filename.replace("\\", "/"))
-    return "__MACOSX" in path.parts or path.name in MACOS_METADATA_NAMES or path.name.startswith("._")
+    return (
+        "__MACOSX" in path.parts or path.name in MACOS_METADATA_NAMES or path.name.startswith("._")
+    )
 
 
 def _is_symlink(info: ZipInfo) -> bool:
@@ -337,7 +341,9 @@ def _append_xlsx(
 
     page_count = output.page_count - initial_pages
     if page_count == 0:
-        raise PackageValidationError(f"XLSX workbook contains no non-empty worksheets: {source_path.name}")
+        raise PackageValidationError(
+            f"XLSX workbook contains no non-empty worksheets: {source_path.name}"
+        )
     return page_count, {"worksheets": rendered_sheets}
 
 
@@ -351,9 +357,7 @@ def _validate_xlsx_container(source_path: Path) -> None:
                     continue
                 expanded_size += int(info.file_size)
                 if expanded_size > max_extracted_bytes():
-                    raise PackageValidationError(
-                        f"Expanded XLSX is too large: {source_path.name}"
-                    )
+                    raise PackageValidationError(f"Expanded XLSX is too large: {source_path.name}")
                 if info.file_size and (
                     not info.compress_size or info.file_size / info.compress_size > 200
                 ):
@@ -383,10 +387,7 @@ def _worksheet_value_table(worksheet: Any) -> tuple[list[list[str]], int, int]:
 
     source_rows = sorted({row for row, _column in values})
     source_columns = sorted({column for _row, column in values})
-    table = [
-        [values.get((row, column), "") for column in source_columns]
-        for row in source_rows
-    ]
+    table = [[values.get((row, column), "") for column in source_columns] for row in source_rows]
     return table, len(source_rows), len(source_columns)
 
 

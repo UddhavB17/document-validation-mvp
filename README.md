@@ -1,175 +1,213 @@
 # Document Validation MVP
 
-Private collaboration repo for DMEF, the Document Matching Early Finder.
+DMEF (Document Matching Early Finder) is a local FastAPI + Next.js application
+for reviewing loan-file documents. It accepts PDF, ZIP-package, or partner OCR
+JSON input, extracts or receives document evidence, evaluates the configured
+checklist, and surfaces exceptions for human review.
 
-## Goal
+This repository is an MVP for local development. The canonical setup path is
+the quickstart below. Use [`run.md`](run.md) for starting, stopping, and
+troubleshooting an already-installed checkout; use
+[`docs/MAINTAINING.md`](docs/MAINTAINING.md) for backend ownership and quality
+checks.
 
-Build an exception-based document validation workflow:
+## What a successful first run looks like
 
-1. Upload a loan-file PDF.
-2. Validate the file.
-3. Extract ground-truth data from digital text pages.
-4. Preprocess scanned pages.
-5. Run OCR.
-6. Classify documents.
-7. Extract document fields.
-8. Match extracted fields against checklist JSON from the system.
-9. Aggregate exceptions.
-10. Show only flagged items for human review.
+There are two independent checks:
 
-## App Structure
+1. The local prerequisite check confirms Python, required imports, paths, and
+   the checklist file.
+2. The running API check confirms that FastAPI started and initialized the
+   local SQLite schema.
 
-- `main.py`: FastAPI backend.
-- `routes/`: upload, verification, decision, and reviewer data APIs.
-- `services/`: PDF processing, OCR, classification, checklist evaluation, reports, LLM integration, and review helpers.
-- `database/`: SQLite schema and connection helpers.
-- `frontend/`: Next.js 14 App Router UI with TypeScript, Tailwind CSS, TanStack Query, and Zod.
+After those checks, the browser UI can be opened. A fresh checkout does not
+contain an approved sample PDF, so document-processing tests need a dummy or
+approved document supplied separately.
 
-The Python UI has been removed. The browser interface is now the Next.js app in `frontend/`.
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser[Next.js UI\nfrontend/] -->|HTTP| API[FastAPI\nmain.py]
+    API --> Routes[routes/\nupload, review, verification, decision, settings]
+    Routes --> Pipeline[services/pipeline/\nprocess and persist]
+    Routes --> Review[services/review/\nworklist and review assembly]
+    Pipeline --> Text[Embedded PDF text\ndigital pages]
+    Pipeline --> OCR[Google Vision\nscanned pages]
+    Pipeline --> Classifier[Deterministic classification\noptional LLM fallback]
+    Pipeline --> Checklist[Checklist, field checks,\nexceptions and reports]
+    API --> DB[(SQLite\ndata/dmef.db)]
+    Pipeline --> Files[(data/uploads\ndata/processed\ndata/reports)]
+```
+
+The normal pipeline is asynchronous after upload: the upload route queues a
+job, the pipeline processes pages and persists progress, and the UI polls the
+progress and review endpoints. Digital PDF pages use embedded text. Scanned
+pages use Google Vision by default. Local PaddleOCR is available only through
+an explicit developer test path described below.
+
+## Repository map
+
+| Path | Responsibility |
+|---|---|
+| `main.py` | FastAPI application, startup schema initialization, CORS, and `/health`. |
+| `routes/` | HTTP request validation and response serialization for upload, review, verification, decisions, and settings. |
+| `services/pipeline/` | Page preparation, extraction/classification orchestration, validation, and persistence. |
+| `services/` | OCR routing, text/field extraction, document classification, checklist evaluation, reports, configuration, and review helpers. |
+| `services/review/` | Read-oriented worklist, comparison, summaries, and repository boundary for review data. |
+| `database/` | SQLite connection helpers and schema/data models. |
+| `frontend/` | Next.js 14 App Router UI, TypeScript, Tailwind, TanStack Query, and Zod. |
+| `data/` | Tracked checklist/registry definitions plus ignored local database, uploads, processed pages, reports, and logs. |
+| `docs/` | Architecture, policy, change, and example-manifest documentation. |
 
 ## Prerequisites
 
-| Requirement | Version | Notes |
-|---|---|---|
-| Python | 3.11.x | Supported backend runtime |
-| Node.js | 20+ | Runs the Next.js UI |
-| Git | any | Source control |
+- Python **3.11.x**. The backend rejects other Python minor versions; the
+  project metadata also requires `<3.12`.
+- Node.js **20+** and npm for the Next.js UI.
+- Git.
+- For scanned-page processing: a Google Cloud project with the Vision API
+  enabled and billing configured, plus either an API key or Application Default
+  Credentials (ADC). Digital pages do not make a Google Vision request.
+- Ollama is optional for the normal backend/UI startup. It is needed only for
+  the optional local LLM modes or the macOS launcher.
 
-## Fast Windows Setup
+If you only need to confirm that the app starts, you do not need Google
+credentials or Ollama. The prerequisite check can skip the optional Ollama
+probe, and the API health endpoint does not call either provider.
 
-From PowerShell in the project root:
+## Canonical quickstart
 
-```powershell
-.\setup.ps1
-.\run_local.ps1
-```
+Run these commands from the repository root. Keep the terminal in the Python
+3.11 virtual environment for backend commands.
 
-`setup.ps1` creates the Python virtual environment, installs backend and frontend dependencies, creates `.env` if needed, prepares local folders, and runs the local health check.
+### macOS
 
-`run_local.ps1` starts both the FastAPI backend and the Next.js UI.
-
-## Manual Setup
-
-Create and activate the Python environment on Windows PowerShell:
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-Install frontend dependencies:
-
-```powershell
-cd frontend
-npm.cmd install
-cd ..
-```
-
-Create environment config:
-
-```powershell
-copy .env.example .env
-```
-
-On macOS Terminal:
+Create the environments and run the prerequisite check:
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-cd frontend && npm install && cd ..
+python -m pip install -r requirements.txt
+npm --prefix frontend ci
 cp .env.example .env
+python -m services.local_health --no-ollama
 ```
 
-## Run Locally
+Start the backend in Terminal 1:
 
-The default `.env.example` uses Google Vision for scanned-page OCR. Configure
-an API key or Application Default Credentials before processing scans. Digital
-PDF pages continue to use embedded text without an OCR API call.
-
-Terminal 1, backend:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
+```bash
+source .venv/bin/activate
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Terminal 2, frontend:
+Start the frontend in Terminal 2:
 
-```powershell
-cd frontend
-npm.cmd run dev -- -p 3000
+```bash
+npm --prefix frontend run dev -- -p 3000
 ```
 
-Open:
+Verify the first successful API path:
 
-- UI: `http://localhost:3000`
-- API docs: `http://127.0.0.1:8000/docs`
-- Health: `http://127.0.0.1:8000/health`
+```bash
+curl -fsS http://127.0.0.1:8000/health
+```
 
-## Main Screens
+Expected response:
 
-- Upload: PDF upload, mapped verification, and partner JSON intake.
-- Worklist: reviewer queue and status filters.
-- Application Review: verdict, reviewer summary, anomalies, checklist, manual review, decisions, and OCR JSON download.
-- My Activity: decisions recorded today.
+```json
+{"status":"ok","version":"0.1.0"}
+```
 
-For the trusted-company-data workflow, open **Document Intake → Automatic
-Verification**. Upload a PDF (or prepare a ZIP) and paste trusted people data
-based on `docs/mapped_manifest.example.json`. Leave `document_index` empty to
-have the shared OCR/classification pipeline identify document types, group
-continuation pages, and infer applicant ownership automatically.
+Open <http://localhost:3000>. API documentation is available at
+<http://127.0.0.1:8000/docs> and ReDoc at
+<http://127.0.0.1:8000/redoc>.
 
-Automatic mode processes every page, uses embedded text where available and
-OCR for scans, predicts each document type, and assigns the document to a person
-using extracted identity evidence. Match/mismatch decisions remain
-deterministic. Low-confidence or ambiguous ownership is surfaced for manual
-review instead of being silently guessed. Explicit one-based `pages` mappings
-remain supported as an override when a trusted index is available.
+### Windows PowerShell
 
-Both normalized ZIP packages and merged PDFs use a second evidence-resolution
-pass. It can promote an Unknown page only when intrinsic document anchors are
-strong, group continuation/front-back pages, match exact identity evidence to
-the correct trusted person, and rerun the appropriate extractor over the whole
-document group. Application forms and CAMs are treated as multi-person
-containers. Observed OCR values, resolved document/person metadata, and trusted
-JSON remain separate; trusted JSON is never copied over an observed value.
+The supported setup script creates `.venv`, installs backend and frontend
+dependencies, creates `.env` when missing, creates local data folders, and runs
+the prerequisite check:
 
-## OCR API Setup (macOS and Windows)
+```powershell
+.\setup.ps1
+```
 
-Google Vision is the API OCR provider currently implemented. When
-`OCR_PROVIDER=google_vision`, each scanned page is sent to Google once and the
-same response is reused for classification and field extraction. Local
-OCR is not called for those pages. Digital pages continue to use their
-embedded PDF text and do not incur OCR API usage.
+Start both services:
 
-Before setup, enable the Vision API and billing in your Google Cloud project.
-Never paste a real API key or service-account JSON into source code, README
-examples, screenshots, issues, or commits. Keep `.env` and credential files
-outside Git; only `.env.example` should be committed.
+```powershell
+.\run_local.ps1
+```
 
-### Option A: Google Vision API key
+Verify the first successful API path from another PowerShell window:
 
-Create `.env` from `.env.example` and use placeholder values like these:
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+Expected response:
+
+```text
+status version
+------ -------
+ok     0.1.0
+```
+
+Open <http://localhost:3000>. The script prints process IDs, URLs, and log
+paths. Stop the services later with:
+
+```powershell
+.\stop_local.ps1
+```
+
+`run_local.ps1` and `stop_local.ps1` force-stop listeners on the requested
+ports. Confirm that ports `8000` and `3000` are owned by DMEF before using them
+on a machine running other local services.
+
+### Fresh-checkout health output
+
+Before the first backend start, `services.local_health` may report a `WARNING`
+for the database or processed-page directory because they are created lazily.
+It may also log that `system_settings` does not exist yet while reading optional
+settings. This is expected on a fresh checkout: `--fail-on-error` returns
+non-zero only for required errors, and the backend creates the SQLite schema on
+startup.
+
+## Optional runtime modes
+
+### Google Vision OCR for scans
+
+`OCR_PROVIDER=google_vision` is the implemented application OCR provider. For
+each scanned page, the backend sends one image to Google Vision and reuses that
+result for classification and field extraction. A digital page uses its
+embedded PDF text instead and does not incur an OCR API request.
+
+The health command checks that the Google Vision Python module is importable; it
+does **not** validate billing, permissions, credentials, or a live OCR request.
+The first real scanned-page run is the credential check.
+
+The `.env.example` value `GOOGLE_VISION_AUTH=auto` uses an API key when one is
+configured and otherwise uses ADC. Set `api_key` or `adc` explicitly when you
+need to force one path. Once the database has been initialized, the Settings
+UI's database-backed OCR setting can take precedence over a copied `.env`.
+
+#### API-key authentication
+
+Put the key in the ignored `.env` file or use the Settings UI. Never put a real
+key in a tracked file, issue, screenshot, or commit.
 
 ```dotenv
 OCR_PROVIDER=google_vision
 GOOGLE_VISION_AUTH=api_key
 GOOGLE_VISION_API_KEY=replace_with_your_secret_key
 GOOGLE_VISION_FEATURE=DOCUMENT_TEXT_DETECTION
-GOOGLE_VISION_TIMEOUT_SECONDS=60
-GOOGLE_VISION_MAX_ATTEMPTS=3
 ```
 
-Restart the backend after changing `.env`.
+#### ADC or service-account authentication
 
-### Option B: Google service account / Application Default Credentials
+Keep the credential file outside the repository and use an absolute path:
 
-Service-account or workload credentials are preferred for production. Put the
-credential JSON outside the repository and configure an absolute path.
-
-macOS `.env` example:
+macOS:
 
 ```dotenv
 OCR_PROVIDER=google_vision
@@ -177,181 +215,159 @@ GOOGLE_VISION_AUTH=adc
 GOOGLE_APPLICATION_CREDENTIALS=/Users/your-user/.config/dmef/google-vision.json
 ```
 
-Windows `.env` example:
+Windows (forward slashes avoid `.env` escaping surprises):
 
 ```dotenv
 OCR_PROVIDER=google_vision
 GOOGLE_VISION_AUTH=adc
-GOOGLE_APPLICATION_CREDENTIALS=C:\Users\your-user\.config\dmef\google-vision.json
+GOOGLE_APPLICATION_CREDENTIALS=C:/Users/your-user/.config/dmef/google-vision.json
 ```
 
-For local development with the Google Cloud CLI, run the same command from
-macOS Terminal or Windows PowerShell:
+With the Google Cloud CLI, this command creates/uses ADC for the current user:
 
 ```text
 gcloud auth application-default login
 ```
 
-Then leave `GOOGLE_APPLICATION_CREDENTIALS` blank and use
-`GOOGLE_VISION_AUTH=adc`.
+When using ADC created by that command, leave
+`GOOGLE_APPLICATION_CREDENTIALS` blank. Restart the backend after changing
+`.env`. The Settings page can show the selected OCR mode and stores secret
+settings without returning the secret value.
 
-### Verify the selected OCR provider
+### Ollama and other LLM providers
 
-Start the backend and open **Settings → OCR Provider**. Select **Google Vision
-API only**, choose the authentication mode, save, and process a test document
-containing approved dummy data. Backend page metadata should show:
+LLM calls are optional. `LLM_PROVIDER` supports these effective modes:
 
-```json
-{
-  "ocr_provider": "google_vision",
-  "ocr_route": "google_vision"
-}
+| Value | Behavior |
+|---|---|
+| `none` | Disable shared LLM calls. Useful for a no-network local smoke run. |
+| `ollama` | Use the local/explicit Ollama endpoint and configured model. |
+| `auto` | Use an API-key provider when a key is present; otherwise use Ollama. This is the `.env.example` default. |
+| `openai` / `openai_compatible` | Use an API-key-backed `/chat/completions`-compatible endpoint. |
+
+Ollama is not required to start FastAPI or the UI. If it is unavailable, the
+optional classifier path logs the failure and standard classification continues.
+Set `LLM_PROVIDER=none` in `.env` when you want to make that choice explicit.
+Do not assume that an LLM response is ground truth: deterministic matching and
+validation remain the source of truth, and the structured classifier does not
+replace the deterministic document type.
+
+#### macOS laptop launcher
+
+The convenience launcher is intentionally not the canonical credential-free
+quickstart:
+
+```bash
+./scripts/start_mvp.sh
 ```
 
-Google Vision mode never silently falls back to local OCR; API failures are
-recorded as page-processing errors so incomplete validation cannot look like a
-successful result.
+It requires the `ollama` command, starts Ollama when needed, pulls the models
+configured by the environment, forces laptop-friendly settings, and starts the
+backend and frontend in the background. It also force-stops any process
+listening on ports `8000` and `3000`. Logs are written to
+`data/logs/ollama.log`, `data/logs/uvicorn.log`, and
+`data/logs/frontend.log`. Use it only when that behavior is wanted.
 
-## Multilingual and Regional-Language Documents
+### Isolated offline PaddleOCR smoke test
 
-The system treats **script detection** and **language identification** as two
-different operations. This is essential for North Indian documents: Hindi,
-Haryanvi, Bhojpuri, Maithili, Magahi, Marathi, Nepali, and other languages may
-all appear in Devanagari. A Devanagari page is therefore never labelled Hindi
-from its characters alone.
-
-Each processed page can carry four separate forms of evidence:
-
-1. `scripts`: deterministic Unicode observations such as `devanagari`,
-   `gurmukhi`, `gujarati`, `bengali`, `tamil`, or `arabic`.
-2. `language_candidates`: possible languages for those scripts, explicitly not
-   treated as detected languages.
-3. `declared_languages`: a printed value such as `Second language: Haryanvi`.
-4. `provider_languages`: language metadata reported by the OCR API.
-
-Document type classification continues to use identifiers, document structure,
-field labels, and page sequence; it does not require the complete packet to have
-one language. Preserve the original Unicode OCR text and classify each page or
-document group independently. For exact language-sensitive rules, use a printed
-language declaration or trusted template metadata and send unresolved cases to
-manual review.
-
-Trusted input may declare an application template's languages when that fact is
-known independently of OCR:
-
-```json
-{
-  "application_form_languages": ["English", "Haryanvi"]
-}
-```
-
-The application-form second-language check runs only on digital pages. Hindi is
-accepted as a second language. Evidence may come from a printed declaration,
-trusted template metadata, provider metadata, or English plus another script in
-the selectable text. Scanned application forms do not produce this anomaly.
-See `docs/multilingual_document_policy.md` for the evidence and decision model.
-
-## Optional Offline OCR Smoke Test
-
-Normal setup and production continue to use Google Vision. Local PaddleOCR is
-an isolated developer test path and is not installed by `requirements.txt`.
-Create a separate environment so its large native dependencies do not affect
-the API-backed app:
+Normal application setup does not install PaddleOCR. The isolated test path is
+for local OCR experiments only and does not call Google Vision:
 
 ```bash
 python3.11 -m venv .venv-ocr
 source .venv-ocr/bin/activate
-pip install -r requirements-ocr-local.txt
-python scripts/test_offline_ocr.py /absolute/path/to/sample.pdf --page 1 --lang bgc
+python -m pip install -r requirements-ocr-local.txt
+python scripts/test_offline_ocr.py /absolute/path/to/sample.pdf --page 1 --lang hi
 ```
 
 On Windows PowerShell, activate with
-`.\.venv-ocr\Scripts\Activate.ps1` and run the same `pip` and `python`
-commands. Useful Paddle language values are:
+`.\.venv-ocr\Scripts\Activate.ps1` and run the same `pip` and `python` commands.
+The script sets `DMEF_LOCAL_OCR_TEST_MODE=true` and `OCR_PROVIDER=local` for
+itself. The full backend must have both values explicitly set to use local OCR;
+`OCR_PROVIDER=local` alone is intentionally ignored outside test mode. The
+first local OCR run may download Paddle models.
 
-| Language | `--lang` |
-|---|---:|
-| Haryanvi | `bgc` |
-| Bihari language group | `bh` |
-| Bhojpuri | `bho` |
-| Maithili | `mai` |
-| Magahi | `mah` |
-| Hindi | `hi` |
-| Urdu | `ur` |
-| Tamil | `ta` |
-| Telugu | `te` |
+The local adapter has no dedicated PaddleOCR v5 recognizer for Gujarati,
+Bengali, Gurmukhi, Odia, Kannada, or Malayalam. Use Google Vision for those
+scripts in the application.
 
-The first run downloads Paddle models into its cache. Run each model once while
-online before testing without a network connection. The smoke-test command
-directly calls local OCR and cannot call Google Vision. The full backend can
-only select local OCR when both `DMEF_LOCAL_OCR_TEST_MODE=true` and
-`OCR_PROVIDER=local` are present; do not use that override in production.
+## Main UI workflows
 
-PaddleOCR v5 does not provide dedicated Gujarati, Bengali, Gurmukhi, Odia,
-Kannada, or Malayalam recognizers in this test adapter. Use Google Vision for
-those in the application. If a fully offline cross-India test is later needed,
-add a Tesseract adapter and the appropriate trained-data files rather than
-pretending the Devanagari model supports those scripts.
+- **Document Intake → Automatic Verification**: upload a PDF, or prepare a ZIP
+  package, and let the shared pipeline identify document types, group
+  continuation pages, and infer ownership. Trusted people data can be supplied
+  using [`docs/mapped_manifest.example.json`](docs/mapped_manifest.example.json).
+- **Document Intake → Mapped Verification**: upload a PDF or ZIP and provide a
+  manifest. `pages` values are one-based PDF page numbers; the supplied
+  `document_type` and person mapping are used instead of automatic type
+  prediction. Match/mismatch decisions are deterministic.
+- **Partner OCR JSON**: submit an already-extracted partner payload directly to
+  the checklist path.
+- **Worklist / Application Review / My Activity**: inspect queued and completed
+  applications, evidence, anomalies, checklist status, decisions, and activity.
 
-### Adding Amazon Textract, Azure AI Vision, or another OCR API
+For multilingual documents, script observations and language identification are
+separate evidence. Do not infer a specific language from a script alone; see
+[`docs/multilingual_document_policy.md`](docs/multilingual_document_policy.md)
+for the current evidence and decision model.
 
-The extraction pipeline expects every provider adapter to return the same
-internal result contract:
+For mapped verification, the manifest is sent as multipart form data to
+`POST /upload/mapped`; the upload response contains progress and summary URLs.
+See the interactive API docs for the exact request schema.
 
-```python
-{
-    "ocr_text": "observed document text",
-    "confidence": 0.0,
-    "is_readable": True,
-    "ocr_provider": "provider_name",
-    "bounding_boxes": [],
-    "layout_blocks": [],
-    "tables": [],
-}
+## Configuration and local data
+
+The defaults are relative to the repository root:
+
+| Purpose | Variable | Default |
+|---|---|---|
+| SQLite database | `DATABASE_PATH` | `data/dmef.db` |
+| Uploaded PDFs and ZIP packages | `UPLOAD_DIR` | `data/uploads` |
+| Rendered pages and OCR JSON | `PAGE_OUTPUT_DIR` | `data/processed` |
+| JSON and Excel reports | `REPORT_OUTPUT_DIR` | `data/reports` |
+| Checklist definition | `CHECKLIST_JSON_PATH` | `data/checklist.json` |
+| Frontend API base URL | `NEXT_PUBLIC_API_BASE_URL` | `http://127.0.0.1:8000` |
+
+The older `DATABASE_URL=sqlite:///...` form remains accepted for legacy local
+`.env` files. `.env.example` contains the other runtime switches, including
+upload/ZIP limits, OCR timeouts, validation profiles, and job-control settings.
+Do not copy a real database or real customer data into the repository.
+
+## Known MVP limitations
+
+- This is a local-development application, not a production deployment. There
+  is no general application authentication layer in the routes; keep services
+  bound to loopback and do not expose them to an untrusted network.
+- A live scanned-document run depends on Google Vision credentials, network
+  access, API enablement, and billing. The health check cannot prove any of
+  those conditions.
+- Offline OCR is an isolated PaddleOCR developer path, not the normal provider
+  and not a complete cross-India language solution.
+- Optional LLM features are best-effort fallbacks/signals. They can be disabled
+  or unavailable without turning a deterministic result into an LLM result.
+- A fresh checkout has no approved sample PDF, and this documentation does not
+  claim that a full OCR/checklist result can be verified without one.
+- The default local SQLite database and generated artifacts are not a shared
+  service. Separate checkouts have separate data unless their paths are
+  deliberately configured to point elsewhere.
+
+## Data handling
+
+Use only dummy or explicitly approved documents during development. Uploads,
+rendered pages, OCR text/JSON, reports, the local database, `.env`, Google
+credentials, API keys, and Ollama-generated local data may contain sensitive
+information or secrets. Keep them outside commits and outside screenshots.
+
+The repository `.gitignore` excludes `.env`, databases, PDFs/images, runtime
+uploads, processed pages, reports, caches, and logs. Treat that as a guardrail,
+not as a substitute for checking what you are about to stage:
+
+```bash
+git status --short --ignored
+git diff --check
+git diff --cached --stat
+git diff --cached
 ```
 
-To add another API, create a provider module beside
-`services/google_vision_ocr.py`, translate the provider response into this
-contract, register the provider in `services/ocr_router.py`, add non-secret
-settings to `.env.example`, and add mocked tests that make no external calls.
-Provider SDK credentials must come from environment variables, the cloud
-provider's standard credential chain, or a secret manager—not from committed
-configuration. Until an adapter is registered, setting an arbitrary provider
-name will not activate that API.
-
-## Trusted JSON + Mapped-Page Verification
-
-For deterministic company workflow, open `Document Intake -> Mapped Verification`. Upload the PDF and paste a manifest based on `docs/mapped_manifest.example.json`.
-
-The `pages` values are one-based PDF page numbers. The mapped path renders and OCRs only those pages, uses the supplied `document_type` instead of predicting it, compares supported fields against trusted reference data, and does not use an LLM to make match/mismatch decisions.
-
-The same workflow is available through `POST /upload/mapped` as multipart form data:
-
-- `file`: the PDF
-- `manifest`: the JSON manifest encoded as a string
-
-Poll the returned `progress_url`, then retrieve the final deterministic summary from the returned `summary_url`.
-
-## Tests
-
-With the Python environment active:
-
-```powershell
-pytest
-```
-
-Frontend checks:
-
-```powershell
-cd frontend
-npm.cmd run typecheck
-npm.cmd run lint
-npm.cmd run build
-```
-
-## Data Safety
-
-Use only dummy or approved sample documents. Uploaded files, extracted pages,
-generated reports, local databases, `.env` files, API keys, and service-account
-credentials must remain untracked. Before committing, inspect staged changes
-for identifiers and secrets.
+Before sharing an output or asking for review, confirm that it contains no
+applicant identifiers, document images, credential paths, tokens, or API keys.

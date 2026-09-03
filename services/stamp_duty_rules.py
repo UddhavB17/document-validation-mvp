@@ -8,15 +8,14 @@ compliance owners supply the rule records; this module never guesses a rate.
 
 from __future__ import annotations
 
-from datetime import date
-from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
-from functools import lru_cache
 import json
 import os
-from pathlib import Path
 import re
+from datetime import date
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
-
 
 DEFAULT_RULES_PATH = Path(__file__).resolve().parents[1] / "data" / "stamp_duty_rules.json"
 
@@ -40,7 +39,9 @@ def evaluate_stamp_duty(
     context: dict[str, Any],
     rules: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    state = _key(observed.get("stamp_jurisdiction_state") or context.get("stamp_jurisdiction_state"))
+    state = _key(
+        observed.get("stamp_jurisdiction_state") or context.get("stamp_jurisdiction_state")
+    )
     instrument = _instrument_key(observed.get("stamp_article") or context.get("stamp_article"))
     execution_date = _date(observed.get("stamp_date") or context.get("execution_date"))
     paid = _decimal(observed.get("stamp_duty_amount"))

@@ -20,10 +20,9 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import fitz  # PyMuPDF
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -85,12 +84,23 @@ def clean_xml_and_metadata(text: str) -> str:
     for line in lines:
         stripped = line.strip()
         # Skip XML signature tags and signature metadata keywords
-        if any(tag in stripped for tag in (
-            "X509Certificate", "X509SubjectName", "X509Data", 
-            "SignatureValue", "DigestValue", "Signature", 
-            "SignedInfo", "KeyInfo", "CanonicalizationMethod", 
-            "SignatureMethod", "Transform", "DigestMethod"
-        )):
+        if any(
+            tag in stripped
+            for tag in (
+                "X509Certificate",
+                "X509SubjectName",
+                "X509Data",
+                "SignatureValue",
+                "DigestValue",
+                "Signature",
+                "SignedInfo",
+                "KeyInfo",
+                "CanonicalizationMethod",
+                "SignatureMethod",
+                "Transform",
+                "DigestMethod",
+            )
+        ):
             continue
         # Strip standard XML tags
         line_no_xml = re.sub(r"<[^>]+>", "", line).strip()
@@ -121,7 +131,6 @@ def extract_digital_text(fitz_page: fitz.Page) -> str:
     text = fitz_page.get_text().strip()
     cleaned = clean_xml_and_metadata(text)
     return cleaned if len(cleaned) > _DIGITAL_THRESHOLD else ""
-
 
 
 def extract_ground_truth(pdf_path: str | Path) -> _GroundTruth:
@@ -176,23 +185,32 @@ def extract_ground_truth(pdf_path: str | Path) -> _GroundTruth:
     json_payload = _extract_json_payload(raw_text)
     flattened_json = _flatten_json_payload(json_payload)
 
-    return {
-        **flattened_json,
-        "applicant_name": _json_value(flattened_json, "applicant_name", "applicant.name", "borrower_name", "name")
-        or _extract_applicant_name_full(layout_cells, raw_text),
-        "pan_number": _json_value(flattened_json, "pan_number", "pan", "applicant.pan_number", "applicant.pan")
-        or _safe_extract(_extract_pan_number, raw_text),
-        "loan_amount": _json_value(flattened_json, "loan_amount", "amount", "requested_amount", "sanctioned_amount")
-        or _safe_extract(_extract_loan_amount, raw_text),
-        "phone": _json_value(flattened_json, "phone", "phone_number", "mobile", "mobile_number")
-        or _safe_extract(_extract_phone, raw_text),
-        "address": _json_value(flattened_json, "address", "applicant.address")
-        or _safe_extract(_extract_address, raw_text),
-        "product_type": _json_value(flattened_json, "product_type", "loan_type", "product")
-        or _safe_extract(_extract_product_type, raw_text),
-        "raw_text": raw_text,
-        "db_data_json": json_payload,
-    }
+    result: dict[str, Any] = dict(flattened_json)
+    result.update(
+        {
+            "applicant_name": _json_value(
+                flattened_json, "applicant_name", "applicant.name", "borrower_name", "name"
+            )
+            or _extract_applicant_name_full(layout_cells, raw_text),
+            "pan_number": _json_value(
+                flattened_json, "pan_number", "pan", "applicant.pan_number", "applicant.pan"
+            )
+            or _safe_extract(_extract_pan_number, raw_text),
+            "loan_amount": _json_value(
+                flattened_json, "loan_amount", "amount", "requested_amount", "sanctioned_amount"
+            )
+            or _safe_extract(_extract_loan_amount, raw_text),
+            "phone": _json_value(flattened_json, "phone", "phone_number", "mobile", "mobile_number")
+            or _safe_extract(_extract_phone, raw_text),
+            "address": _json_value(flattened_json, "address", "applicant.address")
+            or _safe_extract(_extract_address, raw_text),
+            "product_type": _json_value(flattened_json, "product_type", "loan_type", "product")
+            or _safe_extract(_extract_product_type, raw_text),
+            "raw_text": raw_text,
+            "db_data_json": json_payload,
+        }
+    )
+    return cast(_GroundTruth, result)
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +286,7 @@ def _extract_applicant_name(text: str) -> str | None:
     for i, line in enumerate(lines[:20]):
         if not line.lower().startswith("for "):
             continue
-        header_window = " ".join(lines[max(0, i - 3):i]).lower()
+        header_window = " ".join(lines[max(0, i - 3) : i]).lower()
         if "credit information" not in header_window:
             continue
         candidate = _clean_name_candidate(line[4:])
@@ -346,7 +364,7 @@ def _clean_name_candidate(value: str) -> str | None:
     return candidate
 
 
-def _page_layout_cells(fitz_page: "fitz.Page", page_index: int) -> list[_LayoutCell]:
+def _page_layout_cells(fitz_page: fitz.Page, page_index: int) -> list[_LayoutCell]:
     try:
         words = fitz_page.get_text("words")
     except Exception:  # noqa: BLE001

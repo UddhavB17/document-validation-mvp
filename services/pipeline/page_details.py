@@ -9,8 +9,8 @@ from typing import Any
 from services.field_assignment_refiner import refine_field_assignments
 from services.field_extractor import extract_fields
 from services.job_control import mark_checkpoint
-from services.progress_tracker import record_page_completed
 from services.pipeline.persistence import _save_page_checkpoint
+from services.progress_tracker import record_page_completed
 
 
 def _extract_fields_with_layout(
@@ -25,6 +25,7 @@ def _extract_fields_with_layout(
             structured_content=structured_content,
         )
     return extract_fields(document_type, text)
+
 
 def _record_completed_page_event(
     application_id: int | None,
@@ -52,6 +53,7 @@ def _record_completed_page_event(
     _save_page_checkpoint(application_id, page)
     mark_checkpoint(job_id, int(page.get("page_number") or 0))
 
+
 def _build_db_data_fields(*, page_number: int, text: str) -> dict[str, Any]:
     payload = _extract_json_payload(text)
     fields: dict[str, Any] = {
@@ -73,11 +75,13 @@ def _build_db_data_fields(*, page_number: int, text: str) -> dict[str, Any]:
         fields["db_data_json_keys"] = sorted(str(key) for key in payload.keys())
     return fields
 
+
 def _is_starting_json_db_page(*, page_number: int, text: str) -> bool:
     """Return True only for opening digital pages that contain parseable JSON."""
     if page_number > 3:
         return False
     return bool(_extract_json_payload(text))
+
 
 def _extract_json_payload(text: str) -> dict[str, Any]:
     stripped = str(text or "").strip()
@@ -94,6 +98,7 @@ def _extract_json_payload(text: str) -> dict[str, Any]:
         if isinstance(payload, dict):
             return payload
     return {}
+
 
 def _apply_llm_extraction_fallback(
     *,
@@ -143,6 +148,7 @@ def _apply_llm_extraction_fallback(
         **fallback_fields,
     }
 
+
 def _ensure_page_has_json_details(
     *,
     document_type: str,
@@ -160,14 +166,18 @@ def _ensure_page_has_json_details(
     # to GST/premium values.  Only attach semantic loan-summary fields when the
     # page has actually been classified into a loan-term document family.
     summary_document_types = {
-        "cam", "facility agreement", "key fact statement", "kfs",
-        "loan agreement", "repayment schedule", "sanction letter",
+        "cam",
+        "facility agreement",
+        "key fact statement",
+        "kfs",
+        "loan agreement",
+        "repayment schedule",
+        "sanction letter",
     }
     extracted_fields = attach_repayment_fields(
         extracted_fields,
         text,
-        include_summary=str(document_type or "").strip().casefold()
-        in summary_document_types,
+        include_summary=str(document_type or "").strip().casefold() in summary_document_types,
     )
     if _has_informative_public_fields(extracted_fields):
         return extracted_fields
@@ -187,6 +197,7 @@ def _ensure_page_has_json_details(
         },
     }
 
+
 def _has_informative_public_fields(fields: dict[str, Any]) -> bool:
     ignored_fields = {"content_category", "review_flag"}
     for field_name, value in (fields or {}).items():
@@ -195,6 +206,7 @@ def _has_informative_public_fields(fields: dict[str, Any]) -> bool:
         if value not in (None, "", [], {}):
             return True
     return False
+
 
 def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str, Any]:
     normalized_text = str(text or "").strip()
@@ -208,6 +220,7 @@ def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str,
             details[key] = value
 
     return details
+
 
 def _generic_detected_values(text: str) -> dict[str, list[str]]:
     return {
@@ -226,8 +239,11 @@ def _generic_detected_values(text: str) -> dict[str, list[str]]:
             text,
             flags=re.IGNORECASE,
         ),
-        "generic_emails": _unique_matches(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, flags=re.IGNORECASE),
+        "generic_emails": _unique_matches(
+            r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, flags=re.IGNORECASE
+        ),
     }
+
 
 def _generic_keywords(text: str) -> list[str]:
     lowered = text.lower()
@@ -239,11 +255,8 @@ def _generic_keywords(text: str) -> list[str]:
         "identity": ("pan", "aadhaar", "voter", "election commission", "date of birth"),
         "property": ("property", "khasra", "plot", "patta", "registry"),
     }
-    return [
-        label
-        for label, terms in keyword_map.items()
-        if any(term in lowered for term in terms)
-    ]
+    return [label for label, terms in keyword_map.items() if any(term in lowered for term in terms)]
+
 
 def _unique_matches(pattern: str, text: str, *, flags: int = 0, limit: int = 10) -> list[str]:
     values: list[str] = []

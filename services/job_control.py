@@ -7,7 +7,7 @@ import json
 import os
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,7 +15,6 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from database import db
 from database.db import get_connection
-
 
 ControlAction = Literal["pause", "resume", "cancel"]
 _ACTIVE_JOB_STATUSES = frozenset({"queued", "running", "pause_requested", "paused"})
@@ -42,7 +41,7 @@ class PipelineCancelled(RuntimeError):
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _fernet() -> Fernet:
@@ -51,9 +50,7 @@ def _fernet() -> Fernet:
         try:
             return Fernet(configured.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
-            raise JobInputUnavailableError(
-                "DMEF_JOB_INPUT_KEY must be a valid Fernet key"
-            ) from exc
+            raise JobInputUnavailableError("DMEF_JOB_INPUT_KEY must be a valid Fernet key") from exc
 
     key_path = Path(
         os.getenv("DMEF_JOB_INPUT_KEY_FILE", str(db.DATABASE_PATH.parent / ".job_input.key"))
@@ -97,9 +94,7 @@ def safe_settings_snapshot() -> dict[str, Any]:
     return {
         "system_settings": {str(row["config_key"]): row["config_value"] for row in rows},
         "environment": {
-            key: os.environ[key]
-            for key in _SAFE_ENVIRONMENT_KEYS
-            if key in os.environ
+            key: os.environ[key] for key in _SAFE_ENVIRONMENT_KEYS if key in os.environ
         },
     }
 

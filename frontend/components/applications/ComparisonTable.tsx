@@ -1,22 +1,8 @@
 "use client";
 
-import React from "react";
+import { ApplicantComparison, FieldComparison } from "@/lib/api";
 
-interface FieldComparison {
-  field_name: string;
-  label: string;
-  expected_value: string | null;
-  extracted_value: string | null;
-  status: "match" | "mismatch" | "attention";
-  source_pages: number[];
-}
-
-interface ApplicantComparison {
-  applicant_role: "primary" | "co_applicant" | "guarantor";
-  applicant_label: string;
-  person_name: string;
-  fields: FieldComparison[];
-}
+import { formatPageRange } from "@/components/applications/review/issueQueue";
 
 interface ComparisonTableProps {
   coreParameters?: FieldComparison[] | null;
@@ -29,6 +15,40 @@ const statusLabels = {
   mismatch: "Mismatch",
   attention: "Attention",
 };
+
+function normalizedPages(pages: number[]): number[] {
+  return [...new Set(pages.filter((page) => Number.isFinite(page) && page > 0))].sort((a, b) => a - b);
+}
+
+function SourcePages({
+  pages,
+  label,
+  onSelectPage,
+}: {
+  pages: number[];
+  label: string;
+  onSelectPage: (pageNo: number, title: string, reason: string) => void;
+}) {
+  const pageNumbers = normalizedPages(pages);
+  if (pageNumbers.length === 0) {
+    return <span className="text-[#5C6B7A] font-medium">—</span>;
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="font-mono text-[11px] font-semibold text-[#5C6B7A]" title={formatPageRange(pageNumbers)}>
+        {pageNumbers.length} page{pageNumbers.length === 1 ? "" : "s"}
+      </span>
+      <button
+        type="button"
+        onClick={() => onSelectPage(pageNumbers[0], label, `Audit review for ${label}`)}
+        className="rounded-md border border-[#B9CBE2] bg-[#EAF0F8] px-2.5 py-1 text-[11px] font-semibold text-[#2B4C7E] transition-colors hover:bg-[#2B4C7E] hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2B4C7E]"
+      >
+        Review source
+      </button>
+    </div>
+  );
+}
 
 export default function ComparisonTable({ coreParameters, applicants, onSelectPage }: ComparisonTableProps) {
   const coreParams = coreParameters || [];
@@ -101,22 +121,7 @@ export default function ComparisonTable({ coreParameters, applicants, onSelectPa
                       </span>
                     </td>
                     <td className="px-3.5 py-3">
-                      <div className="flex flex-wrap gap-1.5">
-                        {param.source_pages.length > 0 ? (
-                          param.source_pages.map((p) => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => onSelectPage(p, param.label, `Audit review for ${param.label}`)}
-                              className="font-mono text-[11.5px] bg-[#EAF0F8] text-[#2B4C7E] border-none rounded-md px-2.5 py-1 font-semibold hover:bg-[#2B4C7E] hover:text-white transition-all cursor-pointer"
-                            >
-                              Page {p}
-                            </button>
-                          ))
-                        ) : (
-                          <span className="text-[#5C6B7A] font-medium">—</span>
-                        )}
-                      </div>
+                      <SourcePages pages={param.source_pages} label={param.label} onSelectPage={onSelectPage} />
                     </td>
                   </tr>
                 ))
@@ -179,22 +184,7 @@ export default function ComparisonTable({ coreParameters, applicants, onSelectPa
                             </span>
                           </td>
                           <td className="px-3.5 py-3">
-                            <div className="flex flex-wrap gap-1.5">
-                              {field.source_pages.length > 0 ? (
-                                field.source_pages.map((p) => (
-                                  <button
-                                    key={p}
-                                    type="button"
-                                    onClick={() => onSelectPage(p, `${applicant.person_name} — ${field.label}`, `Audit review for ${field.label}`)}
-                                    className="font-mono text-[11.5px] bg-[#EAF0F8] text-[#2B4C7E] border-none rounded-md px-2.5 py-1 font-semibold hover:bg-[#2B4C7E] hover:text-white transition-all cursor-pointer"
-                                  >
-                                    Page {p}
-                                  </button>
-                                ))
-                              ) : (
-                                <span className="text-[#5C6B7A] font-medium">—</span>
-                              )}
-                            </div>
+                            <SourcePages pages={field.source_pages} label={`${applicant.person_name} — ${field.label}`} onSelectPage={onSelectPage} />
                           </td>
                         </tr>
                       ))

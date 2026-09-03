@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 PHOTO_MIN_CHARS = 40
 PHOTO_MAX_CONFIDENCE = 0.35
 HANDWRITTEN_MAX_CONFIDENCE = 0.62
@@ -33,7 +32,9 @@ def triage_page_content(
     metadata = ocr_metadata or {}
     char_count = int(metadata.get("char_count") or len(text.strip()))
     word_count = int(metadata.get("word_count") or len(re.findall(r"\w+", text)))
-    line_count = int(metadata.get("line_count") or len([line for line in text.splitlines() if line.strip()]))
+    line_count = int(
+        metadata.get("line_count") or len([line for line in text.splitlines() if line.strip()])
+    )
     confidence = float(ocr_confidence) if ocr_confidence is not None else None
     text_density = _text_density(metadata, char_count)
     aspect_ratio = _aspect_ratio(metadata)
@@ -67,7 +68,11 @@ def triage_page_content(
             confidence,
         )
 
-    if confidence is not None and confidence < HANDWRITTEN_MAX_CONFIDENCE and text_density < HANDWRITTEN_MAX_DENSITY:
+    if (
+        confidence is not None
+        and confidence < HANDWRITTEN_MAX_CONFIDENCE
+        and text_density < HANDWRITTEN_MAX_DENSITY
+    ):
         return _result(
             "handwritten",
             0.80,
@@ -80,7 +85,9 @@ def triage_page_content(
             confidence,
         )
 
-    if (confidence is not None and confidence >= PRINTED_MIN_CONFIDENCE) or char_count >= PRINTED_MIN_CHARS:
+    if (
+        confidence is not None and confidence >= PRINTED_MIN_CONFIDENCE
+    ) or char_count >= PRINTED_MIN_CHARS:
         return _result(
             "printed_scan",
             0.90,

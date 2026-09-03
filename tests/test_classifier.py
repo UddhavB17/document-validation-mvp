@@ -5,12 +5,10 @@ asserts both the document_type and that confidence == 1.0 (or 0.0 for
 the unclassified fallback).
 """
 
-import pytest
-
 from services.document_classifier import classify_page
 
-
 # ── Helper ────────────────────────────────────────────────────────────────────
+
 
 def _classify(text: str) -> str:
     """Return only the document_type string for cleaner assertions."""
@@ -22,6 +20,7 @@ def _confidence(text: str) -> float:
 
 
 # ── Existing document types ───────────────────────────────────────────────────
+
 
 def test_pan_card_classified() -> None:
     text = "Income Tax Department Permanent Account Number ABCDE1234F"
@@ -185,6 +184,7 @@ def test_unclassified_returns_none() -> None:
 
 # ── New document types ────────────────────────────────────────────────────────
 
+
 def test_voter_id_classified() -> None:
     text = "Election Commission of India Electors Photo Identity Card"
     assert _classify(text) == "Voter ID"
@@ -252,8 +252,7 @@ def test_application_form_employment_spelling_satisfies_required_any() -> None:
     text = "Applicant Employment section with Login Date and Channel Type fields"
     scored = _score_rule(text, rule)
     assert any(
-        signal.get("value") == "applicant employment"
-        for signal in scored["matched_signals"]
+        signal.get("value") == "applicant employment" for signal in scored["matched_signals"]
     )
     assert "applicant employment" in rule["required_any"]
 
@@ -317,7 +316,9 @@ def test_guarantee_deed_classified() -> None:
 
 
 def test_guarantee_deed_via_guarantor_and_deed() -> None:
-    text = "DEED OF GUARANTEE This Guarantee Deed is executed by the guarantor in favour of the lender"
+    text = (
+        "DEED OF GUARANTEE This Guarantee Deed is executed by the guarantor in favour of the lender"
+    )
     assert _classify(text) == "Guarantee Deed"
 
 
@@ -334,21 +335,16 @@ def test_utility_bill_broadband_classified() -> None:
 
 # ── Priority order tests ──────────────────────────────────────────────────────
 
+
 def test_sanction_before_loan_agreement() -> None:
     """Sanction Letter must win when both keywords appear on the same page."""
-    text = (
-        "Sanction Letter Loan Agreement Borrower Lender "
-        "Sanctioned Amount Tenure Repayment"
-    )
+    text = "Sanction Letter Loan Agreement Borrower Lender Sanctioned Amount Tenure Repayment"
     assert _classify(text) == "Sanction Letter"
 
 
 def test_pan_before_aadhaar() -> None:
     """PAN is priority 1; Aadhaar is priority 2."""
-    text = (
-        "Permanent Account Number ABCDE1234F "
-        "Aadhaar UIDAI 1234 5678 9012"
-    )
+    text = "Permanent Account Number ABCDE1234F Aadhaar UIDAI 1234 5678 9012"
     assert _classify(text) == "PAN Card"
 
 
@@ -415,8 +411,13 @@ def test_checklist_page_not_classified_as_identity_card() -> None:
         "Election Commission of India identity proofs accepted."
     )
     assert _classify(text) not in {
-        "Aadhaar", "PAN", "PAN Card", "Voter ID", "Driving License",
-        "Passport", "Ration Card",
+        "Aadhaar",
+        "PAN",
+        "PAN Card",
+        "Voter ID",
+        "Driving License",
+        "Passport",
+        "Ration Card",
     }
 
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from database.db import get_connection
 
+
 def _save_ground_truth(application_id: int, ground_truth: dict[str, Any]) -> None:
     with get_connection() as connection:
         connection.execute("DELETE FROM ground_truth WHERE application_id = ?", (application_id,))
@@ -37,11 +38,13 @@ def _save_ground_truth(application_id: int, ground_truth: dict[str, Any]) -> Non
             ),
         )
 
+
 def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
     with get_connection() as connection:
         connection.execute("DELETE FROM pages WHERE application_id = ?", (application_id,))
         for page in pages:
             _insert_page(connection, application_id, page)
+
 
 def _save_page_checkpoint(application_id: int, page: dict[str, Any]) -> None:
     """Persist one completed page atomically so a crash can resume after it."""
@@ -54,6 +57,7 @@ def _save_page_checkpoint(application_id: int, page: dict[str, Any]) -> None:
             (application_id, page_number),
         )
         _insert_page(connection, application_id, page)
+
 
 def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> None:
     connection.execute(
@@ -88,6 +92,7 @@ def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> 
         ),
     )
 
+
 def _load_page_checkpoints(application_id: int) -> list[dict[str, Any]]:
     with get_connection() as connection:
         rows = connection.execute(
@@ -103,6 +108,7 @@ def _load_page_checkpoints(application_id: int) -> list[dict[str, Any]]:
         checkpoints.append(page)
     return checkpoints
 
+
 def _decode_json_object(value: Any) -> dict[str, Any]:
     if not value:
         return {}
@@ -111,6 +117,7 @@ def _decode_json_object(value: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
 
 def _update_uploaded_file_counts(application_id: int, structure: dict[str, Any]) -> None:
     with get_connection() as connection:
@@ -128,10 +135,12 @@ def _update_uploaded_file_counts(application_id: int, structure: dict[str, Any])
             ),
         )
 
+
 def _should_call_llm(generate_llm_summary: bool | None) -> bool:
     if generate_llm_summary is not None:
         return generate_llm_summary
     return os.getenv("ENABLE_LLM_SUMMARY", "").lower() in {"1", "true", "yes", "on"}
+
 
 def _save_llm_summary(application_id: int, summary: str) -> None:
     with get_connection() as connection:

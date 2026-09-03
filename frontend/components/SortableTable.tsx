@@ -1,73 +1,102 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
-type Column<T> = {
+// Generic table used across worklists and review panels. It owns sorting state
+// while callers provide rendering and optional values for comparison.
+type SortDirection = "asc" | "desc";
+
+type SortState = {
+  key: string;
+  direction: SortDirection;
+};
+
+type SortableColumn<T> = {
   key: string;
   header: string;
-  value: (row: T) => React.ReactNode;
+  value: (row: T) => ReactNode;
   sortValue?: (row: T) => string | number | null | undefined;
 };
 
-export function SortableTable<T>({ rows, columns }: { rows: T[]; columns: Column<T>[] }) {
-  const [sort, setSort] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+export function SortableTable<T>({
+  rows,
+  columns,
+  label = "Data table",
+}: {
+  rows: T[];
+  columns: SortableColumn<T>[];
+  label?: string;
+}) {
+  const [sortState, setSortState] = useState<SortState | null>(null);
   const sortedRows = useMemo(() => {
-    if (!sort) {
+    if (!sortState) {
       return rows;
     }
-    const column = columns.find((item) => item.key === sort.key);
-    if (!column) {
+    const sortColumn = columns.find((item) => item.key === sortState.key);
+    if (!sortColumn) {
       return rows;
     }
     return [...rows].sort((a, b) => {
-      const left = column.sortValue?.(a);
-      const right = column.sortValue?.(b);
+      const left = sortColumn.sortValue?.(a);
+      const right = sortColumn.sortValue?.(b);
       const result = String(left ?? "").localeCompare(String(right ?? ""), undefined, { numeric: true });
-      return sort.direction === "asc" ? result : -result;
+      return sortState.direction === "asc" ? result : -result;
     });
-  }, [columns, rows, sort]);
+  }, [columns, rows, sortState]);
 
   return (
-    <div className="overflow-auto rounded-xl border border-[#E1E5EB] bg-white shadow-3xs max-h-[600px]">
-      <table className="min-w-full divide-y divide-[#E1E5EB] text-[13px] relative border-collapse">
-        <thead className="sticky top-0 bg-[#F6F7FA] text-left text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] border-b border-[#E1E5EB] z-10">
+    <div className="data-table-wrap">
+      <table className="data-table" aria-label={label}>
+        <caption className="sr-only">{label}</caption>
+        <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.key} className="whitespace-nowrap px-6 py-3.5">
-                <button
-                  type="button"
-                  className="font-bold hover:text-[#16202E] transition-colors duration-150 flex items-center gap-1.5 border-none bg-transparent cursor-pointer"
-                  onClick={() =>
-                    setSort((current) =>
-                      current?.key === column.key
-                        ? { key: column.key, direction: current.direction === "asc" ? "desc" : "asc" }
-                        : { key: column.key, direction: "asc" },
-                    )
-                  }
-                >
-                  {column.header}
-                  {sort?.key === column.key ? (
-                    <span className="text-[10px] text-[#2B4C7E] font-mono font-bold">
-                      {sort.direction === "asc" ? " ▲" : " ▼"}
+              <th
+                key={column.key}
+                scope="col"
+                aria-sort={sortState?.key === column.key ? (sortState.direction === "asc" ? "ascending" : "descending") : "none"}
+              >
+                {column.sortValue ? (
+                  <button
+                    type="button"
+                    className="data-table__sort-button"
+                    aria-label={`${column.header}: ${getSortLabel(sortState, column.key)}`}
+                    onClick={() =>
+                      setSortState((currentSort) =>
+                        currentSort?.key === column.key
+                          ? { key: column.key, direction: currentSort.direction === "asc" ? "desc" : "asc" }
+                          : { key: column.key, direction: "asc" },
+                      )
+                    }
+                  >
+                    <span>{column.header}</span>
+                    <span className="data-table__sort-indicator" aria-hidden="true">
+                      {sortState?.key === column.key ? (sortState.direction === "asc" ? "↑" : "↓") : "↕"}
                     </span>
-                  ) : null}
-                </button>
+                  </button>
+                ) : (
+                  column.header
+                )}
               </th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-[#E1E5EB] text-[#16202E]">
+        <tbody>
           {sortedRows.map((row, index) => (
-            <tr key={index} className="align-middle hover:bg-[#EAF0F8]/15 transition-colors duration-100">
-              {columns.map((column) => (
-                <td key={column.key} className="px-6 py-3.5 text-[#16202E] font-medium leading-relaxed">
-                  {column.value(row)}
-                </td>
-              ))}
+            <tr key={index}>
+              {columns.map((column) => <td key={column.key}>{column.value(row)}</td>)}
             </tr>
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+function getSortLabel(sortState: SortState | null, key: string) {
+  if (sortState?.key !== key) {
+    return "sort ascending";
+  }
+  return sortState.direction === "asc" ? "sort descending" : "sort ascending";
 }
