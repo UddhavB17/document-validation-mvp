@@ -2,6 +2,8 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { ApplicationReview } from "@/lib/api";
 import { asText } from "@/lib/format";
 
+import { formatPageRange } from "@/components/applications/review/issueQueue";
+
 export function ReviewerSummary({
   data,
   onSelectPage,
@@ -31,18 +33,22 @@ export function ReviewerSummary({
         </div>
         <p className="text-sm text-slate-600 font-medium leading-relaxed">{asText(summary.recommendation)}</p>
         {pagesToReview.length > 0 ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm flex flex-wrap items-center gap-2">
-            <span>Pages to check manually:</span>
-            {pagesToReview.map((pageNumber) => (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm">
+            <div>
+              <div>Pages to check manually: {pagesToReview.length}</div>
+              <div className="mt-1 text-xs font-medium text-amber-700" title={formatPageRange(pagesToReview)}>
+                Affected pages {formatPageRange(pagesToReview)}
+              </div>
+            </div>
+            {onSelectPage ? (
               <button
-                key={pageNumber}
                 type="button"
-                onClick={() => onSelectPage?.(pageNumber)}
-                className="rounded border border-amber-300 bg-white px-2.5 py-0.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition-colors"
+                onClick={() => onSelectPage(pagesToReview[0])}
+                className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700"
               >
-                Page {pageNumber}
+                Review first page
               </button>
-            ))}
+            ) : null}
           </div>
         ) : null}
       </section>

@@ -18,11 +18,11 @@ interface LlmSummary {
 function isPageSummary(value: unknown): value is PageSummary {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 
-  return (!('page_number' in value) || value.page_number === undefined || value.page_number === null || typeof value.page_number === "number")
-    && (!('document_type' in value) || value.document_type === undefined || value.document_type === null || typeof value.document_type === "string")
-    && (!('rule_id' in value) || value.rule_id === undefined || value.rule_id === null || typeof value.rule_id === "string")
-    && (!('summary_points' in value) || value.summary_points === undefined || (Array.isArray(value.summary_points) && value.summary_points.every((item) => typeof item === "string")))
-    && (!('problem_description' in value) || value.problem_description === undefined || typeof value.problem_description === "string");
+  return (!("page_number" in value) || value.page_number === undefined || value.page_number === null || typeof value.page_number === "number")
+    && (!("document_type" in value) || value.document_type === undefined || value.document_type === null || typeof value.document_type === "string")
+    && (!("rule_id" in value) || value.rule_id === undefined || value.rule_id === null || typeof value.rule_id === "string")
+    && (!("summary_points" in value) || value.summary_points === undefined || (Array.isArray(value.summary_points) && value.summary_points.every((item) => typeof item === "string")))
+    && (!("problem_description" in value) || value.problem_description === undefined || typeof value.problem_description === "string");
 }
 
 function isLlmSummary(value: unknown): value is LlmSummary {
@@ -34,6 +34,71 @@ function isLlmSummary(value: unknown): value is LlmSummary {
     && (pageSummaries === undefined || (Array.isArray(pageSummaries) && pageSummaries.every(isPageSummary)));
 }
 
+export function parseLlmSummary(rawSummary: string | null | undefined): LlmSummary | null {
+  if (!rawSummary || !rawSummary.trim()) return null;
+  try {
+    const payload: unknown = JSON.parse(rawSummary);
+    return isLlmSummary(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function pageSummaryFor(
+  parsed: LlmSummary,
+  anomaly: Anomaly | undefined,
+  pageNumber: number | undefined,
+): PageSummary | undefined {
+  return parsed.page_summaries?.find((item) => {
+    const pageMatches = pageNumber === undefined || item.page_number === pageNumber;
+    const ruleMatches = !anomaly?.rule_id || !item.rule_id || item.rule_id === anomaly.rule_id;
+    return pageMatches && ruleMatches;
+  });
+}
+
+export function getAiExplanation(
+  data: ApplicationReview,
+  anomaly?: Anomaly,
+  pageNumber?: number,
+): string | null {
+  const rawSummary = data.application.llm_summary;
+  if (!rawSummary || !rawSummary.trim()) return null;
+  const parsed = parseLlmSummary(rawSummary);
+  if (!parsed) return rawSummary.trim().slice(0, 1600);
+
+  const pageSummary = pageSummaryFor(parsed, anomaly, pageNumber);
+  const pageDetails = pageSummary
+    ? [pageSummary.problem_description, ...(pageSummary.summary_points ?? [])].filter(Boolean).join(" ")
+    : "";
+  return (pageDetails || parsed.overall_summary).trim() || null;
+}
+
+export function AiExplanationDisclosure({
+  data,
+  anomaly,
+  pageNumber,
+}: {
+  data: ApplicationReview;
+  anomaly?: Anomaly;
+  pageNumber?: number;
+}) {
+  const explanation = getAiExplanation(data, anomaly, pageNumber);
+  if (!explanation) return null;
+
+  return (
+    <details className="rounded-xl border border-violet-200 bg-violet-50/40">
+      <summary className="cursor-pointer list-none px-4 py-3 text-sm font-bold text-violet-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700">
+        <span className="mr-2" aria-hidden="true">＋</span>
+        AI explanation <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider text-violet-700">Secondary context</span>
+      </summary>
+      <div className="border-t border-violet-200 px-4 py-3 text-xs leading-relaxed text-violet-950">
+        <p>{explanation}</p>
+        <p className="mt-2 font-semibold text-violet-800">Deterministic rule output remains the primary review basis.</p>
+      </div>
+    </details>
+  );
+}
+
 export function AiAuditInsights({
   data,
   onSelectEvidence,
@@ -42,157 +107,77 @@ export function AiAuditInsights({
   onSelectEvidence?: (anomaly: Anomaly, pageNumber: number) => void;
 }) {
   const rawSummary = data.application.llm_summary;
-  if (!rawSummary || typeof rawSummary !== "string" || !rawSummary.trim()) {
-    return null;
-  }
+  if (!rawSummary || !rawSummary.trim()) return null;
 
-  let parsed: LlmSummary | null = null;
-  try {
-    const payload: unknown = JSON.parse(rawSummary);
-    parsed = isLlmSummary(payload) ? payload : null;
-  } catch {
-    parsed = null;
-  }
-
-  if (!parsed) {
-    return (
-      <section className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
-        <div className="flex items-center gap-2 text-violet-750 font-bold">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.187L15 15l-5.187.813zM18 10.5l-.5-3-.5 3-3 .5 3 .5.5 3 .5-3 3-.5-3-.5zM20.25 5.25l-.25-1.5-.25 1.5-1.5.25 1.5.25.25 1.5.25-1.5 1.5-.25-1.5-.25z" />
-          </svg>
-          <h2 className="text-base font-bold text-slate-800">AI Audit Insights</h2>
-        </div>
-        <p className="text-sm text-slate-700 whitespace-pre-line font-medium leading-relaxed">{rawSummary}</p>
-      </section>
-    );
-  }
-
-  const rec = String(parsed.final_recommendation || "MANUAL REVIEW").toUpperCase();
-  let badgeColor = "border-amber-300 bg-amber-50 text-amber-800";
-  if (rec === "APPROVE") {
-    badgeColor = "border-emerald-300 bg-emerald-50 text-emerald-800";
-  } else if (rec === "MANUAL REVIEW") {
-    badgeColor = "border-rose-300 bg-rose-50 text-rose-800";
-  }
+  const parsed = parseLlmSummary(rawSummary);
+  const pageSummaries = parsed?.page_summaries?.slice(0, 3) ?? [];
+  const remainingPageSummaries = Math.max(0, (parsed?.page_summaries?.length ?? 0) - pageSummaries.length);
 
   return (
-    <section className="overflow-hidden border border-slate-200 bg-slate-50/30 rounded-2xl shadow-sm space-y-0">
-      <div className="bg-gradient-to-r from-violet-600 via-indigo-600 to-blue-600 px-6 py-4 text-white flex items-center justify-between shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-white/20 p-1.5 backdrop-blur-md">
-            <svg className="w-5 h-5 text-amber-300 animate-pulse animate-duration-1000" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.187L15 15l-5.187.813zM18 10.5l-.5-3-.5 3-3 .5 3 .5.5 3 .5-3 3-.5-3-.5zM20.25 5.25l-.25-1.5-.25 1.5-1.5.25 1.5.25.25 1.5.25-1.5 1.5-.25-1.5-.25z" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-base font-extrabold tracking-tight">AI Audit Insights</h2>
-            <p className="text-[10px] text-indigo-100 font-medium tracking-wide">TOKEN-OPTIMIZED PAGE EXPLANATION</p>
-          </div>
-        </div>
-        <div className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${badgeColor} bg-white shadow-sm flex items-center gap-1.5`}>
-          <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping" />
-          {rec}
-        </div>
-      </div>
+    <section aria-labelledby="ai-audit-insights-heading" className="rounded-2xl border border-violet-200 bg-violet-50/30">
+      <details>
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-bold text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700">
+          <span id="ai-audit-insights-heading">
+            <span className="mr-2 text-violet-700" aria-hidden="true">✦</span>
+            AI Audit Insights
+          </span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">Secondary context</span>
+        </summary>
 
-      <div className="p-6 space-y-6">
-        <div className="bg-white border border-slate-150 rounded-xl p-5 shadow-xs space-y-2">
-          <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Executive Summary</h3>
-          <p className="text-sm font-semibold text-slate-700 leading-relaxed italic">
-            &ldquo;{parsed.overall_summary}&rdquo;
-          </p>
-        </div>
-
-        {parsed.page_summaries && parsed.page_summaries.length > 0 ? (
-          <div className="space-y-4">
-            <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 mb-1">Page-by-Page Findings</h3>
-            <div className="grid gap-4 md:grid-cols-1">
-              {parsed.page_summaries.map((item, index) => {
-                const hasPage = typeof item.page_number === "number" || (typeof item.page_number === "string" && item.page_number);
-                const pageAnomalies = data.anomalies.filter(a =>
-                  a.page_number === Number(item.page_number) ||
-                  a.collapsed_page_numbers?.includes(Number(item.page_number))
-                );
-                const correspondingAnomaly =
-                  pageAnomalies.find(a => item.rule_id && a.rule_id === item.rule_id) ??
-                  pageAnomalies.find(a => item.problem_description && a.reason === item.problem_description) ??
-                  (pageAnomalies.length === 1 ? pageAnomalies[0] : undefined);
-                return (
-                  <div key={index} className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden flex flex-col hover:border-violet-300 transition-colors duration-200">
-                    <div className="bg-slate-50/50 border-b border-slate-150 px-4 py-2.5 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                        <span className="rounded bg-violet-100 text-violet-700 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider">
-                          {hasPage ? `PAGE ${item.page_number}` : "GENERAL"}
-                        </span>
-                        {item.document_type || "Unknown Document"}
-                      </span>
-                      {hasPage && onSelectEvidence ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const anomalyToSelect = correspondingAnomaly || {
-                              page_number: Number(item.page_number),
-                              document_type: item.document_type,
-                              rule_id: "AI_PAGE_REVIEW",
-                              severity: "INFO",
-                              reason: item.problem_description
-                            };
-                            onSelectEvidence(anomalyToSelect, Number(item.page_number));
-                          }}
-                          className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100 transition-colors"
-                        >
-                          View Page {item.page_number}
-                        </button>
-                      ) : null}
-                    </div>
-
-                    <div className="p-4 space-y-3">
-                      {item.summary_points && item.summary_points.length > 0 ? (
-                        <div className="space-y-1.5">
-                          <div className="text-[9px] font-bold uppercase text-slate-400 tracking-wider">Page Content Summary</div>
-                          <ul className="space-y-1 text-xs text-slate-600 font-medium">
-                            {item.summary_points.map((pt, i) => (
-                              <li key={i} className="flex items-start gap-2">
-                                <span className="text-emerald-500 font-bold mt-0.5">•</span>
-                                <span>{pt}</span>
-                              </li>
-                            ))}
-                          </ul>
+        <div className="space-y-4 border-t border-violet-200 px-5 py-4 text-xs leading-relaxed text-slate-700">
+          {parsed ? (
+            <>
+              <div>
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Executive summary</div>
+                <p>{parsed.overall_summary}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded border px-2 py-1 text-[10px] font-bold uppercase ${getSeverityBadgeColor(parsed.final_recommendation)}`}>
+                  {parsed.final_recommendation}
+                </span>
+                <span className="font-semibold text-slate-500">AI output does not change deterministic findings.</span>
+              </div>
+              {pageSummaries.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Selected page notes</div>
+                  {pageSummaries.map((item, index) => {
+                    const pageNumber = typeof item.page_number === "number" ? item.page_number : undefined;
+                    const anomaly: Anomaly = {
+                      page_number: pageNumber,
+                      document_type: item.document_type,
+                      rule_id: item.rule_id ?? "AI_PAGE_REVIEW",
+                      severity: "INFO",
+                      reason: item.problem_description ?? item.summary_points?.[0] ?? "AI page note",
+                    };
+                    return (
+                      <div key={`${item.rule_id ?? "page"}-${item.page_number ?? index}`} className="rounded-lg border border-violet-100 bg-white/70 p-3">
+                        <div className="flex items-center justify-between gap-3 font-semibold text-slate-800">
+                          <span>{pageNumber ? `Page ${pageNumber}` : "General note"}{item.document_type ? ` · ${item.document_type}` : ""}</span>
+                          {pageNumber && onSelectEvidence ? (
+                            <button
+                              type="button"
+                              onClick={() => onSelectEvidence(anomaly, pageNumber)}
+                              className="rounded-md border border-violet-200 bg-white px-2 py-1 text-[10px] font-bold text-violet-800 hover:bg-violet-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700"
+                            >
+                              Review page
+                            </button>
+                          ) : null}
                         </div>
-                      ) : null}
-
-                      {item.problem_description ? (
-                        <div className="rounded-lg bg-rose-50 border border-rose-100 p-3 text-xs">
-                          <div className="flex gap-2">
-                            <span className="text-rose-500 font-bold">⚠️</span>
-                            <div>
-                              <div className="font-bold text-rose-800 flex items-center gap-2">
-                                <span>Anomaly Detected</span>
-                                {correspondingAnomaly ? (
-                                  <>
-                                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider animate-pulse animate-duration-1000 ${getSeverityBadgeColor(correspondingAnomaly.severity)}`}>
-                                      {correspondingAnomaly.severity}
-                                    </span>
-                                    <span className="rounded bg-slate-100 text-slate-700 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wider">
-                                      {correspondingAnomaly.rule_id}
-                                    </span>
-                                  </>
-                                ) : null}
-                              </div>
-                              <div className="mt-0.5 text-rose-750 font-medium leading-relaxed">{item.problem_description}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-      </div>
+                        {item.problem_description ? <p className="mt-1">{item.problem_description}</p> : null}
+                        {item.summary_points?.length ? <p className="mt-1">{item.summary_points.join(" ")}</p> : null}
+                      </div>
+                    );
+                  })}
+                  {remainingPageSummaries > 0 ? <p className="font-semibold text-slate-500">{remainingPageSummaries} additional AI page note(s) remain collapsed.</p> : null}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="whitespace-pre-line">{rawSummary.trim().slice(0, 1600)}</p>
+          )}
+          <p className="font-semibold text-violet-800">Use deterministic rule detail and source evidence for the review decision.</p>
+        </div>
+      </details>
     </section>
   );
 }
