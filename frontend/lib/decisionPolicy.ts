@@ -1,3 +1,6 @@
+import { normalizeDocumentType } from "./documentType";
+import type { ReviewDocumentType } from "./api";
+
 export type DecisionAction = "ACCEPT" | "OVERRIDE" | "REQUEST_DOCS";
 
 export type DecisionProcessingState =
@@ -14,7 +17,7 @@ export type DecisionReviewItem = {
   reason?: string | null;
   severity?: string | null;
   page_number?: number | null;
-  document_type?: string | null;
+  document_type?: ReviewDocumentType;
 };
 
 export type DecisionChecklistRow = {
@@ -192,7 +195,7 @@ export function buildDecisionTasks({
     addOrMergeTask(tasks, {
       id: buildExceptionTaskId(exception, index),
       kind: "exception",
-      label: nonEmpty(exception.document_type) || nonEmpty(exception.rule_id) || `Business exception ${index + 1}`,
+      label: normalizeDocumentType(exception.document_type) || nonEmpty(exception.rule_id) || `Business exception ${index + 1}`,
       reason: nonEmpty(exception.reason) || "Business exception requires reviewer attention",
       severity,
       pageNumber: typeof exception.page_number === "number" ? exception.page_number : null,

@@ -12,6 +12,7 @@ const testFiles = [
   "tests/reviewQueue.test.ts",
   "tests/worklistPolicy.test.ts",
   "tests/reviewSession.test.ts",
+  "tests/reviewItemSchema.test.ts",
 ];
 const outputDirectory = mkdtempSync(path.join(os.tmpdir(), "dmef-frontend-tests-"));
 
@@ -43,7 +44,10 @@ try {
     const emittedTests = testFiles.map((file) =>
       path.join(outputDirectory, file.replace(/\.ts$/, ".js")),
     );
-    const result = spawnSync(process.execPath, ["--test", ...emittedTests], { stdio: "inherit" });
+    const result = spawnSync(process.execPath, ["--test", ...emittedTests], {
+      stdio: "inherit",
+      env: { ...process.env, NODE_PATH: path.join(process.cwd(), "node_modules") },
+    });
     process.exitCode = result.status ?? 1;
   }
 } finally {

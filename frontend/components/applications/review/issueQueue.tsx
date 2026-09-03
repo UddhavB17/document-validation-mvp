@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { InfoMessage } from "@/components/Message";
-import { Anomaly, ApplicationReview } from "@/lib/api";
+import { Anomaly, ApplicationReview, normalizeDocumentType } from "@/lib/api";
 import { buildExceptionTaskId, buildManualTaskId } from "@/lib/decisionPolicy";
 import { asText } from "@/lib/format";
 
@@ -143,7 +143,7 @@ function makeManualCheckAnomaly(
   return {
     rule_id: `MANUAL_CHECK_${item.s_no ?? index + 1}`,
     severity: String(item.severity ?? "MEDIUM").toUpperCase(),
-    document_type: item.document_type ?? item.description ?? "Manual checklist item",
+    document_type: normalizeDocumentType(item.document_type) ?? item.description ?? "Manual checklist item",
     expected_value: item.expected_masked ?? "Manual confirmation",
     found_value: item.extracted_masked,
     page_number: pageNumber,

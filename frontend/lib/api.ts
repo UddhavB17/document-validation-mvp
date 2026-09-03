@@ -1,4 +1,5 @@
 import { z } from "zod";
+export { normalizeDocumentType } from "./documentType";
 
 // The API module owns two concerns: validating backend payloads and exposing
 // the small set of requests used by the frontend. Keeping both here makes the
@@ -273,12 +274,15 @@ export const pageSchema = z.object({
   extracted_fields: dynamicFieldsSchema.optional(),
 });
 
-const reviewItemSchema = z.object({
+export const reviewDocumentTypeSchema = z.union([z.string(), z.array(z.string())]).nullable().optional();
+export type ReviewDocumentType = z.infer<typeof reviewDocumentTypeSchema>;
+
+export const reviewItemSchema = z.object({
   s_no: z.union([z.number(), z.string()]).nullable().optional(),
   page_number: z.number().nullable().optional(),
   person_id: nullableString,
   matched_person_id: nullableString,
-  document_type: nullableString,
+  document_type: reviewDocumentTypeSchema,
   field: nullableString,
   category: nullableString,
   description: nullableString,
