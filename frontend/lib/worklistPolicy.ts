@@ -4,7 +4,21 @@ export type WorklistClassification = "review" | "processing" | "recovery" | "clo
 export type WorklistFilter = WorklistClassification | "all";
 
 const CLOSED_CASE_STATES = new Set(["verified", "verified_with_override", "incomplete"]);
-const PROCESSING_STATES = new Set(["queued", "processing", "pause_requested", "paused"]);
+const COMPLETED_PIPELINE_STATES = new Set(["completed", "completed_with_warnings"]);
+const PROCESSING_STATES = new Set([
+  "not_started",
+  "queued",
+  "processing",
+  "pause_requested",
+  "paused",
+  "uploaded",
+  "ocr_completed",
+  "classified",
+  "mapping",
+  "mapped",
+  "extracting",
+]);
+const RECOVERY_STATES = new Set(["failed", "pipeline_failed", "stale", "cancelled", "unsupported_input"]);
 
 export function classifyWorklistItem(item: WorklistItem): WorklistClassification {
   const processingState = String(item.pipeline_status ?? "").toLowerCase();
@@ -12,10 +26,12 @@ export function classifyWorklistItem(item: WorklistItem): WorklistClassification
 
   // Retryable pipeline failures are recovery work, even when the case also
   // carries business issues. They must never enter the reviewer queue.
-  if (item.pipeline_retryable) return "recovery";
-  if (PROCESSING_STATES.has(processingState)) return "processing";
+  if (item.pipeline_retryable || RECOVERY_STATES.has(processingState)) return "recovery";
   if (CLOSED_CASE_STATES.has(caseState)) return "closed";
-  return "review";
+  if (COMPLETED_PIPELINE_STATES.has(processingState)) return "review";
+  if (PROCESSING_STATES.has(processingState)) return "processing";
+  // Unknown pipeline states are not safe to action; surface them for recovery.
+  return "recovery";
 }
 
 export function matchesWorklistFilter(item: WorklistItem, filter: WorklistFilter): boolean {

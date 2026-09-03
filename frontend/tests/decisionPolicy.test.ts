@@ -6,6 +6,7 @@ import {
   buildPersistedReviewerNote,
   evaluateDecisionPolicy,
   getDecisionProcessingState,
+  taskNeedsEvidence,
 } from "../lib/decisionPolicy";
 
 const manualReviewItems = [
@@ -22,6 +23,11 @@ test("processing gate distinguishes completed warnings from blocked states", () 
   assert.equal(getDecisionProcessingState("completed_with_warnings"), "completed");
   assert.equal(getDecisionProcessingState("queued"), "blocked");
   assert.equal(getDecisionProcessingState("completed", true), "blocked");
+});
+
+test("page-backed tasks require evidence before they can be acknowledged", () => {
+  assert.equal(taskNeedsEvidence({ pageNumber: 4 }), true);
+  assert.equal(taskNeedsEvidence({ pageNumber: null }), false);
 });
 
 test("Accept requires completed processing, no high business exception, and all required checks", () => {

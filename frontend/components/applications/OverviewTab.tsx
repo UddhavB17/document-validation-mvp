@@ -23,7 +23,7 @@ export function OverviewTab({
 }: {
   applicationId: number;
   data: ApplicationReview;
-  onSelectPage: (pageNo: number, title: string, reason: string) => void;
+  onSelectPage: (pageNo: number, title: string, reason: string, decisionTaskId?: string) => void;
 }) {
   const applicantList = getApplicantList(data);
   const anomCount = getAnomalyCount(data);
@@ -110,7 +110,7 @@ export function OverviewTab({
         <ManualReviewAndDecision
           applicationId={applicationId}
           data={data}
-          onSelectPage={(pageNo) => onSelectPage(pageNo, "Manual Check", "Manual item verification review")}
+          onSelectPage={(pageNo, decisionTaskId) => onSelectPage(pageNo, "Manual Check", "Manual item verification review", decisionTaskId)}
         />
       </div>
     </div>

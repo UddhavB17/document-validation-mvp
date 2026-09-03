@@ -8,6 +8,7 @@ import { buildExceptionTaskId, buildManualTaskId } from "@/lib/decisionPolicy";
 import { asText } from "@/lib/format";
 
 import {
+  getReviewTaskState,
   getReviewIssueState,
   REVIEW_STATE_EVENT,
   type ReviewIssueState,
@@ -210,6 +211,11 @@ function stateLabel(state: ReviewIssueState): string {
   return state;
 }
 
+export function getLinkedReviewIssueState(applicationId: number, issue: ReviewIssue): ReviewIssueState {
+  if (issue.decisionTaskIds.some((taskId) => getReviewTaskState(applicationId, taskId) === "Checked")) return "Checked";
+  return getReviewIssueState(issue.key);
+}
+
 export function IssueQueue({
   applicationId,
   data,
@@ -291,7 +297,7 @@ export function IssueQueue({
               <div className="space-y-2">
                 {groupIssues.map((issue) => {
                   const severity = severityLabel(issue.anomaly);
-                  const state = getReviewIssueState(issue.key);
+                  const state = getLinkedReviewIssueState(applicationId, issue);
                   const selected = selectedKey === issue.key;
                   const pageText = issue.pages.length > 0
                     ? `${issue.pages.length} affected page${issue.pages.length === 1 ? "" : "s"}`

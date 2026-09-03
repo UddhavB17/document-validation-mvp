@@ -25,3 +25,19 @@ test("queued and processing cases are not actionable review", () => {
   assert.equal(classifyWorklistItem(processing), "processing");
   assert.deepEqual(getActionableReviewItems([processing]), []);
 });
+
+test("not-started and unsupported inputs stay out of Review now/next", () => {
+  const notStarted = item({ pipeline_status: "not_started" });
+  const unsupported = item({ pipeline_status: "unsupported_input" });
+  const failed = item({ pipeline_status: "failed", pipeline_retryable: false });
+  assert.equal(classifyWorklistItem(notStarted), "processing");
+  assert.equal(classifyWorklistItem(unsupported), "recovery");
+  assert.equal(classifyWorklistItem(failed), "recovery");
+  assert.equal(getActionableReviewItems([notStarted, unsupported, failed]).length, 0);
+});
+
+test("completed with warnings is actionable when the case is not closed", () => {
+  const completedWithWarnings = item({ pipeline_status: "completed_with_warnings", status: "needs_review" });
+  assert.equal(classifyWorklistItem(completedWithWarnings), "review");
+  assert.deepEqual(getActionableReviewItems([completedWithWarnings]).map((entry) => entry.id), [1]);
+});

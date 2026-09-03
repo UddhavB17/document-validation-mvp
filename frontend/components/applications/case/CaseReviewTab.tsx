@@ -9,7 +9,7 @@ type CaseReviewTabProps = {
   applicationId: number;
   data: ApplicationReview;
   onSelectEvidence: (anomaly: Anomaly, pageNumber: number | null, allPageNumbers?: number[], decisionTaskIds?: string[]) => void;
-  onSelectPage: (pageNumber: number, title: string, reason: string) => void;
+  onSelectPage: (pageNumber: number, title: string, reason: string, decisionTaskId?: string) => void;
 };
 
 export function CaseReviewTab({ applicationId, data, onSelectEvidence, onSelectPage }: CaseReviewTabProps) {

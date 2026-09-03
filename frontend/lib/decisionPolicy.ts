@@ -72,6 +72,10 @@ export type DecisionPolicyResult = {
   uncheckedHighTasks: DecisionTask[];
 };
 
+export function taskNeedsEvidence(task: Pick<DecisionTask, "pageNumber">): boolean {
+  return typeof task.pageNumber === "number" && Number.isFinite(task.pageNumber) && task.pageNumber > 0;
+}
+
 const COMPLETED_PROCESSING_STATUSES = new Set(["completed", "completed_with_warnings"]);
 const BLOCKED_PROCESSING_STATUSES = new Set(["queued", "processing", "stale", "failed", "pipeline_failed"]);
 

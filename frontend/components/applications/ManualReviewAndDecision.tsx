@@ -11,6 +11,7 @@ import {
   DecisionAction,
   DecisionTask,
   evaluateDecisionPolicy,
+  taskNeedsEvidence,
 } from "@/lib/decisionPolicy";
 import { ApplicationReview, Decision } from "@/lib/api";
 import { asText } from "@/lib/format";
@@ -63,13 +64,13 @@ function formatCountdown(seconds: number): string {
   return `${minutes}:${remainder}`;
 }
 
-function sourcePageForTask(task: DecisionTask): number | null {
+export function sourcePageForTask(task: DecisionTask): number | null {
   // A task may open source evidence only when the API explicitly attached a
   // page. Document type mappings are not proof of the source page.
-  return task.pageNumber;
+  return taskNeedsEvidence(task) ? task.pageNumber : null;
 }
 
-export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applicationId: number; data: ApplicationReview; onSelectPage?: (pageNo: number) => void }) {
+export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: { applicationId: number; data: ApplicationReview; onSelectPage?: (pageNo: number, taskId?: string) => void }) {
   const [note, setNote] = useState("");
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
   const [borrowerMessage, setBorrowerMessage] = useState("");
@@ -82,6 +83,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recordedDecision, setRecordedDecision] = useState<Decision | null>(null);
   const [undoneDecisionId, setUndoneDecisionId] = useState<number | null>(null);
+  const [nextQueuedCaseId, setNextQueuedCaseId] = useState<number | null>(null);
   const createDecision = useCreateDecision(applicationId);
   const undoDecision = useUndoDecision(applicationId);
   const router = useRouter();
@@ -153,7 +155,17 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
     processing: data.summary.processing_warning_count,
   };
   const mutationBusy = isSubmitting || createDecision.isPending || undoDecision.isPending;
-  const nextQueuedCase = getReviewQueueNeighbors(readReviewQueue(), applicationId).nextId;
+
+  useEffect(() => {
+    const syncQueuePosition = () => setNextQueuedCaseId(getReviewQueueNeighbors(readReviewQueue(), applicationId).nextId);
+    syncQueuePosition();
+    window.addEventListener("dmef-review-queue-change", syncQueuePosition);
+    window.addEventListener("storage", syncQueuePosition);
+    return () => {
+      window.removeEventListener("dmef-review-queue-change", syncQueuePosition);
+      window.removeEventListener("storage", syncQueuePosition);
+    };
+  }, [applicationId]);
 
   function toggleTask(taskId: string): void {
     setCheckedTaskIds((current) => {
@@ -165,6 +177,19 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
       return next;
     });
     setActionError(null);
+  }
+
+  function requestTaskEvidence(task: DecisionTask): void {
+    const sourcePage = sourcePageForTask(task);
+    if (sourcePage !== null && taskNeedsEvidence(task)) {
+      if (onSelectPage) {
+        onSelectPage(sourcePage, task.id);
+      } else {
+        setActionError("Open the task's source evidence before marking it checked.");
+      }
+      return;
+    }
+    toggleTask(task.id);
   }
 
   function toggleReason(reason: string): void {
@@ -298,7 +323,10 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
                       id={inputId}
                       type="checkbox"
                       checked={checkedTaskIds.has(task.id)}
-                      onChange={() => toggleTask(task.id)}
+                      onChange={() => {
+                        if (checkedTaskIds.has(task.id)) toggleTask(task.id);
+                        else requestTaskEvidence(task);
+                      }}
                       disabled={mutationBusy || Boolean(currentDecision)}
                       className="mt-1 h-4 w-4 rounded border-slate-400 text-blue-700 focus:ring-blue-600/20"
                       aria-describedby={`${inputId}-detail`}
@@ -308,10 +336,11 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
                       <p id={`${inputId}-detail`} className="mt-1 text-xs font-medium text-slate-600">
                         {task.reason}{task.severity ? ` · ${task.severity.toUpperCase()} task` : ""}
                       </p>
+                      {sourcePage ? <p className="mt-1 text-xs font-semibold text-blue-700">Checking this task opens page {sourcePage}; mark it checked from the evidence workspace after the image loads.</p> : null}
                       {sourcePage ? (
                         <button
                           type="button"
-                          onClick={() => onSelectPage?.(sourcePage)}
+                          onClick={() => onSelectPage?.(sourcePage, task.id)}
                           disabled={!onSelectPage}
                           className="mt-2 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-bold text-blue-750 hover:bg-blue-100 disabled:cursor-default disabled:opacity-60"
                           aria-label={`Open source page ${sourcePage} for ${task.label}`}
@@ -355,7 +384,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
               {undoDecision.isPending ? "Undoing…" : "Undo decision"}
             </button>
             <button type="button" onClick={openNextQueuedCase} className="rounded-lg bg-emerald-800 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
-              {nextQueuedCase !== null ? "Open next case" : "Return to worklist"}
+              {nextQueuedCaseId !== null ? "Open next case" : "Return to worklist"}
             </button>
           </div>
         </div>
