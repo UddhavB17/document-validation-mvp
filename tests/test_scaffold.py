@@ -65,14 +65,16 @@ def test_auth_dependencies_raise_501() -> None:
 
 def test_pipeline_task_stubs_raise_not_implemented(tmp_path, monkeypatch) -> None:
     """Behaviour stubs raise until their owning workstream implements them."""
-    from services import evidence_boxes, llm_gemini, ops_presentation, worker
+    from services import evidence_boxes, ops_presentation, retention, worker
 
     with pytest.raises(NotImplementedError):
         worker.run_worker(once=True)
     with pytest.raises(NotImplementedError):
         ops_presentation.build_ops_payload(1)
     with pytest.raises(NotImplementedError):
-        llm_gemini.generate("hello", model="m", timeout=60)
+        retention.run_retention(dry_run=True)
+    # ws-g implements services.llm_gemini.generate (see tests/test_llm_gemini.py),
+    # so it is no longer part of the stub contract.
     with pytest.raises(NotImplementedError):
         evidence_boxes.find_value_bbox([], "value")
 

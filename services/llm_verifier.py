@@ -1,22 +1,25 @@
-"""Optional Ollama-backed LLM review for low-confidence field verification."""
+"""Optional LLM review for low-confidence field verification.
+
+Implemented by ``ws-g-gemini-llm``: verification goes through the shared
+``services.llm_client`` entry point (retries + ``llm_calls`` accounting) and
+the model answers in JSON. TOON encodes the prompt input side.
+"""
 
 from __future__ import annotations
 
-import os
+import json
+import logging
 from typing import Any
 
 from pydantic import ValidationError
+from toon import encode
 
 from database.models import FieldVerificationResult
 from services.config import get_bool
-from services.structured_llm_classifier import (
-    LOCAL_DEFAULT_URL as _LOCAL_DEFAULT_URL,
-)
-from services.structured_llm_classifier import (
-    REMOTE_DEFAULT_URL as _REMOTE_DEFAULT_URL,
-)
+from services.llm_client import call_llm_messages
 
-_DEFAULT_MODEL = "qwen2.5:7b"
+logger = logging.getLogger(__name__)
+
 _SYSTEM_PROMPT = (
     "You are a document verification assistant for an Indian NBFC. "
     "Determine if two values refer to the same entity despite OCR errors, "
@@ -28,7 +31,7 @@ _SYSTEM_PROMPT = (
 def verify_field_with_llm(
     field_name: str, extracted: str, db_value: str
 ) -> FieldVerificationResult:
-    """Verify one low-confidence field using local Ollama and Instructor."""
+    """Verify one low-confidence field using the configured LLM provider."""
     fallback = FieldVerificationResult(
         field_name=field_name,
         extracted_value=extracted,
@@ -50,23 +53,27 @@ def verify_field_with_llm(
         )
 
     try:
-        client = _instructor_ollama_client()
-        result = client.chat(
-            model=_field_verifier_model(),
-            messages=[
+        response_text = call_llm_messages(
+            [
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        f"Field name: {field_name}\n"
-                        f"OCR extracted value: {extracted}\n"
-                        f"Graviton ground-truth value: {db_value}\n"
-                        "Return only the structured verification result. "
-                        'Set method to "llm" and confidence between 0.0 and 1.0.'
-                    ),
-                },
+                {"role": "user", "content": _build_verifier_prompt(field_name, extracted, db_value)},
             ],
-            response_model=FieldVerificationResult,
+            purpose="verification",
+            max_tokens=200,
+            timeout=60,
+            response_format="json",
+        )
+        parsed = _parse_verifier_response(response_text or "")
+        if parsed is None:
+            return fallback
+        result = FieldVerificationResult(
+            field_name=field_name,
+            extracted_value=extracted,
+            db_value=db_value,
+            match=bool(parsed["match"]),
+            confidence=float(parsed["confidence"]),
+            method="llm",
+            mismatch_reason=parsed.get("mismatch_reason"),
         )
     except (
         ImportError,
@@ -76,7 +83,8 @@ def verify_field_with_llm(
         ValueError,
         ValidationError,
         TypeError,
-    ):
+    ) as exc:
+        logger.debug("LLM field verification failed: %s", exc)
         return fallback
 
     try:
@@ -135,50 +143,39 @@ def llm_verify_field(
     return llm_result
 
 
-def _instructor_ollama_client() -> Any:
-    import instructor
-    import ollama
-
-    raw_client = ollama.Client(host=_ollama_host())
-    return instructor.from_ollama(raw_client, mode=instructor.Mode.JSON)
-
-
-def _field_verifier_model() -> str:
+def _build_verifier_prompt(field_name: str, extracted: str, db_value: str) -> str:
+    """Prompt input in TOON; the model must answer in JSON."""
     return (
-        os.getenv("LLM_FIELD_VERIFIER_MODEL")
-        or os.getenv("OLLAMA_FIELD_VERIFIER_MODEL")
-        or os.getenv("LOCAL_LLM_MODEL")
-        or os.getenv("LLM_MODEL")
-        or _DEFAULT_MODEL
+        "Decide whether the OCR value and the ground-truth value refer to the same entity.\n"
+        'Answer in JSON only: {"match": true/false, "confidence": 0.0-1.0, '
+        '"mismatch_reason": "short reason or null"}\n\n'
+        "Values to compare (TOON):\n"
+        f"{encode({'field_name': field_name, 'extracted_value': extracted, 'db_value': db_value})}\n"
     )
 
 
-def _ollama_host() -> str:
-    if get_bool("OLLAMA_CLASSIFIER_USE_LOCAL", False):
-        configured = (
-            os.getenv("OLLAMA_HOST")
-            or os.getenv("LOCAL_OLLAMA_CLASSIFIER_URL")
-            or os.getenv("LOCAL_LLM_API_URL")
-            or _LOCAL_DEFAULT_URL
-        )
-        return _normalize_ollama_base_url(configured, default=_LOCAL_DEFAULT_URL)
-
-    configured = (
-        os.getenv("OLLAMA_HOST")
-        or os.getenv("OLLAMA_CLASSIFIER_URL")
-        or os.getenv("REMOTE_OLLAMA_CLASSIFIER_URL")
-        or os.getenv("LOCAL_LLM_API_URL")
-        or _REMOTE_DEFAULT_URL
-    )
-    return _normalize_ollama_base_url(configured, default=_REMOTE_DEFAULT_URL)
-
-
-def _normalize_ollama_base_url(url: str, *, default: str) -> str:
-    configured = url or default
-    cleaned = configured.rstrip("/")
-    if cleaned.endswith("/api/generate"):
-        return cleaned[: -len("/api/generate")]
-    return cleaned
+def _parse_verifier_response(response_text: str) -> dict[str, Any] | None:
+    """Parse the verifier answer with ``json.loads`` plus a schema check."""
+    cleaned = response_text.strip()
+    if not cleaned:
+        return None
+    try:
+        parsed = json.loads(cleaned)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict) or "match" not in parsed or "confidence" not in parsed:
+        return None
+    try:
+        confidence = float(parsed["confidence"])
+    except (TypeError, ValueError):
+        return None
+    if not 0.0 <= confidence <= 1.0:
+        return None
+    return {
+        "match": bool(parsed["match"]),
+        "confidence": confidence,
+        "mismatch_reason": parsed.get("mismatch_reason"),
+    }
 
 
 def _has_values(*values: Any) -> bool:

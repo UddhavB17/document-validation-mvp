@@ -605,3 +605,24 @@ export type BatchItemUpload = z.infer<typeof batchItemSchema>;
 export type BatchUploadResponse = z.infer<typeof batchUploadResponseSchema>;
 export type BatchItem = z.infer<typeof batchStatusItemSchema>;
 export type BatchStatus = z.infer<typeof batchStatusSchema>;
+
+// --- ws-g gemini + llm ---
+const llmProvidersSchema = z.object({
+  providers: z.array(z.string()),
+  current_provider: z.string(),
+  current_model: z.string(),
+  gemini_models: z.array(z.string()),
+  costs: z.array(z.object({
+    model: z.string(),
+    calls: z.number(),
+    tokens_in: z.number(),
+    tokens_out: z.number(),
+    usd: z.number(),
+  })),
+});
+
+export type LlmProviders = z.infer<typeof llmProvidersSchema>;
+
+export const llmApi = {
+  providers: () => getJsonResponse("/settings/llm/providers", llmProvidersSchema),
+};

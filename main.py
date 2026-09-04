@@ -24,6 +24,7 @@ from routes import (
     admin_users,
     auth,
     decisions,
+    llm_settings,
     ops,
     review,
     review_pages,
@@ -92,6 +93,7 @@ app.include_router(decisions.router)
 app.include_router(verification.router)
 app.include_router(review.router)
 app.include_router(settings.router)
+app.include_router(llm_settings.router)
 app.include_router(auth.router)
 app.include_router(admin_users.router)
 app.include_router(ops.router)
