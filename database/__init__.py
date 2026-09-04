@@ -1,3 +1,3 @@
 """Database package."""
 
-from database import schema_registry  # noqa: F401
+from database import llm_calls, schema_registry  # noqa: F401

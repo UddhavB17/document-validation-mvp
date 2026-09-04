@@ -223,8 +223,103 @@ def _result_from_payload(path: Path, payload: Any, *, auth_mode: str) -> dict[st
         "tables": [],
         "seals": [],
         "formulas": [],
-        "structure_json": [mapping] if mapping else [],
+        # Compact in-memory word layout for evidence bboxes (ws-f). The full
+        # Vision response is never persisted; see services/ocr_router.py.
+        "words": build_compact_words(mapping, image_width=width, image_height=height),
     }
+
+
+def build_compact_words(
+    mapping: dict[str, Any], *, image_width: int = 0, image_height: int = 0
+) -> list[dict[str, Any]]:
+    """Build a compact normalized word layout from a Vision response mapping.
+
+    Walks ``fullTextAnnotation`` pages → blocks → paragraphs → words →
+    symbols. Each entry is ``{"t": text, "b": [x0, y0, x1, y1], "c": conf}``
+    with 0–1 normalized coordinates and confidence rounded to 2 dp. Capped at
+    3,000 words per page. In-memory only; never persisted.
+    """
+    full = mapping.get("fullTextAnnotation") or mapping.get("full_text_annotation") or {}
+    pages = full.get("pages") if isinstance(full, dict) else []
+    words: list[dict[str, Any]] = []
+    for page in pages or []:
+        if not isinstance(page, dict):
+            continue
+        for block in page.get("blocks") or []:
+            if not isinstance(block, dict):
+                continue
+            for paragraph in block.get("paragraphs") or []:
+                if not isinstance(paragraph, dict):
+                    continue
+                for word in paragraph.get("words") or []:
+                    if not isinstance(word, dict):
+                        continue
+                    symbols = word.get("symbols") or []
+                    text = "".join(
+                        str(symbol.get("text") or "")
+                        for symbol in symbols
+                        if isinstance(symbol, dict)
+                    )
+                    if not text:
+                        continue
+                    try:
+                        confidence = round(float(word.get("confidence") or 0.0), 2)
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    bbox = _normalized_word_bbox(word, image_width, image_height)
+                    words.append({"t": text, "b": bbox, "c": confidence})
+                    if len(words) >= 3000:
+                        return words
+    return words
+
+
+def _normalized_word_bbox(
+    word: dict[str, Any], image_width: int, image_height: int
+) -> list[float]:
+    """Return a 0–1 ``[x0, y0, x1, y1]`` box for one Vision word dict."""
+    box = word.get("boundingBox") or word.get("bounding_box") or {}
+    poly = box.get("vertices") or box.get("normalizedVertices") or box.get("normalized_vertices")
+    if isinstance(box, dict) and not poly:
+        poly = box.get("vertices") or box.get("normalizedVertices")
+    vertices = poly if isinstance(poly, list) else []
+    points: list[tuple[float, float]] = []
+    normalized = any(
+        isinstance(vertex, dict)
+        and ("x" in vertex or "y" in vertex)
+        and isinstance(vertex.get("x"), float)
+        and 0.0 <= float(vertex.get("x") or 0.0) <= 1.0
+        for vertex in vertices
+    )
+    for vertex in vertices:
+        if not isinstance(vertex, dict):
+            continue
+        try:
+            raw_x = float(vertex.get("x") or 0.0)
+            raw_y = float(vertex.get("y") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if normalized or (image_width <= 0 or image_height <= 0):
+            # Normalized vertices are already 0–1. When image dimensions are
+            # unknown, absolute pixels cannot be scaled; clamp into range so a
+            # missing dimension never produces an out-of-range box.
+            if normalized:
+                points.append((min(max(raw_x, 0.0), 1.0), min(max(raw_y, 0.0), 1.0)))
+            else:
+                points.append(
+                    (min(max(raw_x / 1000.0, 0.0), 1.0), min(max(raw_y / 1000.0, 0.0), 1.0))
+                )
+        else:
+            points.append(
+                (
+                    min(max(raw_x / image_width, 0.0), 1.0),
+                    min(max(raw_y / image_height, 0.0), 1.0),
+                )
+            )
+    if not points:
+        return [0.0, 0.0, 0.0, 0.0]
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return [round(min(xs), 4), round(min(ys), 4), round(max(xs), 4), round(max(ys), 4)]
 
 
 def _full_text(mapping: dict[str, Any]) -> str:
@@ -424,6 +519,6 @@ def _error_result(path: Path, message: str) -> dict[str, Any]:
         "tables": [],
         "seals": [],
         "formulas": [],
-        "structure_json": [],
+        "words": [],
         "error": message,
     }

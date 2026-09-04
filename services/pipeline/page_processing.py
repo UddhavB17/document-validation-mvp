@@ -71,6 +71,47 @@ def _pipeline_ocr_router() -> OCRRouter:
     )
 
 
+def _sync_page_meta(page: dict[str, Any]) -> dict[str, Any]:
+    """Mirror ``_``-prefixed ``extracted_fields`` into ``page["meta"]``.
+
+    Private per-page JSON (``_classification``, ``_triage``, ``_language``,
+    ``_structured_llm_classification``, …) stays readable in memory for
+    downstream stages during the run; persistence writes business keys only
+    to ``pages.extracted_fields`` and the full private dict to ``pages_meta``
+    (see ``services/pipeline/persistence.py``).
+    """
+    fields = page.get("extracted_fields")
+    if not isinstance(fields, dict):
+        fields = {}
+        page["extracted_fields"] = fields
+    meta = page.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        page["meta"] = meta
+    for key, value in fields.items():
+        if str(key).startswith("_"):
+            meta[key] = value
+    return page
+
+
+def _public_page_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Return business keys only (no ``_``-prefixed private entries)."""
+    if not isinstance(fields, dict):
+        return {}
+    return {key: value for key, value in fields.items() if not str(key).startswith("_")}
+
+
+def page_meta(page: dict[str, Any]) -> dict[str, Any]:
+    """Return a page's private meta, with legacy ``extracted_fields`` fallback."""
+    meta = page.get("meta")
+    if isinstance(meta, dict) and meta:
+        return meta
+    fields = page.get("extracted_fields")
+    if isinstance(fields, dict):
+        return {key: value for key, value in fields.items() if str(key).startswith("_")}
+    return {}
+
+
 def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
@@ -208,12 +249,15 @@ def _build_page_records(
                         "is_readable": is_readable,
                         "ocr_text": text,
                         "ocr_confidence": ocr_confidence,
+                        "words": [],
                         "document_type": document_type,
                         "classification_confidence": classification.get("confidence", 0.0),
                         "detection_method": "db_data",
                         "detected_page_number": page_number,
                         "extracted_fields": extracted_fields,
+                        "meta": {},
                     }
+                    _sync_page_meta(db_data_page)
                     pages.append(db_data_page)
                     page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
                     _record_completed_page_event(
@@ -249,12 +293,15 @@ def _build_page_records(
                     "is_readable": is_readable,
                     "ocr_text": text,
                     "ocr_confidence": ocr_confidence,
+                    "words": [],
                     "document_type": document_type,
                     "classification_confidence": classification.get("confidence", 0.0),
                     "detection_method": "skipped",
                     "detected_page_number": None,
                     "extracted_fields": extracted_fields,
+                    "meta": {},
                 }
+                _sync_page_meta(skipped_page)
                 pages.append(skipped_page)
                 page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
                 _record_completed_page_event(
@@ -650,7 +697,11 @@ def _build_page_records(
             "is_readable": is_readable,
             "ocr_text": text,
             "ocr_confidence": ocr_confidence,
-            "ocr_structure": _public_ocr_structure(ocr_metadata),
+            # Compact in-memory word layout for evidence bboxes (ws-f);
+            # never persisted (ws-a data diet).
+            "words": list(ocr_metadata.get("words") or []),
+            # Small in-memory layout for field extraction/smoothing only;
+            # never persisted (no "native" blob).
             "structured_content": ocr_metadata.get("structured_content"),
             "ocr_route": ocr_metadata.get("ocr_route"),
             "ocr_escalated": bool(ocr_metadata.get("ocr_escalated", False)),
@@ -668,7 +719,9 @@ def _build_page_records(
                 else page_number
             ),
             "extracted_fields": extracted_fields,
+            "meta": {},
         }
+        _sync_page_meta(completed_page)
         attach_field_provenance(
             completed_page,
             source_document=_source_document_for_page(source_documents or [], page_number),
@@ -701,6 +754,8 @@ def _build_page_records(
             message=f"Processed {len(pages)}/{total_pages} pages",
         )
     pages = _smooth_page_classifications(pages, application_id, total_pages)
+    for page in pages:
+        _sync_page_meta(page)
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
 
@@ -777,11 +832,9 @@ def _refresh_page_from_cached_ocr(
         detection_method = "cached_visual_evidence"
         confidence = max(confidence, float(refreshed.get("classification_confidence") or 0.0))
 
-    fields = _extract_fields_with_layout(
-        document_type,
-        text,
-        refreshed.get("structured_content") or refreshed.get("ocr_structure"),
-    )
+    # Cached checkpoints carry no layout blobs (never persisted); extraction
+    # re-runs on text alone.
+    fields = _extract_fields_with_layout(document_type, text, None)
     fields = refine_field_assignments(
         document_type=document_type,
         ocr_text=text,
@@ -842,7 +895,9 @@ def _refresh_page_from_cached_ocr(
             "extracted_fields": fields,
         }
     )
+    _sync_page_meta(refreshed)
     attach_field_provenance(refreshed, source_document=source_document)
+    _sync_page_meta(refreshed)
     return refreshed
 
 
@@ -945,29 +1000,31 @@ def _clone_reused_page(
     if isinstance(classification, dict):
         classification["detection_method"] = "deduplicated_reuse"
         classification["detected_page_number"] = page_number if starts_logical_document else None
+    if not isinstance(cloned.get("meta"), dict):
+        cloned["meta"] = {}
+    _sync_page_meta(cloned)
     attach_field_provenance(cloned, source_document=source_document)
+    _sync_page_meta(cloned)
     return cloned
 
 
 def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Select structured OCR fields that should be persisted and exported."""
+    """Select small structured OCR fields kept in memory for the run.
+
+    Nothing returned here is persisted: ``pages`` rows carry no layout blobs
+    and ``pipeline_page_events`` carries no field payload at all. The full
+    provider response (``native``/``structure_json``) is never built.
+    """
     keys = (
         "ocr_pipeline",
         "ocr_languages",
         "ocr_language_hints",
         "header_text",
-        "layout_blocks",
-        "tables",
-        "seals",
-        "formulas",
-        "structure_json",
         "ocr_route",
         "ocr_escalated",
         "ocr_routing_rationale",
         "ocr_original_confidence",
         "ocr_processing_time_ms",
-        "bounding_boxes",
-        "structured_content",
     )
     return {key: metadata[key] for key in keys if key in metadata}
 

@@ -325,6 +325,10 @@ def test_run_pipeline_continues_when_page_processing_errors(
             "SELECT extracted_fields FROM pages WHERE application_id = ? ORDER BY page_number ASC LIMIT 1",
             (application_id,),
         ).fetchone()
+        meta = connection.execute(
+            "SELECT meta_json FROM pages_meta WHERE application_id = ? ORDER BY page_number ASC LIMIT 1",
+            (application_id,),
+        ).fetchone()
         progress = connection.execute(
             "SELECT stage, status, processed_pages, total_pages FROM pipeline_progress WHERE application_id = ?",
             (application_id,),
@@ -332,7 +336,9 @@ def test_run_pipeline_continues_when_page_processing_errors(
 
     assert result["pipeline_status"] == "partial_failed"
     assert result["partial_failure_count"] == 1
-    assert '"_processing_error": "boom"' in page["extracted_fields"]
+    # Diet: private keys live in pages_meta, business keys only in pages.
+    assert '"_processing_error"' not in page["extracted_fields"]
+    assert '"_processing_error": "boom"' in meta["meta_json"]
     assert progress["stage"] == "completed"
     assert progress["status"] == "partial_failed"
     assert progress["processed_pages"] == progress["total_pages"] == 1
@@ -466,8 +472,14 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
             "SELECT extracted_fields FROM pages WHERE application_id = ?",
             (application_id,),
         ).fetchone()
+        meta = connection.execute(
+            "SELECT meta_json FROM pages_meta WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
 
-    assert "OCR exceeded hard timeout" in page["extracted_fields"]
+    # Diet: private keys live in pages_meta, business keys only in pages.
+    assert "OCR exceeded hard timeout" not in page["extracted_fields"]
+    assert "OCR exceeded hard timeout" in meta["meta_json"]
 
 
 def test_build_page_records_routes_photo_without_classification(

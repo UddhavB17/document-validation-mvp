@@ -37,8 +37,18 @@ def test_router_prefixes_empty() -> None:
     assert admin_users.router.prefix == "/admin/users"
     assert ops.router.prefix == "/ops"
     assert review_pages.router.prefix == "/review"
-    for module in (auth, admin_users, ops, review_pages):
+    for module in (auth, admin_users, ops):
         assert list(module.router.routes) == []
+    # ws-a data diet: review_pages serves the polling status + page-text
+    # endpoints so the frontend stops polling the full review payload.
+    assert sorted(
+        route.path for route in review_pages.router.routes
+    ) == sorted(
+        [
+            "/review/applications/{application_id}/status",
+            "/review/applications/{application_id}/pages/{page_number}/text",
+        ]
+    )
 
 
 def test_auth_dependencies_raise_501() -> None:
@@ -53,20 +63,32 @@ def test_auth_dependencies_raise_501() -> None:
     assert callable(require_role("admin"))
 
 
-def test_pipeline_task_stubs_raise_not_implemented() -> None:
+def test_pipeline_task_stubs_raise_not_implemented(tmp_path, monkeypatch) -> None:
     """Behaviour stubs raise until their owning workstream implements them."""
-    from services import evidence_boxes, llm_gemini, ops_presentation, retention, worker
+    from services import evidence_boxes, llm_gemini, ops_presentation, worker
 
     with pytest.raises(NotImplementedError):
         worker.run_worker(once=True)
     with pytest.raises(NotImplementedError):
         ops_presentation.build_ops_payload(1)
     with pytest.raises(NotImplementedError):
-        retention.run_retention(dry_run=True)
-    with pytest.raises(NotImplementedError):
         llm_gemini.generate("hello", model="m", timeout=60)
     with pytest.raises(NotImplementedError):
         evidence_boxes.find_value_bbox([], "value")
+
+
+def test_retention_implemented_by_ws_a(tmp_path, monkeypatch) -> None:
+    """ws-a data diet: run_retention reports per-action counts (dry run)."""
+    import database.db as db_module
+    from database.db import init_db
+    from services.retention import run_retention
+
+    monkeypatch.setattr(db_module, "DATABASE_PATH", tmp_path / "retention-scaffold.db")
+    init_db()
+    result = run_retention(dry_run=True)
+    assert result["dry_run"] is True
+    assert result["pipeline_job_inputs_deleted"] == 0
+    assert result["applications_archived"] == 0
 
 
 def test_local_object_store_round_trip(tmp_path, monkeypatch) -> None:
