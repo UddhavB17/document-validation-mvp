@@ -1,583 +1,199 @@
-# Production next phase: how to implement it on this codebase
+# Production cutover v2: data diet first, then cloud
 
-This is an implementation plan for taking DMEF from a working local prototype
-to a production-ready document review service. It maps the team discussion onto
-the current repository (`main` at PR #22) and says what to reuse, what to
-replace, and in what order.
+Status: plan of record. Supersedes v1 of this document (kept in git history).
+Execution package: `docs/agents/README.md` (run book),
+`docs/agents/00-CONTRACTS.md` (interfaces and budgets), `.opencode/agents/*.md`
+(one brief per agent).
 
-Credit scoring, overnight batch scheduling, and PWS work stay out of this
-phase. They are listed at the end so they are not forgotten.
+## 1. Decisions taken
 
-## Current system in one paragraph
-
-DMEF is a FastAPI + Next.js app. A user uploads a PDF or ZIP. The API writes
-the file under `data/uploads/`, inserts SQLite rows, and hands work to an
-in-process `ThreadPoolExecutor`. The pipeline renders pages, OCRs scanned
-pages with Google Vision, classifies them, compares extracted fields with
-trusted application data, evaluates `data/checklist.json`, and writes OCR
-text, anomalies, summaries, and reports to SQLite plus `data/processed/` and
-`data/reports/`. The Next.js UI then polls progress and shows a single case
-workspace with review, extracted data, checklist, processing logs, and file
-downloads. There is no login, no role split, and no durable queue.
-
-```mermaid
-flowchart LR
-    Browser[Next.js UI] --> API[FastAPI]
-    API --> Disk[data/uploads processed reports]
-    API --> SQLite[(SQLite data/dmef.db)]
-    API --> Threads[ThreadPoolExecutor]
-    Threads --> Pipeline[OCR classify match checklist]
-    Pipeline --> SQLite
-    Pipeline --> Disk
-    Pipeline --> Vision[Google Vision]
-    Pipeline --> LLM[Ollama or OpenAI-compatible]
-```
-
-## What already matches the production discussion
-
-Do not rebuild these. Production work should wrap or expose them.
-
-| Need from the discussion | Already in the repo |
+| Question | Decision |
 |---|---|
-| ZIP/PDF intake | `routes/upload.py`, `services/zip_package.py` |
-| OCR | Google Vision via `services/ocr_router.py` / `services/google_vision_ocr.py` |
-| Compare with trusted application data | `services/mapped_verification.py`, `services/field_verification.py`, `services/trusted_reconciliation.py` |
-| Cross-document checks | `CROSS_DOCUMENT_*` rules, `services/consistency_checks.py` |
-| Checklist in the MSFC NDC format | `data/checklist.json`, `frontend/components/applications/Checklist.tsx` |
-| Name / PAN / address / missing-doc / bank recency / blurry / OCR failure | Existing rule IDs (see [Anomaly categories](#anomaly-categories-map-do-not-rewrite-the-engine)) |
-| Collapse noisy per-page flags | `services/reviewer.py` |
-| Per-file status and progress | `pipeline_jobs`, `pipeline_progress`, `frontend/components/ProgressPanel.tsx` |
-| Manual retry / resume | `services/reprocessing.py`, `/review/applications/{id}/restart` |
-| Click-through to a page with a highlight | `routes/review.py` `source-page` + `highlight=` query |
-| Reviewer summary and pages to check | `reviewer_summaries`, `ReviewerSummary.tsx` |
-| Case tabs that can be split by role | Review vs Extracted vs Checklist vs Processing vs Files |
-| Sequential processing | `DMEF_PIPELINE_WORKERS` defaults to 1 |
+| Migrate existing SQLite data to Neon? | **No.** Neon starts empty. The current `data/dmef.db` and `data/` folders stay on the laptop as an archive. |
+| How do agents run? | **Parallel git worktrees**, one agent per workstream, one PR per workstream, merged in a fixed order. |
+| ORM? | **No.** Raw SQL stays; `database/db.py` gains a thin dialect-aware wrapper. |
+| JSONB? | **No.** JSON payload columns remain `TEXT`. |
+| Object store | Google Cloud Storage (Vision already uses Google ADC). |
+| Database | Neon PostgreSQL via `DATABASE_URL`; SQLite remains the test/dev default. |
+| Queue | Database table (`pipeline_jobs`) with `FOR UPDATE SKIP LOCKED`; one worker process. No Redis/Celery. |
+| Auth | Email + password, admin-provisioned users, roles `admin` / `operations`, JWT bearer, httpOnly cookie in the frontend. |
+| Hindi | Deterministic EN/HI templates for the nine finding types; Gemini writes only the 2–3 sentence overall summary with a deterministic fallback. |
+| Retention | 60 days source files and rows, 7 days generated OCR exports, 30 days telemetry, no durable page images. |
+| Page images | Not stored. Rendered on demand from the source PDF (already how `routes/review.py:141-213` works). |
 
-The prototype is feature-rich. It is not production-shaped: storage, database,
-process lifetime, and access control are all bound to one machine.
+## 2. Why v1's order was wrong: the storage math
 
-## Gaps that block production
+Measured on the current laptop database (3.9 GB SQLite, ~30 applications):
 
-| Requirement | Current behavior | Why it fails in production |
+| What | Where it is stored today | Size |
 |---|---|---|
-| Private cloud storage | Local paths in `uploaded_files.file_path`, `pages.image_path`, `intake_packages.*_path`, `data/reports/` | Files vanish if the process or disk dies; a second instance cannot see them |
-| Neon / hosted PostgreSQL | `database/db.py` is SQLite-only (`sqlite3`, `PRAGMA`, `AUTOINCREMENT`, `INSERT OR IGNORE`, `?` placeholders) | Cannot share state across API and workers; not reachable from a deployed host |
-| Durable one-at-a-time queue | `services/job_runner.py` is an in-process thread pool | Jobs are lost on restart; two API replicas would double-process; no fair batch queue |
-| Results as soon as each file finishes | One upload = one application, and that part is already incremental | The UI only accepts **one** PDF/ZIP per submit. There is no batch of 10 |
-| Auto-retry 3 times then stop with a reason | `pipeline_jobs.attempt` exists; retries are **manual** | Operators have to click restart; no hard stop after 3 failures |
-| Admin vs operations UI | One shell: Upload, Worklist, Activity, Settings, plus technical tabs | Operations users see OCR JSON, processing logs, rule IDs, dumps |
-| Login and admin-managed users | None. `DMEF_JOB_CONTROL_TOKEN` is a shared recovery secret | Anyone who can reach the UI can upload, view KYC, and change settings |
-| English/Hindi operations summary | LLM summary is English TOON JSON; Hindi exists in OCR/classifier, not in the review copy | No language toggle for operations |
-| Highlights on the **image** | Highlight is PDF text search (`page.search_for`) plus OCR text `<mark>` | Scanned pages often have no selectable PDF text; stored Vision bounding boxes are unused in the viewer |
-| Gemini model bakeoff | Settings dropdown includes `gemini`, but `services/llm_client.py` only implements Ollama and OpenAI-compatible HTTP | Selecting Gemini does not call Gemini |
-| Deployed app without the laptop | CORS locked to localhost; paths are relative; no Docker/Cloud Run worker | Health check can pass while processing cannot |
+| Full Google Vision response (`structured_content.native`) | `pages.structured_content`, again in `pipeline_page_events.extracted_fields` (partially), again in the disk export `ocr-export.json` three times over | 60 KB – 103 MB per page, ~135 KB median |
+| `extracted_fields` with private `_classification/_triage/_language/_structured_llm_classification` blobs | `pages`, `pipeline_page_events` | 3–20 KB per page |
+| `ground_truth.raw_json` (raw company dump) | saved twice per run | ~145 KB per run |
+| `reviewer_summaries.summary_json` | one per run, never pruned | ~148 KB avg |
+| Rendered page PNGs | `data/pages/{application}/...` | 400–500 MB per application |
+| Telemetry (`audit_log`, `ocr_route_events`, `classification_review_log`, `pipeline_jobs`, `pipeline_job_inputs`) | append-only forever | grows with every run |
 
-SQLite is used from at least these runtime modules: `database/db.py`,
-`routes/upload.py`, `routes/review.py`, `routes/decisions.py`,
-`routes/settings.py`, `routes/verification.py`, `services/pipeline/persistence.py`,
-`services/progress_tracker.py`, `services/job_control.py`,
-`services/reprocessing.py`, `services/review/repository.py`,
-`services/config.py`, `services/audit_service.py`. Any database move has to
-go through a shared connection layer, not a one-file swap.
+Per application today: ~170 MB (DB + disk). After the diet: ~1 MB in Neon and
+25–50 MB in GCS (the source PDF/ZIP only). At 50 applications a day for a
+two-month pilot that is the difference between ~500 GB and ~3 GB Neon + ~120 GB
+GCS. Moving the data first and dieting later would also mean paying to store
+and later delete unread blobs.
 
-## Target production shape
+The frontend polls `GET /review/applications/{id}` every 2 seconds while a
+job runs (`frontend/lib/queries.ts:42`); that response includes every page's
+`ocr_text` and `structured_content`. Payload budgets are therefore part of the
+diet, not a later optimisation.
+
+## 3. Target data model
+
+| Table | Change |
+|---|---|
+| `pages` | Keep `ocr_text`, classification columns, `ocr_confidence`, `ocr_route`. `extracted_fields` = business keys only (≤ 1 KB). **Drop** `structured_content` and `image_path`. Avg row ≤ 4 KB. |
+| `pages_meta` (new) | Private per-page JSON (`_classification`, `_triage`, `_language`) ≤ 1.5 KB. Admin-only reads. |
+| `pipeline_page_events` | Status, timing, `document_type`. **Drop** `extracted_fields`. |
+| `validation_results` | Add `evidence_json TEXT`: `{"page": n, "bbox": [x0,y0,x1,y1], "text": "..."}` in normalized 0–1 coordinates. |
+| `ground_truth` | Keep normalized `reference_data`; raw dump goes to object storage `applications/{id}/manifest.json`. Saved once per run. |
+| `reviewer_summaries` | ≤ 40 KB avg; remove document index / reconciliation duplicates that are reconstructible. |
+| `applications` | Add `ops_summary_en`, `ops_summary_hi`, `ops_findings_json` (≤ 5 KB). |
+| `pipeline_jobs` | Add `max_attempts`, `next_run_at`, `failure_reason`, `batch_id`. |
+| `llm_calls` (new) | provider, model, purpose, tokens in/out, ms, est_cost_usd, application_id. |
+| `users`, `user_passwords` (new) | Auth. |
+| `exceptions` | Dropped (dead). |
+| Indexes | `pages(application_id, page_number)`, `applications(created_at)`, `reviewer_decisions(decided_at)`, `pipeline_jobs(status, next_run_at)`. |
+
+Object storage keys, budgets and API payload limits are normative in
+`docs/agents/00-CONTRACTS.md` §2 and §8.
+
+## 4. Flaws found in the audit and the stream that fixes each
+
+Storage and data model → **ws-a**
+
+- `structured_content.native` is the whole Vision response: built in
+  `services/ocr_router.py:459-466` and `:496`, persisted in
+  `services/pipeline/persistence.py:62-93`.
+- Private blobs inside `extracted_fields` (`services/pipeline/page_processing.py:640-670`),
+  duplicated into `pipeline_page_events` (`services/progress_tracker.py:191-243`).
+- `services/ocr_json_export.py:361-414` nests each page three times.
+- `ground_truth` saved twice (`services/pipeline/orchestrator.py:100,249`).
+- `init_db()` (DDL + seed writes) called from ~17 request handlers.
+- Missing indexes; append-only telemetry; dead `exceptions` table.
+
+API payload → **ws-a** (backend) and **ws-e** (frontend)
+
+- `SELECT * FROM pages` in `services/review/repository.py:60-63`, spread into the
+  review response in `routes/review.py:96-113`, polled every 2 s.
+
+Architecture → **ws-b**, **ws-c**, **ws-h** (rest deferred)
+
+- Routes own SQL and run pipeline tasks (`routes/upload.py:1065-1174`).
+- 53 env vars, DB settings with inverted precedence (`services/config.py:192-275`). Deferred.
+- God modules: `field_extractor.py` (3428 lines), `consistency_checks.py` (2020),
+  `mapped_verification.py` (1941). Deferred; only targeted edits this phase.
+- `docs/MAINTAINING.md:37-41` calls these modules "facades"; they are not.
+
+Security → **ws-h**, **ws-d**
+
+- Unauthenticated `POST /shutdown` (`main.py:72`); CORS allows any localhost
+  origin with credentials; plaintext secrets in `system_settings`;
+  `FileResponse` of a DB-stored path without confinement (`routes/review.py:121-134`);
+  auto-generated Fernet key under `data/`; no authentication anywhere.
+- Mapped job marks package `completed` even when the pipeline failed
+  (`routes/upload.py:1136-1149`) → **ws-c**.
+
+Accuracy and false positives → **ws-f**
+
+- `run_consistency_checks` compares fields from nearly every page; only utility
+  bills are skipped (`services/consistency_checks.py:315-328`).
+- Generic field extraction runs on photo pages (`services/pipeline/page_details.py:152-192`).
+- `{FIELD}_NOT_FOUND` fires from `readable_pages[0]` regardless of classification
+  confidence (`services/mapped_verification.py:1047-1081`).
+- Legacy date checks use wall clock and `/30` (`services/checklist_engine.py:129-145`, `:1099`).
+- Three name matchers with different thresholds; no Devanagari↔Latin path.
+- Reviewer collapses items to one page (`services/reviewer.py:395-408`);
+  `MISSING_DOC_*` stripped from active anomalies (`services/exception_aggregator.py:86-90`).
+
+Frontend → **ws-e**, **ws-c**
+
+- Demo data in `OverviewTab.tsx:38,44` and `ZipPackageForm.tsx:16-26`.
+- Jargon (OCR, deterministic, stale, pipeline, database dump) in operator-facing copy.
+- ~574 inline hex colours, empty Tailwind theme; no i18n; review state in `sessionStorage`.
+
+LLM → **ws-g**
+
+- `LLM_PROVIDER=gemini` silently falls back to Ollama (`services/llm_client.py:48-90`)
+  while the UI offers Gemini. No token/cost accounting, no retries.
+- Project rule `.agents/AGENTS.md` mandates TOON for LLM I/O; the audit found TOON
+  parsing brittle. Decision for this phase: TOON for prompt input, JSON for model
+  output. `.agents/AGENTS.md` is updated by ws-g to say so.
+
+## 5. Workstreams and waves
 
 ```mermaid
 flowchart LR
-    U[Operations or admin user] --> UI[Next.js]
-    UI --> API[FastAPI API]
-    API --> Auth[Users and roles in Neon]
-    API --> GCS[Private GCS bucket]
-    API --> Neon[(Neon PostgreSQL)]
-    API --> Jobs[pipeline_jobs queued]
-    Worker[Worker process] --> Jobs
-    Worker --> GCS
-    Worker --> Neon
-    Worker --> Vision[Google Vision]
-    Worker --> Gemini[Gemini API]
-    Neon --> Ops[Operations checklist]
-    Neon --> Admin[Admin logs OCR JSON]
-    GCS --> Signed[Short-lived signed URLs]
+  W0[ws-0 scaffold] --> A[ws-a data diet]
+  W0 --> B[ws-b storage + db wrapper]
+  W0 --> C[ws-c queue + batch]
+  W0 --> D[ws-d auth]
+  W0 --> F[ws-f accuracy + ops api]
+  W0 --> G[ws-g gemini + llm]
+  W0 --> H[ws-h security hygiene]
+  A --> I[ws-i postgres cutover]
+  B --> I
+  C --> I
+  D --> E[ws-e ops ui]
+  F --> E
+  A --> E
+  I --> J[ws-j deploy + smoke]
+  E --> J
+  G --> J
+  H --> J
 ```
 
-Keep the current pipeline (`services/pipeline/orchestrator.py`) as the
-processor. Change **where files live**, **where rows live**, **who may see
-them**, and **how jobs are started**.
+| Wave | Stream | Scope in one line | Owned area |
+|---|---|---|---|
+| 0 | `ws-0-scaffold` | Stubs, registry, router registration, deps, env keys, root `AGENTS.md` | new files only |
+| 1 | `ws-a-data-diet` | Stop persisting Vision JSON and private blobs; explicit columns; `/status` + `/pages/{n}/text`; retention; indexes; budget tests | OCR router/Vision output shape, pipeline persistence, review repository, `database/models.py` |
+| 1 | `ws-b-storage-db` | `ObjectStore` (local + GCS), db wrapper with `?`→dialect, alembic skeleton, uploads and evidence streaming through the store, Dockerfile, CI Postgres job | `services/storage/`, `database/db.py`, `services/paths.py`, upload save path, source-pdf/page routes |
+| 1 | `ws-c-queue-batch` | Durable worker loop, retries with backoff and `failure_reason`, batch upload endpoints, multi-file UI | `services/worker.py`, `services/job_runner.py`, `services/pipeline/tasks.py`, batch routes, `frontend/components/upload/` |
+| 1 | `ws-d-auth` | Users, roles, JWT, login page, middleware, admin user management | `services/auth/`, `routes/auth.py`, `routes/admin_users.py`, `frontend/app/login`, `frontend/middleware.ts` |
+| 1 | `ws-f-accuracy-ops-api` | Gate checks by document type/triage/confidence; unify name matching; fix date checks; evidence bboxes; nine finding codes EN/HI; `GET /ops/applications/{id}` | consistency checks, page details, mapped verification, checklist engine, reviewer, exception aggregator, `services/ops_presentation.py`, `routes/ops.py` |
+| 1 | `ws-g-gemini-llm` | Real Gemini provider, retries, `llm_calls` accounting, EN+HI summary with fallback, model bake-off script | `services/llm_client.py`, `services/llm_gemini.py`, `services/llm_service.py`, `scripts/eval_gemini_models.py` |
+| 1 | `ws-h-security-hygiene` | Delete `/shutdown`, `CORS_ORIGINS`, encrypt secrets at rest, fix docs | `main.py`, `routes/settings.py`, `services/config.py`, `services/job_control.py`, `docs/MAINTAINING.md` |
+| 2 | `ws-i-postgres-cutover` | Full suite green on Postgres; SQL dialect sweep; alembic baseline; `/health` checks DB; Neon documented | all SQL sites (sweep), `alembic/` |
+| 2 | `ws-e-ops-ui` | `/ops` screens, `/admin` move, role-aware shell, EN/HI toggle, bbox highlight overlay, polling `/status` only, jargon and demo-data removal, Tailwind tokens | `frontend/app/ops`, `frontend/app/admin`, `AppShell`, `queries.ts`, `i18n/` |
+| 3 | `ws-j-deploy-smoke` | Cloud Run API + worker, secrets, `/health` with worker heartbeat, smoke script, retention schedule, pilot metrics | `Dockerfile`, `deploy/`, `scripts/smoke_batch.py`, `docs/agents/PILOT_METRICS.md` |
+| — | `reviewer` | Read-only: checks each PR against contracts, budgets, ownership | none |
 
-Recommended hosting (fits existing Google Vision + service-account work):
+Merge order: 0 → H → A → B → C → D → F → G → I → E → J.
 
-- **Files:** Google Cloud Storage, private bucket, HMAC or IAM, signed GET URLs
-- **Database:** Neon PostgreSQL, `DATABASE_URL` from the environment
-- **API:** Cloud Run or equivalent, stateless
-- **Worker:** separate Cloud Run service / VM process, one replica, long timeout
-- **Secrets:** Secret Manager or the host’s secret store, never `.env` on disk
-  in production
+## 6. Acceptance for "production-ready v1"
 
-A local `/tmp` working directory during a job is still required (PyMuPDF and
-Vision need files). That is not durable storage. Download → process → upload
-results → delete the temp tree. Do not write under the repo’s `data/` folder
-in production.
+- A 10-file batch uploaded from the UI enqueues 10 jobs; the worker processes
+  them one at a time; each application becomes reviewable as soon as it finishes;
+  a job failing three times shows `failed` with a readable reason.
+- Operations user (role `operations`) sees: summary (EN/HI), ≤ 5 findings,
+  pages to verify, checklist in the familiar format, click-through to the page
+  with the mismatch highlighted; never sees OCR text, JSON, rule IDs or stage names.
+- Admin sees everything the current UI shows, plus user management, job
+  control, LLM settings and cost.
+- Neon holds ≤ ~1 MB per application; GCS holds only source files and
+  short-lived exports; no page images anywhere durable.
+- All routes except `/health` and `/auth/login` require a valid token.
+- Gemini is the LLM provider with per-call token and cost accounting; a
+  bake-off CSV exists for at least two Gemini models on the fixture set.
+- `python -m pytest -q` is green on SQLite and on PostgreSQL in CI.
 
-## Decisions the team still needs to lock
+## 7. Calendar
 
-These are product choices, not code mysteries. Defaults below are what the
-implementation should use if nobody overrides them before 10–11 September.
-
-1. **Retention.** Transcript mentioned both 10–15 days and two months.
-   **Default:** 60 days for source ZIP/PDF (pilot reviewers need history);
-   15 days for rendered page images (they can be regenerated from the source);
-   60 days for structured Neon rows. Encode as `DMEF_RETENTION_SOURCE_DAYS`
-   and `DMEF_RETENTION_PAGE_DAYS`. A later cleanup job enforces this; do not
-   block the first deploy on the cleanup job itself.
-2. **Object store.** **Default: GCS.** The OCR path already uses Google ADC /
-   API keys. S3 is a backend interface, not the first implementation.
-3. **Queue backend.** **Default: Postgres `FOR UPDATE SKIP LOCKED` on
-   `pipeline_jobs`.** Neon is already required. Redis/Celery adds another
-   moving part before the pilot.
-4. **Auth.** **Default: email + password, admin-created accounts, JWT or
-   httpOnly session cookie.** SSO can wait until after the credit-team pilot.
-5. **Gemini default after bakeoff.** Do not hard-code a model until the sample
-   file eval runs. Wire the provider first; pick the model from the eval table.
-
-## Implementation sequence
-
-Build in this order. Each step is deployable without the next. Do not start
-scheduler or PWS work in this list.
-
-### 1. Object storage (bucket + stop using `data/` as the system of record)
-
-**Add** `services/storage/__init__.py` with a small interface:
-
-- `put(key, bytes, content_type) -> key`
-- `get(key) -> bytes`
-- `signed_url(key, seconds) -> str`
-- `delete(key)`
-
-**Implement** `LocalObjectStore` (tests / laptop) and `GcsObjectStore`
-(production). Select with `DMEF_STORAGE_BACKEND=local|gcs` and
-`DMEF_GCS_BUCKET`.
-
-**Key layout:**
-
-```text
-applications/{application_id}/source/{original_filename}
-applications/{application_id}/packages/{package_id}/source.zip
-applications/{application_id}/packages/{package_id}/normalized.pdf
-applications/{application_id}/pages/{page_number}.png
-applications/{application_id}/ocr/{application_id}.json
-applications/{application_id}/reports/{name}.json
-tmp/{job_id}/...          # never the system of record
-```
-
-**Change call sites that write or read paths today:**
-
-| Today | After |
+| Dates | Work |
 |---|---|
-| `routes/upload.py` `_save_upload_stream` → `UPLOAD_DIR` | Stream to GCS (resumable or buffered), store object key in `uploaded_files.storage_key` |
-| `services/zip_package.py` extract + `normalized_pdf_path` | Extract in `/tmp`, upload ZIP + normalized PDF, persist keys on `intake_packages` |
-| `services/pdf_processor.py` page PNGs | Render to `/tmp`, upload PNG, store key on `pages.image_path` (or `image_storage_key`) |
-| `services/ocr_json_export.py` `save_ocr_document_json` | Put JSON in GCS **and** `pages.ocr_text` / `document_verification_reports` in Neon |
-| `services/report_generator.py` Excel/JSON under `data/reports` | Store JSON in Neon (`document_verification_reports`, `reviewer_summaries`); Excel is an on-demand export from Neon, optional object |
-| `routes/review.py` `FileResponse(file_path)` | Redirect or stream via signed URL; page images from GCS, not disk |
-
-Keep a short-lived signed URL (5–15 minutes) for the evidence viewer. Do not
-make the bucket public.
-
-**Temp RAM/disk:** `DMEF_JOB_WORK_DIR=/tmp/dmef-jobs/{job_id}`. Delete in a
-`finally` block in the worker. Page-level OCR still checkpoints into Neon so a
-retry does not need the temp tree.
-
-### 2. Neon PostgreSQL (move the database, not the domain model)
-
-**Do not** keep `sqlite3.connect` and hope a connection string is enough.
-
-**Add** SQLAlchemy 2.x + psycopg (v3) + Alembic.
-
-**Replace** `database/db.py` with an engine/session factory driven by
-`DATABASE_URL`:
-
-- Production: `postgresql://...@....neon.tech/neondb?sslmode=require`
-- Local/tests: `sqlite+pysqlite:///...` **or** a Neon branch, but tests should
-  not require network. Prefer SQLite in pytest through the same SQLAlchemy
-  models so the schema does not fork.
-
-**Schema translation** from `database/models.py` `SCHEMA_STATEMENTS`:
-
-| SQLite | PostgreSQL |
-|---|---|
-| `INTEGER PRIMARY KEY AUTOINCREMENT` | `BIGINT GENERATED BY DEFAULT AS IDENTITY` |
-| `BOOLEAN` stored as 0/1 | `BOOLEAN` (frontend already accepts both in `pageSchema`) |
-| JSON in `TEXT` (`extracted_fields`, `report_json`, `summary_json`, `raw_json`) | `JSONB` |
-| `INSERT OR IGNORE` | `ON CONFLICT DO NOTHING` |
-| `PRAGMA foreign_keys / WAL` | drop; Neon handles this |
-| `CURRENT_TIMESTAMP` | `TIMESTAMPTZ DEFAULT now()` |
-| `?` placeholders | SQLAlchemy bound params |
-
-**New columns (additive, needed by storage and queue):**
-
-- `uploaded_files.storage_key`, `storage_backend`, `content_type`
-- `pages.image_storage_key` (keep `image_path` during dual-read)
-- `intake_packages.source_zip_key`, `normalized_pdf_key`
-- `pipeline_jobs.failure_reason`, `max_attempts` (default 3), `next_run_at`
-- `applications.ops_summary_en`, `ops_summary_hi`, `ops_findings_json`
-- `users`, `user_credentials` (see auth)
-
-**Alembic** becomes the only schema writer. Stop running ad-hoc
-`MIGRATION_STATEMENTS` `ALTER TABLE ... ADD COLUMN` on startup. `init_db()`
-can stay for tests; production uses `alembic upgrade head`.
-
-**Env:** add `DATABASE_URL` to `.env.example`. Treat `DATABASE_PATH` as local
-dev only. Confirm after cutover:
-
-- insert application + uploaded file + job
-- worker writes pages, OCR text, validation_results, reviewer_summaries
-- API on a **different** process reads them
-- `/health` reports `database: ok` without touching the developer laptop
-
-### 3. Durable queue and batch upload
-
-**Keep** the `pipeline_jobs` / `pipeline_progress` tables. **Replace**
-`services/job_runner.py` `ThreadPoolExecutor`.
-
-**Worker loop** (`python -m services.worker`):
-
-1. `BEGIN`
-2. `SELECT ... FROM pipeline_jobs WHERE status = 'queued' AND next_run_at <= now() ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1`
-3. Set `status = 'running'`, heartbeat
-4. `COMMIT`
-5. Download objects to the job work dir
-6. Call existing `run_pipeline(...)`
-7. On success: `completed`, persist summary immediately, delete temp dir
-8. On failure: increment `attempt`; if `attempt < 3`, set `queued` +
-   `failure_reason` + backoff `next_run_at`; else `failed` and freeze the
-   reason for the UI
-
-Heartbeats already exist (`DMEF_JOB_HEARTBEAT_GRACE_SECONDS`). Reuse
-`services/reprocessing.py` stale detection so a dead worker does not leave
-jobs running forever.
-
-**One file at a time:** run **one worker replica**. Do not raise
-`DMEF_PIPELINE_WORKERS` for the pilot. Memory and Vision timeouts are the
-constraint, not throughput.
-
-**Batch upload (the 10-file path):**
-
-New API:
-
-```http
-POST /upload/batch
-multipart: files[] (PDF or ZIP), plus either one shared manifest or per-file loan metadata
-→ { "batch_id": "...", "items": [ { application_id, job_id, filename, status: "queued" } ] }
-
-GET /upload/batch/{batch_id}
-→ items with processing | completed | failed | retrying, attempt, failure_reason
-```
-
-Implementation notes:
-
-- Create N `applications` and N `pipeline_jobs` in one request after all
-  objects are stored.
-- Do **not** wait for pipeline completion in the HTTP request.
-- Each job writes `reviewer_summaries` and `validation_results` when **that**
-  file finishes. The worklist already lists applications independently;
-  polling `GET /review/worklist` is enough for “show completed files early.”
-- Frontend: `PdfUploadForm` / `MappedUploadForm` / `ZipPackageForm` today use
-  a single `File`. Change the file input to `multiple`, show a per-file status
-  table, and navigate into a case as soon as its `operational_status` is
-  `completed` / `completed_with_warnings` / `failed`.
-
-**Retry UX:** worklist already has `pipeline_retryable`. Extend it:
-
-- `retrying` while `attempt` in 1..2 after a failure
-- `failed` after attempt 3, with `error` shown in operations language
-  (“Could not read this file after 3 tries: Google Vision timed out”)
-- Admin may still force a fourth attempt via the existing restart route
-
-Overnight “process everything uploaded today” is a Cloud Scheduler trigger
-on the same worker query. **Do not build the scheduler in this phase.** The
-queue table is the hook.
-
-### 4. Authentication and two roles
-
-**New tables:**
-
-```text
-users (id, email UNIQUE, display_name, role CHECK IN ('admin','operations'), is_active, created_at, created_by)
-user_passwords (user_id PK, password_hash, updated_at)
-```
-
-**API:** FastAPI dependency `get_current_user`. Unauthenticated requests get
-401 except `/health`. Admin-only: settings, user CRUD, raw OCR JSON, job
-control, SQL-ish dumps.
-
-**Admin APIs:**
-
-```http
-POST   /admin/users          { email, display_name, role, password }
-PATCH  /admin/users/{id}     { is_active, role, password }
-GET    /admin/users
-```
-
-First admin: bootstrap from `DMEF_BOOTSTRAP_ADMIN_EMAIL` +
-`DMEF_BOOTSTRAP_ADMIN_PASSWORD` on empty `users` table, then require a
-password change. Never commit those values.
-
-**Frontend:**
-
-- Login page
-- `AppShell` nav filtered by role
-- Next.js middleware: no token → `/login`
-
-Passwords: bcrypt or argon2. Store hashes only.
-
-### 5. Split the UI: operations vs admin
-
-The case workspace already has the right **tabs**. Split by **route and
-payload**, not by hiding a CSS class.
-
-**Operations** (`/ops/worklist`, `/ops/applications/{id}`):
-
-Reuse:
-
-- `ReviewerSummary` (headline + pages to review)
-- `Checklist` / NDC checklist rows (familiar format)
-- `Verdict` copy, rewritten without “pipeline” jargon
-- Evidence viewer **without** OCR text panel
-- Page buttons already on checklist and anomalies
-
-New operations payload `GET /ops/applications/{id}` (not the full review
-document):
-
-```json
-{
-  "loan_id": "...",
-  "applicant_name": "...",
-  "status": "needs_review",
-  "summary": { "en": "...", "hi": "..." },
-  "language": "en",
-  "top_findings": [ { "title", "detail", "pages", "severity" } ],
-  "pages_to_verify": [ { "page", "problem", "document_label" } ],
-  "checklist": { "rows": [ { "s_no", "description", "status", "pages" } ] }
-}
-```
-
-Rules for this payload:
-
-- At most five `top_findings`, ordered HIGH business exceptions first
-- Map rule IDs through a copy table (below); never send `rule_id`, `ocr`,
-  `json`, `database dump`, `TOON`
-- `pages_to_verify` comes from `reviewer_summaries.pages_to_review`
-- Language toggle switches `summary` and finding titles; checklist
-  descriptions can stay English until a translation pass exists
-
-**Admin** keeps the current workspace:
-
-- Review (comparison matrix, relationship graph, exceptions)
-- Extracted data
-- Checklist
-- Processing (progress, page events)
-- Files (source PDF + OCR JSON download)
-- Settings (OCR, LLM, required fields)
-
-`Downloads.tsx` OCR JSON link is **admin only**. Operations can open the
-source page image (signed URL) but should not download raw OCR JSON.
-
-### 6. Operations findings and highlights
-
-#### Copy and ranking
-
-Add `services/ops_presentation.py` that reads collapsed reviewer items and
-emits the five findings. Priority order:
-
-1. Applicant name mismatch  
-2. PAN / Aadhaar mismatch  
-3. Address mismatch  
-4. Missing required documents  
-5. Bank statement older than three months  
-6. Blurry / unreadable scan  
-7. Could not read this page  
-8. Expected field missing  
-9. Processing failed  
-
-`services/reviewer.py` already separates business vs processing quality.
-Operations should show processing issues only when they block a business
-check (for example PAN page unreadable), not every unknown photo page.
-
-#### Stop flagging irrelevant pages
-
-False positives from checking the wrong page are a known issue. Tighten
-**before** the Gemini bakeoff so the eval is not measuring noise:
-
-- Run field matchers only on pages whose `document_type` is in that field’s
-  allow-list (PAN on PAN/KYC, address on Aadhaar/application/utility, etc.).
-- `services/content_triage.py` already buckets `photo` / `handwritten` /
-  `printed_scan`. Photos should not emit `*_NOT_FOUND` or name mismatches.
-- `services/processing_policy.py` `is_internal_document_type` already drops
-  some types from reports; extend that to identity checks.
-- Keep collapsing `UNCLASSIFIED_PAGE` in `services/reviewer.py`; do not send
-  those to operations at all.
-
-This is a filter around existing detectors, not a new ML model.
-
-#### Highlights on the page image
-
-Today `GET /review/applications/{id}/source-page/{n}?highlight=` uses PyMuPDF
-text search. For scans, Vision already returns bounding boxes
-(`services/ocr_router.py` `bounding_boxes`). Persist boxes in
-`pages.structured_content` (already a JSON column) and draw a rectangle in
-the evidence viewer overlay.
-
-Fallback order: stored bbox for the found value → PDF `search_for` → OCR
-text `<mark>` in the admin viewer only.
-
-### 7. Gemini provider and bakeoff
-
-`frontend/components/settings/LlmSettings.tsx` already offers Gemini.
-`services/llm_client.py` ignores it.
-
-**Implement** `LLM_PROVIDER=gemini` with the Google Gen AI SDK or the
-OpenAI-compatible Gemini endpoint, using the same service account as Vision
-when possible (`GOOGLE_APPLICATION_CREDENTIALS`).
-
-Use Gemini for:
-
-- Operations EN/HI summary (`generate_explanation`)
-- Optional low-confidence field verifier (already behind
-  `ENABLE_LLM_FIELD_VERIFIER`)
-
-Do **not** put Gemini on every page classification for the pilot. The
-deterministic classifier plus Vision is the source of truth; the LLM writes
-the short summary.
-
-**Bakeoff script** `scripts/eval_gemini_models.py`:
-
-- Input: a frozen directory of known sample files + a gold JSON of expected
-  findings (name/PAN/address/missing/recency)
-- Models to try (adjust to whatever is enabled on the GCP project):
-  `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-2.0-flash`
-- For each file × model record: accuracy vs gold, false-positive count,
-  wall time, input/output tokens, estimated USD
-- Output: `outputs/gemini_bakeoff.csv` and a one-page summary
-- Selection rule: **accuracy and false-positive rate first**, then latency,
-  then cost. Do not pick the cheapest model if it invents mismatches.
-
-Confirm ADC works with a dry-run that only lists models / sends one tiny
-prompt, before burning the sample set.
-
-### 8. Production deploy and pilot instrumentation
-
-**API process:** uvicorn, no `--reload`, CORS set to the real frontend origin
-(today `main.py` only allows localhost).
-
-**Worker process:** same image, different command, min instances 1, CPU
-always allocated, timeout high enough for a 200+ page file (start at 60
-minutes; measure).
-
-**Health:** `/health` should check Neon (`SELECT 1`) and, optionally, that
-the worker heartbeat is recent. Do not call Vision or Gemini on health.
-
-**Pilot metrics** (log + a `pipeline_jobs` query, not a new product):
-
-- processing time per file
-- failure rate and reason
-- retry count
-- operations “pages to verify” count (proxy for manual effort)
-- sampled false positives from credit-team notes
-
-Store these in `pipeline_jobs` timestamps + `audit_log`. A dashboard can wait.
-
-Target dates from the discussion: first production-ready cut around
-10–11 September; live around 15 September; credit-team pilot two to three
-months. Those are calendar goals, not a reason to skip the storage/database
-cutover.
-
-## Anomaly categories: map, do not rewrite the engine
-
-| Operations finding | Existing detectors |
-|---|---|
-| Applicant name mismatch | `APPLICANT_NAME_MISMATCH`, `TRUSTED_APPLICANT_NAME_MISMATCH`, `CROSS_DOCUMENT_APPLICANT_NAME_MISMATCH` |
-| PAN / identity mismatch | `PAN_NUMBER_MISMATCH`, `AADHAAR_NUMBER_MISMATCH`, `TRUSTED_PAN_NUMBER_MISMATCH` |
-| Address mismatch | `verify_address` / `TRUSTED_*_ADDRESS*`, related `ADDRESS_NOT_FOUND` |
-| Missing documents | `MISSING_DOC_S*` from `services/checklist_engine.py` |
-| Bank statement recency (3 months) | `check_date_range(..., min_months)` → `DATE_CHECK_S*` |
-| Blurry / unreadable scan | `UNREADABLE_PAGE`, `DOCUMENT_NOT_READABLE` |
-| Could not read page | `LOW_OCR_CONFIDENCE`, `PAGE_PROCESSING_ERROR`, `OCR_BUDGET_PARTIAL_SCAN` |
-| Expected data missing | `*_NOT_FOUND` family, collapsed in `services/reviewer.py` |
-| Technical processing error | `PAGE_PROCESSING_ERROR`, job-level `pipeline_jobs.error` |
-
-Operations copy examples:
-
-- `PAN_NUMBER_MISMATCH` → “PAN on the card does not match the application.”
-- `DATE_CHECK_S*` → “Bank statement is older than three months.”
-- `UNREADABLE_PAGE` → “This page is too blurry to read. Please check it.”
-- `MISSING_DOC_S7` → “PAN card was not found in this file.”
-
-## Concrete file-level change list
-
-New:
-
-- `services/storage/` local + GCS backends
-- `services/worker.py` dequeue loop
-- `database/engine.py` SQLAlchemy session
-- `alembic/` migrations
-- `routes/auth.py`, `routes/admin_users.py`, `routes/ops.py`
-- `frontend/app/login/page.tsx`
-- `frontend/app/ops/...`
-- `scripts/eval_gemini_models.py`
-- `services/ops_presentation.py`
-- `services/llm_gemini.py` (or a branch in `llm_client.py`)
-
-Rework:
-
-- `database/db.py` and `database/models.py`
-- `routes/upload.py` (object put + batch)
-- `services/job_runner.py` (thin enqueue only)
-- `services/reprocessing.py` (download from GCS, respect max attempts)
-- `routes/review.py` source PDF/page via signed URL
-- `main.py` CORS, auth middleware, worker not started inside the API
-- `.env.example` (`DATABASE_URL`, `DMEF_GCS_BUCKET`, `LLM_PROVIDER=gemini`,
-  retention, bootstrap admin)
-- `frontend/components/upload/*` multiple files + per-file status
-- `frontend/components/AppShell.tsx` role-aware nav
-- `frontend/components/applications/EvidenceViewerModal.tsx` bbox overlay
-- `frontend/components/settings/LlmSettings.tsx` bind to a real Gemini provider
-- `requirements.txt` (`sqlalchemy`, `psycopg[binary]`, `alembic`,
-  `google-cloud-storage`, `google-genai` or equivalent, `bcrypt`,
-  `python-jose` or similar)
-
-Leave alone unless a later bug requires it:
-
-- Classification keywords, field extractors, stamp duty, bureau anchors
-- Credit-scoring ideas, repayment ML
-- Local PaddleOCR test path
-
-## What “production-ready” means for 10–11 September
-
-A file can be uploaded by a logged-in user, land in a private bucket, sit in
-Neon as a queued job, be processed by a worker that is not the API process,
-and show an operations screen with a short summary, checklist, and page
-links—without anything required on a developer laptop. Admin can still open
-OCR and logs. Failed jobs stop after three tries with a readable reason.
-
-It does **not** require overnight scheduling, a credit model, Hindi
-translations of all 44 checklist items, or a perfect Gemini model. Those
-follow the bakeoff and the pilot.
-
-## Explicitly later
-
-| Item | Why later |
-|---|---|
-| Overnight scheduler | Queue table is enough; cron is a one-endpoint add-on |
-| PWS-related work | Called out as follow-on in the discussion |
-| Credit scoring / ML scorecards | Incomplete history; hybrid scorecard project is separate |
-| Multi-worker parallelism | Vision + RAM; one worker is the correct pilot default |
-| Translating the full NDC checklist to Hindi | Operations summary + findings first |
-
-## Suggested first coding slice (smallest vertical cut)
-
-If implementation starts immediately, the first merge should be **storage
-interface + GCS keys on upload + signed URL for source PDF**, still on
-SQLite. That proves the bucket and signed URLs without blocking on Alembic.
-The second merge is **SQLAlchemy + Neon** with the same pipeline. The third
-is **the worker process**. Auth and the operations route can land in parallel
-once jobs survive a process restart.
+| Sep 4–5 | Wave 0, Wave 1 launched |
+| Sep 5–7 | Wave 1 merged in order |
+| Sep 7–10 | Wave 2 |
+| Sep 10–11 | Wave 3, infra provisioning, smoke on fixtures → production-ready build |
+| Sep 15 | Live deployment, pilot start (two operations users, one admin) |
+| Sep 15 – Nov 15 | Pilot: track processing time, accuracy, false positives, manual-review effort, failure rate (`docs/agents/PILOT_METRICS.md`) |
+
+Out of scope for this phase: overnight scheduler beyond the retention job,
+PWS work, credit scoring, env-var consolidation, god-module refactors.
