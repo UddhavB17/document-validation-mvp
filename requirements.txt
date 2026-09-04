@@ -37,3 +37,12 @@ httpx>=0.27.0
 # Python quality checks (installed by setup.ps1 and the documented setup flow)
 ruff>=0.9.0
 mypy>=1.14.0
+
+# Production cutover (ws-0 scaffold): Postgres, migrations, object store, LLM, auth
+sqlalchemy>=2.0
+psycopg[binary]>=3.1
+alembic>=1.13
+google-cloud-storage>=2.16
+google-genai>=1.0
+bcrypt>=4.1
+PyJWT>=2.8

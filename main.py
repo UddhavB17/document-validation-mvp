@@ -16,7 +16,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database.models import initialize_schema
-from routes import decisions, review, settings, upload, verification
+from routes import (
+    admin_users,
+    auth,
+    decisions,
+    ops,
+    review,
+    review_pages,
+    settings,
+    upload,
+    verification,
+)
 from services.config import log_effective_config
 from services.low_memory import apply_low_memory_defaults
 
@@ -60,6 +70,10 @@ app.include_router(decisions.router)
 app.include_router(verification.router)
 app.include_router(review.router)
 app.include_router(settings.router)
+app.include_router(auth.router)
+app.include_router(admin_users.router)
+app.include_router(ops.router)
+app.include_router(review_pages.router)
 
 
 # ── Health ────────────────────────────────────

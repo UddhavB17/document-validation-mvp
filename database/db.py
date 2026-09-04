@@ -40,10 +40,13 @@ def get_connection() -> Iterator[sqlite3.Connection]:
 
 def init_db() -> None:
     """Create all DMEF tables and indexes if they do not already exist."""
+    from database import schema_registry
     from database.models import INDEX_STATEMENTS, MIGRATION_STATEMENTS, SCHEMA_STATEMENTS
 
     with get_connection() as connection:
         for statement in SCHEMA_STATEMENTS:
+            connection.execute(statement)
+        for statement in schema_registry.all_statements():
             connection.execute(statement)
         for statement in MIGRATION_STATEMENTS:
             try:
