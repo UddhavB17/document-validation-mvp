@@ -309,6 +309,18 @@ a {
   color: var(--text);
 }
 
+.app-shell__nav-row {
+  padding: var(--space-1) var(--space-2);
+}
+
+.app-shell__signout {
+  width: 100%;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
 .app-shell__nav-link.is-active {
   border-color: #C7D8F6;
   background: var(--action-muted);

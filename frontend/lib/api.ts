@@ -191,6 +191,40 @@ export const checklistRowSchema = z.object({
   pages: z.string(),
 });
 
+export const anomalyEvidenceObjectSchema = z.object({
+  page: z.number().nullable().optional(),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).nullable().optional(),
+  text: nullableString,
+});
+
+// The review API returns validation rows verbatim, so evidence_json arrives
+// as an object, a raw TEXT string, or null. Keep this a plain union (no
+// preprocess/transform effects): effect wrappers degrade to `unknown` when
+// inferred through react-query's generics. Callers narrow with
+// parseAnomalyEvidence below.
+export const anomalyEvidenceSchema = z
+  .union([anomalyEvidenceObjectSchema, z.string()])
+  .nullable()
+  .optional();
+
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** Narrow an anomaly's evidence_json (object | string | null) to an object. */
+export function parseAnomalyEvidence(value: unknown): z.infer<typeof anomalyEvidenceObjectSchema> | null {
+  const raw = typeof value === "string" ? safeJsonParse(value) : value;
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const parsed = anomalyEvidenceObjectSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 export const anomalySchema = z.object({
   id: z.number().optional(),
   application_id: z.number().optional(),
@@ -205,6 +239,7 @@ export const anomalySchema = z.object({
   status: nullableString,
   created_at: nullableString,
   collapsed_page_numbers: z.array(z.number()).optional(),
+  evidence_json: anomalyEvidenceSchema,
 });
 
 export const applicationSchema = z.object({
@@ -626,3 +661,152 @@ export type LlmProviders = z.infer<typeof llmProvidersSchema>;
 export const llmApi = {
   providers: () => getJsonResponse("/settings/llm/providers", llmProvidersSchema),
 };
+
+export async function fetchCurrentUser(): Promise<AuthUser> {
+  return getJsonResponse("/auth/me", authUserSchema);
+}
+
+// --- ws-e ops ui ---
+// Operations payload (contracts §5). Everything a non-technical user sees
+// comes from GET /ops/applications/{id}: at most 5 findings, bilingual
+// strings, normalized bboxes. No rule ids, no OCR text, no JSON dumps.
+const opsTextSchema = z.object({
+  en: z.string(),
+  hi: z.string(),
+});
+
+const opsBboxSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
+export const opsEvidenceSchema = z.object({
+  page: z.number(),
+  bbox: opsBboxSchema.nullable(),
+  text: z.string(),
+});
+
+export const opsFindingSchema = z.object({
+  code: z.string(),
+  severity: z.string(),
+  title: opsTextSchema,
+  detail: opsTextSchema,
+  pages: z.array(z.number()),
+  evidence: opsEvidenceSchema.nullable(),
+});
+
+export const opsPageToVerifySchema = z.object({
+  page: z.number(),
+  document: opsTextSchema,
+  problem: opsTextSchema,
+});
+
+export const opsChecklistRowSchema = z.object({
+  s_no: z.number(),
+  description: z.string(),
+  status: z.string(),
+  pages: z.array(z.number()),
+});
+
+export const opsChecklistSchema = z.object({
+  total: z.number(),
+  found: z.number(),
+  missing: z.number(),
+  not_checked: z.number(),
+  rows: z.array(opsChecklistRowSchema),
+});
+
+export const opsProcessingSchema = z.object({
+  stage: z.string().nullable().optional(),
+  percentage: z.number().nullable().optional(),
+  attempt: z.number().nullable().optional(),
+  failure_reason: z.string().nullable().optional(),
+});
+
+export const opsApplicationSchema = z.object({
+  application_id: z.number(),
+  loan_id: z.string().nullable().optional(),
+  applicant_name: z.string().nullable().optional(),
+  status: z.string(),
+  processing: opsProcessingSchema,
+  summary: opsTextSchema,
+  top_findings: z.array(opsFindingSchema),
+  pages_to_verify: z.array(opsPageToVerifySchema),
+  checklist: opsChecklistSchema,
+});
+
+export const opsWorklistItemSchema = z.object({
+  application_id: z.number(),
+  loan_id: z.string().nullable().optional(),
+  applicant_name: z.string().nullable().optional(),
+  status: z.string(),
+  findings_count: z.number(),
+  updated_at: z.string().nullable().optional(),
+});
+
+export const opsWorklistSchema = z.object({
+  applications: z.array(opsWorklistItemSchema),
+});
+
+// Application processing status (contracts §8, ≤ 5 KB). The dedicated
+// GET /review/applications/{id}/status endpoint is owned by ws-a and is not
+// present in this branch yet; this tolerant schema accepts the status shape
+// once it lands and ignores any extra keys.
+export const applicationStatusSchema = z
+  .object({
+    application_id: z.number().optional(),
+    status: z.string(),
+    percentage: z.number().nullable().optional(),
+    failure_reason: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export type AnomalyEvidence = z.infer<typeof anomalyEvidenceSchema>;
+export type OpsText = z.infer<typeof opsTextSchema>;
+export type OpsEvidence = z.infer<typeof opsEvidenceSchema>;
+export type OpsFinding = z.infer<typeof opsFindingSchema>;
+export type OpsPageToVerify = z.infer<typeof opsPageToVerifySchema>;
+export type OpsChecklistRow = z.infer<typeof opsChecklistRowSchema>;
+export type OpsChecklist = z.infer<typeof opsChecklistSchema>;
+export type OpsApplication = z.infer<typeof opsApplicationSchema>;
+export type OpsWorklistItem = z.infer<typeof opsWorklistItemSchema>;
+export type OpsWorklist = z.infer<typeof opsWorklistSchema>;
+export type ApplicationStatus = z.infer<typeof applicationStatusSchema>;
+
+// Admin user management (ws-d endpoints in routes/admin_users.py).
+export const adminUserListSchema = z.object({
+  users: z.array(adminUserSchema),
+});
+
+export async function adminListUsersRequest(): Promise<z.infer<typeof adminUserListSchema>> {
+  return getJsonResponse("/admin/users", adminUserListSchema);
+}
+
+export async function adminCreateUserRequest(payload: {
+  email: string;
+  display_name: string;
+  role: string;
+  password: string;
+}): Promise<AdminUser> {
+  return postJsonResponse("/admin/users", payload, adminUserSchema);
+}
+
+export async function adminUpdateUserRequest(
+  userId: number,
+  payload: { display_name?: string; role?: string; is_active?: boolean },
+): Promise<AdminUser> {
+  return patchJsonResponse(`/admin/users/${userId}`, payload, adminUserSchema);
+}
+
+export async function adminResetPasswordRequest(userId: number, newPassword: string): Promise<void> {
+  await postJsonResponse(`/admin/users/${userId}/password`, { new_password: newPassword }, z.object({}));
+}
+
+export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {
+  return getJsonResponse(`/ops/applications/${applicationId}`, opsApplicationSchema);
+}
+
+export async function fetchOpsWorklist(): Promise<OpsWorklist> {
+  return getJsonResponse("/ops/worklist", opsWorklistSchema);
+}
+
+export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {
+  return getJsonResponse(`/review/applications/${applicationId}/status`, applicationStatusSchema);
+}

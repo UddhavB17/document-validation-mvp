@@ -21,7 +21,7 @@ const PROCESSING_STATE_LABELS: Record<string, string> = {
   paused: "Paused",
   processing: "Processing",
   queued: "Queued",
-  stale: "Stale",
+  stale: "Out of date",
 };
 
 const DECISION_LABELS: Record<string, string> = {

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function WorklistRedirect() {
+export default function AdminHomeRedirect() {
   redirect("/admin/worklist");
 }

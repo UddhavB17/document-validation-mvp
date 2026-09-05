@@ -279,7 +279,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
     const queue = readReviewQueue();
     const neighbors = getReviewQueueNeighbors(queue, applicationId);
     if (neighbors.position !== null) updateReviewQueuePosition(neighbors.position);
-    router.push(neighbors.nextId !== null ? `/applications/${neighbors.nextId}` : "/worklist");
+    router.push(neighbors.nextId !== null ? `/admin/applications/${neighbors.nextId}` : "/admin/worklist");
   }
 
   return (
