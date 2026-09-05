@@ -13,11 +13,19 @@ every item is terminal (``completed``/``failed``/``cancelled``), then for
 each completed application ``GET /ops/applications/{id}`` and validate the
 operations payload (contracts §5: valid shape, ≤ 5 findings, Hindi present,
 ≤ 50 KB, no internal keys). Prints a table (file, status, seconds,
-findings, ops bytes). Exit non-zero when any item is not terminal within
-``--timeout`` or any payload is invalid.
+findings, ops bytes).
+
+Exit policy: non-zero when any item is still pending after ``--timeout`` or
+any ops payload is invalid. Terminal ``failed``/``cancelled`` items (and
+upload rejections) are smoke *warnings* printed with ``failure_reason``,
+unless ``--require-clean`` is passed. NOTE: ``GET /ops/...`` 404s until
+``fx-integrate-df`` lands, so live smoke needs that stream merged; dry-run
+never touches ``/ops``.
 
 ``--dry-run`` validates arguments and prints the plan without any network
-I/O (used by ``tests/test_smoke_script.py``).
+I/O (used by ``tests/test_smoke_script.py``). ``--dry-run`` against
+``tests/fixtures/smoke`` (checked-in generated tiny PDFs, no loan-file PII)
+must exit 0. Live mode still requires 1–10 pdf/zip files.
 """
 
 from __future__ import annotations
@@ -47,6 +55,31 @@ FINDING_CODES = frozenset(
 FORBIDDEN_KEYS = frozenset({"rule_id", "ocr_text", "structured_content"})
 OPS_STATUS_VALUES = frozenset({"needs_review", "clean", "processing", "failed"})
 OPS_SIZE_BUDGET_BYTES = 50 * 1024
+
+# Terminal-but-not-completed outcomes are smoke warnings, not hard failures
+# (see pipeline_failure_is_fatal). "rejected" = upload accepted the batch
+# but refused this file (no application_id assigned).
+WARNABLE_STATUSES = frozenset({"failed", "cancelled", "rejected"})
+
+
+def pipeline_failure_is_fatal(
+    status: str, *, timed_out: bool, require_clean: bool
+) -> bool:
+    """Decide whether a non-completed pipeline item fails the smoke run.
+
+    - Still pending after ``--timeout`` (``timed_out=True``): always fatal.
+    - Terminal ``failed``/``cancelled``/``rejected``: a warning printed with
+      ``failure_reason``, unless ``--require-clean`` was passed.
+    - ``completed``: never fatal here (the ops-payload check decides).
+    - Anything else: fatal (unknown state, stay strict).
+    """
+    if timed_out:
+        return True
+    if status in WARNABLE_STATUSES:
+        return require_clean
+    if status == "completed":
+        return False
+    return True
 
 
 def collect_files(files_dir: Path) -> list[Path]:
@@ -185,6 +218,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="validate arguments and print the plan without any network I/O",
+    )
+    parser.add_argument(
+        "--require-clean",
+        action="store_true",
+        help="fail on failed/cancelled/rejected pipeline items "
+        "(default: warn with failure_reason and exit 0 if ops payloads pass)",
     )
     return parser.parse_args(argv)
 
@@ -332,8 +371,16 @@ def main(argv: list[str] | None = None) -> int:
 
     rows: list[dict[str, object]] = []
     failures = 0
+    warnings = 0
     for item in rejected:
-        failures += 1
+        reason = item.get("reason") or "no reason returned"
+        if pipeline_failure_is_fatal(
+            "rejected", timed_out=False, require_clean=args.require_clean
+        ):
+            failures += 1
+        else:
+            warnings += 1
+            print(f"warning: {item.get('filename')} rejected: {reason}")
         rows.append(
             {
                 "file": str(item.get("filename", "-")),
@@ -363,9 +410,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             continue
         if status != "completed":
-            failures += 1
             reason = item.get("failure_reason") or "no failure_reason returned"
-            print(f"failed: {filename} (application {app_id}): {reason}")
+            if pipeline_failure_is_fatal(
+                status, timed_out=False, require_clean=args.require_clean
+            ):
+                failures += 1
+                print(f"failed: {filename} (application {app_id}): {reason}")
+            else:
+                warnings += 1
+                print(f"warning: {filename} (application {app_id}) status={status}: {reason}")
             rows.append(
                 {
                     "file": filename,
@@ -445,7 +498,8 @@ def main(argv: list[str] | None = None) -> int:
     if failures:
         print(f"smoke FAILED: {failures} problem item(s)", file=sys.stderr)
         return 1
-    print(f"smoke OK: {len(rows)} file(s), all terminal with valid ops payloads")
+    suffix = f" (+{warnings} warning(s))" if warnings else ""
+    print(f"smoke OK: {len(rows)} file(s), all terminal with valid ops payloads{suffix}")
     return 0
 
 

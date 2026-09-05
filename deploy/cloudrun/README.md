@@ -10,7 +10,14 @@ must be replaced by the operator before applying.
 |---|---|---|---|---|
 | `dmef-api` (`api.yaml`) | backend (`Dockerfile`) | `uvicorn main:app --host 0.0.0.0 --port 8080` | min 0, concurrency 20 | 2 CPU, 2 GiB |
 | `dmef-worker` (`worker.yaml`) | same backend image | `python -m services.worker --serve-health 8080` | min 1, max 1, CPU always allocated | 4 CPU, 4 GiB, internal ingress only |
-| frontend | `frontend/Dockerfile` (`output: 'standalone'`) | `node server.js` (port 3000) | min 0 | 1 CPU, 1 GiB |
+| `dmef-frontend` (no YAML; `scripts/release.sh` + `deploy.yml`) | `frontend/Dockerfile` (`output: 'standalone'`) | `node server.js` (port 3000) | min 0 | 1 CPU, 1 GiB |
+
+Worker ingress is enforced in `worker.yaml` itself
+(`metadata.annotations: {"run.googleapis.com/ingress": internal}`), applied
+by `scripts/release.sh` via `gcloud run services replace` — no console click
+needed. The API stays public (frontend + operator workstations reach it);
+the worker accepts traffic only from inside the project VPC / other Cloud
+Run services.
 
 The worker's `--serve-health PORT` flag starts a minimal `GET /health`
 server (worker heartbeat JSON) so Cloud Run probes pass even when no job
@@ -39,6 +46,21 @@ Service accounts:
 Frontend build arg: `NEXT_PUBLIC_API_BASE_URL=https://<api-host>`
 (the brief calls this `NEXT_PUBLIC_API_URL`; the codebase name wins and the
 Dockerfile honours both, with `NEXT_PUBLIC_API_URL` taking precedence).
+It is baked in at **build** time (`.github/workflows/deploy.yml` passes it
+as a Docker `--build-arg` when pushing
+`${REGION}-docker.pkg.dev/${PROJECT_ID}/dmef/frontend:${TAG}`).
+`scripts/release.sh` deploys that prebuilt, tag-matched frontend image with
+`gcloud run deploy dmef-frontend --image …` — the same `:TAG` as the API —
+and deliberately does **not** `--set-env-vars NEXT_PUBLIC_API_BASE_URL`,
+because Next.js inlines `NEXT_PUBLIC_*` into the client bundle at build and
+a runtime env var would be a silent no-op.
+
+Validate placeholder substitution without credentials (no alembic, gcloud,
+docker, or network):
+
+```bash
+PROJECT_ID=my-proj REGION=asia-south1 TAG=v1.2.3 bash scripts/release.sh --dry-run
+```
 
 ## Release order (see `scripts/release.sh`)
 

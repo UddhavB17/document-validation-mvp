@@ -99,6 +99,9 @@ Sample output:
 
 ## 4. Findings per application by code (§11 mapping)
 
+> Wildcards below use single `%` so the queries paste straight into `psql`.
+> Python callers going through `database/db.py` must double them (`%%`).
+
 ```sql
 SELECT code,
        COUNT(*) AS findings,
@@ -107,35 +110,35 @@ SELECT code,
              / NULLIF(COUNT(DISTINCT application_id), 0), 2) AS avg_per_application
 FROM (SELECT application_id,
              CASE
-               WHEN UPPER(rule_id) LIKE '%%APPLICANT_NAME_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%TRUSTED%%NAME%%MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%NAME_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%APPLICATION_NAME_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%CROSS_DOCUMENT_APPLICANT_NAME%%'
+               WHEN UPPER(rule_id) LIKE '%APPLICANT_NAME_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%TRUSTED%NAME%MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%NAME_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%APPLICATION_NAME_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%CROSS_DOCUMENT_APPLICANT_NAME%'
                  THEN 'NAME_MISMATCH'
-               WHEN UPPER(rule_id) LIKE '%%PAN_NUMBER_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%AADHAAR_NUMBER_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%TRUSTED_PAN%%'
-                 OR UPPER(rule_id) LIKE '%%TRUSTED_AADHAAR%%'
-                 OR UPPER(rule_id) LIKE '%%DATE_OF_BIRTH_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%INVALID_PAN_FORMAT%%'
+               WHEN UPPER(rule_id) LIKE '%PAN_NUMBER_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%AADHAAR_NUMBER_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%TRUSTED_PAN%'
+                 OR UPPER(rule_id) LIKE '%TRUSTED_AADHAAR%'
+                 OR UPPER(rule_id) LIKE '%DATE_OF_BIRTH_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%INVALID_PAN_FORMAT%'
                  THEN 'ID_MISMATCH'
-               WHEN UPPER(rule_id) LIKE '%%ADDRESS_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%AADHAAR_ADDRESS_MISMATCH%%'
-                 OR UPPER(rule_id) LIKE '%%CROSS_DOCUMENT_ADDRESS%%'
+               WHEN UPPER(rule_id) LIKE '%ADDRESS_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%AADHAAR_ADDRESS_MISMATCH%'
+                 OR UPPER(rule_id) LIKE '%CROSS_DOCUMENT_ADDRESS%'
                  THEN 'ADDRESS_MISMATCH'
-               WHEN UPPER(rule_id) LIKE '%%MISSING_DOC_S%%' THEN 'MISSING_DOCUMENT'
-               WHEN UPPER(rule_id) LIKE '%%PERIOD_%%'
-                 OR UPPER(rule_id) LIKE '%%DATE_CHECK_S%%' THEN 'BANK_STATEMENT_OLD'
-               WHEN UPPER(rule_id) LIKE '%%UNREADABLE_PAGE%%'
-                 OR UPPER(rule_id) LIKE '%%DOCUMENT_NOT_READABLE%%' THEN 'PAGE_UNREADABLE'
-               WHEN UPPER(rule_id) LIKE '%%LOW_OCR_CONFIDENCE%%'
-                 OR UPPER(rule_id) LIKE '%%LOW_CONFIDENCE_PAGE%%'
-                 OR UPPER(rule_id) LIKE '%%OCR_BUDGET_PARTIAL_SCAN%%' THEN 'OCR_FAILED'
-               WHEN UPPER(rule_id) LIKE '%%NOT_FOUND%%'
-                 OR UPPER(rule_id) LIKE '%%EXTRACTION_UNRELIABLE%%'
-                 OR UPPER(rule_id) LIKE '%%FIELD_VALUE_MISSING_S%%' THEN 'DATA_MISSING'
-               WHEN UPPER(rule_id) LIKE '%%PAGE_PROCESSING_ERROR%%' THEN 'PROCESSING_ERROR'
+               WHEN UPPER(rule_id) LIKE '%MISSING_DOC_S%' THEN 'MISSING_DOCUMENT'
+               WHEN UPPER(rule_id) LIKE '%PERIOD_%'
+                 OR UPPER(rule_id) LIKE '%DATE_CHECK_S%' THEN 'BANK_STATEMENT_OLD'
+               WHEN UPPER(rule_id) LIKE '%UNREADABLE_PAGE%'
+                 OR UPPER(rule_id) LIKE '%DOCUMENT_NOT_READABLE%' THEN 'PAGE_UNREADABLE'
+               WHEN UPPER(rule_id) LIKE '%LOW_OCR_CONFIDENCE%'
+                 OR UPPER(rule_id) LIKE '%LOW_CONFIDENCE_PAGE%'
+                 OR UPPER(rule_id) LIKE '%OCR_BUDGET_PARTIAL_SCAN%' THEN 'OCR_FAILED'
+               WHEN UPPER(rule_id) LIKE '%NOT_FOUND%'
+                 OR UPPER(rule_id) LIKE '%EXTRACTION_UNRELIABLE%'
+                 OR UPPER(rule_id) LIKE '%FIELD_VALUE_MISSING_S%' THEN 'DATA_MISSING'
+               WHEN UPPER(rule_id) LIKE '%PAGE_PROCESSING_ERROR%' THEN 'PROCESSING_ERROR'
                ELSE 'UNMAPPED_ADMIN_ONLY'
              END AS code
       FROM validation_results) AS mapped
