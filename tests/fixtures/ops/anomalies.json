@@ -1,0 +1,79 @@
+[
+  {
+    "rule_id": "TRUSTED_APPLICANT_NAME_MISMATCH",
+    "s_no": null,
+    "severity": "HIGH",
+    "document_type": "PAN Card",
+    "expected_value": "Suthar Anupkumar",
+    "found_value": "Suthar Anup",
+    "page_number": 2,
+    "reason": "Applicant Name does not match the trusted JSON/database dump.",
+    "evidence_json": {"page": 2, "bbox": [0.12, 0.4, 0.55, 0.44], "text": "Suthar Anup"}
+  },
+  {
+    "rule_id": "PAN_NUMBER_MISMATCH",
+    "s_no": null,
+    "severity": "HIGH",
+    "document_type": "PAN Card",
+    "expected_value": "NBRPS4867N",
+    "found_value": "NBRPS4867M",
+    "page_number": 2,
+    "reason": "PAN number differs from digital application form.",
+    "evidence_json": {"page": 2, "bbox": [0.1, 0.5, 0.5, 0.54], "text": "NBRPS4867M"}
+  },
+  {
+    "rule_id": "TRUSTED_ADDRESS_MISMATCH",
+    "s_no": null,
+    "severity": "MEDIUM",
+    "document_type": "Aadhaar",
+    "expected_value": "Ward 2 Jhalawar Rajasthan 326001",
+    "found_value": "Ward 9 Kota Rajasthan 324001",
+    "page_number": 1,
+    "reason": "Address does not match the trusted JSON/database dump.",
+    "evidence_json": null
+  },
+  {
+    "rule_id": "MISSING_DOC_S12",
+    "s_no": 12,
+    "severity": "HIGH",
+    "document_type": "Salary Slip",
+    "expected_value": "Salary Slip available",
+    "found_value": null,
+    "page_number": null,
+    "reason": "Required salary slip not found.",
+    "evidence_json": null
+  },
+  {
+    "rule_id": "PERIOD_CHECK_S17",
+    "s_no": 17,
+    "severity": "MEDIUM",
+    "document_type": "Bank Statement",
+    "expected_value": "Required months: May 2026, June 2026, July 2026",
+    "found_value": "4 months old",
+    "page_number": 9,
+    "reason": "Bank statement recency check failed.",
+    "evidence_json": null
+  },
+  {
+    "rule_id": "LOW_CONFIDENCE_PAGE",
+    "s_no": null,
+    "severity": "LOW",
+    "document_type": "Bank Statement",
+    "expected_value": "Readable OCR text",
+    "found_value": "OCR confidence 30% — field extraction unreliable",
+    "page_number": 10,
+    "reason": "ocr_confidence",
+    "evidence_json": null
+  },
+  {
+    "rule_id": "PAN_NUMBER_NOT_FOUND",
+    "s_no": null,
+    "severity": "MEDIUM",
+    "document_type": "PAN Card",
+    "expected_value": "NBRPS4867N",
+    "found_value": null,
+    "page_number": 11,
+    "reason": "Expected field was not found with sufficient confidence.",
+    "evidence_json": null
+  }
+]

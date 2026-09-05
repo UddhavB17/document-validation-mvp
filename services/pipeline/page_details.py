@@ -154,6 +154,8 @@ def _ensure_page_has_json_details(
     document_type: str,
     text: str,
     extracted_fields: dict[str, Any],
+    triage_category: str | None = None,
+    ocr_confidence: float | None = None,
 ) -> dict[str, Any]:
     # Repayment tables are structural evidence.  Parse them even when the page
     # already has other public fields, and even when a continuation page was
@@ -184,7 +186,12 @@ def _ensure_page_has_json_details(
     if not str(text or "").strip():
         return extracted_fields
 
-    generic_fields = _extract_generic_page_details(document_type=document_type, text=text)
+    generic_fields = _extract_generic_page_details(
+        document_type=document_type,
+        text=text,
+        triage_category=triage_category or _triage_from_fields(extracted_fields),
+        ocr_confidence=ocr_confidence,
+    )
     if not generic_fields:
         return extracted_fields
     return {
@@ -208,9 +215,24 @@ def _has_informative_public_fields(fields: dict[str, Any]) -> bool:
     return False
 
 
-def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str, Any]:
+def _extract_generic_page_details(
+    *,
+    document_type: str,
+    text: str,
+    triage_category: str | None = None,
+    ocr_confidence: float | None = None,
+) -> dict[str, Any]:
     normalized_text = str(text or "").strip()
     if not normalized_text:
+        return {}
+    # ws-f accuracy: photo/blank/unreadable pages must not seed generic PAN /
+    # Aadhaar / phone observations that later become false mismatches.
+    if str(triage_category or "").strip().casefold() in {"photo", "blank", "unreadable"}:
+        return {}
+    try:
+        if ocr_confidence is not None and float(ocr_confidence) < 0.55:
+            return {}
+    except (TypeError, ValueError):
         return {}
 
     details: dict[str, Any] = {}
@@ -220,6 +242,15 @@ def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str,
             details[key] = value
 
     return details
+
+
+def _triage_from_fields(extracted_fields: dict[str, Any]) -> str | None:
+    classification = (extracted_fields or {}).get("_classification")
+    if isinstance(classification, dict):
+        triage = classification.get("triage")
+        if isinstance(triage, dict) and triage.get("category"):
+            return str(triage.get("category"))
+    return None
 
 
 def _generic_detected_values(text: str) -> dict[str, list[str]]:

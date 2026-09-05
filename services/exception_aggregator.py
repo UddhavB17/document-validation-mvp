@@ -82,12 +82,14 @@ def aggregate(
         }
     )
 
-    # Filter out missing document presence anomalies from active anomalies and flags list
-    active_anomalies = [
-        anomaly
-        for anomaly in sorted_anomalies
-        if not str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
-    ]
+    # ws-f accuracy: missing-document presence anomalies stay in the active
+    # list (operations needs them) tagged with category="MISSING_DOCUMENT"
+    # instead of being stripped.
+    active_anomalies = []
+    for anomaly in sorted_anomalies:
+        if str(anomaly.get("rule_id", "")).startswith("MISSING_DOC"):
+            anomaly = {**anomaly, "category": "MISSING_DOCUMENT"}
+        active_anomalies.append(anomaly)
 
     if not active_anomalies:
         final_status = "CLEAN"
@@ -129,9 +131,10 @@ def save_aggregation(application_id: int, anomalies: list[dict], final_status: s
                     expected_value,
                     found_value,
                     page_number,
-                    reason
+                    reason,
+                    evidence_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     application_id,
@@ -143,6 +146,7 @@ def save_aggregation(application_id: int, anomalies: list[dict], final_status: s
                     _stringify(anomaly.get("found_value")),
                     anomaly.get("page_number"),
                     anomaly.get("reason"),
+                    _stringify(anomaly.get("evidence_json")),
                 ),
             )
         connection.execute(

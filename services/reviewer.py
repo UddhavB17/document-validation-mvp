@@ -331,6 +331,9 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
         "expected_value": items[0].get("expected_value"),
         "found_value": found_value,
         "page_number": pages[0] if pages else None,
+        # ws-f accuracy: keep every page number; `page_number` stays the first
+        # for backward compatibility.
+        "page_numbers": pages,
         "reason": reason,
         "collapsed_page_numbers": pages,
         "collapsed_count": len(items),
@@ -394,8 +397,15 @@ def _needs_review(anomaly: dict[str, Any]) -> bool:
 
 
 def _review_item(anomaly: dict[str, Any]) -> dict[str, Any]:
+    collapsed = anomaly.get("collapsed_page_numbers")
+    if isinstance(collapsed, list) and collapsed:
+        all_pages = [int(page) for page in collapsed if page is not None]
+    else:
+        all_pages = _pages_from_anomaly(anomaly)
     item = {
-        "page_number": anomaly.get("page_number"),
+        "page_number": all_pages[0] if all_pages else anomaly.get("page_number"),
+        # ws-f accuracy: every contributing page; `page_number` is the first.
+        "page_numbers": all_pages,
         "person_id": anomaly.get("person_id"),
         "matched_person_id": anomaly.get("matched_person_id"),
         "document_type": anomaly.get("document_type"),

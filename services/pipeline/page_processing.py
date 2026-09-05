@@ -1030,4 +1030,39 @@ def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
-    return result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
+    # NEEDS-COORDINATION (ws-a): temporary ws-f derivation of the in-memory
+    # `words` list ([{"t","b","c"}], normalized 0-1) from provider bounding
+    # boxes until ws-a merges the canonical key.
+    payload = result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
+    words = payload.get("words")
+    if not (isinstance(words, list) and words):
+        payload["words"] = _words_from_bounding_boxes(payload)
+    return payload
+
+
+def _words_from_bounding_boxes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Derive normalized ``[{"t","b","c"}]`` words from provider boxes."""
+    boxes = payload.get("bounding_boxes")
+    if not isinstance(boxes, list) or not boxes:
+        return []
+    try:
+        width = float(payload.get("image_width") or 0)
+        height = float(payload.get("image_height") or 0)
+    except (TypeError, ValueError):
+        width, height = 0.0, 0.0
+    words: list[dict[str, Any]] = []
+    for box in boxes:
+        if not isinstance(box, dict):
+            continue
+        text = box.get("text", box.get("t", ""))
+        bbox = box.get("bbox", box.get("b", []))
+        if text in (None, "") or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            coords = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            continue
+        if width > 0 and height > 0 and max(coords) > 1.0:
+            coords = [coords[0] / width, coords[1] / height, coords[2] / width, coords[3] / height]
+        words.append({"t": str(text), "b": coords, "c": box.get("confidence", box.get("c"))})
+    return words

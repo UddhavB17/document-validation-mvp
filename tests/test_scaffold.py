@@ -33,7 +33,7 @@ def test_router_prefixes_empty() -> None:
     """New routers exist with the contracted prefixes.
 
     ``ws-d-auth`` implemented the auth/admin routers, so those now expose
-    endpoints; ops stays empty until ws-f lands.
+    endpoints; ops serves two endpoints (ws-f).
     """
     from routes import admin_users, auth, ops, review_pages
 
@@ -43,8 +43,6 @@ def test_router_prefixes_empty() -> None:
     assert review_pages.router.prefix == "/review"
     assert any(route.path == "/auth/login" for route in auth.router.routes)
     assert list(admin_users.router.routes) != []
-    for module in (ops,):
-        assert list(module.router.routes) == []
     # ws-a data diet: review_pages serves the polling status + page-text
     # endpoints so the frontend stops polling the full review payload.
     assert sorted(
@@ -55,6 +53,8 @@ def test_router_prefixes_empty() -> None:
             "/review/applications/{application_id}/pages/{page_number}/text",
         ]
     )
+    # ws-f accuracy + ops api: /ops serves GET /ops/applications/{id} + /ops/worklist.
+    assert len(list(ops.router.routes)) == 2
 
 
 def test_auth_dependencies_raise_501() -> None:
@@ -71,18 +71,14 @@ def test_auth_dependencies_raise_501() -> None:
 
 def test_pipeline_task_stubs_raise_not_implemented(tmp_path, monkeypatch) -> None:
     """Behaviour stubs raise until their owning workstream implements them."""
-    from services import evidence_boxes, ops_presentation, retention, worker
+    # ws-f implements ops_presentation.build_ops_payload and
+    # evidence_boxes.find_value_bbox (see tests/test_ops_presentation.py and
+    # tests/test_evidence_boxes.py); ws-g implements llm_gemini.generate;
+    # ws-a implements retention.run_retention. Only the worker stays a stub.
+    from services import worker
 
     with pytest.raises(NotImplementedError):
         worker.run_worker(once=True)
-    with pytest.raises(NotImplementedError):
-        ops_presentation.build_ops_payload(1)
-    with pytest.raises(NotImplementedError):
-        retention.run_retention(dry_run=True)
-    # ws-g implements services.llm_gemini.generate (see tests/test_llm_gemini.py),
-    # so it is no longer part of the stub contract.
-    with pytest.raises(NotImplementedError):
-        evidence_boxes.find_value_bbox([], "value")
 
 
 def test_retention_implemented_by_ws_a(tmp_path, monkeypatch) -> None:
