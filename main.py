@@ -34,6 +34,7 @@ from routes import (
     upload,
     verification,
 )
+from services.auth.bootstrap import bootstrap_admin
 from services.config import log_effective_config
 from services.job_control import ensure_secrets_key
 from services.low_memory import apply_low_memory_defaults
@@ -65,6 +66,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     initialize_schema()
     # Fail fast in production when DMEF_SECRETS_KEY is missing.
     ensure_secrets_key()
+    bootstrap_admin()
     log_effective_config()
     logger.info("CORS origins: %s", ", ".join(_cors_origins()))
     yield

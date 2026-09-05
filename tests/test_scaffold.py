@@ -30,14 +30,20 @@ def test_stub_imports() -> None:
 
 
 def test_router_prefixes_empty() -> None:
-    """New routers exist with the contracted prefixes and no endpoints yet."""
+    """New routers exist with the contracted prefixes.
+
+    ``ws-d-auth`` implemented the auth/admin routers, so those now expose
+    endpoints; ops stays empty until ws-f lands.
+    """
     from routes import admin_users, auth, ops, review_pages
 
     assert auth.router.prefix == "/auth"
     assert admin_users.router.prefix == "/admin/users"
     assert ops.router.prefix == "/ops"
     assert review_pages.router.prefix == "/review"
-    for module in (auth, admin_users, ops):
+    assert any(route.path == "/auth/login" for route in auth.router.routes)
+    assert list(admin_users.router.routes) != []
+    for module in (ops,):
         assert list(module.router.routes) == []
     # ws-a data diet: review_pages serves the polling status + page-text
     # endpoints so the frontend stops polling the full review payload.
@@ -52,14 +58,14 @@ def test_router_prefixes_empty() -> None:
 
 
 def test_auth_dependencies_raise_501() -> None:
-    """Auth dependency stubs fail closed until ws-d implements them."""
+    """Auth dependencies fail closed (ws-d implemented them: 401, not 501)."""
     from fastapi import HTTPException
 
     from services.auth.dependencies import get_current_user, require_role
 
     with pytest.raises(HTTPException) as exc_info:
-        get_current_user()
-    assert exc_info.value.status_code == 501
+        get_current_user(None)
+    assert exc_info.value.status_code == 401
     assert callable(require_role("admin"))
 
 

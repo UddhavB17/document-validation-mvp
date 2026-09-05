@@ -147,7 +147,7 @@ def test_persist_job_input_failure_marks_job_and_application_failed(tmp_path, mo
     assert progress["status"] == "failed"
 
 
-def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch) -> None:
+def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setenv("DMEF_JOB_CONTROL_TOKEN", "control-secret")
     application_id, job_id, _ = _seed_job(tmp_path)
@@ -155,10 +155,16 @@ def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch) -
         connection.execute("UPDATE pipeline_jobs SET status = 'running' WHERE id = ?", (job_id,))
     client = TestClient(app)
 
-    assert client.post(f"/review/applications/{application_id}/pause").status_code == 403
+    assert client.post(f"/review/applications/{application_id}/pause").status_code == 401
+    assert (
+        client.post(
+            f"/review/applications/{application_id}/pause", headers=auth_headers
+        ).status_code
+        == 403
+    )
     response = client.post(
         f"/review/applications/{application_id}/pause",
-        headers={"X-Job-Control-Token": "control-secret"},
+        headers={**auth_headers, "X-Job-Control-Token": "control-secret"},
     )
     assert response.status_code == 200
     assert response.json()["status"] == "pause_requested"

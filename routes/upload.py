@@ -11,10 +11,11 @@ from pathlib import Path, PurePosixPath
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ValidationError
 
 from database.db import get_connection, init_db
+from services.auth.dependencies import require_role
 from services.company_dump_adapter import (
     CompanyDumpConversionError,
     convert_company_database_dump,
@@ -44,7 +45,9 @@ from services.zip_package import (
     normalize_zip_package,
 )
 
-router = APIRouter(prefix="/upload", tags=["upload"])
+router = APIRouter(
+    prefix="/upload", tags=["upload"], dependencies=[Depends(require_role("admin"))]
+)
 # Compat shim: historical staging root. New code stages uploads under
 # DMEF_JOB_WORK_DIR and persists bytes through the object store, so nothing
 # is written here. Kept so existing monkeypatching (UPLOAD_DIR) keeps working.

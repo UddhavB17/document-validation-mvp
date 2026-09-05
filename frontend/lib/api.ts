@@ -7,6 +7,34 @@ export { normalizeDocumentType } from "./documentType";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+// --- ws-d auth: in-memory bearer token (set once by lib/auth.ts) ---
+// The JWT lives in an httpOnly cookie, so page code cannot read it directly.
+// lib/auth.ts loads it once via GET /api/session and registers a getter here;
+// every backend request below carries it as `Authorization: Bearer …`.
+type AuthTokenProvider = () => string | null;
+let authTokenProvider: AuthTokenProvider | null = null;
+
+export function setAuthTokenProvider(provider: AuthTokenProvider | null) {
+  authTokenProvider = provider;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = authTokenProvider?.() ?? null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function handleUnauthorized(status: number) {
+  if (typeof window === "undefined" || status !== 401) {
+    return;
+  }
+  if (window.location.pathname === "/login") {
+    return;
+  }
+  void fetch("/api/session", { method: "DELETE" }).finally(() => {
+    window.location.assign("/login");
+  });
+}
+
 // Shared schema pieces used by several response shapes.
 const nullableString = z.string().nullable().optional();
 const dynamicFieldsSchema = z.record(z.unknown());
@@ -475,6 +503,7 @@ async function parseApiResponse<T>(response: Response, schema: z.ZodType<T>): Pr
     throw new ApiError(text || "Backend returned a non-JSON response", response.status);
   }
   if (!response.ok) {
+    handleUnauthorized(response.status);
     const detailPayload = getApiErrorDetail(payload);
     const detail = typeof detailPayload === "string" ? detailPayload : JSON.stringify(detailPayload);
     throw new ApiError(detail || "Request failed", response.status);
@@ -490,14 +519,14 @@ function getApiErrorDetail(payload: unknown): unknown {
 }
 
 async function getJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() } });
   return parseApiResponse(response, schema);
 }
 
 async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return parseApiResponse(response, schema);
@@ -506,7 +535,7 @@ async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodTyp
 async function patchJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return parseApiResponse(response, schema);
@@ -546,7 +575,7 @@ export const api = {
     formData.append("case_type", payload.caseType);
     formData.append("application_date", payload.applicationDate);
     formData.append("file", payload.file);
-    const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, uploadResponseSchema);
   },
   uploadMapped: async (payload: { manifest?: string; caseType: "Normal Case" | "BT Case"; file: File }) => {
@@ -556,7 +585,7 @@ export const api = {
     }
     formData.append("case_type", payload.caseType);
     formData.append("file", payload.file);
-    const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, uploadResponseSchema);
   },
   uploadPartnerJson: (payload: unknown) => postJsonResponse("/upload/json", payload, uploadResponseSchema),
@@ -565,6 +594,7 @@ export const api = {
     formData.append("file", file);
     const response = await fetch(`${API_BASE_URL}/upload/package?background=true`, {
       method: "POST",
+      headers: { ...authHeaders() },
       body: formData,
     });
     return parseApiResponse(response, zipPackageUploadResponseSchema);
@@ -577,6 +607,7 @@ export const api = {
     formData.append("case_type", caseType);
     const response = await fetch(`${API_BASE_URL}/upload/package/${packageId}/verify`, {
       method: "POST",
+      headers: { ...authHeaders() },
       body: formData,
     });
     return parseApiResponse(response, uploadResponseSchema);
@@ -600,7 +631,7 @@ export const api = {
     for (const file of files) {
       formData.append("files", file);
     }
-    const response = await fetch(`${API_BASE_URL}/upload/batch`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload/batch`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, batchUploadResponseSchema);
   },
   batchStatus: (batchId: string) => getJsonResponse(`/upload/batch/${batchId}`, batchStatusSchema),
@@ -640,6 +671,41 @@ export type BatchItemUpload = z.infer<typeof batchItemSchema>;
 export type BatchUploadResponse = z.infer<typeof batchUploadResponseSchema>;
 export type BatchItem = z.infer<typeof batchStatusItemSchema>;
 export type BatchStatus = z.infer<typeof batchStatusSchema>;
+
+// --- ws-d auth ---
+export const authUserSchema = z.object({
+  id: z.number(),
+  email: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+});
+
+export const loginResponseSchema = z.object({
+  token: z.string(),
+  user: authUserSchema,
+});
+
+export const sessionResponseSchema = z.object({
+  token: z.string(),
+  role: z.string(),
+});
+
+export const adminUserSchema = z.object({
+  id: z.number(),
+  email: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+  is_active: z.boolean(),
+  created_at: z.string(),
+});
+
+export type AuthUser = z.infer<typeof authUserSchema>;
+export type LoginResponse = z.infer<typeof loginResponseSchema>;
+export type AdminUser = z.infer<typeof adminUserSchema>;
+
+export async function loginRequest(email: string, password: string): Promise<LoginResponse> {
+  return postJsonResponse("/auth/login", { email, password }, loginResponseSchema);
+}
 
 // --- ws-g gemini + llm ---
 const llmProvidersSchema = z.object({

@@ -11,10 +11,11 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from database.db import init_db
+from services.auth.dependencies import get_current_user, require_role
 from services.checklist_service import (
     get_ai_checkable_items,
     get_all_checklist_items,
@@ -42,7 +43,9 @@ from services.review.repository import (
 from services.review.worklist import build_worklist
 from services.reviewer import load_reviewer_summary, summarize_for_display
 
-router = APIRouter(prefix="/review", tags=["review"])
+router = APIRouter(
+    prefix="/review", tags=["review"], dependencies=[Depends(get_current_user)]
+)
 LOGGER = logging.getLogger(__name__)
 
 # In-memory LRU of rendered evidence pages, keyed by
@@ -262,7 +265,11 @@ def _authorize_job_control(request: Request, token: str | None) -> None:
         raise HTTPException(status_code=403, detail="Job control is restricted to localhost")
 
 
-@router.post("/applications/{application_id}/pause", summary="Pause at the next safe boundary")
+@router.post(
+    "/applications/{application_id}/pause",
+    summary="Pause at the next safe boundary",
+    dependencies=[Depends(require_role("admin"))],
+)
 def pause_application(
     application_id: int,
     request: Request,
@@ -275,7 +282,11 @@ def pause_application(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/applications/{application_id}/cancel", summary="Cancel at the next safe boundary")
+@router.post(
+    "/applications/{application_id}/cancel",
+    summary="Cancel at the next safe boundary",
+    dependencies=[Depends(require_role("admin"))],
+)
 def cancel_application(
     application_id: int,
     request: Request,
@@ -288,7 +299,11 @@ def cancel_application(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/applications/{application_id}/resume", summary="Resume from the last checkpoint")
+@router.post(
+    "/applications/{application_id}/resume",
+    summary="Resume from the last checkpoint",
+    dependencies=[Depends(require_role("admin"))],
+)
 def resume_pipeline_application(
     application_id: int,
     request: Request,
@@ -303,7 +318,11 @@ def resume_pipeline_application(
         raise HTTPException(status_code=410, detail=str(exc)) from exc
 
 
-@router.post("/applications/{application_id}/restart", summary="Start a new controlled attempt")
+@router.post(
+    "/applications/{application_id}/restart",
+    summary="Start a new controlled attempt",
+    dependencies=[Depends(require_role("admin"))],
+)
 def restart_pipeline_application(
     application_id: int,
     request: Request,
@@ -324,7 +343,10 @@ def restart_pipeline_application(
         raise HTTPException(status_code=410, detail=str(exc)) from exc
 
 
-@router.get("/applications/{application_id}/ocr-json")
+@router.get(
+    "/applications/{application_id}/ocr-json",
+    dependencies=[Depends(require_role("admin"))],
+)
 def get_application_ocr_json(application_id: int) -> dict[str, Any]:
     """Build the OCR JSON payload on demand and persist it to the object store."""
     import json

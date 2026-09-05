@@ -1,6 +1,7 @@
 """Database package."""
 
 from database import (  # noqa: F401
+    auth_schema,
     llm_calls,
     schema_registry,
     storage_schema,

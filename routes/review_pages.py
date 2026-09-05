@@ -10,12 +10,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from database.db import get_connection
+from services.auth.dependencies import get_current_user, require_role
 from services.review.repository import load_page_text
 
-router = APIRouter(prefix="/review", tags=["review"])
+router = APIRouter(
+    prefix="/review", tags=["review"], dependencies=[Depends(get_current_user)]
+)
 
 
 @router.get("/applications/{application_id}/status")
@@ -74,10 +77,12 @@ def get_application_status(application_id: int) -> dict[str, Any]:
     }
 
 
-@router.get("/applications/{application_id}/pages/{page_number}/text")
+@router.get(
+    "/applications/{application_id}/pages/{page_number}/text",
+    dependencies=[Depends(require_role("admin"))],
+)
 def get_application_page_text(application_id: int, page_number: int) -> dict[str, Any]:
     """Return one page's OCR text with confidence and document type."""
-    # TODO(ws-d): require_role("admin")
     page = load_page_text(application_id, page_number)
     if page is None:
         raise HTTPException(status_code=404, detail="Page not found")
