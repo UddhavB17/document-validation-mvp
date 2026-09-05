@@ -1416,26 +1416,12 @@ def upload_progress(application_id: int) -> dict[str, object]:
 # --- batch ---
 
 
-def _ensure_batch_rejections_table() -> None:
-    """Create the batch-rejections table (dialect neutral, TEXT PK)."""
-    with get_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS batch_rejections (
-                id TEXT PRIMARY KEY,
-                batch_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_batch_rejections_batch ON batch_rejections(batch_id)"
-        )
-
-
 def _record_batch_rejection(batch_id: str, filename: str, reason: str) -> None:
+    """Persist one rejected batch file (table owned by the schema registry).
+
+    Insert errors propagate to the caller (logged and re-raised there) so a
+    failing rejection write is never silently swallowed.
+    """
     from datetime import UTC, datetime
 
     with get_connection() as connection:
@@ -1465,7 +1451,6 @@ async def upload_batch(
 ) -> dict[str, object]:
     """Create one application + one job per file sharing a batch_id."""
     init_db()
-    _ensure_batch_rejections_table()
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="A batch accepts at most 10 files")
     batch_id = uuid4().hex
@@ -1576,6 +1561,9 @@ async def upload_batch(
                 }
             )
     # Persist rejections so GET /upload/batch/{id} can show them.
+    # Insert failures are logged and re-raised, never swallowed: the table
+    # is created by init_db() via the schema registry, so a failure here is
+    # a real DB problem the operator must see.
     for entry in items:
         if entry.get("status") == "rejected":
             try:
@@ -1583,14 +1571,16 @@ async def upload_batch(
                     batch_id, str(entry.get("filename") or "upload.pdf"), str(entry.get("reason") or "")
                 )
             except Exception:
-                pass
+                LOGGER.exception(
+                    "Failed to persist batch rejection for batch %s", batch_id
+                )
+                raise
     return {"batch_id": batch_id, "items": items}
 
 
 @router.get("/batch/{batch_id}", summary="Get per-file batch status")
 def get_batch_status(batch_id: str) -> dict[str, object]:
     init_db()
-    _ensure_batch_rejections_table()
     if not re.fullmatch(r"[0-9a-f]{32}", batch_id):
         raise HTTPException(status_code=404, detail="Batch not found")
     with get_connection() as connection:

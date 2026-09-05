@@ -43,6 +43,26 @@ Service accounts:
   `roles/secretmanager.secretAccessor` on the secrets above.
 - Scheduler invoker (`dmef-scheduler@...`): `roles/run.invoker` on `dmef-api`.
 
+## Retention scheduler auth (`deploy/scheduler/retention.yaml`)
+
+`POST /admin/retention/run` accepts an admin JWT **or** the scheduler bearer
+`Authorization: Bearer <DMEF_SCHEDULER_TOKEN>` (see
+`routes/admin_ops.py::_admin_or_scheduler`; the token is read via
+`services.config.get_setting`, never a new `os.getenv`).
+
+- Cloud Scheduler must send the bearer header **in addition to** OIDC
+  (`httpTarget.headers.Authorization: Bearer DMEF_SCHEDULER_TOKEN_VALUE`
+  in `retention.yaml`). OIDC gets the request through Cloud Run IAM;
+  the bearer header authenticates it to DMEF.
+- OIDC alone is not a DMEF admin JWT: without the bearer header the
+  endpoint returns 401, so the daily job would silently never run.
+- The endpoint stays authenticated. Do not remove the bearer requirement
+  or expose retention without auth.
+- Set `DMEF_SCHEDULER_TOKEN` on the `dmef-api` service (recommended: a new
+  Secret Manager secret following the mapping pattern in the secrets list
+  above); when unset, the endpoint is admin-JWT-only and schedulers get
+  401. Use a placeholder in YAML/docs, never a real secret.
+
 Frontend build arg: `NEXT_PUBLIC_API_BASE_URL=https://<api-host>`
 (the brief calls this `NEXT_PUBLIC_API_URL`; the codebase name wins and the
 Dockerfile honours both, with `NEXT_PUBLIC_API_URL` taking precedence).

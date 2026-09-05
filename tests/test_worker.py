@@ -329,7 +329,9 @@ def test_worker_reloads_store_bytes_after_api_workdir_deleted(tmp_path, monkeypa
     assert worker_mod.process_once() is True
     assert seen.get("application_id") == application_id
     assert seen.get("sha") == expected_sha
-    assert Path(str(seen["path"])).is_file() or True  # cleaned after run is fine
+    # The staged job file is cleaned after the run, so only assert a path
+    # was staged (existence during the run is asserted inside the fake).
+    assert seen.get("path")
     with get_connection() as connection:
         job = connection.execute(
             "SELECT status FROM pipeline_jobs WHERE id = ?", (job_id,)
@@ -473,5 +475,5 @@ def test_clean_pipeline_failure_is_terminal_without_retry(
             "SELECT next_run_at FROM pipeline_jobs WHERE id = ?", (job_id,)
         ).fetchone()["next_run_at"]
     # Terminal failure clears next_run_at (stays failed, not retrying).
-    assert next_run is None or True
+    assert next_run is None
     assert worker_mod.process_once() is False

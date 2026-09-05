@@ -37,7 +37,14 @@ def _admin_or_scheduler(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ):
-    """Admin JWT, or the Cloud Scheduler bearer stub (retention only)."""
+    """Admin JWT, or the Cloud Scheduler bearer stub (retention only).
+
+    Scheduler wiring lives in ``deploy/scheduler/retention.yaml``: Cloud
+    Scheduler sends ``Authorization: Bearer <DMEF_SCHEDULER_TOKEN>`` in the
+    ``headers`` map *in addition to* OIDC. OIDC alone is not a DMEF admin
+    JWT, so without the bearer header this dependency falls through to the
+    admin check and the scheduler gets 401.
+    """
     from services.auth.dependencies import get_current_user
     from services.config import get_setting
 
