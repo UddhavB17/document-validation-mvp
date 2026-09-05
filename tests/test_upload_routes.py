@@ -688,7 +688,9 @@ def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch, 
     assert uploaded["original_filename"] == "selected.pdf"
 
 
-def test_reprocess_store_backed_upload_without_file_path(tmp_path, monkeypatch) -> None:
+def test_reprocess_store_backed_upload_without_file_path(
+    tmp_path, monkeypatch, auth_headers
+) -> None:
     """Reprocess of a store-backed upload (NULL file_path) must not FileNotFoundError."""
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
@@ -703,6 +705,7 @@ def test_reprocess_store_backed_upload_without_file_path(tmp_path, monkeypatch) 
     client = TestClient(app)
     uploaded = client.post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "LAP-REPROCESS-001",
             "applicant_name": "Ramesh Kumar",

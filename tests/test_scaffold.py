@@ -70,15 +70,19 @@ def test_auth_dependencies_raise_501() -> None:
 
 
 def test_pipeline_task_stubs_raise_not_implemented(tmp_path, monkeypatch) -> None:
-    """Behaviour stubs raise until their owning workstream implements them."""
-    # ws-f implements ops_presentation.build_ops_payload and
-    # evidence_boxes.find_value_bbox (see tests/test_ops_presentation.py and
-    # tests/test_evidence_boxes.py); ws-g implements llm_gemini.generate;
-    # ws-a implements retention.run_retention. Only the worker stays a stub.
+    """Owning streams implemented the former stubs; the worker is live.
+
+    ws-f implements ops_presentation / evidence_boxes, ws-g llm_gemini,
+    ws-a retention, and fx-worker-store implements ``run_worker``. An empty
+    queue is a no-op (``once=True`` returns after recover + process_once).
+    """
+    import database.db as db_module
+    from database.db import init_db
     from services import worker
 
-    with pytest.raises(NotImplementedError):
-        worker.run_worker(once=True)
+    monkeypatch.setattr(db_module, "DATABASE_PATH", tmp_path / "worker-scaffold.db")
+    init_db()
+    assert worker.run_worker(once=True) is None
 
 
 def test_retention_implemented_by_ws_a(tmp_path, monkeypatch) -> None:
