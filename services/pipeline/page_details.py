@@ -245,7 +245,13 @@ def _extract_generic_page_details(
 
 
 def _triage_from_fields(extracted_fields: dict[str, Any]) -> str | None:
-    classification = (extracted_fields or {}).get("_classification")
+    fields = extracted_fields or {}
+    # Photo pages record triage at the top level of ``extracted_fields``;
+    # classified pages nest it under ``_classification``.
+    direct = fields.get("_triage")
+    if isinstance(direct, dict) and direct.get("category"):
+        return str(direct.get("category"))
+    classification = fields.get("_classification")
     if isinstance(classification, dict):
         triage = classification.get("triage")
         if isinstance(triage, dict) and triage.get("category"):

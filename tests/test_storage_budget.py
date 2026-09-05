@@ -178,19 +178,23 @@ def test_page_events_carry_no_field_payload(
 
 
 def test_review_payloads_respect_budgets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth_headers
 ) -> None:
     application_id = _run_fixture_pipeline(tmp_path, monkeypatch)
     from main import app
 
     client = TestClient(app)
 
-    review_response = client.get(f"/review/applications/{application_id}")
+    review_response = client.get(
+        f"/review/applications/{application_id}", headers=auth_headers
+    )
     assert review_response.status_code == 200
     assert '"ocr_text"' not in review_response.text
     assert '"structured_content"' not in review_response.text
 
-    status_response = client.get(f"/review/applications/{application_id}/status")
+    status_response = client.get(
+        f"/review/applications/{application_id}/status", headers=auth_headers
+    )
     assert status_response.status_code == 200
     assert len(status_response.content) <= 5 * 1024
     payload = status_response.json()
@@ -202,7 +206,9 @@ def test_review_payloads_respect_budgets(
         "total_pages",
     }
 
-    text_response = client.get(f"/review/applications/{application_id}/pages/1/text")
+    text_response = client.get(
+        f"/review/applications/{application_id}/pages/1/text", headers=auth_headers
+    )
     assert text_response.status_code == 200
     assert set(text_response.json().keys()) == {
         "page_number",

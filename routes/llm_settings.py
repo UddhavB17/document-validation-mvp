@@ -7,11 +7,18 @@ settings CRUD in ``routes/settings.py`` is owned by ws-h and untouched.)
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from services.auth.dependencies import require_role
 from services.llm_client import ALLOWED_PROVIDERS, llm_model, llm_provider
 
-router = APIRouter(prefix="/settings/llm", tags=["settings"])
+# fx-integrate-df: LLM settings are admin-only (contracts §6). One-line
+# cross-stream edit (file owned by ws-g-gemini-llm).
+router = APIRouter(
+    prefix="/settings/llm",
+    tags=["settings"],
+    dependencies=[Depends(require_role("admin"))],
+)
 
 
 @router.get("/providers")

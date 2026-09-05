@@ -469,13 +469,16 @@ def build_ops_payload(application_id: int) -> dict:
         attempt = 1
 
     pages = _load_pages(application_id)
+    # contracts §5: the ops payload never leaks internal job_type / pipeline
+    # stage names. Operations vocabulary is just ``processing`` here; the
+    # numeric progress, attempt, and failure reason carry the detail.
     return {
         "application_id": int(application_id),
         "loan_id": application.get("loan_id"),
         "applicant_name": application.get("applicant_name"),
         "status": status,
         "processing": {
-            "stage": progress.get("stage") or job.get("job_type"),
+            "stage": "processing",
             "percentage": percentage,
             "attempt": attempt,
             "failure_reason": failure_reason,

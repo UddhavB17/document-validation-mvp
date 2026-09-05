@@ -951,22 +951,3 @@ export async function fetchOpsWorklist(): Promise<OpsWorklist> {
 export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {
   return getJsonResponse(`/review/applications/${applicationId}/status`, applicationStatusSchema);
 }
-
-// --- fx-frontend stubs until fx-integrate-df ---
-// Type-only stand-ins so `npm test` can compile this module before the auth
-// stream lands its schemas. These names are already referenced above from
-// ws-e; nothing here emits runtime code.
-export type AdminUser = {
-  id: number;
-  email: string;
-  display_name: string;
-  role: string;
-  is_active: boolean;
-};
-export declare const adminUserSchema: z.ZodType<AdminUser>;
-export type AuthUser = {
-  id: number;
-  email: string;
-  role: string;
-};
-export declare const authUserSchema: z.ZodType<AuthUser>;

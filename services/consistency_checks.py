@@ -167,11 +167,27 @@ def _canonical_type(label: Any) -> str:
 
 
 def _page_triage_category(page: dict) -> str | None:
+    # Triage lives in several shapes: synthetic/test pages carry top-level
+    # ``triage``/``content_triage``/``triage_category``; live pipeline pages
+    # store it under ``extracted_fields`` (``_triage`` / ``_classification``)
+    # with a mirror in ``meta`` (see services/pipeline/page_processing.py).
     triage = page.get("triage") or page.get("content_triage")
     if isinstance(triage, dict):
         category = triage.get("category")
         if category:
             return str(category).strip().casefold()
+    for container_key in ("extracted_fields", "meta"):
+        container = page.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        nested = container.get("_triage")
+        if isinstance(nested, dict) and nested.get("category"):
+            return str(nested.get("category")).strip().casefold()
+        classification = container.get("_classification")
+        if isinstance(classification, dict):
+            nested_triage = classification.get("triage")
+            if isinstance(nested_triage, dict) and nested_triage.get("category"):
+                return str(nested_triage.get("category")).strip().casefold()
     category = page.get("triage_category") or page.get("content_category")
     if category:
         return str(category).strip().casefold()
@@ -186,11 +202,18 @@ def page_eligible_for(field: str, page: dict) -> bool:
     if str(page.get("is_readable")).casefold() == "false" and page.get("is_readable") is False:
         return False
     ocr_confidence = page.get("ocr_confidence")
-    try:
-        if ocr_confidence is not None and float(ocr_confidence) < OCR_CONFIDENCE_MIN:
+    # Missing OCR confidence is ineligible: a comparison needs measured text
+    # quality (ocr_confidence >= 0.55). Digital pages are exempt — their text
+    # comes from the file itself, not OCR, so there is nothing to measure.
+    if ocr_confidence is None:
+        if str(page.get("page_type") or "").strip().casefold() != "digital":
             return False
-    except (TypeError, ValueError):
-        return False
+    else:
+        try:
+            if float(ocr_confidence) < OCR_CONFIDENCE_MIN:
+                return False
+        except (TypeError, ValueError):
+            return False
     canonical_field = _canonical(str(field or ""))
     allowed = FIELD_DOCUMENT_TYPES.get(canonical_field)
     if not allowed:
@@ -216,37 +239,15 @@ def page_eligible_for(field: str, page: dict) -> bool:
 
 
 def _reference_date(trusted: dict | None = None) -> Any:
-    """Application reference date for age/recency maths (not the wall clock)."""
-    candidates: list[Any] = []
-    if isinstance(trusted, dict):
-        manifest = trusted.get("manifest") if isinstance(trusted.get("manifest"), dict) else {}
-        for source in (trusted, manifest):
-            for key in (
-                "reference_date",
-                "created_at",
-                "application_date",
-                "application_opened_at",
-                "application_open_date",
-                "case_opened_at",
-                "case_open_date",
-                "case_login_date",
-                "login_date",
-            ):
-                value = source.get(key)
-                if value not in (None, ""):
-                    candidates.append(value)
-    from datetime import UTC as _UTC
-    from datetime import datetime as _datetime
+    """Application reference date for age/recency maths (not the wall clock).
 
-    for candidate in candidates:
-        try:
-            from dateutil import parser as _parser
+    Single shared resolver lives in ``services.checklist_engine``; this is a
+    thin alias so every check uses one reference-date function. Today is only
+    a last resort when no reference exists anywhere (documented allow-list).
+    """
+    from services.checklist_engine import application_reference_date
 
-            parsed = _parser.parse(str(candidate), dayfirst=True)
-            return parsed.date() if hasattr(parsed, "date") else parsed
-        except (TypeError, ValueError, OverflowError):
-            continue
-    return _datetime.now(_UTC).date()
+    return application_reference_date(trusted)
 
 
 EXACT_FIELDS = {

@@ -262,8 +262,9 @@ def check_date_range(
         )
         if isinstance(reference, datetime):
             reference = reference.date()
-        months_old = calendar_months_between(parsed_date, reference)
-        if months_old > min_months:
+        # Single decider for statement recency (see is_bank_statement_old).
+        if is_bank_statement_old(parsed_date, reference, int(min_months)):
+            months_old = calendar_months_between(parsed_date, reference)
             return {
                 "passed": False,
                 "found_value": f"{int(months_old)} months old",
@@ -279,20 +280,31 @@ def check_date_range_for_pages(
     min_months: int,
     reference_date: date | datetime | str | None = None,
 ) -> dict:
-    """Statement recency over the latest date found on ANY page of the document."""
+    """Statement recency over the latest date found on ANY page of the document.
+
+    ``application_reference_date`` wins: when the caller passes no explicit
+    reference, it is resolved from the pages' own extracted fields (which
+    carry the application/manifest dates). The wall clock is only a last
+    resort when no reference exists anywhere.
+    """
     latest = latest_statement_date(doc_pages)
     if latest is None:
         return {"passed": False, "reason": "Statement date not found"}
     try:
-        reference = (
-            _parse_date(reference_date).date()
-            if reference_date not in (None, "")
-            else datetime.now(UTC).date()
-        )
+        if reference_date not in (None, ""):
+            reference = _parse_date(reference_date).date()
+        else:
+            contexts = [
+                page.get("extracted_fields")
+                for page in doc_pages
+                if isinstance(page, dict)
+            ]
+            reference = application_reference_date(*contexts)
         if isinstance(reference, datetime):
             reference = reference.date()
-        months_old = calendar_months_between(latest, reference)
-        if months_old > min_months:
+        # Single decider for statement recency (see is_bank_statement_old).
+        if is_bank_statement_old(latest, reference, int(min_months)):
+            months_old = calendar_months_between(latest, reference)
             return {
                 "passed": False,
                 "found_value": f"{int(months_old)} months old",

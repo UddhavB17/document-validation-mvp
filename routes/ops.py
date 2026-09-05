@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-
 from typing import Any
 
-from services.auth.dependencies import get_current_user
-from database.db import get_connection, init_db
+from fastapi import APIRouter, Depends, HTTPException
 
-from fastapi import HTTPException
+from database.db import get_connection, init_db
+from services.auth.dependencies import get_current_user
 
 router = APIRouter(
     prefix="/ops", tags=["ops"], dependencies=[Depends(get_current_user)]

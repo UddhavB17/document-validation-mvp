@@ -184,7 +184,7 @@ def test_sigterm_flag_finishes_current_job(isolated_db, tmp_path, monkeypatch) -
         worker_mod._shutdown_requested = False
 
 
-def test_inline_disabled_runs_no_pipeline_code_in_api(tmp_path, monkeypatch) -> None:
+def test_inline_disabled_runs_no_pipeline_code_in_api(tmp_path, monkeypatch, auth_headers) -> None:
     """With DMEF_INLINE_WORKER=0 the upload request only enqueues."""
     from fastapi.testclient import TestClient
 
@@ -216,6 +216,7 @@ def test_inline_disabled_runs_no_pipeline_code_in_api(tmp_path, monkeypatch) -> 
 
     response = TestClient(app).post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "LAP-INLINE-000",
             "applicant_name": "Ramesh Kumar",
@@ -237,7 +238,7 @@ def test_inline_disabled_runs_no_pipeline_code_in_api(tmp_path, monkeypatch) -> 
     assert int(job["attempt"]) == 0
 
 
-def test_worker_reloads_store_bytes_after_api_workdir_deleted(tmp_path, monkeypatch) -> None:
+def test_worker_reloads_store_bytes_after_api_workdir_deleted(tmp_path, monkeypatch, auth_headers) -> None:
     """DMEF_INLINE_WORKER=0 upload → worker opens the PDF from the store.
 
     The API deletes the upload work dir in ``finally`` after enqueue; the
@@ -295,6 +296,7 @@ def test_worker_reloads_store_bytes_after_api_workdir_deleted(tmp_path, monkeypa
 
     response = TestClient(app).post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "LAP-STORE-RELOAD-001",
             "applicant_name": "Ramesh Kumar",

@@ -362,6 +362,9 @@ def _build_page_records(
                         "raw_document_type": document_type,
                         "raw_confidence": triage["confidence"],
                         "detected_page_number": page_number,
+                        # Nested copy so eligibility helpers that read
+                        # ``_classification.triage`` see photo pages too.
+                        "triage": triage,
                     },
                 }
             elif triage["category"] == "handwritten" and (
@@ -619,6 +622,10 @@ def _build_page_records(
             document_type=document_type,
             text=text,
             extracted_fields=extracted_fields,
+            triage_category=(
+                triage.get("category") if isinstance(triage, dict) else None
+            ),
+            ocr_confidence=ocr_confidence,
         )
         # Run the structured classifier only after deterministic and generic
         # extraction has completed, and only for the two allowed fallback
@@ -869,6 +876,7 @@ def _refresh_page_from_cached_ocr(
         document_type=document_type,
         text=text,
         extracted_fields=fields,
+        ocr_confidence=ocr_confidence,
     )
     language_profile = analyze_text_languages(text)
     previous_language = (

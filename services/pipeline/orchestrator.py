@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 from typing import Any
@@ -331,6 +332,18 @@ def _run_pipeline_impl(
     anomalies.extend(processing_error_anomalies)
     touch_progress(application_id, f"Aggregating {len(anomalies)} checklist findings")
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
+    # fx-integrate-df (NEEDS-COORDINATION: orchestrator is shared pipeline
+    # code): persist the ops payload on the live path so
+    # ``applications.ops_findings_json`` is non-null after a successful run.
+    # Best-effort; the endpoint recomputes when needed.
+    try:
+        from services.ops_presentation import store_ops_payload
+
+        store_ops_payload(application_id)
+    except Exception:  # noqa: BLE001 - ops persistence is best-effort
+        logging.getLogger(__name__).warning(
+            "Could not store ops payload for application %s", application_id, exc_info=True
+        )
     pipeline_status = _pipeline_outcome(result["anomalies"], processing_error_anomalies)
     checklist_verification = build_checklist_verification_response(
         loan_file_id=str(ground_truth.get("loan_id") or application_id),

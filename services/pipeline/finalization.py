@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from services.audit_service import log_action
@@ -15,6 +16,8 @@ from services.pipeline.persistence import (
 )
 from services.progress_tracker import mark_completed
 from services.report_generator import build_report, save_report_json
+
+logger = logging.getLogger(__name__)
 
 
 def _finalize_pipeline_result(
@@ -30,6 +33,18 @@ def _finalize_pipeline_result(
     _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
+    # ws-f accuracy: persist the ops payload (minus checklist) so
+    # ``applications.ops_findings_json`` is non-null after a successful run.
+    # The endpoint recomputes when needed; a store failure must never fail
+    # the pipeline (store_ops_payload already swallows/logs internally).
+    try:
+        from services.ops_presentation import store_ops_payload
+
+        store_ops_payload(application_id)
+    except Exception:  # noqa: BLE001 - ops persistence is best-effort
+        logger.warning(
+            "Could not store ops payload for application %s", application_id, exc_info=True
+        )
     summary = summarize_exceptions(result["anomalies"])
     if _should_call_llm(generate_llm_summary):
         llm_summary = generate_explanation(result["anomalies"], ground_truth, application_id)

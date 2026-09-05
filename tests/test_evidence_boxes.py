@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from services.evidence_boxes import attach_evidence_to_anomalies, find_value_bbox
+from services.evidence_boxes import (
+    attach_evidence_to_anomalies,
+    evidence_for_value,
+    find_value_bbox,
+    page_words,
+)
 
 
 def _word(text: str, box: list[float], confidence: float = 0.9) -> dict:
@@ -63,3 +68,80 @@ def test_attach_writes_evidence_json() -> None:
     assert evidence["page"] == 3
     assert evidence["bbox"] == [0.12, 0.40, 0.55, 0.44]
     assert evidence["text"] == "ABCDE1234F"
+
+
+def test_completed_page_words_produce_bbox() -> None:
+    """End-to-end shape: a ``completed_page``-style dict with real OCR words.
+
+    Guards the fx-integrate-df wiring where ``completed_page["words"]`` (the
+    compact ``[{"t","b","c"}]`` list written by ``_build_page_records``) is
+    the input evidence reads — not a hand-built list.
+    """
+    from services.pipeline.page_processing import _ocr_result_dict
+
+    ocr_result = _ocr_result_dict(
+        {
+            "ocr_text": "INCOME TAX ABCDE1234F",
+            "confidence": 0.9,
+            "is_readable": True,
+            # Shape produced by OCRResult.to_legacy_dict(): compact words plus
+            # the small layout dict. Dict inputs pass through untouched.
+            "words": [
+                {"t": "INCOME", "b": [0.0, 0.0, 0.2, 0.1], "c": 0.9},
+                {"t": "TAX", "b": [0.21, 0.0, 0.3, 0.1], "c": 0.9},
+                {"t": "ABCDE1234F", "b": [0.1, 0.4, 0.55, 0.44], "c": 0.92},
+            ],
+            "structured_content": {
+                "words": [
+                    {"t": "INCOME", "b": [0.0, 0.0, 0.2, 0.1], "c": 0.9},
+                    {"t": "TAX", "b": [0.21, 0.0, 0.3, 0.1], "c": 0.9},
+                    {"t": "ABCDE1234F", "b": [0.1, 0.4, 0.55, 0.44], "c": 0.92},
+                ]
+            },
+        }
+    )
+    completed_page = {
+        "page_number": 1,
+        "page_type": "scanned",
+        "ocr_text": ocr_result.get("ocr_text", ""),
+        "ocr_confidence": ocr_result.get("confidence", 0.0),
+        "words": list(ocr_result.get("words") or []),
+        "structured_content": ocr_result.get("structured_content"),
+        "document_type": "PAN Card",
+    }
+    assert len(page_words(completed_page)) == 3
+    anomalies = [
+        {
+            "rule_id": "TRUSTED_PAN_NUMBER_MISMATCH",
+            "page_number": 1,
+            "found_value": "ABCDE1234F",
+            "expected_value": "XXXXX0000X",
+        }
+    ]
+    attach_evidence_to_anomalies(anomalies, [completed_page])
+    evidence = anomalies[0].get("evidence_json")
+    assert evidence is not None
+    assert evidence["page"] == 1
+    assert evidence["bbox"] == [0.1, 0.4, 0.55, 0.44]
+
+
+def test_page_words_reads_persisted_structures() -> None:
+    """Pages rebuilt without top-level ``words`` still resolve evidence."""
+    structured_page = {
+        "page_number": 2,
+        "structured_content": {
+            "words": [_word("ABCDE1234F", [0.12, 0.40, 0.55, 0.44])],
+        },
+    }
+    assert page_words(structured_page) != []
+    assert evidence_for_value(structured_page, "ABCDE1234F") is not None
+    provider_page = {
+        "page_number": 3,
+        "ocr_structure": {
+            "bounding_boxes": [
+                {"text": "ABCDE1234F", "bbox": [0.12, 0.40, 0.55, 0.44]},
+            ]
+        },
+    }
+    assert page_words(provider_page) != []
+    assert evidence_for_value(provider_page, "ABCDE1234F") is not None

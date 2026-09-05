@@ -162,12 +162,63 @@ def find_value_bbox(words: list[dict], value: str) -> list[float] | None:
 
 
 def page_words(page: dict) -> list[dict]:
-    """Return the in-memory OCR word list for a page dict (any known key)."""
+    """Return the in-memory OCR word list for a page dict (any known key).
+
+    Live pipeline pages carry top-level ``words`` ([{"t","b","c"}], 0-1).
+    Pages rebuilt from persisted state (cached checkpoints, revalidation)
+    may only carry the layout that was kept: ``structured_content.words``
+    or provider ``bounding_boxes`` under ``ocr_structure`` /
+    ``structured_content`` / top level. Those shapes are coerced to the
+    same compact form so evidence resolution never silently no-ops.
+    """
     for key in ("words", "ocr_words", "ocr_word_boxes", "word_boxes"):
         words = page.get(key)
         if isinstance(words, list) and words:
-            return [word for word in words if isinstance(word, dict)]
+            compact = [word for word in words if isinstance(word, dict)]
+            if compact:
+                return compact
+    for container_key in ("structured_content", "ocr_structure"):
+        container = page.get(container_key)
+        if isinstance(container, dict):
+            words = container.get("words")
+            if isinstance(words, list) and words:
+                compact = [word for word in words if isinstance(word, dict)]
+                if compact:
+                    return compact
+            boxes = container.get("bounding_boxes")
+            coerced = _words_from_boxes(boxes)
+            if coerced:
+                return coerced
+    coerced = _words_from_boxes(page.get("bounding_boxes"))
+    if coerced:
+        return coerced
     return []
+
+
+def _words_from_boxes(boxes: Any) -> list[dict]:
+    """Coerce provider ``bounding_boxes`` to compact ``[{"t","b","c"}]`` words."""
+    if not isinstance(boxes, list) or not boxes:
+        return []
+    words: list[dict] = []
+    for box in boxes:
+        if not isinstance(box, dict):
+            continue
+        text = box.get("text", box.get("t", box.get("w", box.get("word", ""))))
+        bbox = box.get("bbox", box.get("b", box.get("box", None)))
+        if text in (None, "") or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            coords = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            continue
+        words.append(
+            {
+                "t": str(text),
+                "b": coords,
+                "c": box.get("confidence", box.get("c")),
+            }
+        )
+    return words
 
 
 def evidence_for_value(page: dict | None, value: Any) -> dict | None:

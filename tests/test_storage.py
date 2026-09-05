@@ -259,7 +259,7 @@ def _snapshot_tree(root: Path) -> set[str]:
     return {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
 
 
-def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch) -> None:
+def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch, auth_headers) -> None:
     _use_tmp_env(tmp_path, monkeypatch)
     _ensure_schema()
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
@@ -279,6 +279,7 @@ def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch
     client = TestClient(app)
     response = client.post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "WSB-STORE-001",
             "applicant_name": "Ramesh Kumar",
@@ -312,19 +313,22 @@ def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch
     assert list((tmp_path / "jobs").rglob("*")) == []
 
 
-def test_storage_route_serves_local_object(tmp_path, monkeypatch) -> None:
+def test_storage_route_serves_local_object(tmp_path, monkeypatch, auth_headers) -> None:
     _use_tmp_env(tmp_path, monkeypatch)
     store = LocalObjectStore()
     store.put("applications/9/source/doc.pdf", b"%PDF-stub", "application/pdf")
     client = TestClient(app)
 
-    served = client.get("/storage/applications/9/source/doc.pdf")
+    served = client.get("/storage/applications/9/source/doc.pdf", headers=auth_headers)
     assert served.status_code == 200
     assert served.content == b"%PDF-stub"
 
     # Traversal attempts never serve objects (client-normalized or rejected).
-    assert client.get("/storage/../escape.pdf").status_code in {400, 404}
-    assert client.get("/storage/applications/9/source/missing.pdf").status_code == 404
+    assert client.get("/storage/../escape.pdf", headers=auth_headers).status_code in {400, 404}
+    assert (
+        client.get("/storage/applications/9/source/missing.pdf", headers=auth_headers).status_code
+        == 404
+    )
 
     from fastapi import HTTPException
 

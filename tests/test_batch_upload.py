@@ -12,7 +12,7 @@ from main import app
 
 
 @pytest.fixture()
-def batch_client(tmp_path, monkeypatch):
+def batch_client(tmp_path, monkeypatch, auth_headers):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
@@ -20,7 +20,9 @@ def batch_client(tmp_path, monkeypatch):
     monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
     monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
     monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
-    return TestClient(app)
+    client = TestClient(app)
+    client.headers.update(auth_headers)
+    return client
 
 
 def _pdf_bytes(tag: str) -> bytes:
@@ -125,7 +127,7 @@ def test_batch_status_endpoint_shape(batch_client) -> None:
     assert batch_client.get("/upload/batch/0" * 1 + "f" * 31).status_code == 404
 
 
-def test_batch_single_pdf_uses_object_store(tmp_path, monkeypatch) -> None:
+def test_batch_single_pdf_uses_object_store(tmp_path, monkeypatch, auth_headers) -> None:
     """POST /upload/batch with one PDF lives in the store, not data/uploads."""
     from pathlib import Path
 
@@ -139,6 +141,7 @@ def test_batch_single_pdf_uses_object_store(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
     monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
     client = TestClient(app)
+    client.headers.update(auth_headers)
 
     from services.storage import get_store
     from services.storage.refs import get_ref
@@ -210,7 +213,7 @@ def test_batch_status_includes_rejected_files(batch_client) -> None:
 
 
 def test_batch_worker_processes_store_bytes_without_shared_upload_dir(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, auth_headers
 ) -> None:
     """Batch job runs with DMEF_INLINE_WORKER=0 after the API work dir is gone."""
     import hashlib
@@ -241,6 +244,7 @@ def test_batch_worker_processes_store_bytes_without_shared_upload_dir(
 
     monkeypatch.setattr(orchestrator, "run_pipeline", fake_pipeline)
     client = TestClient(app)
+    client.headers.update(auth_headers)
     pdf = _pdf_bytes("Batch Worker")
     posted = _post_batch(client, [("worker.pdf", pdf, "application/pdf")]).json()
     assert posted["items"][0]["status"] == "queued"
