@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import time
@@ -15,6 +16,21 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from database import db
 from database.db import get_connection
+
+logger = logging.getLogger(__name__)
+
+# Secret settings in ``system_settings`` are stored with this prefix followed
+# by the Fernet token, so reads can tell ciphertext apart from legacy
+# plaintext rows left behind before encryption at rest landed.
+SECRET_VALUE_PREFIX = "enc:fernet:"
+
+# Primary env var for the Fernet key that encrypts both pipeline recovery
+# payloads and secret settings. ``DMEF_JOB_INPUT_KEY`` is the deprecated
+# alias and is only honoured with a warning.
+SECRETS_KEY_ENV = "DMEF_SECRETS_KEY"
+DEPRECATED_SECRETS_KEY_ENV = "DMEF_JOB_INPUT_KEY"
+
+_in_memory_fernet_key: bytes | None = None
 
 ControlAction = Literal["pause", "resume", "cancel"]
 _ACTIVE_JOB_STATUSES = frozenset({"queued", "running", "pause_requested", "paused"})
@@ -44,32 +60,134 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _fernet() -> Fernet:
-    configured = os.getenv("DMEF_JOB_INPUT_KEY", "").strip()
+def _configured_key_material() -> tuple[bytes | None, str]:
+    """Return ``(key_bytes, source)`` from env or an existing key file.
+
+    ``source`` names where the key came from for error messages. Returns
+    ``(None, "")`` when nothing is configured.
+    """
+    configured = os.getenv(SECRETS_KEY_ENV, "").strip()
     if configured:
         try:
-            return Fernet(configured.encode("ascii"))
+            Fernet(configured.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
-            raise JobInputUnavailableError("DMEF_JOB_INPUT_KEY must be a valid Fernet key") from exc
-
-    key_path = Path(
-        os.getenv("DMEF_JOB_INPUT_KEY_FILE", str(db.DATABASE_PATH.parent / ".job_input.key"))
-    )
-    key_path.parent.mkdir(parents=True, exist_ok=True)
-    if not key_path.exists():
-        key = Fernet.generate_key()
+            raise JobInputUnavailableError(
+                f"{SECRETS_KEY_ENV} must be a valid Fernet key"
+            ) from exc
+        return configured.encode("ascii"), SECRETS_KEY_ENV
+    legacy = os.getenv(DEPRECATED_SECRETS_KEY_ENV, "").strip()
+    if legacy:
+        logger.warning(
+            "%s is deprecated; set %s instead",
+            DEPRECATED_SECRETS_KEY_ENV,
+            SECRETS_KEY_ENV,
+        )
         try:
-            descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            pass
-        else:
-            with os.fdopen(descriptor, "wb") as key_file:
-                key_file.write(key)
+            Fernet(legacy.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise JobInputUnavailableError(
+                f"{DEPRECATED_SECRETS_KEY_ENV} must be a valid Fernet key"
+            ) from exc
+        return legacy.encode("ascii"), DEPRECATED_SECRETS_KEY_ENV
+
+    explicit_file = os.getenv("DMEF_JOB_INPUT_KEY_FILE", "").strip()
+    if explicit_file:
+        key_path = Path(explicit_file)
+        if key_path.exists():
+            try:
+                os.chmod(key_path, 0o600)
+                return key_path.read_bytes().strip(), "DMEF_JOB_INPUT_KEY_FILE"
+            except (OSError, ValueError) as exc:
+                raise JobInputUnavailableError(
+                    "Secure pipeline recovery key is unavailable"
+                ) from exc
+        if not _is_production():
+            key = Fernet.generate_key()
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(descriptor, "wb") as key_file:
+                    key_file.write(key)
+            return key, "DMEF_JOB_INPUT_KEY_FILE"
+        return None, ""
+
+    # Never auto-generate under the default data/ location. An existing legacy
+    # key file is still honoured so older checkouts keep decrypting.
+    default_path = Path(db.DATABASE_PATH.parent / ".job_input.key")
+    if default_path.exists():
+        try:
+            os.chmod(default_path, 0o600)
+            return default_path.read_bytes().strip(), "default key file"
+        except (OSError, ValueError) as exc:
+            raise JobInputUnavailableError(
+                "Secure pipeline recovery key is unavailable"
+            ) from exc
+    return None, ""
+
+
+def _is_production() -> bool:
+    return os.getenv("DMEF_ENV", "").strip().lower() == "production"
+
+
+def ensure_secrets_key() -> bytes:
+    """Validate secrets-key configuration; fail fast in production.
+
+    Returns the raw Fernet key bytes. When no key is configured and
+    ``DMEF_ENV=production``, raises ``RuntimeError`` with a clear message so
+    startup fails instead of silently running unencrypted. Outside production
+    an ephemeral in-memory key is generated once per process and a warning is
+    logged (in-memory means recovery payloads and secrets do not survive a
+    restart — set ``DMEF_SECRETS_KEY`` for anything durable).
+    """
+    configured, _source = _configured_key_material()
+    if configured:
+        return configured
+    if _is_production():
+        raise RuntimeError(
+            "DMEF_ENV=production requires DMEF_SECRETS_KEY to be set to a valid "
+            "Fernet key (generate one with "
+            "`python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`). "
+            "Refusing to start without encrypted secrets at rest."
+        )
+    global _in_memory_fernet_key
+    if _in_memory_fernet_key is None:
+        _in_memory_fernet_key = Fernet.generate_key()
+        logger.warning(
+            "No DMEF_SECRETS_KEY configured; using an ephemeral in-memory key. "
+            "Set DMEF_SECRETS_KEY for durable encryption."
+        )
+    return _in_memory_fernet_key
+
+
+def secrets_fernet() -> Fernet:
+    """Return a Fernet instance backed by :func:`ensure_secrets_key`."""
     try:
-        os.chmod(key_path, 0o600)
-        return Fernet(key_path.read_bytes().strip())
-    except (OSError, ValueError) as exc:
-        raise JobInputUnavailableError("Secure pipeline recovery key is unavailable") from exc
+        return Fernet(ensure_secrets_key())
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise JobInputUnavailableError("Configured secrets key is not a valid Fernet key") from exc
+
+
+def encrypt_secret(plaintext: str) -> str:
+    """Encrypt a secret setting value for storage."""
+    return SECRET_VALUE_PREFIX + secrets_fernet().encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+
+def decrypt_secret(stored: str) -> str:
+    """Decrypt a stored secret setting value (raises ``InvalidToken`` if bad)."""
+    token = stored[len(SECRET_VALUE_PREFIX):] if stored.startswith(SECRET_VALUE_PREFIX) else stored
+    return secrets_fernet().decrypt(token.encode("ascii")).decode("utf-8")
+
+
+def is_encrypted_secret(stored: str) -> bool:
+    """Return True when a stored value carries the Fernet envelope prefix."""
+    return stored.startswith(SECRET_VALUE_PREFIX)
+
+
+def _fernet() -> Fernet:
+    return secrets_fernet()
 
 
 def _source_checksum(source_path: Path) -> str:

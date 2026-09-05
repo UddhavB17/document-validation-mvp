@@ -34,11 +34,11 @@ flowchart TD
   checkpoints, persistence, and pipeline outcomes.
 - `services/review/repository.py` owns review SQL. Worklist, comparison, and
   document-summary assembly belongs in the matching `services/review/` module.
-- The top-level validation modules such as `services/checklist_engine.py`,
-  `services/consistency_checks.py`, `services/field_extractor.py`, and
-  `services/person_ownership.py` remain compatibility facades for existing
-  imports and monkeypatch targets. Keep them unless the migration is proved
-  behavior-preserving.
+- Field extraction (`services/field_extractor.py`), cross-document consistency
+  checks (`services/consistency_checks.py`), and trusted-manifest verification
+  (`services/mapped_verification.py`) are active implementation modules with
+  their own unit tests — not facades. Keep their public function names stable:
+  other modules and tests import them directly.
 - `database/` owns schema statements, connections, and shared data models.
   `services/paths.py` is the single source for environment-driven filesystem
   locations.
@@ -61,6 +61,16 @@ Paths default relative to the repository root and are resolved by
 | Rendered pages and OCR JSON | `PAGE_OUTPUT_DIR` | `data/processed` |
 | Reports | `REPORT_OUTPUT_DIR` | `data/reports` |
 | Checklist definition | `CHECKLIST_JSON_PATH` | `data/checklist.json` |
+| Object store (durable files) | `DMEF_LOCAL_STORE_DIR` | `data/store` |
+| Per-job working directory (deleted in a `finally` after each run) | `DMEF_JOB_WORK_DIR` | `/tmp/dmef-jobs` |
+| Secrets key for encrypted settings and recovery payloads | `DMEF_SECRETS_KEY` | none (ephemeral in-memory key outside production; startup fails when `DMEF_ENV=production`) |
+
+Durable file layout follows the object-store key scheme and the worker
+process (`services/worker.py`, which polls `pipeline_jobs`) in
+[`docs/agents/00-CONTRACTS.md`](agents/00-CONTRACTS.md) §§2–4. That contracts
+file is the cross-workstream source of truth for the DB wrapper, storage
+backends, schema registry, job table, ops payload, auth/roles, env vars, and
+budgets; this note only maps the backend code.
 
 The legacy `DATABASE_URL=sqlite:///...` value is still accepted for older local
 `.env` files. Runtime databases, uploads, rendered pages, OCR output, reports,

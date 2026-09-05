@@ -4,7 +4,6 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useApplicationReview, useHealth } from "@/lib/queries";
 import type { FieldComparison } from "@/lib/api";
@@ -22,22 +21,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const health = useHealth();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const [isStopDialogOpen, setIsStopDialogOpen] = useState(false);
-  const [stopNotice, setStopNotice] = useState<string | null>(null);
   const applicationId = getApplicationIdFromPath(pathname);
   const healthStatus = health.data?.status === "ok" ? "ok" : "failed";
 
   const closeMobileNavigation = () => setIsMobileNavOpen(false);
-  const handleStopDmef = async () => {
-    setIsStopDialogOpen(false);
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      await fetch(`${baseUrl}/shutdown`, { method: "POST" });
-      setStopNotice("Stop request sent. You can close this browser tab.");
-    } catch {
-      setStopNotice("The stop request could not reach the local API.");
-    }
-  };
 
   return (
     <div className="app-shell">
@@ -127,20 +114,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
             <code className="app-shell__endpoint">127.0.0.1:8000</code>
           </div>
-
-          <div className="app-shell__stop-area">
-            {stopNotice ? <div className="app-shell__stop-notice" role="status">{stopNotice}</div> : null}
-            <button
-              type="button"
-              className="app-shell__stop-button"
-              onClick={() => setIsStopDialogOpen(true)}
-              disabled={health.isLoading || health.isError || !health.data}
-              aria-label="Stop DMEF"
-            >
-              <Icon name="stop" />
-              <span className="app-shell__nav-text">Stop DMEF</span>
-            </button>
-          </div>
         </div>
       </aside>
 
@@ -177,15 +150,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
         <main id="main-content" className="app-shell__main" tabIndex={-1}>{children}</main>
       </div>
-
-      <ConfirmDialog
-        open={isStopDialogOpen}
-        title="Stop DMEF?"
-        description="This will shut down the local backend and UI servers. Any work currently processing may be interrupted. Continue only if you are ready to stop the local workspace."
-        confirmLabel="Stop DMEF"
-        onConfirm={handleStopDmef}
-        onCancel={() => setIsStopDialogOpen(false)}
-      />
     </div>
   );
 }
