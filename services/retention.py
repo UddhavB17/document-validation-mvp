@@ -42,6 +42,19 @@ RETAINED_AUDIT_ACTIONS = frozenset(
     }
 )
 
+#: Jobs in these statuses are terminal and eligible for pruning. Active jobs
+#: (queued/running/retrying, plus paused/cancelled/stale) are never deleted.
+TERMINAL_JOB_STATUSES = ("completed", "failed")
+
+# --- fx-schema: stale-job subquery (terminal only, newest N kept per app) ---
+_STALE_JOBS_SUBQUERY = (
+    "SELECT id FROM ("
+    "SELECT id, ROW_NUMBER() OVER "
+    "(PARTITION BY application_id ORDER BY id DESC) AS rn "
+    "FROM pipeline_jobs WHERE status IN ('completed','failed')"
+    ") AS stale_ranked WHERE rn > ?"
+)
+
 
 def _resolve_now(now: Any) -> datetime:
     if isinstance(now, datetime):
@@ -67,6 +80,16 @@ def _table_exists(connection: Any, table: str) -> bool:
         with get_connection() as probe:
             probe.execute(f"SELECT 1 FROM {table} WHERE 1 = 0").fetchall()
     except Exception:  # noqa: BLE001 - missing table on legacy databases
+        return False
+    return True
+
+
+def _has_column(table: str, column: str) -> bool:
+    """Return True when ``table.column`` exists (probed outside the txn)."""
+    try:
+        with get_connection() as probe:
+            probe.execute(f"SELECT {column} FROM {table} WHERE 1 = 0").fetchall()
+    except Exception:  # noqa: BLE001 - legacy databases predate the column
         return False
     return True
 
@@ -117,52 +140,54 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
 
     with get_connection() as connection:
         # 1. Inputs of completed jobs are never read again.
-        if _table_exists(connection, "pipeline_job_inputs"):
-            completed_ids = _column_values(
-                connection, "pipeline_jobs", "id", "status = ?", ("completed",)
-            )
-            if completed_ids:
-                placeholders = ",".join("?" for _ in completed_ids)
-                if dry_run:
-                    row = connection.execute(
-                        "SELECT COUNT(*) AS count FROM pipeline_job_inputs "
-                        f"WHERE job_id IN ({placeholders})",
-                        tuple(completed_ids),
-                    ).fetchone()
-                    result["pipeline_job_inputs_deleted"] = int(row["count"])
-                else:
-                    cursor = connection.execute(
-                        "DELETE FROM pipeline_job_inputs "
-                        f"WHERE job_id IN ({placeholders})",
-                        tuple(completed_ids),
-                    )
-                    result["pipeline_job_inputs_deleted"] = int(cursor.rowcount or 0)
+        # --- fx-schema: IN (SELECT ...) avoids thousands of bound params ---
+        if _table_exists(connection, "pipeline_job_inputs") and _table_exists(
+            connection, "pipeline_jobs"
+        ):
+            if dry_run:
+                row = connection.execute(
+                    "SELECT COUNT(*) AS count FROM pipeline_job_inputs "
+                    "WHERE job_id IN (SELECT id FROM pipeline_jobs WHERE status = ?)",
+                    ("completed",),
+                ).fetchone()
+                result["pipeline_job_inputs_deleted"] = int(row["count"])
+            else:
+                cursor = connection.execute(
+                    "DELETE FROM pipeline_job_inputs "
+                    "WHERE job_id IN (SELECT id FROM pipeline_jobs WHERE status = ?)",
+                    ("completed",),
+                )
+                result["pipeline_job_inputs_deleted"] = int(cursor.rowcount or 0)
 
-        # 2. Keep the newest N jobs per application.
+        # 2. Keep the newest N terminal jobs per application.
+        # --- fx-schema: terminal-only filter + pre-delete FK nulling ---
         if _table_exists(connection, "pipeline_jobs"):
-            try:
-                job_rows = connection.execute(
-                    "SELECT application_id, id FROM pipeline_jobs "
-                    "ORDER BY application_id ASC, id DESC"
-                ).fetchall()
-            except Exception:  # noqa: BLE001 - unexpected shape; skip pruning
-                job_rows = []
-            seen: dict[Any, int] = {}
-            stale_ids: list[Any] = []
-            for row in job_rows:
-                application_id = row["application_id"]
-                seen[application_id] = seen.get(application_id, 0) + 1
-                if seen[application_id] > max_attempts:
-                    stale_ids.append(row["id"])
-            if stale_ids:
-                result["pipeline_jobs_deleted"] = len(stale_ids)
-                if not dry_run:
-                    placeholders = ",".join("?" for _ in stale_ids)
+            stale_filter = _STALE_JOBS_SUBQUERY
+            if dry_run:
+                try:
+                    row = connection.execute(
+                        "SELECT COUNT(*) AS count FROM pipeline_jobs "
+                        f"WHERE id IN ({stale_filter})",
+                        (max_attempts,),
+                    ).fetchone()
+                    result["pipeline_jobs_deleted"] = int(row["count"])
+                except Exception:  # noqa: BLE001 - unexpected shape; skip pruning
+                    pass
+            else:
+                try:
+                    if _has_column("pipeline_jobs", "parent_job_id"):
+                        connection.execute(
+                            "UPDATE pipeline_jobs SET parent_job_id = NULL "
+                            f"WHERE parent_job_id IN ({stale_filter})",
+                            (max_attempts,),
+                        )
                     cursor = connection.execute(
-                        f"DELETE FROM pipeline_jobs WHERE id IN ({placeholders})",
-                        tuple(stale_ids),
+                        f"DELETE FROM pipeline_jobs WHERE id IN ({stale_filter})",
+                        (max_attempts,),
                     )
                     result["pipeline_jobs_deleted"] = int(cursor.rowcount or 0)
+                except Exception:  # noqa: BLE001 - unexpected shape; skip pruning
+                    pass
 
         # 3. Telemetry older than the telemetry window.
         for table in ("ocr_route_events", "classification_review_log"):
@@ -210,76 +235,67 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
                 pass
 
         # 5. Archive applications older than the source window.
-        archive_ids: list[Any] = []
-        if _table_exists(connection, "applications"):
-            candidates = _column_values(
-                connection,
-                "applications",
-                "id",
-                "created_at < ? AND (archived_at IS NULL)",
-                (source_cutoff,),
-            )
-            if candidates is None:
-                # Legacy table without archived_at: fall back to age only and
-                # add the column lazily via the diet migration path.
-                candidates = _column_values(
-                    connection, "applications", "id", "created_at < ?", (source_cutoff,)
-                )
-            archive_ids = list(candidates or [])
-            result["applications_archived"] = len(archive_ids)
-            if archive_ids and not dry_run:
-                placeholders = ",".join("?" for _ in archive_ids)
+        has_archived_col = _has_column("applications", "archived_at")
+        if _table_exists(connection, "applications") and has_archived_col:
+            if dry_run:
                 try:
-                    connection.execute(
+                    row = connection.execute(
+                        "SELECT COUNT(*) AS count FROM applications "
+                        "WHERE created_at < ? AND archived_at IS NULL",
+                        (source_cutoff,),
+                    ).fetchone()
+                    result["applications_archived"] = int(row["count"])
+                except Exception:  # noqa: BLE001 - legacy table; counts stand
+                    pass
+            else:
+                try:
+                    cursor = connection.execute(
                         "UPDATE applications SET archived_at = ? "
-                        f"WHERE id IN ({placeholders})",
-                        (archived_at, *tuple(archive_ids)),
+                        "WHERE created_at < ? AND archived_at IS NULL",
+                        (archived_at, source_cutoff),
                     )
+                    result["applications_archived"] = int(cursor.rowcount or 0)
                 except Exception:  # noqa: BLE001 - legacy table; counts stand
                     pass
 
-        # 6. Delete archived source keys from the object store (real run only).
+        # 6. Count (dry-run) or collect (real run) archived source keys
+        # via object_refs. Keys live in object_refs (owner_table/owner_id),
+        # never in uploaded_files.storage_key or intake_packages.*_key.
+        # --- fx-schema: object_refs lookup with IN (SELECT ...) ---
         source_keys: list[str] = []
-        if archive_ids and not dry_run:
-            placeholders = ",".join("?" for _ in archive_ids)
-            params = tuple(archive_ids)
-            upload_keys = _column_values(
-                connection,
-                "uploaded_files",
-                "storage_key",
-                f"application_id IN ({placeholders})",
-                params,
-            )
-            if upload_keys is None:
-                upload_keys = _column_values(
-                    connection,
-                    "uploaded_files",
-                    "file_path",
-                    f"application_id IN ({placeholders})",
-                    params,
-                )
-            package_columns = (
-                "source_zip_key",
-                "normalized_pdf_key",
-                "source_zip_path",
-                "normalized_pdf_path",
-            )
-            package_keys: list[Any] = []
-            for column in package_columns:
-                values = _column_values(
-                    connection,
-                    "intake_packages",
-                    column,
-                    f"application_id IN ({placeholders})",
-                    params,
-                )
-                if values is None:
-                    continue
-                package_keys.extend(values)
-            for key in list(upload_keys or []) + package_keys:
-                if isinstance(key, str) and key and not key.startswith("/"):
-                    if ".." not in key:
-                        source_keys.append(key)
+        if _table_exists(connection, "object_refs") and has_archived_col:
+            try:
+                if dry_run:
+                    row = connection.execute(
+                        "SELECT COUNT(*) AS count FROM object_refs WHERE "
+                        "(owner_table = 'applications' AND owner_id IN "
+                        "(SELECT CAST(id AS TEXT) FROM applications "
+                        "WHERE created_at < ? AND archived_at IS NULL)) "
+                        "OR (owner_table = 'intake_packages' AND owner_id IN "
+                        "(SELECT package_id FROM intake_packages WHERE application_id IN "
+                        "(SELECT id FROM applications "
+                        "WHERE created_at < ? AND archived_at IS NULL)))",
+                        (source_cutoff, source_cutoff),
+                    ).fetchone()
+                    result["source_keys_deleted"] = int(row["count"])
+                elif result["applications_archived"]:
+                    rows = connection.execute(
+                        "SELECT storage_key FROM object_refs WHERE "
+                        "(owner_table = 'applications' AND owner_id IN "
+                        "(SELECT CAST(id AS TEXT) FROM applications "
+                        "WHERE archived_at = ?)) "
+                        "OR (owner_table = 'intake_packages' AND owner_id IN "
+                        "(SELECT package_id FROM intake_packages WHERE application_id IN "
+                        "(SELECT id FROM applications WHERE archived_at = ?)))",
+                        (archived_at, archived_at),
+                    ).fetchall()
+                    for key_row in rows:
+                        key = key_row["storage_key"]
+                        if isinstance(key, str) and key and not key.startswith("/"):
+                            if ".." not in key:
+                                source_keys.append(key)
+            except Exception:  # noqa: BLE001 - legacy shape; no source keys
+                pass
 
     deleted = 0
     if source_keys and not dry_run:
@@ -290,5 +306,6 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
                 deleted += 1
             except Exception:  # noqa: BLE001 - best effort per key
                 continue
-    result["source_keys_deleted"] = deleted
+    if not dry_run:
+        result["source_keys_deleted"] = deleted
     return result

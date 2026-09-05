@@ -31,34 +31,8 @@ MODEL_PRICES_USD_PER_1M: dict[str, tuple[float, float]] = {
     "qwen2.5": (0.0, 0.0),
 }
 
-LLM_CALLS_SCHEMA_STATEMENTS = [
-    """
-    CREATE TABLE IF NOT EXISTS llm_calls (
-        id INTEGER PRIMARY KEY,
-        provider TEXT NOT NULL,
-        model TEXT NOT NULL,
-        purpose TEXT NOT NULL,
-        tokens_in INTEGER NOT NULL DEFAULT 0,
-        tokens_out INTEGER NOT NULL DEFAULT 0,
-        duration_ms INTEGER NOT NULL DEFAULT 0,
-        application_id INTEGER REFERENCES applications(id),
-        ok INTEGER NOT NULL DEFAULT 1,
-        error TEXT,
-        est_cost_usd REAL,
-        created_at TEXT NOT NULL
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_llm_calls_application_id ON llm_calls(application_id)",
-    "CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model)",
-    "CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at)",
-]
-
-try:  # registered when imported from database/__init__.py (contracts §3)
-    from database.schema_registry import register as _register
-
-    _register(LLM_CALLS_SCHEMA_STATEMENTS)
-except Exception:  # noqa: BLE001 - registry unavailable (e.g. partial import)
-    logger.debug("llm_calls schema registration deferred", exc_info=True)
+# Canonical DDL lives in database/llm_calls.py (contracts §3, one module per
+# table). This module only writes rows via record_call().
 
 
 def _pricing_table() -> dict[str, tuple[float, float]]:

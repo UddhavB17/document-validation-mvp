@@ -20,10 +20,14 @@ LLM_CALLS_STATEMENTS = [
         tokens_out INTEGER,
         duration_ms INTEGER,
         est_cost_usd REAL,
+        ok INTEGER NOT NULL DEFAULT 1,
+        error TEXT,
         created_at TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_llm_calls_application_id ON llm_calls(application_id)",
+    "CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model)",
+    "CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at)",
 ]
 
 register(LLM_CALLS_STATEMENTS)

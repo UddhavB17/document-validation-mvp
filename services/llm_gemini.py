@@ -46,7 +46,12 @@ def _get_setting(key: str, default: Any = None) -> Any:
 
 
 def gemini_model() -> str:
-    raw = _get_setting("GEMINI_MODEL", "") or _get_setting("LLM_MODEL", "")
+    # --- fx-schema: honour DB llm_model with env still winning (contracts §7) ---
+    raw = (
+        _get_setting("GEMINI_MODEL", "")
+        or _get_setting("LLM_MODEL", "")
+        or _get_setting("llm_model", "")
+    )
     cleaned = str(raw or "").strip()
     return cleaned or DEFAULT_GEMINI_MODEL
 

@@ -66,14 +66,18 @@ Expected (Postgres):
 {
   "status": "ok",
   "version": "0.1.0",
-  "database": {"status": "ok", "dialect": "postgresql"}
+  "database": "ok",
+  "database_dialect": "postgresql",
+  "storage": "ok",
+  "worker": {"last_heartbeat": "2026-09-05T00:00:00+00:00", "status": "ok"}
 }
 ```
 
 The frontend `healthSchema` (`frontend/lib/api.ts`) only requires
-`status`/`version`, so the extra `database` object is ignored by the UI.
-If a strict health consumer ever breaks on the nested shape, fall back to
-`"database": "ok"` plus a top-level `"database_dialect"` key.
+`status`/`version`, so the extra keys are ignored by the UI. `database` is
+always a string (`"ok"`/`"error"`); the dialect lives in the top-level
+`"database_dialect"` key. `worker.status` is `"stale"` when the heartbeat
+is older than 2 minutes.
 
 ## 5. Neon notes
 

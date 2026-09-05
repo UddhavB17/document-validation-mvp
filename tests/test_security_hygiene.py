@@ -72,8 +72,13 @@ def test_health_reports_database_and_storage(isolated_db) -> None:
     payload = client.get("/health").json()
     assert payload["status"] == "ok"
     assert payload["version"] == main.app.version
+    # --- fx-schema: flat database contract (string, never a nested dict) ---
     assert payload["database"] == "ok"
+    assert isinstance(payload["database"], str)
+    assert payload["database_dialect"] in {"sqlite", "postgresql"}
     assert payload["storage"] == "ok"
+    assert isinstance(payload["worker"], dict)
+    assert payload["worker"]["status"] in {"ok", "stale"}
 
 
 def test_secret_setting_round_trips_encrypted(isolated_db, monkeypatch) -> None:

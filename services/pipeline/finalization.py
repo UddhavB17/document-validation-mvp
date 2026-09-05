@@ -6,7 +6,7 @@ from typing import Any
 
 from services.audit_service import log_action
 from services.exception_aggregator import aggregate
-from services.llm_service import generate_explanation, summarize_exceptions
+from services.llm_service import generate_explanation, generate_summaries, summarize_exceptions
 from services.pipeline.persistence import (
     _save_ground_truth,
     _save_llm_summary,
@@ -36,6 +36,8 @@ def _finalize_pipeline_result(
         summary = llm_summary or summary
     if summary:
         _save_llm_summary(application_id, summary)
+    # --- fx-schema: persist bilingual ops summaries ---
+    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth})
 
     report_path = save_report_json(
         build_report(

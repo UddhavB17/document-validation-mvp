@@ -13,7 +13,7 @@ from services.config import get_setting
 from services.exception_aggregator import aggregate
 from services.input_classifier import classify_input_text
 from services.job_control import cooperate
-from services.llm_service import generate_explanation, summarize_exceptions
+from services.llm_service import generate_explanation, generate_summaries, summarize_exceptions
 from services.paths import processed_output_dir
 from services.pdf_processor import process_pdf_structure
 from services.pipeline.anomalies import (
@@ -357,6 +357,8 @@ def _run_pipeline_impl(
         touch_progress(application_id, "LLM reviewer summary complete")
     if summary:
         _save_llm_summary(application_id, summary)
+    # --- fx-schema: persist bilingual ops summaries ---
+    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth})
 
     if mapped_result is not None:
         reviewer_summary = build_reviewer_summary(

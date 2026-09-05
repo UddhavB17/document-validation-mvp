@@ -106,14 +106,15 @@ app.include_router(admin_ops.router)
 # ── Health ────────────────────────────────────
 @app.get("/health", tags=["meta"])
 def health_check() -> dict[str, object]:
+    # --- fx-schema: flat database contract (string + dialect) ---
     from database.db import dialect
 
     try:
         with get_connection() as connection:
             connection.execute("SELECT 1").fetchone()
-        database_status: dict[str, str] = {"status": "ok", "dialect": dialect()}
+        database: str = "ok"
     except Exception:  # noqa: BLE001 - health must report, not raise
-        database_status = {"status": "error", "dialect": dialect()}
+        database = "error"
     storage = "ok"
     try:
         get_store().exists("healthcheck")
@@ -129,7 +130,8 @@ def health_check() -> dict[str, object]:
     return {
         "status": "ok",
         "version": app.version,
-        "database": database_status,
+        "database": database,
+        "database_dialect": dialect(),
         "storage": storage,
         "worker": worker,
     }
