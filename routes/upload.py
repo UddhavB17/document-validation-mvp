@@ -27,17 +27,13 @@ from services.file_validator import (
     validate_upload,
 )
 from services.job_control import PipelineCancelled, persist_job_input_or_fail
-from services.job_runner import submit_job
+from services.job_runner import enqueue, submit_job
 from services.paths import job_work_dir, upload_dir
 from services.pipeline import run_pipeline
 from services.pipeline.input_preparation import cleanup_job_source, resolve_job_source
 from services.progress_tracker import (
-    create_pipeline_job,
+    create_pipeline_job,  # noqa: F401  # kept: tests call upload_route.create_pipeline_job
     get_progress,
-    mark_failed,
-    mark_job_completed,
-    mark_job_failed,
-    mark_job_started,
     start_tracking,
 )
 from services.storage import get_store
@@ -621,6 +617,7 @@ def _queue_mapped_verification(
     audit_action: str,
     audit_detail: str | None = None,
     package_id: str | None = None,
+    batch_id: str | None = None,
 ) -> dict[str, object]:
     mapped_pages = sorted({page for item in parsed.document_index for page in item.pages})
     automatic_mapping = not parsed.document_index
@@ -722,7 +719,7 @@ def _queue_mapped_verification(
             else f"Queued {len(mapped_pages)} mapped page(s) for deterministic verification"
         ),
     )
-    job_id = create_pipeline_job(application_id)
+    job_id = -1
     manifest_payload = parsed.pipeline_payload()
     reference_data = manifest_payload.get("reference_data") or {}
     primary_reference = reference_data.get("primary") if isinstance(reference_data, dict) else {}
@@ -738,15 +735,18 @@ def _queue_mapped_verification(
         "case_type": manifest_payload.get("case_type") or "Normal Case",
     }
     try:
-        persist_job_input_or_fail(
-            job_id,
+        job_id = enqueue(
+            "mapped_pipeline",
             application_id,
-            source_path=file_path,
-            system_data=recovery_system_data,
-            product_type=parsed.product_type,
-            mapped_manifest=manifest_payload,
-            package_id=package_id,
-            generate_llm_summary=True,
+            {
+                "source_path": str(file_path),
+                "system_data": recovery_system_data,
+                "product_type": parsed.product_type,
+                "mapped_manifest": manifest_payload,
+                "package_id": package_id,
+                "generate_llm_summary": True,
+            },
+            batch_id=batch_id,
         )
     except Exception as exc:
         raise HTTPException(
@@ -1282,14 +1282,16 @@ async def upload_file(
         stage="queued",
         message="Upload accepted and queued",
     )
-    job_id = create_pipeline_job(application_id)
+    job_id = -1
     try:
-        persist_job_input_or_fail(
-            job_id,
+        job_id = enqueue(
+            "pdf_pipeline",
             application_id,
-            source_path=file_path,
-            system_data=system_data,
-            product_type=product_type,
+            {
+                "source_path": str(file_path),
+                "system_data": system_data,
+                "product_type": product_type,
+            },
         )
     except Exception as exc:
         _cleanup_work_dir(work_dir)
@@ -1297,7 +1299,6 @@ async def upload_file(
             status_code=500,
             detail="Upload accepted but failed to queue securely for processing",
         ) from exc
-
     submit_job(
         _run_pipeline_task,
         job_id,
@@ -1333,40 +1334,16 @@ def _run_pipeline_task(
     system_data: dict,
     product_type: str,
 ) -> None:
-    source_path = resolve_job_source(application_id, file_path, job_id)
+    """Legacy entry point kept for tests; body lives in services.pipeline.tasks."""
+    from services.pipeline import tasks as pipeline_tasks
+
     try:
-        mark_job_started(job_id)
-        result = run_pipeline(
-            source_path,
-            application_id,
-            system_data=system_data,
-            product_type=product_type,
-            job_id=job_id,
+        pipeline_tasks._do_pipeline_work(
+            job_id, file_path, application_id, system_data, product_type,
+            run_fn=run_pipeline,
         )
-        if result.get("pipeline_status") == "failed":
-            mark_job_failed(job_id, "Pipeline completed with failed outcome")
-        else:
-            mark_job_completed(job_id)
     except PipelineCancelled:
         return
-    except Exception as exc:  # noqa: BLE001
-        mark_job_failed(job_id, str(exc))
-        mark_failed(application_id, str(exc))
-        with get_connection() as connection:
-            connection.execute(
-                "UPDATE applications SET status = ? WHERE id = ?",
-                ("pipeline_failed", application_id),
-            )
-            connection.execute(
-                """
-                INSERT INTO audit_log (application_id, action, details)
-                VALUES (?, ?, ?)
-                """,
-                (application_id, "pipeline_failed", str(exc)),
-            )
-    finally:
-        # Job-scoped pipeline inputs are deleted on return, success or failure.
-        cleanup_job_source(source_path)
 
 
 def _run_mapped_pipeline_task(
@@ -1376,74 +1353,36 @@ def _run_mapped_pipeline_task(
     manifest: dict[str, object],
     package_id: str | None = None,
 ) -> None:
-    source_path = resolve_job_source(application_id, file_path, job_id)
+    """Legacy entry point kept for tests; body lives in services.pipeline.tasks."""
+    from services.pipeline import tasks as pipeline_tasks
+
+    reference_data = manifest.get("reference_data") or {}
+    primary = reference_data.get("primary") if isinstance(reference_data, dict) else {}
+    primary = primary if isinstance(primary, dict) else {}
+    system_data = {
+        **primary,
+        "loan_id": manifest.get("loan_id"),
+        "product_type": manifest.get("product_type") or "LAP",
+        "branch": manifest.get("branch"),
+        "application_date": manifest.get("application_date"),
+        "reference_data": reference_data,
+        "people": reference_data,
+        "case_type": manifest.get("case_type") or "Normal Case",
+    }
     try:
-        mark_job_started(job_id)
-        reference_data = manifest.get("reference_data") or {}
-        primary = reference_data.get("primary") if isinstance(reference_data, dict) else {}
-        primary = primary if isinstance(primary, dict) else {}
-        system_data = {
-            **primary,
-            "loan_id": manifest.get("loan_id"),
-            "product_type": manifest.get("product_type") or "LAP",
-            "branch": manifest.get("branch"),
-            "application_date": manifest.get("application_date"),
-            "reference_data": reference_data,
-            "people": reference_data,
-            "case_type": manifest.get("case_type") or "Normal Case",
-        }
-        result = run_pipeline(
-            source_path,
+        pipeline_tasks._do_pipeline_work(
+            job_id,
+            file_path,
             application_id,
-            system_data=system_data,
-            product_type=str(manifest.get("product_type") or "LAP"),
-            generate_llm_summary=True,
+            system_data,
+            str(manifest.get("product_type") or "LAP"),
             mapped_manifest=manifest,
-            source_documents=_load_package_source_documents(package_id),
-            job_id=job_id,
+            package_id=package_id,
+            generate_llm_summary=True,
+            run_fn=run_pipeline,
         )
-        if result.get("pipeline_status") == "failed":
-            mark_job_failed(job_id, "Pipeline completed with failed outcome")
-        else:
-            mark_job_completed(job_id)
-        if package_id:
-            with get_connection() as connection:
-                connection.execute(
-                    """
-                    UPDATE intake_packages
-                    SET status = 'completed', verified_at = CURRENT_TIMESTAMP
-                    WHERE package_id = ? AND application_id = ?
-                    """,
-                    (package_id, application_id),
-                )
     except PipelineCancelled:
         return
-    except Exception as exc:  # noqa: BLE001
-        mark_job_failed(job_id, str(exc))
-        mark_failed(application_id, str(exc))
-        with get_connection() as connection:
-            connection.execute(
-                "UPDATE applications SET status = ? WHERE id = ?",
-                ("pipeline_failed", application_id),
-            )
-            connection.execute(
-                """
-                INSERT INTO audit_log (application_id, action, details)
-                VALUES (?, ?, ?)
-                """,
-                (application_id, "pipeline_failed", str(exc)),
-            )
-            if package_id:
-                connection.execute(
-                    """
-                    UPDATE intake_packages SET status = 'failed'
-                    WHERE package_id = ? AND application_id = ?
-                    """,
-                    (package_id, application_id),
-                )
-    finally:
-        # Job-scoped pipeline inputs are deleted on return, success or failure.
-        cleanup_job_source(source_path)
 
 
 def _load_package_source_documents(package_id: str | None) -> list[dict[str, object]]:
@@ -1469,3 +1408,420 @@ def upload_progress(application_id: int) -> dict[str, object]:
     if progress is None:
         raise HTTPException(status_code=404, detail="Progress not found for application")
     return progress
+
+
+# --- batch ---
+
+
+@router.post("/batch", summary="Upload up to ten files as one batch")
+async def upload_batch(
+    files: list[UploadFile] = File(...),
+    product_type: str = Form("LAP"),
+    branch: str = Form(""),
+    applicant_name: str = Form(""),
+    case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
+) -> dict[str, object]:
+    """Create one application + one job per file sharing a batch_id."""
+    init_db()
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="A batch accepts at most 10 files")
+    batch_id = uuid4().hex
+    batch_dir = UPLOAD_DIR / f"batch_{batch_id}"
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    # Index sidecar manifests by stem: <name>.pdf + <name>.manifest.json
+    manifests: dict[str, bytes] = {}
+    for item in files:
+        name = (item.filename or "").lower()
+        if name.endswith(".manifest.json"):
+            stem = Path(item.filename or "").name[: -len(".manifest.json")]
+            manifests[stem.lower()] = await item.read()
+
+    items: list[dict[str, object]] = []
+    for item in files:
+        filename = item.filename or "upload.pdf"
+        lowered = filename.lower()
+        if lowered.endswith(".manifest.json"):
+            continue
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        # Basic filename validation before touching disk.
+        if lowered.endswith(".pdf"):
+            precheck = validate_upload(filename, file_size_bytes=item.size or 0)
+            if not precheck["is_valid"]:
+                items.append(
+                    {
+                        "filename": filename,
+                        "application_id": None,
+                        "job_id": None,
+                        "status": "rejected",
+                        "reason": "; ".join(str(e) for e in precheck["errors"]),
+                    }
+                )
+                continue
+        elif lowered.endswith(".zip"):
+            precheck = validate_package_upload(filename, file_size_bytes=item.size or 0)
+            if not precheck["is_valid"]:
+                items.append(
+                    {
+                        "filename": filename,
+                        "application_id": None,
+                        "job_id": None,
+                        "status": "rejected",
+                        "reason": "; ".join(str(e) for e in precheck["errors"]),
+                    }
+                )
+                continue
+        else:
+            items.append(
+                {
+                    "filename": filename,
+                    "application_id": None,
+                    "job_id": None,
+                    "status": "rejected",
+                    "reason": "Only PDF files accepted",
+                }
+            )
+            continue
+        try:
+            if lowered.endswith(".zip"):
+                result_item = await _batch_single_mapped_zip(
+                    item, batch_id, batch_dir, timestamp, case_type
+                )
+                items.append(result_item)
+                continue
+            stem = Path(filename).stem
+            sidecar = manifests.get(stem.lower())
+            if sidecar is not None:
+                result_item = await _batch_single_pdf_with_manifest(
+                    item,
+                    sidecar,
+                    filename,
+                    batch_id,
+                    batch_dir,
+                    timestamp,
+                    case_type,
+                )
+                items.append(result_item)
+                continue
+            result_item = await _batch_single_plain_pdf(
+                item,
+                filename,
+                batch_id,
+                batch_dir,
+                timestamp,
+                product_type,
+                branch,
+                applicant_name,
+                case_type,
+            )
+            items.append(result_item)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            items.append(
+                {
+                    "filename": filename,
+                    "application_id": None,
+                    "job_id": None,
+                    "status": "rejected",
+                    "reason": detail,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            items.append(
+                {
+                    "filename": filename,
+                    "application_id": None,
+                    "job_id": None,
+                    "status": "rejected",
+                    "reason": str(exc)[:300],
+                }
+            )
+    return {"batch_id": batch_id, "items": items}
+
+
+@router.get("/batch/{batch_id}", summary="Get per-file batch status")
+def get_batch_status(batch_id: str) -> dict[str, object]:
+    init_db()
+    if not re.fullmatch(r"[0-9a-f]{32}", batch_id):
+        raise HTTPException(status_code=404, detail="Batch not found")
+    with get_connection() as connection:
+        jobs = connection.execute(
+            """
+            SELECT id, application_id, status, attempt, max_attempts,
+                   failure_reason, error
+            FROM pipeline_jobs
+            WHERE batch_id = ?
+            ORDER BY id
+            """,
+            (batch_id,),
+        ).fetchall()
+        if not jobs:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        items: list[dict[str, object]] = []
+        for job in jobs:
+            app_id = int(job["application_id"])
+            uploaded = connection.execute(
+                """
+                SELECT original_filename FROM uploaded_files
+                WHERE application_id = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (app_id,),
+            ).fetchone()
+            progress = connection.execute(
+                "SELECT percentage, status FROM pipeline_progress WHERE application_id = ?",
+                (app_id,),
+            ).fetchone()
+            status = str(job["status"])
+            items.append(
+                {
+                    "application_id": app_id,
+                    "filename": str(uploaded["original_filename"])
+                    if uploaded and uploaded["original_filename"]
+                    else f"application_{app_id}.pdf",
+                    "status": status,
+                    "attempt": int(job["attempt"] or 0),
+                    "max_attempts": int(job["max_attempts"] or 3),
+                    "failure_reason": job["failure_reason"] if job["failure_reason"] else None,
+                    "progress_percentage": float(progress["percentage"])
+                    if progress and progress["percentage"] is not None
+                    else 0.0,
+                    "review_ready": status == "completed",
+                }
+            )
+    return {"batch_id": batch_id, "items": items}
+
+
+async def _batch_single_plain_pdf(
+    item: UploadFile,
+    filename: str,
+    batch_id: str,
+    batch_dir: Path,
+    timestamp: str,
+    product_type: str,
+    branch: str,
+    applicant_name: str,
+    case_type: str,
+) -> dict[str, object]:
+    file_path = batch_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
+    file_size_bytes = await _save_upload_stream(item, file_path)
+    validation = validate_file(file_path, file_size_bytes)
+    if not validation["valid"]:
+        file_path.unlink(missing_ok=True)
+        return {
+            "filename": filename,
+            "application_id": None,
+            "job_id": None,
+            "status": "rejected",
+            "reason": str(validation["error"]),
+        }
+    loan_id = Path(filename).stem[:64] or f"BATCH-{timestamp}"
+    resolved_applicant = applicant_name.strip() or loan_id
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            INSERT INTO applications (loan_id, applicant_name, product_type, branch)
+            VALUES (?, ?, ?, ?)
+            RETURNING id
+            """,
+            (loan_id, resolved_applicant, product_type, branch),
+        ).fetchone()
+        application_id = int(row["id"])
+        connection.execute(
+            """
+            INSERT INTO uploaded_files (
+                application_id, file_path, original_filename, file_size_kb,
+                total_pages, digital_pages, scanned_pages
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                application_id,
+                str(file_path),
+                filename,
+                round(file_size_bytes / 1024, 2),
+                validation["total_pages"],
+                validation["digital_pages"],
+                validation["scanned_pages"],
+            ),
+        )
+        connection.execute(
+            "INSERT INTO audit_log (application_id, action, details) VALUES (?, ?, ?)",
+            (application_id, "file_uploaded", f"Batch {batch_id}: uploaded {filename}"),
+        )
+    system_data = {
+        "loan_id": loan_id,
+        "applicant_name": resolved_applicant,
+        "product_type": product_type,
+        "branch": branch,
+        "case_type": case_type,
+        "people": {"primary": {"role": "primary", "applicant_name": resolved_applicant}},
+    }
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE applications SET status = ? WHERE id = ?", ("processing", application_id)
+        )
+    start_tracking(
+        application_id,
+        total_pages=int(validation["total_pages"]),  # type: ignore[arg-type]
+        digital_pages=int(validation["digital_pages"]),  # type: ignore[arg-type]
+        scanned_pages=int(validation["scanned_pages"]),  # type: ignore[arg-type]
+        stage="queued",
+        message=f"Batch {batch_id}: upload accepted and queued",
+    )
+    try:
+        job_id = enqueue(
+            "pdf_pipeline",
+            application_id,
+            {
+                "source_path": str(file_path),
+                "system_data": system_data,
+                "product_type": product_type,
+            },
+            batch_id=batch_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="Upload accepted but failed to queue securely"
+        ) from exc
+    submit_job(
+        _run_pipeline_task,
+        job_id,
+        str(file_path),
+        application_id,
+        system_data,
+        product_type,
+    )
+    return {
+        "filename": filename,
+        "application_id": application_id,
+        "job_id": job_id,
+        "status": "queued",
+    }
+
+
+async def _batch_single_pdf_with_manifest(
+    item: UploadFile,
+    manifest_bytes: bytes,
+    filename: str,
+    batch_id: str,
+    batch_dir: Path,
+    timestamp: str,
+    case_type: str,
+) -> dict[str, object]:
+    file_path = batch_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
+    await _save_upload_stream(item, file_path)
+    try:
+        manifest_text = manifest_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail="Manifest file is not valid UTF-8") from exc
+    try:
+        parsed = _parse_manifest(manifest_text)
+        parsed.case_type = case_type  # type: ignore[assignment]
+    except HTTPException:
+        file_path.unlink(missing_ok=True)
+        raise
+    file_size_bytes = file_path.stat().st_size
+    validation = validate_file(file_path, file_size_bytes)
+    if not validation["valid"]:
+        file_path.unlink(missing_ok=True)
+        return {
+            "filename": filename,
+            "application_id": None,
+            "job_id": None,
+            "status": "rejected",
+            "reason": str(validation["error"]),
+        }
+    result = _queue_mapped_verification(
+        parsed,
+        file_path=file_path,
+        original_filename=filename,
+        file_size_bytes=file_size_bytes,
+        validation=validation,
+        audit_action="mapped_file_uploaded",
+        audit_detail=f"Batch {batch_id}: uploaded {filename} with manifest",
+        batch_id=batch_id,
+    )
+    return {
+        "filename": filename,
+        "application_id": result["application_id"],
+        "job_id": result["job_id"],
+        "status": "queued",
+    }
+
+
+async def _batch_single_mapped_zip(
+    item: UploadFile,
+    batch_id: str,
+    batch_dir: Path,
+    timestamp: str,
+    case_type: str,
+) -> dict[str, object]:
+    filename = item.filename or "package.zip"
+    package_bytes = await _read_upload_bytes(item)
+    try:
+        archive = zipfile.ZipFile(BytesIO(package_bytes))
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
+    with archive:
+        members = [
+            m
+            for m in archive.infolist()
+            if not m.is_dir()
+            and not PurePosixPath(m.filename).name.startswith(".")
+            and "__MACOSX" not in PurePosixPath(m.filename).parts
+        ]
+        pdf_members = [
+            m for m in members if PurePosixPath(m.filename).suffix.lower() == ".pdf"
+        ]
+        json_members = [
+            m for m in members if PurePosixPath(m.filename).suffix.lower() == ".json"
+        ]
+        if len(json_members) != 1 or not pdf_members:
+            raise HTTPException(
+                status_code=422,
+                detail="Mapped ZIP must contain one PDF and one JSON manifest",
+            )
+        manifest_text = archive.read(json_members[0]).decode("utf-8")
+        manifest_payload = _decode_manifest_payload(manifest_text)
+        pdf_member = _select_pdf_member(pdf_members, manifest_payload)
+        pdf_bytes = archive.read(pdf_member)
+        if not pdf_bytes:
+            raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
+    file_path = batch_dir / f"mapped_package_{timestamp}.pdf"
+    file_path.write_bytes(pdf_bytes)
+    original_filename = PurePosixPath(pdf_member.filename).name
+    try:
+        parsed = _parse_manifest(manifest_text)
+        parsed.case_type = case_type  # type: ignore[assignment]
+    except HTTPException:
+        file_path.unlink(missing_ok=True)
+        raise
+    file_size_bytes = file_path.stat().st_size
+    validation = validate_file(file_path, file_size_bytes)
+    if not validation["valid"]:
+        file_path.unlink(missing_ok=True)
+        return {
+            "filename": filename,
+            "application_id": None,
+            "job_id": None,
+            "status": "rejected",
+            "reason": str(validation["error"]),
+        }
+    result = _queue_mapped_verification(
+        parsed,
+        file_path=file_path,
+        original_filename=original_filename,
+        file_size_bytes=file_size_bytes,
+        validation=validation,
+        audit_action="mapped_file_uploaded",
+        audit_detail=f"Batch {batch_id}: mapped ZIP {filename}",
+        batch_id=batch_id,
+    )
+    return {
+        "filename": filename,
+        "application_id": result["application_id"],
+        "job_id": result["job_id"],
+        "status": "queued",
+    }

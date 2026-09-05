@@ -13,14 +13,12 @@ from services.job_control import (
     JobInputUnavailableError,
     PipelineCancelled,
     load_job_input,
-    persist_job_input_or_fail,
     request_control,
 )
-from services.job_runner import submit_job
+from services.job_runner import enqueue, submit_job
 from services.pipeline import run_pipeline
 from services.progress_tracker import (
     RETRYABLE_PROGRESS_STATES,
-    create_pipeline_job,
     get_progress,
     mark_failed,
     mark_job_completed,
@@ -182,21 +180,27 @@ def queue_application_reprocess(
         with get_connection() as connection:
             connection.execute("DELETE FROM pages WHERE application_id = ?", (application_id,))
     parent_job_id = int(previous_job["id"]) if previous_job else None
-    job_id = create_pipeline_job(
+    kind = "mapped_reprocess" if mapped_manifest is not None else "pdf_reprocess"
+    job_id = enqueue(
+        kind,
         application_id,
-        job_type="pdf_reprocess",
-        parent_job_id=parent_job_id,
+        {
+            "source_path": str(file_path),
+            "system_data": system_data,
+            "product_type": str(application["product_type"] or "LAP"),
+            "mapped_manifest": mapped_manifest,
+            "package_id": package_id,
+            "generate_llm_summary": generate_llm_summary,
+            "resume": resume,
+            "refresh_cached_ocr": refresh_cached_ocr,
+        },
     )
-    persist_job_input_or_fail(
-        job_id,
-        application_id,
-        source_path=file_path,
-        system_data=system_data,
-        product_type=str(application["product_type"] or "LAP"),
-        mapped_manifest=mapped_manifest,
-        package_id=package_id,
-        generate_llm_summary=generate_llm_summary,
-    )
+    # Preserve parent linkage for audit trails.
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE pipeline_jobs SET parent_job_id = ? WHERE id = ?",
+            (parent_job_id, job_id),
+        )
     with get_connection() as connection:
         connection.execute(
             "UPDATE applications SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -232,6 +236,7 @@ def queue_application_reprocess(
         resume,
         refresh_cached_ocr,
     )
+
     return {
         "application_id": application_id,
         "job_id": job_id,

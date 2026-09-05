@@ -404,21 +404,19 @@ def create_pipeline_job(
                 (application_id,),
             ).fetchone()[0]
         )
-        cursor = connection.execute(
+        row = connection.execute(
             """
             INSERT INTO pipeline_jobs (
                 application_id, job_type, status, control_state, attempt,
+                max_attempts, next_run_at, failure_reason, batch_id,
                 parent_job_id, heartbeat_at, created_at
             )
-            VALUES (?, ?, 'queued', 'running', ?, ?, ?, ?)
+            VALUES (?, ?, 'queued', 'running', ?, 3, NULL, NULL, NULL, ?, ?, ?)
             RETURNING id
             """,
             (application_id, job_type, attempt, parent_job_id, now, now),
-        )
-        created = cursor.fetchone()
-        if created is None:
-            raise RuntimeError("Failed to create pipeline job")
-        return int(created["id"])
+        ).fetchone()
+        return int(row["id"])
 
 
 def mark_job_started(job_id: int) -> None:

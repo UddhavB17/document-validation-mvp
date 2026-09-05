@@ -560,4 +560,48 @@ export const api = {
     return highlight ? `${base}?highlight=${encodeURIComponent(highlight)}` : base;
   },
   ocrJsonUrl: (applicationId: number) => `${API_BASE_URL}/review/applications/${applicationId}/ocr-json`,
+  uploadBatch: async (files: File[]) => {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+    const response = await fetch(`${API_BASE_URL}/upload/batch`, { method: "POST", body: formData });
+    return parseApiResponse(response, batchUploadResponseSchema);
+  },
+  batchStatus: (batchId: string) => getJsonResponse(`/upload/batch/${batchId}`, batchStatusSchema),
 };
+
+// --- ws-c batch ---
+export const batchItemSchema = z.object({
+  filename: z.string(),
+  application_id: z.number().nullable().optional(),
+  job_id: z.number().nullable().optional(),
+  status: z.string(),
+  reason: nullableString,
+});
+
+export const batchUploadResponseSchema = z.object({
+  batch_id: z.string(),
+  items: z.array(batchItemSchema),
+});
+
+export const batchStatusItemSchema = z.object({
+  application_id: z.number(),
+  filename: z.string(),
+  status: z.string(),
+  attempt: z.number(),
+  max_attempts: z.number().optional().default(3),
+  failure_reason: nullableString,
+  progress_percentage: z.number().nullable().optional(),
+  review_ready: z.boolean(),
+});
+
+export const batchStatusSchema = z.object({
+  batch_id: z.string(),
+  items: z.array(batchStatusItemSchema),
+});
+
+export type BatchItemUpload = z.infer<typeof batchItemSchema>;
+export type BatchUploadResponse = z.infer<typeof batchUploadResponseSchema>;
+export type BatchItem = z.infer<typeof batchStatusItemSchema>;
+export type BatchStatus = z.infer<typeof batchStatusSchema>;

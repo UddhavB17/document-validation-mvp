@@ -1,4 +1,4 @@
-"""Shared pytest fixtures (ws-i postgres cutover).
+"""Shared fixtures for Postgres and queue/batch tests.
 
 When ``DATABASE_URL`` is set (PostgreSQL): at session start run
 ``alembic upgrade head`` against it; before each test truncate all tables
@@ -13,6 +13,8 @@ module does nothing and each test's own ``monkeypatch`` of
 from __future__ import annotations
 
 import os
+
+os.environ.setdefault("DMEF_INLINE_WORKER", "1")
 
 import pytest
 

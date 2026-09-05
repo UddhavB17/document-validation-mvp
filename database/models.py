@@ -450,6 +450,10 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE pipeline_jobs ADD COLUMN heartbeat_at TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN control_requested_at TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN last_completed_page INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE pipeline_jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3",
+    "ALTER TABLE pipeline_jobs ADD COLUMN next_run_at TEXT",
+    "ALTER TABLE pipeline_jobs ADD COLUMN failure_reason TEXT",
+    "ALTER TABLE pipeline_jobs ADD COLUMN batch_id TEXT",
 ]
 
 INDEX_STATEMENTS = [
@@ -470,6 +474,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status ON pipeline_jobs(status)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_status_next_run ON pipeline_jobs(status, next_run_at)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_application_attempt ON pipeline_jobs(application_id, attempt)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_batch_id ON pipeline_jobs(batch_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_job_inputs_application_id ON pipeline_job_inputs(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_id ON pipeline_page_events(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_pipeline_page_events_application_page ON pipeline_page_events(application_id, page_number)",

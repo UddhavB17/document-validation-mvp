@@ -100,3 +100,24 @@ export function useUndoDecision(applicationId: number) {
     },
   });
 }
+
+const BATCH_TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "rejected"]);
+
+export function useBatchStatus(batchId: string | null) {
+  return useQuery({
+    queryKey: ["batchStatus", batchId],
+    queryFn: () => {
+      if (batchId === null) {
+        throw new Error("Batch ID is required");
+      }
+      return api.batchStatus(batchId);
+    },
+    enabled: batchId !== null,
+    refetchInterval: (query) => {
+      const items = query.state.data?.items ?? [];
+      const pending = items.some((item) => !BATCH_TERMINAL_STATUSES.has(String(item.status ?? "").toLowerCase()));
+      return pending ? 3000 : false;
+    },
+    retry: false,
+  });
+}

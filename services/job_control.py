@@ -109,6 +109,8 @@ def persist_job_input(
     mapped_manifest: dict[str, Any] | None = None,
     package_id: str | None = None,
     generate_llm_summary: bool | None = None,
+    resume: bool = False,
+    refresh_cached_ocr: bool = False,
 ) -> None:
     """Encrypt the minimum complete payload required for an exact recovery run."""
     source = Path(source_path).resolve()
@@ -121,6 +123,8 @@ def persist_job_input(
         "mapped_manifest": mapped_manifest,
         "package_id": package_id,
         "generate_llm_summary": generate_llm_summary,
+        "resume": resume,
+        "refresh_cached_ocr": refresh_cached_ocr,
         "settings_snapshot": safe_settings_snapshot(),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -151,6 +155,8 @@ def persist_job_input_or_fail(
     mapped_manifest: dict[str, Any] | None = None,
     package_id: str | None = None,
     generate_llm_summary: bool | None = None,
+    resume: bool = False,
+    refresh_cached_ocr: bool = False,
 ) -> None:
     """Persist recovery input, or mark the queued job/application failed and re-raise."""
     try:
@@ -163,6 +169,8 @@ def persist_job_input_or_fail(
             mapped_manifest=mapped_manifest,
             package_id=package_id,
             generate_llm_summary=generate_llm_summary,
+            resume=resume,
+            refresh_cached_ocr=refresh_cached_ocr,
         )
     except Exception as exc:
         from services.progress_tracker import mark_failed, mark_job_failed
@@ -270,6 +278,29 @@ def request_control(application_id: int, action: ControlAction) -> dict[str, Any
             ),
         )
     return {"application_id": application_id, "job_id": int(job["id"]), "status": next_status}
+
+
+def restart_job(application_id: int) -> dict[str, Any]:
+    """Reset the latest job for a fresh run: attempt=0, queued, no failure reason."""
+    now = _utc_now_iso()
+    with get_connection() as connection:
+        job = connection.execute(
+            "SELECT * FROM pipeline_jobs WHERE application_id = ? ORDER BY id DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+        if job is None:
+            raise JobControlError("No pipeline job exists for this application")
+        connection.execute(
+            """
+            UPDATE pipeline_jobs
+            SET status = 'queued', control_state = 'running', attempt = 0,
+                failure_reason = NULL, error = NULL, next_run_at = NULL,
+                control_requested_at = ?, heartbeat_at = ?
+            WHERE id = ?
+            """,
+            (now, now, job["id"]),
+        )
+    return {"application_id": application_id, "job_id": int(job["id"]), "status": "queued"}
 
 
 def cooperate(job_id: int | None, application_id: int) -> None:
