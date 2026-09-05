@@ -23,7 +23,10 @@ import {
 // (GET /review/applications/{id}) and the ops payload
 // (GET /ops/applications/{id}) are fetched once and refetched manually or
 // when the status hook reports a terminal state.
-const APPLICATION_REVIEW_POLL_STATUSES = new Set(["uploaded", "processing", "ocr_completed"]);
+// In-flight statuses that keep the lightweight /status poll alive. The API
+// reports `processing` while a run is active; every other state is terminal,
+// stops the 2 s poll, and triggers a single full-payload refetch.
+const APPLICATION_REVIEW_POLL_STATUSES = new Set(["processing"]);
 const PROGRESS_POLL_STATUSES = new Set(["queued", "processing"]);
 
 export const STATUS_POLL_INTERVAL_MS = 2000;

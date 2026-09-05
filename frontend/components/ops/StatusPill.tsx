@@ -23,6 +23,8 @@ export function normalizeOpsStatus(value: string | null | undefined): OpsStatus 
   if (normalized === "clean" || normalized === "processing" || normalized === "failed") {
     return normalized;
   }
+  // Legacy reviewer vocabulary (CLEAN / NEEDS_REVIEW / CRITICAL) folds into
+  // the ops vocabulary; raw values never reach the pill.
   return "needs_review";
 }
 

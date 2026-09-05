@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { EvidenceViewer, EvidenceSelection } from "@/components/ops/EvidenceViewer";
 import { FindingsList, PagesToVerifyTable } from "@/components/ops/FindingsList";
 import { OpsChecklist } from "@/components/ops/OpsChecklist";
-import { pickText, takeTopFindings } from "@/components/ops/opsUtils";
+import { pickText, clampPercentage, statusProgressPercentage, takeTopFindings } from "@/components/ops/opsUtils";
 import { StatusPill, normalizeOpsStatus } from "@/components/ops/StatusPill";
 import { OpsFinding } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
@@ -90,7 +90,12 @@ export default function OpsApplicationPage() {
 
   const data = ops.data;
   const opsStatus = normalizeOpsStatus(liveStatus);
-  const percentage = Math.min(100, Math.max(0, Number(data.processing.percentage ?? 0) || 0));
+  // While in-flight the bar follows the lightweight /status value nested
+  // under progress; the full ops payload is fetched once, never polled.
+  // Raw stage names stay out of the UI; only the percentage is shown.
+  const statusPercentage = statusProgressPercentage(status.data);
+  const percentage = statusPercentage ?? clampPercentage(data.processing.percentage);
+  const failureReason = status.data?.job?.failure_reason ?? data.processing.failure_reason;
 
   const openEvidence = (finding: OpsFinding, page: number) => {
     const evidencePage = finding.evidence?.page;
@@ -98,6 +103,7 @@ export default function OpsApplicationPage() {
     setEvidence({
       page,
       pages: finding.pages.length > 0 ? finding.pages : [page],
+      evidencePage: finding.evidence?.bbox ? (evidencePage ?? null) : null,
       bbox: matches && finding.evidence?.bbox ? [...finding.evidence.bbox] : null,
       severity: finding.severity,
       title: pickText(finding.title, locale),
@@ -105,7 +111,7 @@ export default function OpsApplicationPage() {
   };
 
   const openVerifyPage = (page: number) => {
-    setEvidence({ page, pages: [page], bbox: null, severity: null, title: "" });
+    setEvidence({ page, pages: [page], evidencePage: null, bbox: null, severity: null, title: "" });
   };
 
   return (
@@ -142,9 +148,9 @@ export default function OpsApplicationPage() {
             <p className="mt-1 font-mono text-xs font-semibold text-slate-500">{Math.round(percentage)}% {t(locale, "ops.review.progress")}</p>
           </div>
         ) : null}
-        {opsStatus === "failed" && data.processing.failure_reason ? (
+        {opsStatus === "failed" && failureReason ? (
           <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-900">
-            {data.processing.failure_reason}
+            {failureReason}
           </p>
         ) : null}
       </header>
@@ -178,7 +184,10 @@ export default function OpsApplicationPage() {
           onSelectPage={(page) => setEvidence((current) => {
             if (!current) return current;
             const pages = current.pages.includes(page) ? current.pages : [...current.pages, page].sort((a, b) => a - b);
-            return { ...current, page, pages, bbox: null };
+            // Keep the box while the new page is still the evidence page;
+            // clear it only when the page has no box.
+            const keepBox = current.bbox !== null && current.evidencePage !== null && current.evidencePage === page;
+            return { ...current, page, pages, bbox: keepBox ? current.bbox : null };
           })}
           onClose={() => setEvidence(null)}
         />

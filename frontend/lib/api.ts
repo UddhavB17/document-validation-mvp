@@ -675,6 +675,51 @@ const opsTextSchema = z.object({
   hi: z.string(),
 });
 
+// Contracts §5 status vocabulary. The reviewer still emits its legacy
+// uppercase values (services/reviewer.py: CLEAN / NEEDS_REVIEW / CRITICAL),
+// so the parser maps them here instead of leaking raw values into the pill.
+const OPS_STATUS_MAP: Record<string, "needs_review" | "clean" | "processing" | "failed"> = {
+  needs_review: "needs_review",
+  clean: "clean",
+  processing: "processing",
+  failed: "failed",
+  critical: "needs_review",
+};
+
+function mapOpsStatusValue(value: unknown): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return OPS_STATUS_MAP[normalized] ?? "needs_review";
+}
+
+export const opsStatusSchema = z.preprocess(
+  mapOpsStatusValue,
+  z.enum(["needs_review", "clean", "processing", "failed"]),
+);
+
+// Contracts §11 finding codes, priority order.
+const OPS_FINDING_CODES = [
+  "NAME_MISMATCH",
+  "ID_MISMATCH",
+  "ADDRESS_MISMATCH",
+  "MISSING_DOCUMENT",
+  "BANK_STATEMENT_OLD",
+  "PAGE_UNREADABLE",
+  "OCR_FAILED",
+  "DATA_MISSING",
+  "PROCESSING_ERROR",
+] as const;
+
+function isOpsFindingCode(value: unknown): boolean {
+  return (OPS_FINDING_CODES as readonly string[]).includes(String(value));
+}
+
+// Display strings stay lenient: null or a missing key becomes "" so one
+// empty field cannot fail the whole payload parse.
+const opsDisplayStringSchema = z.preprocess(
+  (value: unknown) => (value === null || value === undefined ? "" : value),
+  z.string(),
+);
+
 const opsBboxSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
 export const opsEvidenceSchema = z.object({
@@ -684,8 +729,8 @@ export const opsEvidenceSchema = z.object({
 });
 
 export const opsFindingSchema = z.object({
-  code: z.string(),
-  severity: z.string(),
+  code: z.string().refine(isOpsFindingCode, { message: "Unknown finding code" }),
+  severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
   title: opsTextSchema,
   detail: opsTextSchema,
   pages: z.array(z.number()),
@@ -701,7 +746,7 @@ export const opsPageToVerifySchema = z.object({
 export const opsChecklistRowSchema = z.object({
   s_no: z.number(),
   description: z.string(),
-  status: z.string(),
+  status: z.enum(["FOUND", "MISSING", "NOT_CHECKED"]),
   pages: z.array(z.number()),
 });
 
@@ -722,21 +767,21 @@ export const opsProcessingSchema = z.object({
 
 export const opsApplicationSchema = z.object({
   application_id: z.number(),
-  loan_id: z.string().nullable().optional(),
-  applicant_name: z.string().nullable().optional(),
-  status: z.string(),
+  loan_id: opsDisplayStringSchema,
+  applicant_name: opsDisplayStringSchema,
+  status: opsStatusSchema,
   processing: opsProcessingSchema,
   summary: opsTextSchema,
-  top_findings: z.array(opsFindingSchema),
+  top_findings: z.array(opsFindingSchema).max(5),
   pages_to_verify: z.array(opsPageToVerifySchema),
   checklist: opsChecklistSchema,
 });
 
 export const opsWorklistItemSchema = z.object({
   application_id: z.number(),
-  loan_id: z.string().nullable().optional(),
-  applicant_name: z.string().nullable().optional(),
-  status: z.string(),
+  loan_id: opsDisplayStringSchema.optional(),
+  applicant_name: opsDisplayStringSchema.optional(),
+  status: opsStatusSchema,
   findings_count: z.number(),
   updated_at: z.string().nullable().optional(),
 });
@@ -745,16 +790,36 @@ export const opsWorklistSchema = z.object({
   applications: z.array(opsWorklistItemSchema),
 });
 
-// Application processing status (contracts §8, ≤ 5 KB). The dedicated
-// GET /review/applications/{id}/status endpoint is owned by ws-a and is not
-// present in this branch yet; this tolerant schema accepts the status shape
-// once it lands and ignores any extra keys.
+// Application processing status (contracts §8, ≤ 5 KB). The lightweight
+// GET /review/applications/{id}/status nests progress under `progress`
+// (routes/review_pages.py: stage, percentage, completed_pages, total_pages)
+// plus the latest job row. The ops header bar reads progress.percentage
+// from here while in-flight; extra keys are ignored.
+const statusProgressSchema = z
+  .object({
+    stage: z.string().nullable().optional(),
+    percentage: z.number().nullable().optional(),
+    completed_pages: z.number().nullable().optional(),
+    total_pages: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const statusJobSchema = z
+  .object({
+    id: z.number().nullable().optional(),
+    status: z.string().nullable().optional(),
+    attempt: z.number().nullable().optional(),
+    failure_reason: z.string().nullable().optional(),
+  })
+  .passthrough();
+
 export const applicationStatusSchema = z
   .object({
     application_id: z.number().optional(),
     status: z.string(),
-    percentage: z.number().nullable().optional(),
-    failure_reason: z.string().nullable().optional(),
+    progress: statusProgressSchema.nullable().optional(),
+    updated_at: z.string().nullable().optional(),
+    job: statusJobSchema.nullable().optional(),
   })
   .passthrough();
 
@@ -800,13 +865,42 @@ export async function adminResetPasswordRequest(userId: number, newPassword: str
 }
 
 export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {
-  return getJsonResponse(`/ops/applications/${applicationId}`, opsApplicationSchema);
+  // The ops schemas use z.preprocess for legacy-status mapping and null
+  // coercion. That is runtime-correct, but this toolchain infers preprocessed
+  // fields as unknown through the response generic (see the note on
+  // anomalyEvidenceSchema above), so the schema is asserted to its own
+  // inferred output type here. The assertion cannot drift: OpsApplication is
+  // derived from this same schema.
+  return getJsonResponse(
+    `/ops/applications/${applicationId}`,
+    opsApplicationSchema as z.ZodType<OpsApplication>,
+  );
 }
 
 export async function fetchOpsWorklist(): Promise<OpsWorklist> {
-  return getJsonResponse("/ops/worklist", opsWorklistSchema);
+  // Same preprocess note as fetchOpsApplication.
+  return getJsonResponse("/ops/worklist", opsWorklistSchema as z.ZodType<OpsWorklist>);
 }
 
 export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {
   return getJsonResponse(`/review/applications/${applicationId}/status`, applicationStatusSchema);
 }
+
+// --- fx-frontend stubs until fx-integrate-df ---
+// Type-only stand-ins so `npm test` can compile this module before the auth
+// stream lands its schemas. These names are already referenced above from
+// ws-e; nothing here emits runtime code.
+export type AdminUser = {
+  id: number;
+  email: string;
+  display_name: string;
+  role: string;
+  is_active: boolean;
+};
+export declare const adminUserSchema: z.ZodType<AdminUser>;
+export type AuthUser = {
+  id: number;
+  email: string;
+  role: string;
+};
+export declare const authUserSchema: z.ZodType<AuthUser>;
