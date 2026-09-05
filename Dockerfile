@@ -1,8 +1,8 @@
-# DMEF backend image (owned by ws-b-storage-db). Python 3.11 only.
+# DMEF backend image (owned by ws-b-storage-db; entrypoints by ws-j). Python 3.11 only.
 #
-# Entry commands:
-#   uvicorn main:app --host 0.0.0.0 --port 8080
-#   python -m services.worker
+# Entry commands (same image, different command):
+#   API:    uvicorn main:app --host 0.0.0.0 --port 8080
+#   Worker: python -m services.worker --serve-health 8080
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -20,6 +20,12 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Non-root runtime user (ws-j): Cloud Run runs as non-root; the app only
+# needs /app (read) plus writable store/work dirs mounted at runtime.
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8080
 

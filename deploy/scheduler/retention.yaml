@@ -1,0 +1,39 @@
+# Cloud Scheduler retention job (ws-j-deploy-smoke).
+# Daily 02:00 IST -> POST /admin/retention/run?dry_run=false with an OIDC token.
+# The target service account must have run.routes.invoke on dmef-api and the
+# API must accept the scheduler OIDC audience (Cloud Run default).
+# Create once (operator only):
+#   gcloud scheduler jobs create http dmef-retention-daily \
+#     --location=asia-south1 \
+#     --schedule="0 2 * * *" \
+#     --time-zone="Asia/Kolkata" \
+#     --uri="https://dmef-api-PROJECT_HASH-REGION.a.run.app/admin/retention/run?dry_run=false" \
+#     --http-method=POST \
+#     --oidc-service-account-email=dmef-scheduler@PROJECT_ID.iam.gserviceaccount.com \
+#     --oidc-token-audience="https://dmef-api-PROJECT_HASH-REGION.a.run.app" \
+#     --headers="Content-Type=application/json" \
+#     --message-body="{}"
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: dmef-retention-daily
+labels:
+  app: dmef
+  component: retention
+spec:
+  schedule: "0 2 * * *"
+  timeZone: Asia/Kolkata
+  httpTarget:
+    httpMethod: POST
+    uri: https://dmef-api-PROJECT_HASH-REGION.a.run.app/admin/retention/run?dry_run=false
+    headers:
+      Content-Type: application/json
+    body: "{}"
+    oidcToken:
+      serviceAccountEmail: dmef-scheduler@PROJECT_ID.iam.gserviceaccount.com
+      audience: https://dmef-api-PROJECT_HASH-REGION.a.run.app
+  retryConfig:
+    retryCount: 3
+    maxRetryDuration: 600s
+    minBackoffDuration: 60s
+    maxBackoffDuration: 600s

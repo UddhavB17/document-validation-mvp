@@ -26,11 +26,11 @@ from services.file_validator import (
     validate_package_upload,
     validate_upload,
 )
-from services.job_control import PipelineCancelled, persist_job_input_or_fail
+from services.job_control import PipelineCancelled
 from services.job_runner import enqueue, submit_job
 from services.paths import job_work_dir, upload_dir
 from services.pipeline import run_pipeline
-from services.pipeline.input_preparation import cleanup_job_source, resolve_job_source
+from services.pipeline.input_preparation import cleanup_job_source
 from services.progress_tracker import (
     create_pipeline_job,  # noqa: F401  # kept: tests call upload_route.create_pipeline_job
     get_progress,

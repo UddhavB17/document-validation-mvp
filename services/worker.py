@@ -281,14 +281,94 @@ def process_once() -> bool:
     return True
 
 
-def run_worker(poll_seconds: float = 2.0, once: bool = False) -> None:
+def _default_poll_seconds() -> float:
+    """Poll interval from ``DMEF_WORKER_POLL_SECONDS`` (contracts §7)."""
+    try:
+        from services.config import get_float
+    except Exception:
+        return 2.0
+    try:
+        return float(get_float("DMEF_WORKER_POLL_SECONDS", 2.0, minimum=0.1))
+    except Exception:
+        return 2.0
+
+
+def _touch_idle_heartbeat() -> None:
+    """Update the singleton worker heartbeat row. Never raises."""
+    try:
+        from database.worker_heartbeat import update_heartbeat
+
+        update_heartbeat(WORKER_ID)
+    except Exception:
+        return
+
+
+def start_health_server(port: int):
+    """Start a minimal ``GET /health`` server for Cloud Run probes.
+
+    Returns the ``HTTPServer`` instance (already serving on a daemon
+    thread). Only answers ``GET /health`` with the worker heartbeat JSON;
+    every other path is 404. Never raises: on bind failure returns None.
+    """
+    import json
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    def _payload() -> dict:
+        try:
+            from database.worker_heartbeat import get_heartbeat
+
+            heartbeat = get_heartbeat()
+        except Exception:
+            heartbeat = {"last_heartbeat": None, "status": "stale"}
+        return {
+            "status": "ok",
+            "worker_id": WORKER_ID,
+            "worker": heartbeat,
+        }
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            if path != "/health":
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":"not_found"}')
+                return
+            body = json.dumps(_payload()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            return
+
+    try:
+        server = HTTPServer(("0.0.0.0", int(port)), _Handler)
+    except Exception:
+        return None
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+def run_worker(
+    poll_seconds: float | None = None, once: bool = False
+) -> None:
     """Claim → run → finalize loop. ``once`` processes a single job."""
     global _shutdown_requested
     try:
         signal.signal(signal.SIGTERM, request_shutdown)
     except (ValueError, OSError):
         pass
+    effective_poll = (
+        float(poll_seconds) if poll_seconds is not None else _default_poll_seconds()
+    )
     recover_stale_jobs()
+    _touch_idle_heartbeat()
+    last_idle_touch = time.monotonic()
     if once:
         process_once()
         return
@@ -296,8 +376,16 @@ def run_worker(poll_seconds: float = 2.0, once: bool = False) -> None:
         claimed = process_once()
         if _shutdown_requested:
             break
+        # Dedicated heartbeat every 30 s even when idle (ws-j).
+        now = time.monotonic()
+        if claimed:
+            _touch_idle_heartbeat()
+            last_idle_touch = now
+        elif now - last_idle_touch >= 30.0:
+            _touch_idle_heartbeat()
+            last_idle_touch = now
         if not claimed:
-            time.sleep(poll_seconds)
+            time.sleep(effective_poll)
 
 
 def main() -> None:
@@ -305,9 +393,23 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="DMEF durable pipeline worker")
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
-    parser.add_argument("--poll-seconds", type=float, default=2.0)
+    parser.add_argument("--poll-seconds", type=float, default=None)
+    parser.add_argument(
+        "--serve-health",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help="Start a minimal GET /health server for Cloud Run probes",
+    )
     args = parser.parse_args()
-    run_worker(poll_seconds=args.poll_seconds, once=args.once)
+    if args.serve_health is not None:
+        start_health_server(args.serve_health)
+    run_worker(
+        poll_seconds=args.poll_seconds
+        if args.poll_seconds is not None
+        else _default_poll_seconds(),
+        once=args.once,
+    )
 
 
 if __name__ == "__main__":

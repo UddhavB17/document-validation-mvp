@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database.db import get_connection
 from database.models import initialize_schema
 from routes import (
+    admin_ops,
     admin_users,
     auth,
     decisions,
@@ -99,12 +100,13 @@ app.include_router(admin_users.router)
 app.include_router(ops.router)
 app.include_router(review_pages.router)
 app.include_router(storage.router)
+app.include_router(admin_ops.router)
 
 
 # ── Health ────────────────────────────────────
 @app.get("/health", tags=["meta"])
 def health_check() -> dict[str, object]:
-    from database.db import dialect, get_connection
+    from database.db import dialect
 
     try:
         with get_connection() as connection:
@@ -118,9 +120,16 @@ def health_check() -> dict[str, object]:
     except Exception:
         logger.warning("Health check: object store unreachable", exc_info=True)
         storage = "error"
+    try:
+        from database.worker_heartbeat import get_heartbeat
+
+        worker: dict[str, object] = dict(get_heartbeat())
+    except Exception:  # noqa: BLE001 - health must report, not raise
+        worker = {"last_heartbeat": None, "status": "stale"}
     return {
         "status": "ok",
         "version": app.version,
         "database": database_status,
         "storage": storage,
+        "worker": worker,
     }
