@@ -26,9 +26,10 @@ def _seed_pdf_application(tmp_path: Path, *, progress_status: str = "failed") ->
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 ("OPS-001", "Ramesh Kumar", "LAP", "Delhi", "pipeline_failed"),
-            ).lastrowid
+            ).fetchone()["id"]
         )
         connection.execute(
             """

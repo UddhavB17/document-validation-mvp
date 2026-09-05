@@ -61,8 +61,11 @@ def _cutoff_text(moment: datetime) -> str:
 
 
 def _table_exists(connection: Any, table: str) -> bool:
+    # Probe in a separate connection: on Postgres a failed statement aborts
+    # the caller's transaction, so legacy-table probes must not run inside it.
     try:
-        connection.execute(f"SELECT 1 FROM {table} WHERE 1 = 0").fetchall()
+        with get_connection() as probe:
+            probe.execute(f"SELECT 1 FROM {table} WHERE 1 = 0").fetchall()
     except Exception:  # noqa: BLE001 - missing table on legacy databases
         return False
     return True
@@ -71,11 +74,18 @@ def _table_exists(connection: Any, table: str) -> bool:
 def _column_values(
     connection: Any, table: str, column: str, where: str, params: tuple[Any, ...]
 ) -> list[Any] | None:
-    """Return one column's values, or ``None`` when table/column is missing."""
+    """Return one column's values, or ``None`` when table/column is missing.
+
+    The probe runs in a separate connection so a missing-column error on
+    Postgres does not abort the caller's transaction (and roll back its
+    pending deletes). ``connection`` is kept for signature compatibility.
+    """
+    _ = connection
     try:
-        rows = connection.execute(
-            f"SELECT {column} FROM {table} WHERE {where}", params
-        ).fetchall()
+        with get_connection() as probe:
+            rows = probe.execute(
+                f"SELECT {column} FROM {table} WHERE {where}", params
+            ).fetchall()
     except Exception:  # noqa: BLE001 - legacy databases predate diet columns
         return None
     return [row[column] for row in rows]

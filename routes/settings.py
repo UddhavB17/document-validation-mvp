@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -65,8 +67,8 @@ def update_setting(config_key: str, payload: SettingUpdatePayload):
             new_value = incoming
 
         conn.execute(
-            "UPDATE system_settings SET config_value = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE config_key = ?",
-            (new_value, config_key),
+            "UPDATE system_settings SET config_value = ?, updated_at = ? WHERE config_key = ?",
+            (new_value, datetime.now(UTC).isoformat(), config_key),
         )
         conn.commit()
 

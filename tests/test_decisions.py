@@ -8,14 +8,15 @@ from main import app
 def _seed_application() -> int:
     init_db()
     with db.get_connection() as connection:
-        cursor = connection.execute(
+        created = connection.execute(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
             VALUES (?, ?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-DECISION-1", "Ramesh Kumar", "LAP", "Delhi", "NEEDS_REVIEW"),
-        )
-        application_id = cursor.lastrowid
+        ).fetchone()
+        application_id = int(created["id"])
         connection.execute(
             """
             INSERT INTO validation_results (application_id, rule_id, severity, reason)

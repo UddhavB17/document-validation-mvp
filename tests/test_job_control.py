@@ -26,8 +26,8 @@ def _seed_job(tmp_path: Path) -> tuple[int, int, Path]:
     with get_connection() as connection:
         application_id = int(
             connection.execute(
-                "INSERT INTO applications (loan_id, status) VALUES ('SECURE-001', 'processing')"
-            ).lastrowid
+                "INSERT INTO applications (loan_id, status) VALUES ('SECURE-001', 'processing') RETURNING id"
+            ).fetchone()["id"]
         )
     start_tracking(application_id, total_pages=2)
     return application_id, create_pipeline_job(application_id), source

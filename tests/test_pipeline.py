@@ -154,10 +154,11 @@ def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.Monke
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PIPE-001", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -241,10 +242,11 @@ def test_run_pipeline_saves_rule_summary_when_llm_fails(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PIPE-002", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -296,10 +298,11 @@ def test_run_pipeline_continues_when_page_processing_errors(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PIPE-003", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -371,10 +374,11 @@ def test_run_pipeline_marks_partial_scan_and_preserves_skipped_readability(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PARTIAL-001", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -439,10 +443,11 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-OCR-ERR-001", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (

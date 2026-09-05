@@ -12,8 +12,14 @@ config = context.config
 # Production connection string comes from DATABASE_URL (Neon PostgreSQL);
 # empty means the SQLite dev/test default. Set here so alembic.ini stays
 # environment-agnostic. Owned by ws-0 scaffold; migrations by ws-i.
+# requirements.txt ships psycopg v3, so a bare ``postgresql://`` URL must
+# be translated to the ``postgresql+psycopg://`` SQLAlchemy dialect.
 database_url = os.environ.get("DATABASE_URL", "").strip()
 if database_url:
+    if database_url.startswith("postgresql://"):
+        database_url = "postgresql+psycopg://" + database_url.removeprefix(
+            "postgresql://"
+        )
     config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database.db import get_connection
 from services.paths import processed_output_dir
@@ -24,7 +25,7 @@ def _required_int(value: object) -> int:
     raise ValueError(f"Expected an integer-compatible database value, got {value!r}")
 
 
-def coerce_json_row(row: sqlite3.Row) -> JsonRow:
+def coerce_json_row(row: Any) -> JsonRow:
     """Convert a SQLite row into a mapping with decoded extracted fields."""
     row_payload = dict(row)
     raw_extracted_fields = row_payload.get("extracted_fields")
@@ -256,6 +257,10 @@ def load_pipeline_progress_by_application_ids(
 
 def load_today_activity() -> list[JsonRow]:
     """Load today's reviewer decisions in the API's existing order."""
+    now = datetime.now(UTC)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    day_end = (now.replace(hour=0, minute=0, second=0, microsecond=0)
+               + timedelta(days=1)).isoformat()
     with get_connection() as connection:
         activity_rows = connection.execute(
             """
@@ -267,9 +272,11 @@ def load_today_activity() -> list[JsonRow]:
                 reviewer_decisions.decided_at
             FROM reviewer_decisions
             JOIN applications ON applications.id = reviewer_decisions.application_id
-            WHERE date(reviewer_decisions.decided_at) = date('now', 'localtime')
+            WHERE reviewer_decisions.decided_at >= ?
+              AND reviewer_decisions.decided_at < ?
             ORDER BY reviewer_decisions.decided_at DESC
-            """
+            """,
+            (day_start, day_end),
         ).fetchall()
     return [dict(row) for row in activity_rows]
 

@@ -37,22 +37,24 @@ def _insert_application(
 ) -> int:
     with get_connection() as connection:
         if created_at is None:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (loan_id, applicant_name, product_type, "Delhi", status),
-            )
+            ).fetchone()
         else:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (loan_id, applicant_name, product_type, "Delhi", status, created_at),
-            )
-        return int(cursor.lastrowid)
+            ).fetchone()
+        return int(row["id"])
 
 
 def _insert_ground_truth(application_id: int, raw_json: dict) -> None:

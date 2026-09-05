@@ -285,9 +285,9 @@ def test_mapped_background_job_uses_shared_pdf_pipeline(tmp_path, monkeypatch) -
     with db.get_connection() as connection:
         application_id = int(
             connection.execute(
-                "INSERT INTO applications (loan_id, status) VALUES (?, 'processing')",
+                "INSERT INTO applications (loan_id, status) VALUES (?, 'processing') RETURNING id",
                 ("MAP-SHARED-001",),
-            ).lastrowid
+            ).fetchone()["id"]
         )
     job_id = upload_route.create_pipeline_job(application_id)
     captured = {}

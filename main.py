@@ -80,8 +80,16 @@ app.include_router(storage.router)
 
 # ── Health ────────────────────────────────────
 @app.get("/health", tags=["meta"])
-def health_check() -> dict[str, str]:
-    return {"status": "ok", "version": app.version}
+def health_check() -> dict[str, object]:
+    from database.db import dialect, get_connection
+
+    try:
+        with get_connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+        database_status: dict[str, str] = {"status": "ok", "dialect": dialect()}
+    except Exception:  # noqa: BLE001 - health must report, not raise
+        database_status = {"status": "error", "dialect": dialect()}
+    return {"status": "ok", "version": app.version, "database": database_status}
 
 
 # ── Shutdown ──────────────────────────────────

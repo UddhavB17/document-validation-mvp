@@ -357,8 +357,12 @@ def mark_checkpoint(job_id: int | None, page_number: int) -> None:
         connection.execute(
             """
             UPDATE pipeline_jobs
-            SET last_completed_page = MAX(last_completed_page, ?), heartbeat_at = ?
+            SET last_completed_page = CASE
+                    WHEN last_completed_page > ? THEN last_completed_page
+                    ELSE ?
+                END,
+                heartbeat_at = ?
             WHERE id = ?
             """,
-            (page_number, _utc_now_iso(), job_id),
+            (page_number, page_number, _utc_now_iso(), job_id),
         )

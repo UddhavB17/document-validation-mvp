@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Any
 
 from database.db import get_connection
@@ -432,16 +433,17 @@ def _mask(value: Any) -> str | None:
 
 
 def save_reviewer_summary(application_id: int, summary: dict[str, Any]) -> None:
+    now = datetime.now(UTC).isoformat()
     with get_connection() as connection:
         connection.execute(
             """
             INSERT INTO reviewer_summaries (application_id, summary_json, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?)
             ON CONFLICT(application_id) DO UPDATE SET
                 summary_json = excluded.summary_json,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = excluded.updated_at
             """,
-            (application_id, json.dumps(summary, ensure_ascii=False)),
+            (application_id, json.dumps(summary, ensure_ascii=False), now),
         )
 
 
