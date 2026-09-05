@@ -156,6 +156,7 @@ def _ensure_page_has_json_details(
     extracted_fields: dict[str, Any],
     triage_category: str | None = None,
     ocr_confidence: float | None = None,
+    page_type: str | None = None,
 ) -> dict[str, Any]:
     # Repayment tables are structural evidence.  Parse them even when the page
     # already has other public fields, and even when a continuation page was
@@ -191,6 +192,7 @@ def _ensure_page_has_json_details(
         text=text,
         triage_category=triage_category or _triage_from_fields(extracted_fields),
         ocr_confidence=ocr_confidence,
+        page_type=page_type,
     )
     if not generic_fields:
         return extracted_fields
@@ -221,18 +223,29 @@ def _extract_generic_page_details(
     text: str,
     triage_category: str | None = None,
     ocr_confidence: float | None = None,
+    page_type: str | None = None,
 ) -> dict[str, Any]:
     normalized_text = str(text or "").strip()
     if not normalized_text:
         return {}
-    # ws-f accuracy: photo/blank/unreadable pages must not seed generic PAN /
-    # Aadhaar / phone observations that later become false mismatches.
-    if str(triage_category or "").strip().casefold() in {"photo", "blank", "unreadable"}:
-        return {}
-    try:
-        if ocr_confidence is not None and float(ocr_confidence) < 0.55:
-            return {}
-    except (TypeError, ValueError):
+    # ws-f accuracy: photo/blank/unreadable or low-confidence pages must not
+    # seed generic PAN / Aadhaar / phone observations that later become false
+    # mismatches. Gate through the shared page_eligible_for helper instead of
+    # inlining triage/confidence thresholds here. The probe field is
+    # intentionally absent from FIELD_DOCUMENT_TYPES so only the
+    # triage/OCR-confidence gates apply; missing ocr_confidence is ineligible
+    # except on digital pages (same rule as page_eligible_for).
+    from services.consistency_checks import page_eligible_for
+
+    probe = {
+        "triage_category": triage_category,
+        "ocr_confidence": ocr_confidence,
+        "page_type": page_type,
+        "document_type": document_type,
+        "classification_confidence": 1.0,
+        "detection_method": "detected",
+    }
+    if not page_eligible_for("generic_detail", probe):
         return {}
 
     details: dict[str, Any] = {}

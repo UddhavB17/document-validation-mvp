@@ -125,6 +125,76 @@ def test_completed_page_words_produce_bbox() -> None:
     assert evidence["bbox"] == [0.1, 0.4, 0.55, 0.44]
 
 
+def test_fast_ocr_bounding_boxes_only_yield_words() -> None:
+    """Fast-OCR shape: provider boxes + image size, no structured words.
+
+    Reproduces the Paddle fast path where ``OCRResult.structured_content``
+    is ``None``, so ``to_legacy_dict()`` yields empty ``words``. The
+    production overwrite path (``_ocr_result_dict`` applied after
+    ``to_legacy_dict``, as in ``_build_page_records``) must derive compact
+    words from the provider bounding boxes. No pre-built ``words`` list is
+    injected anywhere in this test.
+    """
+    from services.ocr_router import OCRResult
+    from services.pipeline.page_processing import _ocr_result_dict
+
+    fast_result = OCRResult(
+        text="INCOME TAX ABCDE1234F",
+        confidence=0.9,
+        route_used="fast",
+        bounding_boxes=[
+            {"text": "INCOME", "confidence": 0.9, "bbox": [0.0, 0.0, 200.0, 100.0]},
+            {"text": "TAX", "confidence": 0.9, "bbox": [210.0, 0.0, 300.0, 100.0]},
+            {
+                "text": "ABCDE1234F",
+                "confidence": 0.92,
+                "bbox": [100.0, 400.0, 550.0, 440.0],
+            },
+        ],
+        image_width=1000,
+        image_height=1000,
+    )
+    # Fast path clears structured content (see _coerce_fast_result).
+    assert fast_result.structured_content is None
+
+    # Production overwrite path: to_legacy_dict() first (empty words) ...
+    legacy = fast_result.to_legacy_dict()
+    assert legacy["words"] == []
+    assert legacy["structured_content"] is None
+
+    # ... then _ocr_result_dict derives words from bounding boxes.
+    ocr_metadata = _ocr_result_dict(legacy)
+    assert len(ocr_metadata["words"]) == 3
+
+    # Same completed_page shape _build_page_records writes in memory.
+    completed_page = {
+        "page_number": 1,
+        "page_type": "scanned",
+        "ocr_text": ocr_metadata.get("ocr_text", ""),
+        "ocr_confidence": ocr_metadata.get("confidence", 0.0),
+        "words": list(ocr_metadata.get("words") or []),
+        "bounding_boxes": list(ocr_metadata.get("bounding_boxes") or []),
+        "structured_content": ocr_metadata.get("structured_content"),
+        "document_type": "PAN Card",
+    }
+    words = page_words(completed_page)
+    assert len(words) == 3
+    assert find_value_bbox(words, "ABCDE1234F") == [0.1, 0.4, 0.55, 0.44]
+    anomalies = [
+        {
+            "rule_id": "TRUSTED_PAN_NUMBER_MISMATCH",
+            "page_number": 1,
+            "found_value": "ABCDE1234F",
+            "expected_value": "XXXXX0000X",
+        }
+    ]
+    attach_evidence_to_anomalies(anomalies, [completed_page])
+    evidence = anomalies[0].get("evidence_json")
+    assert evidence is not None
+    assert evidence["page"] == 1
+    assert evidence["bbox"] == [0.1, 0.4, 0.55, 0.44]
+
+
 def test_page_words_reads_persisted_structures() -> None:
     """Pages rebuilt without top-level ``words`` still resolve evidence."""
     structured_page = {

@@ -46,6 +46,7 @@ from services.pipeline.page_details import (
     _extract_fields_with_layout,
     _is_starting_json_db_page,
     _record_completed_page_event,
+    _triage_from_fields,
 )
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
@@ -513,7 +514,7 @@ def _build_page_records(
                     text = routed_ocr.text
                     ocr_confidence = routed_ocr.confidence
                     is_readable = bool(text.strip())
-                    ocr_metadata = routed_ocr.to_legacy_dict()
+                    ocr_metadata = _ocr_result_dict(routed_ocr.to_legacy_dict())
                     if routed_ocr.error:
                         extracted_fields["_processing_error"] = routed_ocr.error
                     if page_number % 5 == 0:
@@ -626,6 +627,7 @@ def _build_page_records(
                 triage.get("category") if isinstance(triage, dict) else None
             ),
             ocr_confidence=ocr_confidence,
+            page_type=page_type,
         )
         # Run the structured classifier only after deterministic and generic
         # extraction has completed, and only for the two allowed fallback
@@ -707,6 +709,10 @@ def _build_page_records(
             # Compact in-memory word layout for evidence bboxes (ws-f);
             # never persisted (ws-a data diet).
             "words": list(ocr_metadata.get("words") or []),
+            # Provider boxes kept in memory as a fallback so page_words can
+            # coerce words even when derivation produced none; never
+            # persisted (ws-a data diet: _insert_page uses explicit columns).
+            "bounding_boxes": list(ocr_metadata.get("bounding_boxes") or []),
             # Small in-memory layout for field extraction/smoothing only;
             # never persisted (no "native" blob).
             "structured_content": ocr_metadata.get("structured_content"),
@@ -876,7 +882,9 @@ def _refresh_page_from_cached_ocr(
         document_type=document_type,
         text=text,
         extracted_fields=fields,
+        triage_category=_triage_from_fields(fields),
         ocr_confidence=ocr_confidence,
+        page_type=refreshed.get("page_type"),
     )
     language_profile = analyze_text_languages(text)
     previous_language = (
