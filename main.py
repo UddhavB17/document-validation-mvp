@@ -24,6 +24,7 @@ from routes import (
     review,
     review_pages,
     settings,
+    storage,
     upload,
     verification,
 )
@@ -74,6 +75,7 @@ app.include_router(auth.router)
 app.include_router(admin_users.router)
 app.include_router(ops.router)
 app.include_router(review_pages.router)
+app.include_router(storage.router)
 
 
 # ── Health ────────────────────────────────────

@@ -9,9 +9,11 @@ Key rules: keys are always relative (never absolute paths). Keys containing
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import BinaryIO, Protocol
+
+from services.paths import local_store_dir, storage_backend
+from services.storage.gcs import GcsObjectStore
 
 __all__ = [
     "GcsObjectStore",
@@ -35,8 +37,7 @@ class ObjectStore(Protocol):
 
 def _store_dir() -> Path:
     """Resolve ``DMEF_LOCAL_STORE_DIR`` (default ``data/store``)."""
-    raw = os.environ.get("DMEF_LOCAL_STORE_DIR", "").strip()
-    return Path(raw) if raw else Path("data/store")
+    return local_store_dir()
 
 
 def _check_key(key: str) -> str:
@@ -105,38 +106,9 @@ class LocalObjectStore:
         return sorted(key for key in keys if key.startswith(prefix))
 
 
-class GcsObjectStore:
-    """Google Cloud Storage backend. Implemented by ``ws-b-storage-db``."""
-
-    def __init__(self, bucket: str | None = None) -> None:
-        raw = bucket if bucket is not None else os.environ.get("DMEF_GCS_BUCKET", "")
-        self.bucket = raw.strip()
-
-    def put(self, key: str, data: bytes | BinaryIO, content_type: str) -> str:
-        raise NotImplementedError("GcsObjectStore is implemented by ws-b-storage-db")
-
-    def get(self, key: str) -> bytes:
-        raise NotImplementedError("GcsObjectStore is implemented by ws-b-storage-db")
-
-    def open(self, key: str) -> BinaryIO:
-        raise NotImplementedError("GcsObjectStore is implemented by ws-b-storage-db")
-
-    def exists(self, key: str) -> bool:
-        raise NotImplementedError("GcsObjectStore is implemented by ws-b-storage-db")
-
-    def delete(self, key: str) -> None:
-        raise NotImplementedError("GcsObjectStore is implemented by ws-b-storage-db")
-
-    def signed_url(self, key: str, expires_seconds: int = 600) -> str:
-        raise NotImplementedError("GcsObjectStore is implemented by ws-b-storage-db")
-
-    def list(self, prefix: str) -> list[str]:
-        raise NotImplementedError("GcsObjectStore is implemented by ws-b-storage-db")
-
-
 def get_store() -> ObjectStore:
     """Return the configured store (``DMEF_STORAGE_BACKEND=local|gcs``)."""
-    backend = os.environ.get("DMEF_STORAGE_BACKEND", "local").strip().lower() or "local"
+    backend = storage_backend()
     if backend == "local":
         return LocalObjectStore()
     if backend == "gcs":

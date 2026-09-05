@@ -53,3 +53,32 @@ def report_output_dir() -> Path:
 def checklist_json_path() -> Path:
     """Path to the product checklist definition."""
     return _env_path("CHECKLIST_JSON_PATH", "data/checklist.json")
+
+
+# --- ws-b storage + db: object-store and job working-directory locations ---
+# Env is read here (never in domain modules) so storage/database code stays
+# backend-agnostic. Contracts §2 key rules: keys are always relative; keys
+# containing ``..`` or starting with ``/`` are rejected by the store.
+
+
+def storage_backend() -> str:
+    """Return the configured object-store backend (``local`` or ``gcs``)."""
+    raw = os.getenv("DMEF_STORAGE_BACKEND", "")
+    backend = raw.strip().lower() if isinstance(raw, str) else ""
+    return backend or "local"
+
+
+def local_store_dir() -> Path:
+    """Base directory for the local object store."""
+    return _env_path("DMEF_LOCAL_STORE_DIR", "data/store")
+
+
+def gcs_bucket() -> str:
+    """Return the GCS bucket name (empty when the local backend is used)."""
+    raw = os.getenv("DMEF_GCS_BUCKET", "")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def job_work_dir() -> Path:
+    """Root working directory for running jobs; always deleted in a ``finally``."""
+    return _env_path("DMEF_JOB_WORK_DIR", "/tmp/dmef-jobs")

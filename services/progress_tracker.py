@@ -411,10 +411,14 @@ def create_pipeline_job(
                 parent_job_id, heartbeat_at, created_at
             )
             VALUES (?, ?, 'queued', 'running', ?, ?, ?, ?)
+            RETURNING id
             """,
             (application_id, job_type, attempt, parent_job_id, now, now),
         )
-        return int(cursor.lastrowid)
+        created = cursor.fetchone()
+        if created is None:
+            raise RuntimeError("Failed to create pipeline job")
+        return int(created["id"])
 
 
 def mark_job_started(job_id: int) -> None:

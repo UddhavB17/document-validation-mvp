@@ -3,7 +3,6 @@
 import json
 import logging
 import re
-import shutil
 import time
 import zipfile
 from datetime import datetime
@@ -29,8 +28,9 @@ from services.file_validator import (
 )
 from services.job_control import PipelineCancelled, persist_job_input_or_fail
 from services.job_runner import submit_job
-from services.paths import upload_dir
+from services.paths import job_work_dir, upload_dir
 from services.pipeline import run_pipeline
+from services.pipeline.input_preparation import cleanup_job_source, resolve_job_source
 from services.progress_tracker import (
     create_pipeline_job,
     get_progress,
@@ -40,16 +40,54 @@ from services.progress_tracker import (
     mark_job_started,
     start_tracking,
 )
+from services.storage import get_store
+from services.storage.refs import get_ref, record_ref
 from services.verification_manifest import VerificationManifest
 from services.zip_package import (
     PackageValidationError,
-    load_package_metadata,
     normalize_zip_package,
 )
 
 router = APIRouter(prefix="/upload", tags=["upload"])
+# Compat shim: historical staging root. New code stages uploads under
+# DMEF_JOB_WORK_DIR and persists bytes through the object store, so nothing
+# is written here. Kept so existing monkeypatching (UPLOAD_DIR) keeps working.
 UPLOAD_DIR = upload_dir()
 LOGGER = logging.getLogger(__name__)
+
+
+def _new_upload_work_dir(prefix: str) -> Path:
+    """Create a per-upload scratch dir under ``DMEF_JOB_WORK_DIR``."""
+    work_dir = job_work_dir() / f"{prefix}-{uuid4().hex}"
+    work_dir.mkdir(parents=True, exist_ok=False)
+    return work_dir
+
+
+def _cleanup_work_dir(path: Path | None) -> None:
+    """Remove a job-scoped work dir; legacy/test paths are never touched."""
+    if path is not None:
+        cleanup_job_source(path if path.is_dir() else path.parent)
+
+
+def _safe_stemmed_name(filename: str, default_suffix: str) -> str:
+    """Sanitize an upload filename while preserving its extension."""
+    base = Path(filename or "").name or f"upload{default_suffix}"
+    suffix = Path(base).suffix.lower() or default_suffix
+    return f"{_safe_name(Path(base).stem) or 'upload'}{suffix}"
+
+
+def _application_source_key(application_id: int, filename: str) -> str:
+    return f"applications/{application_id}/source/{_safe_stemmed_name(filename, '.pdf')}"
+
+
+def _intake_source_key(package_id: str, filename: str) -> str:
+    return f"intake/{package_id}/{_safe_stemmed_name(filename, '.zip')}"
+
+
+def _store_bytes(key: str, data: bytes, content_type: str) -> None:
+    store = get_store()
+    stream = BytesIO(data)
+    store.put(key, stream, content_type or "application/octet-stream")
 
 
 class PartnerPayload(BaseModel):
@@ -96,7 +134,7 @@ async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
     from services.pipeline import run_partner_json_pipeline
 
     with get_connection() as connection:
-        cursor = connection.execute(
+        created = connection.execute(
             """
             INSERT INTO applications (
                 loan_id,
@@ -107,6 +145,7 @@ async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
                 status
             )
             VALUES (?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 payload.loan_id,
@@ -116,8 +155,10 @@ async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
                 payload.branch,
                 "processing",
             ),
-        )
-        application_id = cursor.lastrowid
+        ).fetchone()
+        if created is None:
+            raise HTTPException(status_code=500, detail="Failed to create application")
+        application_id = int(created["id"])
         connection.execute(
             """
             INSERT INTO audit_log (application_id, action, details)
@@ -175,21 +216,31 @@ async def upload_mapped_file(
     """Queue shared PDF processing plus trusted mapped JSON comparison."""
     init_db()
 
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    work_dir = _new_upload_work_dir("mapped")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     uploaded_name = file.filename or "mapped_upload"
+    file_path: Path | None = None
 
     if Path(uploaded_name).suffix.lower() == ".zip":
-        file_path, manifest_text, original_filename = await _save_mapped_zip_package(
-            file, manifest, timestamp
-        )
+        try:
+            file_path, manifest_text, original_filename = await _save_mapped_zip_package(
+                file, manifest, timestamp
+            )
+        except Exception:
+            _cleanup_work_dir(work_dir)
+            raise
     else:
         if not manifest or not manifest.strip():
+            _cleanup_work_dir(work_dir)
             raise HTTPException(
                 status_code=422, detail="Manifest JSON is required for mapped PDF upload"
             )
-        file_path = UPLOAD_DIR / f"mapped_{timestamp}.pdf"
-        await _save_upload_stream(file, file_path)
+        file_path = work_dir / f"mapped_{timestamp}.pdf"
+        try:
+            await _save_upload_stream(file, file_path)
+        except Exception:
+            _cleanup_work_dir(work_dir)
+            raise
         manifest_text = manifest
         original_filename = uploaded_name
 
@@ -197,22 +248,19 @@ async def upload_mapped_file(
         parsed = _parse_manifest(manifest_text)
         parsed.case_type = case_type
     except HTTPException:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(file_path.parent)
+        _cleanup_work_dir(work_dir)
         raise
-
-    final_file_path = UPLOAD_DIR / f"{_safe_name(parsed.loan_id)}_{timestamp}.pdf"
-    if file_path != final_file_path:
-        file_path.replace(final_file_path)
-        file_path = final_file_path
 
     file_size_bytes = file_path.stat().st_size
     validation = validate_file(file_path, file_size_bytes)
     if not validation["valid"]:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(file_path.parent)
+        _cleanup_work_dir(work_dir)
         raise HTTPException(status_code=400, detail=validation["error"])
 
     try:
-        return _queue_mapped_verification(
+        result = _queue_mapped_verification(
             parsed,
             file_path=file_path,
             original_filename=original_filename,
@@ -221,8 +269,12 @@ async def upload_mapped_file(
             audit_action="mapped_file_uploaded",
         )
     except Exception:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(file_path.parent)
+        _cleanup_work_dir(work_dir)
         raise
+    _cleanup_work_dir(file_path.parent)
+    _cleanup_work_dir(work_dir)
+    return result
 
 
 @router.post("/package", summary="Prepare an unordered ZIP package for page mapping")
@@ -237,7 +289,8 @@ async def upload_zip_package(
 
     init_db()
     package_id = uuid4().hex
-    package_dir = UPLOAD_DIR / "packages" / package_id
+    source_filename = file.filename or "documents.zip"
+    package_dir = job_work_dir() / f"package-{package_id}"
     package_dir.mkdir(parents=True, exist_ok=False)
     zip_path = package_dir / "source.zip"
     try:
@@ -257,13 +310,13 @@ async def upload_zip_package(
             submit_job(
                 _prepare_zip_package_task,
                 package_id,
-                file.filename or "documents.zip",
+                source_filename,
                 zip_path,
                 package_dir,
             )
             return {
                 "package_id": package_id,
-                "source_filename": file.filename,
+                "source_filename": source_filename,
                 "status": "queued",
                 "progress_url": f"/upload/package/{package_id}/preparation",
             }
@@ -272,28 +325,80 @@ async def upload_zip_package(
         pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
         if not pdf_validation["valid"]:
             raise PackageValidationError(str(pdf_validation["error"]))
+        zip_key, normalized_pdf_key = _store_intake_package(
+            package_id, source_filename, zip_path, pdf_path, package_dir
+        )
         _persist_intake_package(
             package_id,
-            file.filename or "documents.zip",
-            zip_path,
+            source_filename,
+            zip_key,
+            normalized_pdf_key,
             normalized,
         )
+        # Sync path only: staging lives in DMEF_JOB_WORK_DIR; later steps
+        # read via the store. (Background cleanup happens in the task.)
+        _cleanup_work_dir(package_dir)
     except (PackageValidationError, ValueError) as exc:
-        shutil.rmtree(package_dir, ignore_errors=True)
+        _cleanup_work_dir(package_dir)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception:
-        shutil.rmtree(package_dir, ignore_errors=True)
+        _cleanup_work_dir(package_dir)
         raise
 
     return {
         "package_id": package_id,
-        "source_filename": file.filename,
+        "source_filename": source_filename,
         "status": "prepared",
         "total_files": normalized["total_files"],
         "total_pages": normalized["total_pages"],
         "documents": normalized["documents"],
         "verify_url": f"/upload/package/{package_id}/verify",
     }
+
+
+def _store_intake_package(
+    package_id: str,
+    source_filename: str,
+    zip_path: Path,
+    normalized_pdf_path: Path,
+    package_dir: Path,
+) -> tuple[str, str]:
+    """Upload ZIP artifacts to the object store and record ``object_refs``."""
+    zip_bytes = zip_path.read_bytes()
+    pdf_bytes = normalized_pdf_path.read_bytes()
+    zip_key = _intake_source_key(package_id, source_filename)
+    normalized_pdf_key = f"intake/{package_id}/normalized.pdf"
+    manifest_key = f"intake/{package_id}/manifest.json"
+    _store_bytes(zip_key, zip_bytes, "application/zip")
+    _store_bytes(normalized_pdf_key, pdf_bytes, "application/pdf")
+    manifest_path = package_dir / "package.json"
+    if manifest_path.is_file():
+        _store_bytes(manifest_key, manifest_path.read_bytes(), "application/json")
+        record_ref(
+            "intake_packages",
+            package_id,
+            "manifest",
+            manifest_key,
+            content_type="application/json",
+            size_bytes=manifest_path.stat().st_size,
+        )
+    record_ref(
+        "intake_packages",
+        package_id,
+        "source",
+        zip_key,
+        content_type="application/zip",
+        size_bytes=len(zip_bytes),
+    )
+    record_ref(
+        "intake_packages",
+        package_id,
+        "normalized_pdf",
+        normalized_pdf_key,
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
+    return zip_key, normalized_pdf_key
 
 
 @router.get(
@@ -303,26 +408,126 @@ async def upload_zip_package(
 def get_zip_preparation_progress(package_id: str) -> dict[str, object]:
     if not re.fullmatch(r"[0-9a-f]{32}", package_id):
         raise HTTPException(status_code=404, detail="ZIP package not found")
-    progress_path = UPLOAD_DIR / "packages" / package_id / "preparation_progress.json"
-    if not progress_path.is_file():
+    progress_path = job_work_dir() / f"package-{package_id}" / "preparation_progress.json"
+    if progress_path.is_file():
+        try:
+            return json.loads(progress_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=503, detail="ZIP progress is being updated") from exc
+    # Staging is deleted after preparation; rebuild the terminal state from
+    # the persisted intake rows + stored manifest.
+    row = _get_package_row(package_id)
+    if row["status"] != "prepared":
         raise HTTPException(status_code=404, detail="ZIP preparation progress not found")
-    try:
-        return json.loads(progress_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=503, detail="ZIP progress is being updated") from exc
+    documents = _load_intake_manifest_documents(package_id)
+    return {
+        "package_id": package_id,
+        "source_filename": row["source_filename"],
+        "status": "prepared",
+        "stage": "completed",
+        "message": (
+            f"ZIP preparation complete: {row['total_files']} file(s), "
+            f"{row['total_pages']} internal page(s)"
+        ),
+        "processed_files": row["total_files"],
+        "total_files": row["total_files"],
+        "current_file": None,
+        "total_pages": row["total_pages"],
+        "documents": documents,
+        "verify_url": f"/upload/package/{package_id}/verify",
+        "events": [
+            {
+                "stage": "file_completed",
+                "message": f"Normalized {document.get('original_filename')}",
+                "processed_files": position,
+                "total_files": len(documents),
+                "current_file": document.get("original_filename"),
+                "document": document,
+                "elapsed_seconds": None,
+                "timestamp": None,
+            }
+            for position, document in enumerate(documents, start=1)
+        ],
+    }
+
+
+def _load_intake_manifest_documents(package_id: str) -> list[dict[str, object]]:
+    """Load ZIP inventory documents from the stored manifest, else from DB rows."""
+    ref = get_ref("intake_packages", package_id, "manifest")
+    if ref is not None:
+        try:
+            payload = json.loads(get_store().get(str(ref["storage_key"])).decode("utf-8"))
+        except Exception:
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("documents"), list):
+            return [dict(item) for item in payload["documents"]]
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT source_document_id, original_filename, file_type,
+                   source_size_bytes, page_count,
+                   internal_page_start, internal_page_end
+            FROM intake_documents
+            WHERE package_id = ?
+            ORDER BY internal_page_start
+            """,
+            (package_id,),
+        ).fetchall()
+    documents = []
+    for row in rows:
+        start = int(row["internal_page_start"])
+        end = int(row["internal_page_end"])
+        documents.append(
+            {
+                "source_document_id": row["source_document_id"],
+                "original_filename": row["original_filename"],
+                "file_type": row["file_type"],
+                "source_size_bytes": row["source_size_bytes"],
+                "page_count": row["page_count"],
+                "internal_page_start": start,
+                "internal_page_end": end,
+                "pages": list(range(start, end + 1)),
+            }
+        )
+    return documents
+
+
+def _stage_intake_pdf(package_id: str, row: object) -> Path:
+    """Stage the intake normalized PDF from the store into a verify work dir."""
+    mapping = dict(row)  # type: ignore[arg-type]
+    candidate = str(mapping.get("normalized_pdf_path") or "")
+    pdf_bytes: bytes | None = None
+    ref = get_ref("intake_packages", package_id, "normalized_pdf")
+    if ref is not None:
+        try:
+            pdf_bytes = get_store().get(str(ref["storage_key"]))
+        except Exception:
+            pdf_bytes = None
+    if pdf_bytes is None and candidate:
+        local = Path(candidate)
+        if local.is_file():
+            pdf_bytes = local.read_bytes()
+    if pdf_bytes is None:
+        raise HTTPException(
+            status_code=410, detail="Prepared ZIP package files are no longer available"
+        )
+    work_dir = job_work_dir() / f"verify-{package_id}-{uuid4().hex}"
+    work_dir.mkdir(parents=True, exist_ok=False)
+    staged = work_dir / "normalized.pdf"
+    staged.write_bytes(pdf_bytes)
+    return staged
 
 
 @router.get("/package/{package_id}", summary="Get prepared ZIP package inventory")
 def get_zip_package(package_id: str) -> dict[str, object]:
     row = _get_package_row(package_id)
-    metadata = load_package_metadata(Path(row["normalized_pdf_path"]).parent)
     return {
         "package_id": package_id,
         "source_filename": row["source_filename"],
         "status": row["status"],
         "total_files": row["total_files"],
         "total_pages": row["total_pages"],
-        "documents": metadata["documents"],
+        "documents": _load_intake_manifest_documents(package_id),
         "verify_url": f"/upload/package/{package_id}/verify",
     }
 
@@ -342,13 +547,10 @@ async def verify_zip_package(
         raise HTTPException(status_code=409, detail="ZIP package verification is already running")
 
     _validate_package_mapping(package_id, parsed)
-    pdf_path = Path(row["normalized_pdf_path"])
-    if not pdf_path.is_file():
-        raise HTTPException(
-            status_code=410, detail="Prepared ZIP package files are no longer available"
-        )
+    pdf_path = _stage_intake_pdf(package_id, row)
     pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
     if not pdf_validation["valid"]:
+        _cleanup_work_dir(pdf_path.parent)
         raise HTTPException(status_code=422, detail=pdf_validation["error"])
 
     with get_connection() as connection:
@@ -360,6 +562,7 @@ async def verify_zip_package(
             (package_id,),
         )
         if updated.rowcount != 1:
+            _cleanup_work_dir(pdf_path.parent)
             raise HTTPException(
                 status_code=409, detail="ZIP package verification has already started"
             )
@@ -377,6 +580,7 @@ async def verify_zip_package(
             package_id=package_id,
         )
     except Exception:
+        _cleanup_work_dir(pdf_path.parent)
         with get_connection() as connection:
             connection.execute(
                 "UPDATE intake_packages SET status = 'prepared' WHERE package_id = ?",
@@ -386,6 +590,8 @@ async def verify_zip_package(
 
     result["package_id"] = package_id
     result["source_documents"] = int(row["total_files"])
+    # The staged verify copy is job-scoped; the pipeline resolves via the store.
+    _cleanup_work_dir(pdf_path.parent)
     return result
 
 
@@ -426,11 +632,12 @@ def _queue_mapped_verification(
         )
 
     with get_connection() as connection:
-        cursor = connection.execute(
+        row = connection.execute(
             """
             INSERT INTO applications (
                 loan_id, applicant_name, coapplicant_name, product_type, branch, status
             ) VALUES (?, ?, ?, ?, ?, 'processing')
+            RETURNING id
             """,
             (
                 parsed.loan_id,
@@ -441,8 +648,10 @@ def _queue_mapped_verification(
                 parsed.product_type,
                 parsed.branch,
             ),
-        )
-        application_id = int(cursor.lastrowid)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to create application")
+        application_id = int(row["id"])
         connection.execute(
             """
             INSERT INTO audit_log (application_id, action, details)
@@ -473,7 +682,7 @@ def _queue_mapped_verification(
             """,
             (
                 application_id,
-                str(file_path),
+                None,
                 original_filename,
                 round(file_size_bytes / 1024, 2),
                 validation["total_pages"],
@@ -481,6 +690,22 @@ def _queue_mapped_verification(
                 validation["scanned_pages"],
             ),
         )
+
+    # Persist the source PDF through the object store (never under data/uploads).
+    pdf_bytes = file_path.read_bytes()
+    storage_key = _application_source_key(application_id, original_filename)
+    try:
+        _store_bytes(storage_key, pdf_bytes, "application/pdf")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to store uploaded PDF") from exc
+    record_ref(
+        "applications",
+        application_id,
+        "source",
+        storage_key,
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
 
     covers_entire_pdf = automatic_mapping or len(mapped_pages) == int(validation["total_pages"])
     initial_digital_pages = int(validation["digital_pages"]) if covers_entire_pdf else 0
@@ -596,7 +821,8 @@ async def _save_mapped_zip_package(
                 detail=f"File too large, max {max_file_size_bytes() // (1024 * 1024)}MB",
             )
 
-    file_path = UPLOAD_DIR / f"mapped_package_{timestamp}.pdf"
+    file_path = job_work_dir() / f"mapped-{timestamp}-{uuid4().hex}" / "source.pdf"
+    file_path.parent.mkdir(parents=True, exist_ok=False)
     file_path.write_bytes(pdf_bytes)
     return file_path, manifest_text, original_filename
 
@@ -693,9 +919,11 @@ async def _read_upload_bytes(file: UploadFile) -> bytes:
 def _persist_intake_package(
     package_id: str,
     source_filename: str,
-    zip_path: Path,
+    zip_key: str,
+    normalized_pdf_key: str,
     normalized: dict[str, object],
 ) -> None:
+    """Persist intake rows; path columns hold object-store keys (contracts §2)."""
     with get_connection() as connection:
         connection.execute(
             """
@@ -707,8 +935,8 @@ def _persist_intake_package(
             (
                 package_id,
                 source_filename,
-                str(zip_path),
-                str(normalized["normalized_pdf_path"]),
+                zip_key,
+                normalized_pdf_key,
                 normalized["total_files"],
                 normalized["total_pages"],
             ),
@@ -771,7 +999,12 @@ def _prepare_zip_package_task(
         pdf_validation = validate_file(pdf_path, pdf_path.stat().st_size)
         if not pdf_validation["valid"]:
             raise PackageValidationError(str(pdf_validation["error"]))
-        _persist_intake_package(package_id, source_filename, zip_path, normalized)
+        zip_key, normalized_pdf_key = _store_intake_package(
+            package_id, source_filename, zip_path, pdf_path, package_dir
+        )
+        _persist_intake_package(
+            package_id, source_filename, zip_key, normalized_pdf_key, normalized
+        )
         _write_package_preparation_progress(
             package_dir,
             {
@@ -805,6 +1038,10 @@ def _prepare_zip_package_task(
             },
             append_event=True,
         )
+    finally:
+        # Staging lives only in DMEF_JOB_WORK_DIR; the terminal state is
+        # readable via the store/DB fallback in get_zip_preparation_progress.
+        _cleanup_work_dir(package_dir)
 
 
 def _write_package_preparation_progress(
@@ -932,19 +1169,22 @@ async def upload_file(
     file: UploadFile = File(...),
 ) -> dict[str, object]:
     init_db()
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
+    work_dir = _new_upload_work_dir("upload")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    file_path = UPLOAD_DIR / f"{_safe_name(loan_id)}_{timestamp}.pdf"
-    file_size_bytes = await _save_upload_stream(file, file_path)
+    file_path = work_dir / f"{_safe_name(loan_id)}_{timestamp}.pdf"
+    try:
+        file_size_bytes = await _save_upload_stream(file, file_path)
+    except Exception:
+        _cleanup_work_dir(work_dir)
+        raise
 
     validation = validate_file(file_path, file_size_bytes)
     if not validation["valid"]:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(work_dir)
         raise HTTPException(status_code=400, detail=validation["error"])
 
     with get_connection() as connection:
-        cursor = connection.execute(
+        row = connection.execute(
             """
             INSERT INTO applications (
                 loan_id,
@@ -954,10 +1194,14 @@ async def upload_file(
                 branch
             )
             VALUES (?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (loan_id, applicant_name, coapplicant_name, product_type, branch),
-        )
-        application_id = cursor.lastrowid
+        ).fetchone()
+        if row is None:
+            _cleanup_work_dir(work_dir)
+            raise HTTPException(status_code=500, detail="Failed to create application")
+        application_id = int(row["id"])
 
         connection.execute(
             """
@@ -974,7 +1218,7 @@ async def upload_file(
             """,
             (
                 application_id,
-                str(file_path),
+                None,
                 file.filename,
                 round(file_size_bytes / 1024, 2),
                 validation["total_pages"],
@@ -990,6 +1234,23 @@ async def upload_file(
             """,
             (application_id, "file_uploaded", f"Uploaded {file.filename}"),
         )
+
+    # Persist the source PDF through the object store (never under data/uploads).
+    pdf_bytes = file_path.read_bytes()
+    storage_key = _application_source_key(application_id, file.filename or "upload.pdf")
+    try:
+        _store_bytes(storage_key, pdf_bytes, file.content_type or "application/pdf")
+    except Exception as exc:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(status_code=500, detail="Failed to store uploaded PDF") from exc
+    record_ref(
+        "applications",
+        application_id,
+        "source",
+        storage_key,
+        content_type=file.content_type or "application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
 
     system_data = {
         "loan_id": loan_id,
@@ -1031,6 +1292,7 @@ async def upload_file(
             product_type=product_type,
         )
     except Exception as exc:
+        _cleanup_work_dir(work_dir)
         raise HTTPException(
             status_code=500,
             detail="Upload accepted but failed to queue securely for processing",
@@ -1044,6 +1306,8 @@ async def upload_file(
         system_data,
         product_type,
     )
+    # The staged upload copy is job-scoped; the pipeline resolves via the store.
+    _cleanup_work_dir(work_dir)
 
     return {
         "application_id": application_id,
@@ -1069,10 +1333,11 @@ def _run_pipeline_task(
     system_data: dict,
     product_type: str,
 ) -> None:
+    source_path = resolve_job_source(application_id, file_path, job_id)
     try:
         mark_job_started(job_id)
         result = run_pipeline(
-            file_path,
+            source_path,
             application_id,
             system_data=system_data,
             product_type=product_type,
@@ -1099,6 +1364,9 @@ def _run_pipeline_task(
                 """,
                 (application_id, "pipeline_failed", str(exc)),
             )
+    finally:
+        # Job-scoped pipeline inputs are deleted on return, success or failure.
+        cleanup_job_source(source_path)
 
 
 def _run_mapped_pipeline_task(
@@ -1108,6 +1376,7 @@ def _run_mapped_pipeline_task(
     manifest: dict[str, object],
     package_id: str | None = None,
 ) -> None:
+    source_path = resolve_job_source(application_id, file_path, job_id)
     try:
         mark_job_started(job_id)
         reference_data = manifest.get("reference_data") or {}
@@ -1124,7 +1393,7 @@ def _run_mapped_pipeline_task(
             "case_type": manifest.get("case_type") or "Normal Case",
         }
         result = run_pipeline(
-            file_path,
+            source_path,
             application_id,
             system_data=system_data,
             product_type=str(manifest.get("product_type") or "LAP"),
@@ -1172,6 +1441,9 @@ def _run_mapped_pipeline_task(
                     """,
                     (package_id, application_id),
                 )
+    finally:
+        # Job-scoped pipeline inputs are deleted on return, success or failure.
+        cleanup_job_source(source_path)
 
 
 def _load_package_source_documents(package_id: str | None) -> list[dict[str, object]]:

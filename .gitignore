@@ -18,6 +18,7 @@ outputs/*
 data/uploads/*
 data/pages/*
 data/reports/*
+data/store/*
 data/dmef.db
 data/*.db
 data/*.db.bak

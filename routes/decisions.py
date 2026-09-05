@@ -72,14 +72,18 @@ def create_decision(payload: DecisionRequest) -> dict[str, object]:
             raise HTTPException(status_code=404, detail="Application not found")
 
         previous_status = existing["status"]
-        cursor = connection.execute(
+        # ws-b storage+db: RETURNING instead of cursor.lastrowid (None on Postgres).
+        created = connection.execute(
             """
             INSERT INTO reviewer_decisions (application_id, decision, reviewer_note, decided_at)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             (payload.application_id, decision, reviewer_note, decided_at),
-        )
-        decision_id = cursor.lastrowid
+        ).fetchone()
+        if created is None:
+            raise HTTPException(status_code=500, detail="Failed to record decision")
+        decision_id = int(created["id"])
         connection.execute(
             "UPDATE applications SET status = ? WHERE id = ?",
             (new_status, payload.application_id),
