@@ -56,6 +56,14 @@ class PipelineCancelled(RuntimeError):
     """Cooperative signal used to stop a pipeline at a safe boundary."""
 
 
+class PipelineFailedError(RuntimeError):
+    """Terminal pipeline outcome (``pipeline_status == 'failed'``).
+
+    Unlike transient crashes, a clean pipeline failure must not be retried by
+    the worker. Handlers treat this as immediately terminal.
+    """
+
+
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -304,8 +312,25 @@ def persist_job_input_or_fail(
         raise
 
 
+def _checksum_matches(source: Path, expected: str) -> bool:
+    """Return True when ``source`` exists and matches ``expected`` sha256."""
+    try:
+        if not source.is_file():
+            return False
+        return secrets.compare_digest(_source_checksum(source), expected)
+    except OSError:
+        return False
+
+
 def load_job_input(application_id: int, job_id: int | None = None) -> dict[str, Any]:
-    """Decrypt and integrity-check the latest persisted recovery payload."""
+    """Decrypt and integrity-check the persisted recovery payload.
+
+    The durable source of truth is the object store. When the original upload
+    work dir has been deleted (the API deletes it in ``finally`` after
+    enqueue), the source is re-staged from the store into
+    ``DMEF_JOB_WORK_DIR`` before the checksum is verified. The returned
+    payload's ``source_path`` points at a real file on disk.
+    """
     with get_connection() as connection:
         if job_id is None:
             row = connection.execute(
@@ -331,12 +356,40 @@ def load_job_input(application_id: int, job_id: int | None = None) -> dict[str, 
         payload = json.loads(plaintext)
     except (InvalidToken, UnicodeEncodeError, json.JSONDecodeError) as exc:
         raise JobInputUnavailableError("Recovery payload failed decryption") from exc
-    source = Path(str(payload.get("source_path") or ""))
-    if not source.is_file() or not secrets.compare_digest(
-        _source_checksum(source), str(row["source_sha256"])
-    ):
-        raise JobInputUnavailableError("Recovery source file failed its integrity check")
-    return payload
+    expected = str(row["source_sha256"])
+    hint = Path(str(payload.get("source_path") or ""))
+    if hint.name and _checksum_matches(hint, expected):
+        return payload
+    # Original upload work dir is gone (API deletes it after enqueue).
+    # Re-stage the durable bytes from the object store before verifying.
+    effective_job_id = job_id if job_id is not None else int(row["job_id"])
+    restore_error: Exception | None = None
+    try:
+        from services.pipeline.input_preparation import prepare_job_source
+
+        staged = prepare_job_source(application_id, effective_job_id)
+        if _checksum_matches(staged, expected):
+            payload["source_path"] = str(staged)
+            return payload
+    except Exception as exc:  # noqa: BLE001
+        restore_error = exc
+    # ZIP/package jobs also record an intake normalized PDF; use it when the
+    # application-level source ref is missing.
+    package_id = payload.get("package_id")
+    if package_id:
+        try:
+            from services.pipeline.input_preparation import prepare_intake_source
+
+            staged_intake = prepare_intake_source(str(package_id), effective_job_id)
+            if _checksum_matches(staged_intake, expected):
+                payload["source_path"] = str(staged_intake)
+                return payload
+        except Exception as exc:  # noqa: BLE001
+            if restore_error is None:
+                restore_error = exc
+    raise JobInputUnavailableError(
+        "Recovery source file failed its integrity check"
+    ) from restore_error
 
 
 def request_control(application_id: int, action: ControlAction) -> dict[str, Any]:

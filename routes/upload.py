@@ -1413,6 +1413,45 @@ def upload_progress(application_id: int) -> dict[str, object]:
 # --- batch ---
 
 
+def _ensure_batch_rejections_table() -> None:
+    """Create the batch-rejections table (dialect neutral, TEXT PK)."""
+    with get_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS batch_rejections (
+                id TEXT PRIMARY KEY,
+                batch_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_batch_rejections_batch ON batch_rejections(batch_id)"
+        )
+
+
+def _record_batch_rejection(batch_id: str, filename: str, reason: str) -> None:
+    from datetime import UTC, datetime
+
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO batch_rejections (id, batch_id, filename, reason, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (uuid4().hex, batch_id, filename, reason, datetime.now(UTC).isoformat()),
+        )
+
+
+def _load_batch_rejections(batch_id: str) -> list[dict[str, object]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT filename, reason FROM batch_rejections WHERE batch_id = ? ORDER BY created_at, filename",
+            (batch_id,),
+        ).fetchall()
+    return [{"filename": str(row["filename"]), "reason": str(row["reason"])} for row in rows]
+
+
 @router.post("/batch", summary="Upload up to ten files as one batch")
 async def upload_batch(
     files: list[UploadFile] = File(...),
@@ -1423,12 +1462,10 @@ async def upload_batch(
 ) -> dict[str, object]:
     """Create one application + one job per file sharing a batch_id."""
     init_db()
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_batch_rejections_table()
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="A batch accepts at most 10 files")
     batch_id = uuid4().hex
-    batch_dir = UPLOAD_DIR / f"batch_{batch_id}"
-    batch_dir.mkdir(parents=True, exist_ok=True)
 
     # Index sidecar manifests by stem: <name>.pdf + <name>.manifest.json
     manifests: dict[str, bytes] = {}
@@ -1486,7 +1523,7 @@ async def upload_batch(
         try:
             if lowered.endswith(".zip"):
                 result_item = await _batch_single_mapped_zip(
-                    item, batch_id, batch_dir, timestamp, case_type
+                    item, batch_id, timestamp, case_type
                 )
                 items.append(result_item)
                 continue
@@ -1498,7 +1535,6 @@ async def upload_batch(
                     sidecar,
                     filename,
                     batch_id,
-                    batch_dir,
                     timestamp,
                     case_type,
                 )
@@ -1508,7 +1544,6 @@ async def upload_batch(
                 item,
                 filename,
                 batch_id,
-                batch_dir,
                 timestamp,
                 product_type,
                 branch,
@@ -1537,12 +1572,22 @@ async def upload_batch(
                     "reason": str(exc)[:300],
                 }
             )
+    # Persist rejections so GET /upload/batch/{id} can show them.
+    for entry in items:
+        if entry.get("status") == "rejected":
+            try:
+                _record_batch_rejection(
+                    batch_id, str(entry.get("filename") or "upload.pdf"), str(entry.get("reason") or "")
+                )
+            except Exception:
+                pass
     return {"batch_id": batch_id, "items": items}
 
 
 @router.get("/batch/{batch_id}", summary="Get per-file batch status")
 def get_batch_status(batch_id: str) -> dict[str, object]:
     init_db()
+    _ensure_batch_rejections_table()
     if not re.fullmatch(r"[0-9a-f]{32}", batch_id):
         raise HTTPException(status_code=404, detail="Batch not found")
     with get_connection() as connection:
@@ -1556,7 +1601,11 @@ def get_batch_status(batch_id: str) -> dict[str, object]:
             """,
             (batch_id,),
         ).fetchall()
-        if not jobs:
+        rejected_rows = connection.execute(
+            "SELECT filename, reason FROM batch_rejections WHERE batch_id = ? ORDER BY created_at, filename",
+            (batch_id,),
+        ).fetchall()
+        if not jobs and not rejected_rows:
             raise HTTPException(status_code=404, detail="Batch not found")
         items: list[dict[str, object]] = []
         for job in jobs:
@@ -1590,6 +1639,22 @@ def get_batch_status(batch_id: str) -> dict[str, object]:
                     "review_ready": status == "completed",
                 }
             )
+        for rejected in rejected_rows:
+            reason = str(rejected["reason"] or "")
+            items.append(
+                {
+                    "application_id": None,
+                    "job_id": None,
+                    "filename": str(rejected["filename"]),
+                    "status": "rejected",
+                    "reason": reason,
+                    "attempt": 0,
+                    "max_attempts": 3,
+                    "failure_reason": reason or None,
+                    "progress_percentage": 0.0,
+                    "review_ready": False,
+                }
+            )
     return {"batch_id": batch_id, "items": items}
 
 
@@ -1597,18 +1662,26 @@ async def _batch_single_plain_pdf(
     item: UploadFile,
     filename: str,
     batch_id: str,
-    batch_dir: Path,
     timestamp: str,
     product_type: str,
     branch: str,
     applicant_name: str,
     case_type: str,
+    batch_dir: Path | None = None,
 ) -> dict[str, object]:
-    file_path = batch_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
-    file_size_bytes = await _save_upload_stream(item, file_path)
+    # Batch PDFs are staged under DMEF_JOB_WORK_DIR (never UPLOAD_DIR) and
+    # persisted through the object store, same key layout as single /upload.
+    _ = batch_dir  # legacy param ignored; kept for backward compatibility
+    work_dir = _new_upload_work_dir("batch")
+    file_path = work_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
+    try:
+        file_size_bytes = await _save_upload_stream(item, file_path)
+    except Exception:
+        _cleanup_work_dir(work_dir)
+        raise
     validation = validate_file(file_path, file_size_bytes)
     if not validation["valid"]:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(work_dir)
         return {
             "filename": filename,
             "application_id": None,
@@ -1637,7 +1710,7 @@ async def _batch_single_plain_pdf(
             """,
             (
                 application_id,
-                str(file_path),
+                None,
                 filename,
                 round(file_size_bytes / 1024, 2),
                 validation["total_pages"],
@@ -1649,6 +1722,22 @@ async def _batch_single_plain_pdf(
             "INSERT INTO audit_log (application_id, action, details) VALUES (?, ?, ?)",
             (application_id, "file_uploaded", f"Batch {batch_id}: uploaded {filename}"),
         )
+    # Persist bytes through the object store before enqueue.
+    pdf_bytes = file_path.read_bytes()
+    storage_key = _application_source_key(application_id, filename)
+    try:
+        _store_bytes(storage_key, pdf_bytes, "application/pdf")
+    except Exception as exc:
+        _cleanup_work_dir(work_dir)
+        raise HTTPException(status_code=500, detail="Failed to store uploaded PDF") from exc
+    record_ref(
+        "applications",
+        application_id,
+        "source",
+        storage_key,
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
     system_data = {
         "loan_id": loan_id,
         "applicant_name": resolved_applicant,
@@ -1681,6 +1770,7 @@ async def _batch_single_plain_pdf(
             batch_id=batch_id,
         )
     except Exception as exc:
+        _cleanup_work_dir(work_dir)
         raise HTTPException(
             status_code=500, detail="Upload accepted but failed to queue securely"
         ) from exc
@@ -1692,6 +1782,8 @@ async def _batch_single_plain_pdf(
         system_data,
         product_type,
     )
+    # Staged copy is job-scoped; the worker reloads via the store.
+    _cleanup_work_dir(work_dir)
     return {
         "filename": filename,
         "application_id": application_id,
@@ -1705,27 +1797,33 @@ async def _batch_single_pdf_with_manifest(
     manifest_bytes: bytes,
     filename: str,
     batch_id: str,
-    batch_dir: Path,
     timestamp: str,
     case_type: str,
+    batch_dir: Path | None = None,
 ) -> dict[str, object]:
-    file_path = batch_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
-    await _save_upload_stream(item, file_path)
+    _ = batch_dir  # legacy param ignored; staging lives under DMEF_JOB_WORK_DIR
+    work_dir = _new_upload_work_dir("batch")
+    file_path = work_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
+    try:
+        await _save_upload_stream(item, file_path)
+    except Exception:
+        _cleanup_work_dir(work_dir)
+        raise
     try:
         manifest_text = manifest_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(work_dir)
         raise HTTPException(status_code=422, detail="Manifest file is not valid UTF-8") from exc
     try:
         parsed = _parse_manifest(manifest_text)
         parsed.case_type = case_type  # type: ignore[assignment]
     except HTTPException:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(work_dir)
         raise
     file_size_bytes = file_path.stat().st_size
     validation = validate_file(file_path, file_size_bytes)
     if not validation["valid"]:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(work_dir)
         return {
             "filename": filename,
             "application_id": None,
@@ -1733,16 +1831,22 @@ async def _batch_single_pdf_with_manifest(
             "status": "rejected",
             "reason": str(validation["error"]),
         }
-    result = _queue_mapped_verification(
-        parsed,
-        file_path=file_path,
-        original_filename=filename,
-        file_size_bytes=file_size_bytes,
-        validation=validation,
-        audit_action="mapped_file_uploaded",
-        audit_detail=f"Batch {batch_id}: uploaded {filename} with manifest",
-        batch_id=batch_id,
-    )
+    try:
+        result = _queue_mapped_verification(
+            parsed,
+            file_path=file_path,
+            original_filename=filename,
+            file_size_bytes=file_size_bytes,
+            validation=validation,
+            audit_action="mapped_file_uploaded",
+            audit_detail=f"Batch {batch_id}: uploaded {filename} with manifest",
+            batch_id=batch_id,
+        )
+    except Exception:
+        _cleanup_work_dir(work_dir)
+        raise
+    # Staged copy is job-scoped; the worker reloads via the store.
+    _cleanup_work_dir(work_dir)
     return {
         "filename": filename,
         "application_id": result["application_id"],
@@ -1754,10 +1858,11 @@ async def _batch_single_pdf_with_manifest(
 async def _batch_single_mapped_zip(
     item: UploadFile,
     batch_id: str,
-    batch_dir: Path,
     timestamp: str,
     case_type: str,
+    batch_dir: Path | None = None,
 ) -> dict[str, object]:
+    _ = batch_dir  # legacy param ignored; staging lives under DMEF_JOB_WORK_DIR
     filename = item.filename or "package.zip"
     package_bytes = await _read_upload_bytes(item)
     try:
@@ -1789,19 +1894,20 @@ async def _batch_single_mapped_zip(
         pdf_bytes = archive.read(pdf_member)
         if not pdf_bytes:
             raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
-    file_path = batch_dir / f"mapped_package_{timestamp}.pdf"
+    work_dir = _new_upload_work_dir("batch")
+    file_path = work_dir / f"mapped_package_{timestamp}.pdf"
     file_path.write_bytes(pdf_bytes)
     original_filename = PurePosixPath(pdf_member.filename).name
     try:
         parsed = _parse_manifest(manifest_text)
         parsed.case_type = case_type  # type: ignore[assignment]
     except HTTPException:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(work_dir)
         raise
     file_size_bytes = file_path.stat().st_size
     validation = validate_file(file_path, file_size_bytes)
     if not validation["valid"]:
-        file_path.unlink(missing_ok=True)
+        _cleanup_work_dir(work_dir)
         return {
             "filename": filename,
             "application_id": None,
@@ -1809,16 +1915,22 @@ async def _batch_single_mapped_zip(
             "status": "rejected",
             "reason": str(validation["error"]),
         }
-    result = _queue_mapped_verification(
-        parsed,
-        file_path=file_path,
-        original_filename=original_filename,
-        file_size_bytes=file_size_bytes,
-        validation=validation,
-        audit_action="mapped_file_uploaded",
-        audit_detail=f"Batch {batch_id}: mapped ZIP {filename}",
-        batch_id=batch_id,
-    )
+    try:
+        result = _queue_mapped_verification(
+            parsed,
+            file_path=file_path,
+            original_filename=original_filename,
+            file_size_bytes=file_size_bytes,
+            validation=validation,
+            audit_action="mapped_file_uploaded",
+            audit_detail=f"Batch {batch_id}: mapped ZIP {filename}",
+            batch_id=batch_id,
+        )
+    except Exception:
+        _cleanup_work_dir(work_dir)
+        raise
+    # Staged copy is job-scoped; the worker reloads via the store.
+    _cleanup_work_dir(work_dir)
     return {
         "filename": filename,
         "application_id": result["application_id"],

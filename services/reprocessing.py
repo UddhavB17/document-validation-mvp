@@ -128,16 +128,13 @@ def queue_application_reprocess(
 
     if application is None:
         raise LookupError("Application not found")
-    if uploaded is None or not uploaded["file_path"]:
-        raise FileNotFoundError("The original uploaded PDF is not available for reprocessing.")
-
-    file_path = Path(str(uploaded["file_path"]))
-    if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
+    if uploaded is None:
         raise FileNotFoundError("The original uploaded PDF is not available for reprocessing.")
 
     try:
         recovery = load_job_input(application_id)
     except JobInputUnavailableError:
+        recovery = None
         ground_truth = _decode_object(ground_truth_row["raw_json"] if ground_truth_row else None)
         system_data = {
             **ground_truth,
@@ -159,11 +156,21 @@ def queue_application_reprocess(
         package_id = None
         generate_llm_summary = None
     else:
-        file_path = Path(str(recovery["source_path"]))
         system_data = dict(recovery.get("system_data") or {})
         mapped_manifest = recovery.get("mapped_manifest")
         package_id = str(recovery.get("package_id") or "") or None
         generate_llm_summary = recovery.get("generate_llm_summary")
+
+    # Resolve a real file for enqueue: store-backed uploads have NULL
+    # file_path, so stage the durable bytes from object_refs via the store.
+    # Legacy archive rows with a live file_path keep working.
+    recovery_hint = str((recovery or {}).get("source_path") or "") or None
+    file_path = _resolve_reprocess_source(
+        application_id,
+        uploaded["file_path"] if uploaded else None,
+        recovery_hint,
+        package_id,
+    )
 
     start_tracking(
         application_id,
@@ -236,6 +243,15 @@ def queue_application_reprocess(
         resume,
         refresh_cached_ocr,
     )
+    # The staged reprocess copy is job-scoped; the worker reloads via the
+    # store, so remove it (legacy paths are never touched).
+    try:
+        if "reprocess-" in str(file_path):
+            from services.pipeline.input_preparation import cleanup_job_source
+
+            cleanup_job_source(Path(file_path).parent)
+    except Exception:
+        pass
 
     return {
         "application_id": application_id,
@@ -276,6 +292,16 @@ def _run_reprocess_task(
         )
         if result.get("pipeline_status") == "failed":
             mark_job_failed(job_id, "Recovery pipeline completed with failed outcome")
+            if package_id:
+                with get_connection() as connection:
+                    connection.execute(
+                        """
+                        UPDATE intake_packages
+                        SET status = 'failed'
+                        WHERE package_id = ? AND application_id = ?
+                        """,
+                        (package_id, application_id),
+                    )
         else:
             mark_job_completed(job_id)
             if package_id:
@@ -307,6 +333,51 @@ def _run_reprocess_task(
                     "UPDATE intake_packages SET status = 'failed' WHERE package_id = ? AND application_id = ?",
                     (package_id, application_id),
                 )
+
+
+def _resolve_reprocess_source(
+    application_id: int,
+    legacy_file_path: Any | None,
+    recovery_hint: str | None,
+    package_id: str | None,
+) -> Path:
+    """Return a live PDF path for reprocess enqueue, preferring the store.
+
+    Store-backed uploads record ``file_path`` as NULL; their bytes live in
+    the object store under ``object_refs``. Stage those bytes into
+    ``DMEF_JOB_WORK_DIR`` so ``enqueue`` can hash a real file and the worker
+    can reload it after this process is gone.
+    """
+    if recovery_hint:
+        candidate = Path(recovery_hint)
+        if candidate.is_file() and candidate.suffix.lower() == ".pdf":
+            return candidate
+    from uuid import uuid4
+
+    from services.paths import job_work_dir
+    from services.storage import get_store
+    from services.storage.refs import get_ref
+
+    ref = get_ref("applications", application_id, "source") or get_ref(
+        "applications", application_id, "normalized_pdf"
+    )
+    if ref is None and package_id:
+        ref = get_ref("intake_packages", package_id, "normalized_pdf")
+    if ref is not None:
+        try:
+            pdf_bytes = get_store().get(str(ref["storage_key"]))
+        except Exception:
+            pdf_bytes = None
+        if pdf_bytes:
+            staging = job_work_dir() / f"reprocess-{application_id}-{uuid4().hex}" / "source.pdf"
+            staging.parent.mkdir(parents=True, exist_ok=False)
+            staging.write_bytes(pdf_bytes)
+            return staging
+    if legacy_file_path:
+        candidate = Path(str(legacy_file_path))
+        if candidate.is_file() and candidate.suffix.lower() == ".pdf":
+            return candidate
+    raise FileNotFoundError("The original uploaded PDF is not available for reprocessing.")
 
 
 def _load_package_source_documents(package_id: str | None) -> list[dict[str, Any]]:

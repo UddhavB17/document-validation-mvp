@@ -335,6 +335,76 @@ def test_storage_route_serves_local_object(tmp_path, monkeypatch) -> None:
     assert exc_info.value.status_code == 400
 
 
+def test_worker_reload_from_store_after_workdir_deleted(tmp_path, monkeypatch) -> None:
+    """Worker+store reload: deleted upload work dir still yields a real PDF.
+
+    Persist inputs for a temp file, delete the file (API ``finally`` cleanup),
+    then ``load_job_input`` must re-stage the durable store bytes into
+    ``DMEF_JOB_WORK_DIR`` before the checksum. The staged file must match the
+    stored bytes.
+    """
+    import hashlib
+    import shutil
+
+    _use_tmp_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_INLINE_WORKER", "0")
+    _ensure_schema()
+
+    from database.db import get_connection
+    from services.job_control import load_job_input
+    from services.job_runner import enqueue
+    from services.pipeline.input_preparation import resolve_job_source
+
+    pdf_path = tmp_path / "source.pdf"
+    _create_pdf(pdf_path)
+    pdf_bytes = pdf_path.read_bytes()
+    expected_sha = hashlib.sha256(pdf_bytes).hexdigest()
+
+    with get_connection() as connection:
+        application_id = int(
+            connection.execute(
+                "INSERT INTO applications (loan_id, status) VALUES ('STORE-RELOAD-001', 'processing')"
+                " RETURNING id"
+            ).fetchone()["id"]
+        )
+    # Durable bytes live in the store before enqueue (single /upload layout).
+    store_key = f"applications/{application_id}/source/source.pdf"
+    get_store().put(store_key, pdf_bytes, "application/pdf")
+    record_ref(
+        "applications",
+        application_id,
+        "source",
+        store_key,
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
+
+    # Enqueue hashes the temp file, then the API deletes the work dir.
+    staging = tmp_path / "jobs" / "upload-scratch" / "source.pdf"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_bytes(pdf_bytes)
+    job_id = enqueue(
+        "pdf_pipeline",
+        application_id,
+        {"source_path": str(staging), "system_data": {}, "product_type": "LAP"},
+    )
+    shutil.rmtree(tmp_path / "jobs", ignore_errors=True)
+    (tmp_path / "jobs").mkdir(parents=True, exist_ok=True)
+    assert not staging.exists()
+
+    payload = load_job_input(application_id, job_id)
+    restored = Path(str(payload["source_path"]))
+    assert restored.is_file()
+    assert hashlib.sha256(restored.read_bytes()).hexdigest() == expected_sha
+    assert get_store().get(store_key) == pdf_bytes
+
+    # Explicit resolve prefers the store and never falls back to the deleted hint.
+    resolved = resolve_job_source(application_id, str(staging), job_id)
+    assert Path(resolved).is_file()
+    assert Path(resolved).read_bytes() == pdf_bytes
+
+
 @pytest.mark.skipif(
     not os.environ.get("DMEF_GCS_BUCKET"),
     reason="GCS integration needs DMEF_GCS_BUCKET",

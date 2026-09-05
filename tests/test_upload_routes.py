@@ -665,3 +665,48 @@ def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch) 
             (body["application_id"],),
         ).fetchone()
     assert uploaded["original_filename"] == "selected.pdf"
+
+
+def test_reprocess_store_backed_upload_without_file_path(tmp_path, monkeypatch) -> None:
+    """Reprocess of a store-backed upload (NULL file_path) must not FileNotFoundError."""
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_INLINE_WORKER", "0")
+    monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
+    pdf_path = tmp_path / "reprocess.pdf"
+    _create_pdf(pdf_path)
+    client = TestClient(app)
+    uploaded = client.post(
+        "/upload",
+        data={
+            "loan_id": "LAP-REPROCESS-001",
+            "applicant_name": "Ramesh Kumar",
+            "coapplicant_name": "",
+            "product_type": "LAP",
+            "branch": "Delhi",
+        },
+        files={"file": ("reprocess.pdf", pdf_path.read_bytes(), "application/pdf")},
+    ).json()
+    application_id = int(uploaded["application_id"])
+    with db.get_connection() as connection:
+        row = connection.execute(
+            "SELECT file_path FROM uploaded_files WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+    assert row["file_path"] is None
+    # Make the application retryable for reprocessing.
+    with db.get_connection() as connection:
+        connection.execute(
+            "UPDATE pipeline_progress SET status = 'failed', stage = 'failed' WHERE application_id = ?",
+            (application_id,),
+        )
+    import services.reprocessing as reprocessing
+
+    monkeypatch.setattr(reprocessing, "submit_job", lambda *args, **kwargs: None)
+    result = reprocessing.queue_application_reprocess(application_id)
+    assert result["pipeline_status"] == "queued"
+    assert int(result["application_id"]) == application_id

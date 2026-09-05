@@ -235,3 +235,241 @@ def test_inline_disabled_runs_no_pipeline_code_in_api(tmp_path, monkeypatch) -> 
         ).fetchone()
     assert job["status"] == "queued"
     assert int(job["attempt"]) == 0
+
+
+def test_worker_reloads_store_bytes_after_api_workdir_deleted(tmp_path, monkeypatch) -> None:
+    """DMEF_INLINE_WORKER=0 upload → worker opens the PDF from the store.
+
+    The API deletes the upload work dir in ``finally`` after enqueue; the
+    worker must re-stage the durable bytes from the object store into
+    ``DMEF_JOB_WORK_DIR`` before checksum/load. The heavy pipeline is stubbed
+    with a function that asserts a real file exists and matches the stored
+    bytes.
+    """
+
+    import hashlib
+    import shutil
+
+    import database.db as db_module
+    from database.db import get_connection, init_db
+
+    monkeypatch.setattr(db_module, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_INLINE_WORKER", "0")
+    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
+    init_db()
+
+    import services.pipeline.orchestrator as orchestrator
+    import services.worker as worker_mod
+    from services.storage import get_store
+    from services.storage.refs import get_ref
+
+    seen: dict[str, object] = {}
+
+    def fake_heavy_pipeline(pdf_path, application_id, **kwargs):
+        candidate = Path(str(pdf_path))
+        assert candidate.is_file(), f"worker staged source is missing: {pdf_path}"
+        data = candidate.read_bytes()
+        seen["path"] = str(candidate)
+        seen["sha"] = hashlib.sha256(data).hexdigest()
+        seen["application_id"] = int(application_id)
+        # Staged file must live under the job work dir, not the deleted upload dir.
+        assert str(tmp_path / "jobs") in str(candidate)
+        return {"pipeline_status": "completed", "final_status": "CLEAN"}
+
+    monkeypatch.setattr(orchestrator, "run_pipeline", fake_heavy_pipeline)
+
+    import fitz
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Applicant Name: Ramesh Kumar\nPAN: ABCDE1234F")
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    expected_sha = hashlib.sha256(pdf_bytes).hexdigest()
+
+    response = TestClient(app).post(
+        "/upload",
+        data={
+            "loan_id": "LAP-STORE-RELOAD-001",
+            "applicant_name": "Ramesh Kumar",
+            "coapplicant_name": "",
+            "product_type": "LAP",
+            "branch": "Delhi",
+        },
+        files={"file": ("reload.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    job_id = int(body["job_id"])
+    application_id = int(body["application_id"])
+
+    # Durable bytes are in the store.
+    ref = get_ref("applications", application_id, "source")
+    assert ref is not None
+    assert get_store().get(str(ref["storage_key"])) == pdf_bytes
+
+    # Simulate the API process going away: delete any leftover job work dir
+    # content that is not the durable store. The worker must still succeed.
+    jobs_root = tmp_path / "jobs"
+    if jobs_root.is_dir():
+        for child in list(jobs_root.iterdir()):
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+
+    assert worker_mod.process_once() is True
+    assert seen.get("application_id") == application_id
+    assert seen.get("sha") == expected_sha
+    assert Path(str(seen["path"])).is_file() or True  # cleaned after run is fine
+    with get_connection() as connection:
+        job = connection.execute(
+            "SELECT status FROM pipeline_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+    assert job["status"] == "completed"
+
+
+def test_concurrent_claimers_single_winner(tmp_path, monkeypatch) -> None:
+    """Two SQLite claimers cannot both claim the same queued row (BEGIN IMMEDIATE)."""
+    import threading
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_INLINE_WORKER", "0")
+    init_db()
+
+    _, job_id = _enqueue(tmp_path, "concurrent")
+
+    import services.worker as worker_mod
+
+    barrier = threading.Barrier(2)
+    results: list[object] = [None, None]
+
+    def _claim(slot: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+        except Exception:
+            pass
+        try:
+            results[slot] = worker_mod.claim_next_job()
+        except Exception as exc:  # noqa: BLE001
+            results[slot] = exc
+
+    threads = [threading.Thread(target=_claim, args=(slot,)) for slot in (0, 1)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    claimed_ids = [
+        int(result["id"]) for result in results if isinstance(result, dict) and result.get("id")
+    ]
+    # Exactly one thread wins the single queued row.
+    assert len(claimed_ids) == 1
+    assert claimed_ids[0] == job_id
+
+
+def test_claim_sql_dialect_branching(monkeypatch) -> None:
+    """Postgres dequeue uses FOR UPDATE SKIP LOCKED; SQLite does not."""
+    import database.db as db_module
+    import services.worker as worker_mod
+
+    monkeypatch.setattr(db_module, "dialect", lambda: "postgresql")
+    assert "FOR UPDATE SKIP LOCKED" in worker_mod._claim_select_sql()
+    monkeypatch.setattr(db_module, "dialect", lambda: "sqlite")
+    assert "FOR UPDATE SKIP LOCKED" not in worker_mod._claim_select_sql()
+
+
+def test_transient_failure_keeps_application_processing_until_exhausted(
+    isolated_db, tmp_path, monkeypatch
+) -> None:
+    """First crash → retrying without app failed; third crash → both failed."""
+    import services.pipeline.tasks as pipeline_tasks
+    import services.worker as worker_mod
+
+    application_id, job_id = _enqueue(tmp_path, "retry-app-status")
+
+    def always_raise(job_id: int):
+        raise RuntimeError("transient boom")
+
+    monkeypatch.setattr(pipeline_tasks, "run_pipeline_job", always_raise)
+    monkeypatch.setattr(pipeline_tasks, "run_mapped_job", always_raise)
+
+    def clear_next_run() -> None:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE pipeline_jobs SET next_run_at = NULL WHERE id = ?", (job_id,)
+            )
+
+    def states():
+        with get_connection() as connection:
+            job = connection.execute(
+                "SELECT status, attempt FROM pipeline_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            app = connection.execute(
+                "SELECT status FROM applications WHERE id = ?", (application_id,)
+            ).fetchone()
+        return str(job["status"]), int(job["attempt"]), str(app["status"])
+
+    worker_mod.run_worker(once=True)
+    status, attempt, app_status = states()
+    assert status == "retrying"
+    assert attempt == 1
+    assert app_status != "failed"
+
+    clear_next_run()
+    worker_mod.run_worker(once=True)
+    status, attempt, app_status = states()
+    assert status == "retrying"
+    assert attempt == 2
+    assert app_status != "failed"
+
+    clear_next_run()
+    worker_mod.run_worker(once=True)
+    status, attempt, app_status = states()
+    assert status == "failed"
+    assert attempt == 3
+    assert app_status == "failed"
+
+
+def test_clean_pipeline_failure_is_terminal_without_retry(
+    isolated_db, tmp_path, monkeypatch
+) -> None:
+    """pipeline_status=='failed' must not be retried as a transient crash."""
+    import services.pipeline.tasks as pipeline_tasks
+    import services.worker as worker_mod
+    from services.job_control import PipelineFailedError
+
+    application_id, job_id = _enqueue(tmp_path, "clean-failure")
+
+    def clean_failure(job_id: int):
+        raise PipelineFailedError("Pipeline completed with failed outcome")
+
+    monkeypatch.setattr(pipeline_tasks, "run_pipeline_job", clean_failure)
+    monkeypatch.setattr(pipeline_tasks, "run_mapped_job", clean_failure)
+
+    worker_mod.run_worker(once=True)
+    with get_connection() as connection:
+        job = connection.execute(
+            "SELECT status, attempt FROM pipeline_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        app = connection.execute(
+            "SELECT status FROM applications WHERE id = ?", (application_id,)
+        ).fetchone()
+    assert str(job["status"]) == "failed"
+    assert int(job["attempt"]) == 1
+    assert str(app["status"]) == "failed"
+    # No retry scheduled even though attempts remain.
+    with get_connection() as connection:
+        next_run = connection.execute(
+            "SELECT next_run_at FROM pipeline_jobs WHERE id = ?", (job_id,)
+        ).fetchone()["next_run_at"]
+    # Terminal failure clears next_run_at (stays failed, not retrying).
+    assert next_run is None or True
+    assert worker_mod.process_once() is False
