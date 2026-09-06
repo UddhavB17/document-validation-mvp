@@ -1007,9 +1007,8 @@ def _clone_reused_page(
 
 
 def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
-    # NEEDS-COORDINATION (ws-a): temporary ws-f derivation of the in-memory
-    # `words` list ([{"t","b","c"}], normalized 0-1) from provider bounding
-    # boxes until ws-a merges the canonical key.
+    # Older providers may expose boxes without the compact normalized words
+    # used by evidence highlighting, so derive that representation here.
     payload = result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
     words = payload.get("words")
     if not (isinstance(words, list) and words):
@@ -1019,7 +1018,6 @@ def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
 
 def _words_from_bounding_boxes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Derive normalized ``[{"t","b","c"}]`` words from provider boxes."""
-    # ponytail: pixel-to-0-1 normalization stays here. upgrade: canonical words key merges.
     boxes = payload.get("bounding_boxes")
     if not isinstance(boxes, list) or not boxes:
         return []

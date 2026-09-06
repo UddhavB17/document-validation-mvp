@@ -332,10 +332,8 @@ def _run_pipeline_impl(
     anomalies.extend(processing_error_anomalies)
     touch_progress(application_id, f"Aggregating {len(anomalies)} checklist findings")
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
-    # fx-integrate-df (NEEDS-COORDINATION: orchestrator is shared pipeline
-    # code): persist the ops payload on the live path so
-    # ``applications.ops_findings_json`` is non-null after a successful run.
-    # Best-effort; the endpoint recomputes when needed.
+    # Persist the operations payload on the live path. This is best-effort;
+    # the endpoint recomputes it when needed.
     try:
         from services.ops_presentation import store_ops_payload
 

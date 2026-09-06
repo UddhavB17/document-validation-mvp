@@ -151,11 +151,7 @@ def _evidence_shape(evidence: Any) -> dict | None:
         page_num = int(page) if page is not None else None
     except (TypeError, ValueError):
         page_num = None
-    if (
-        page_num is None
-        or not isinstance(bbox, (list, tuple))
-        or len(bbox) != 4
-    ):
+    if page_num is None or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
     try:
         bbox_floats = [float(value) for value in bbox]
@@ -227,12 +223,8 @@ def _summaries(findings: list[dict]) -> dict[str, str]:
             "hi": "कोई समस्या नहीं मिली। फ़ाइल ठीक है।",
         }
     noun_en = "issue" if count == 1 else "issues"
-    parts_en = ", ".join(
-        _summary_part(f["code"], f["pages"], "en") for f in findings
-    )
-    parts_hi = ", ".join(
-        _summary_part(f["code"], f["pages"], "hi") for f in findings
-    )
+    parts_en = ", ".join(_summary_part(f["code"], f["pages"], "en") for f in findings)
+    parts_hi = ", ".join(_summary_part(f["code"], f["pages"], "hi") for f in findings)
     return {
         "en": f"{count} {noun_en} need your attention: {parts_en}.",
         "hi": f"{count} समस्याओं पर ध्यान दें: {parts_hi}।",
@@ -278,8 +270,7 @@ def _load_job(application_id: int) -> dict | None:
     with get_connection() as connection:
         try:
             row = connection.execute(
-                "SELECT * FROM pipeline_jobs WHERE application_id = ? "
-                "ORDER BY id DESC LIMIT 1",
+                "SELECT * FROM pipeline_jobs WHERE application_id = ? ORDER BY id DESC LIMIT 1",
                 (application_id,),
             ).fetchone()
         except Exception:
@@ -345,9 +336,7 @@ _CHECKLIST_STATUS_MAP = {
 }
 
 
-def _checklist_section(
-    application: dict, pages: list[dict], anomalies: list[dict]
-) -> dict:
+def _checklist_section(application: dict, pages: list[dict], anomalies: list[dict]) -> dict:
     try:
         from services.checklist_output import build_checklist_verification_response
 
@@ -524,16 +513,12 @@ def _overflow_pages(all_overflow: list[dict], anomalies: list[dict]) -> list[dic
 
 
 def store_ops_payload(application_id: int) -> dict | None:
-    """Compute findings (minus checklist) and persist to ops_findings_json.
-
-    Intended one-line call from ``services/pipeline/finalization.py`` at
-    pipeline finalisation (that file is owned by another stream, so the call
-    itself is listed under NEEDS-COORDINATION and NOT made here).
-    """
+    """Compute findings (minus checklist) and persist to ops_findings_json."""
     try:
         anomalies = _load_anomalies(application_id)
-        findings = compute_findings(anomalies)[:5]
-        overflow = _overflow_pages(compute_findings(anomalies)[5:], anomalies)
+        all_findings = compute_findings(anomalies)
+        findings = all_findings[:5]
+        overflow = _overflow_pages(all_findings[5:], anomalies)
         stored = {
             "top_findings": findings,
             "pages_to_verify": overflow,

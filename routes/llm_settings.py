@@ -12,8 +12,7 @@ from fastapi import APIRouter, Depends
 from services.auth.dependencies import require_role
 from services.llm_client import ALLOWED_PROVIDERS, llm_model, llm_provider
 
-# fx-integrate-df: LLM settings are admin-only (contracts §6). One-line
-# cross-stream edit (file owned by ws-g-gemini-llm).
+# Provider and model configuration is restricted to admins.
 router = APIRouter(
     prefix="/settings/llm",
     tags=["settings"],
