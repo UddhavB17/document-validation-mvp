@@ -95,24 +95,6 @@ def _sync_page_meta(page: dict[str, Any]) -> dict[str, Any]:
     return page
 
 
-def _public_page_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    """Return business keys only (no ``_``-prefixed private entries)."""
-    if not isinstance(fields, dict):
-        return {}
-    return {key: value for key, value in fields.items() if not str(key).startswith("_")}
-
-
-def page_meta(page: dict[str, Any]) -> dict[str, Any]:
-    """Return a page's private meta, with legacy ``extracted_fields`` fallback."""
-    meta = page.get("meta")
-    if isinstance(meta, dict) and meta:
-        return meta
-    fields = page.get("extracted_fields")
-    if isinstance(fields, dict):
-        return {key: value for key, value in fields.items() if str(key).startswith("_")}
-    return {}
-
-
 def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],
@@ -1024,27 +1006,6 @@ def _clone_reused_page(
     return cloned
 
 
-def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Select small structured OCR fields kept in memory for the run.
-
-    Nothing returned here is persisted: ``pages`` rows carry no layout blobs
-    and ``pipeline_page_events`` carries no field payload at all. The full
-    provider response (``native``/``structure_json``) is never built.
-    """
-    keys = (
-        "ocr_pipeline",
-        "ocr_languages",
-        "ocr_language_hints",
-        "header_text",
-        "ocr_route",
-        "ocr_escalated",
-        "ocr_routing_rationale",
-        "ocr_original_confidence",
-        "ocr_processing_time_ms",
-    )
-    return {key: metadata[key] for key in keys if key in metadata}
-
-
 def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
     # NEEDS-COORDINATION (ws-a): temporary ws-f derivation of the in-memory
     # `words` list ([{"t","b","c"}], normalized 0-1) from provider bounding
@@ -1058,6 +1019,7 @@ def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
 
 def _words_from_bounding_boxes(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Derive normalized ``[{"t","b","c"}]`` words from provider boxes."""
+    # ponytail: pixel-to-0-1 normalization stays here. upgrade: canonical words key merges.
     boxes = payload.get("bounding_boxes")
     if not isinstance(boxes, list) or not boxes:
         return []

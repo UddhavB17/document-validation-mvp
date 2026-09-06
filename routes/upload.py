@@ -1388,23 +1388,6 @@ def _run_mapped_pipeline_task(
         return
 
 
-def _load_package_source_documents(package_id: str | None) -> list[dict[str, object]]:
-    if not package_id:
-        return []
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT source_document_id, original_filename, file_type, page_count,
-                   internal_page_start, internal_page_end
-            FROM intake_documents
-            WHERE package_id = ?
-            ORDER BY internal_page_start
-            """,
-            (package_id,),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
 @router.get("/{application_id}/progress", summary="Get upload processing progress")
 def upload_progress(application_id: int) -> dict[str, object]:
     progress = get_progress(application_id)
@@ -1430,15 +1413,6 @@ def _record_batch_rejection(batch_id: str, filename: str, reason: str) -> None:
             " VALUES (?, ?, ?, ?, ?)",
             (uuid4().hex, batch_id, filename, reason, datetime.now(UTC).isoformat()),
         )
-
-
-def _load_batch_rejections(batch_id: str) -> list[dict[str, object]]:
-    with get_connection() as connection:
-        rows = connection.execute(
-            "SELECT filename, reason FROM batch_rejections WHERE batch_id = ? ORDER BY created_at, filename",
-            (batch_id,),
-        ).fetchall()
-    return [{"filename": str(row["filename"]), "reason": str(row["reason"])} for row in rows]
 
 
 @router.post("/batch", summary="Upload up to ten files as one batch")
@@ -1660,11 +1634,9 @@ async def _batch_single_plain_pdf(
     branch: str,
     applicant_name: str,
     case_type: str,
-    batch_dir: Path | None = None,
 ) -> dict[str, object]:
     # Batch PDFs are staged under DMEF_JOB_WORK_DIR (never UPLOAD_DIR) and
     # persisted through the object store, same key layout as single /upload.
-    _ = batch_dir  # legacy param ignored; kept for backward compatibility
     work_dir = _new_upload_work_dir("batch")
     file_path = work_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
     try:
@@ -1792,9 +1764,7 @@ async def _batch_single_pdf_with_manifest(
     batch_id: str,
     timestamp: str,
     case_type: str,
-    batch_dir: Path | None = None,
 ) -> dict[str, object]:
-    _ = batch_dir  # legacy param ignored; staging lives under DMEF_JOB_WORK_DIR
     work_dir = _new_upload_work_dir("batch")
     file_path = work_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
     try:
@@ -1853,9 +1823,7 @@ async def _batch_single_mapped_zip(
     batch_id: str,
     timestamp: str,
     case_type: str,
-    batch_dir: Path | None = None,
 ) -> dict[str, object]:
-    _ = batch_dir  # legacy param ignored; staging lives under DMEF_JOB_WORK_DIR
     filename = item.filename or "package.zip"
     package_bytes = await _read_upload_bytes(item)
     try:

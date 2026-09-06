@@ -295,19 +295,6 @@ def _generic_detected_values(text: str) -> dict[str, list[str]]:
     }
 
 
-def _generic_keywords(text: str) -> list[str]:
-    lowered = text.lower()
-    keyword_map = {
-        "account": ("account", "a/c", "ifsc"),
-        "address": ("address", "village", "district", "tehsil", "pin code"),
-        "amount": ("amount", "loan", "emi", "tenure", "interest"),
-        "credit_report": ("cibil", "crif", "credit score", "score"),
-        "identity": ("pan", "aadhaar", "voter", "election commission", "date of birth"),
-        "property": ("property", "khasra", "plot", "patta", "registry"),
-    }
-    return [label for label, terms in keyword_map.items() if any(term in lowered for term in terms)]
-
-
 def _unique_matches(pattern: str, text: str, *, flags: int = 0, limit: int = 10) -> list[str]:
     values: list[str] = []
     seen: set[str] = set()

@@ -63,7 +63,7 @@ def _do_pipeline_work(
     is marked ``failed`` (never ``completed``) and a non-retryable
     ``PipelineFailedError`` is raised.
     """
-    from services.job_control import PipelineCancelled, PipelineFailedError
+    from services.job_control import PipelineFailedError
 
     if run_fn is None:
         from services.pipeline.orchestrator import run_pipeline as run_fn  # type: ignore[no-redef]
@@ -74,69 +74,56 @@ def _do_pipeline_work(
         mark_job_started,
     )
 
-    try:
-        mark_job_started(job_id)
-        source_docs = _load_package_source_documents(package_id)
-        result = run_fn(
-            file_path,
-            application_id,
-            system_data=system_data,
-            product_type=product_type,
-            generate_llm_summary=generate_llm_summary,
-            mapped_manifest=mapped_manifest,
-            source_documents=source_docs,
-            job_id=job_id,
-            resume=resume,
-            refresh_cached_ocr=refresh_cached_ocr,
-        )
-        if result.get("pipeline_status") == "failed":
-            mark_job_failed(job_id, "Pipeline completed with failed outcome")
-            mark_failed(application_id, "Pipeline completed with failed outcome")
-            with get_connection() as connection:
-                connection.execute(
-                    "UPDATE applications SET status = ? WHERE id = ?",
-                    ("failed", application_id),
-                )
-                connection.execute(
-                    """
-                    INSERT INTO audit_log (application_id, action, details)
-                    VALUES (?, ?, ?)
-                    """,
-                    (application_id, "pipeline_failed", "Pipeline completed with failed outcome"),
-                )
-                if package_id:
-                    connection.execute(
-                        """
-                        UPDATE intake_packages SET status = 'failed'
-                        WHERE package_id = ? AND application_id = ?
-                        """,
-                        (package_id, application_id),
-                    )
-            raise PipelineFailedError("Pipeline completed with failed outcome")
-        mark_job_completed(job_id)
-        if package_id:
-            with get_connection() as connection:
+    mark_job_started(job_id)
+    source_docs = _load_package_source_documents(package_id)
+    result = run_fn(
+        file_path,
+        application_id,
+        system_data=system_data,
+        product_type=product_type,
+        generate_llm_summary=generate_llm_summary,
+        mapped_manifest=mapped_manifest,
+        source_documents=source_docs,
+        job_id=job_id,
+        resume=resume,
+        refresh_cached_ocr=refresh_cached_ocr,
+    )
+    if result.get("pipeline_status") == "failed":
+        mark_job_failed(job_id, "Pipeline completed with failed outcome")
+        mark_failed(application_id, "Pipeline completed with failed outcome")
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE applications SET status = ? WHERE id = ?",
+                ("failed", application_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_log (application_id, action, details)
+                VALUES (?, ?, ?)
+                """,
+                (application_id, "pipeline_failed", "Pipeline completed with failed outcome"),
+            )
+            if package_id:
                 connection.execute(
                     """
-                    UPDATE intake_packages
-                    SET status = 'completed', verified_at = CURRENT_TIMESTAMP
+                    UPDATE intake_packages SET status = 'failed'
                     WHERE package_id = ? AND application_id = ?
                     """,
                     (package_id, application_id),
                 )
-        return result
-    except PipelineCancelled:
-        raise
-    except PipelineFailedError:
-        raise
-    except RuntimeError:
-        # Transient crash: let the worker retry; do not mark the application
-        # failed here (final failure handling lives in handle_job_exception).
-        raise
-    except Exception:
-        # Transient crash: re-raise for the worker retry path without
-        # eagerly marking applications/intake failed.
-        raise
+        raise PipelineFailedError("Pipeline completed with failed outcome")
+    mark_job_completed(job_id)
+    if package_id:
+        with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE intake_packages
+                SET status = 'completed', verified_at = CURRENT_TIMESTAMP
+                WHERE package_id = ? AND application_id = ?
+                """,
+                (package_id, application_id),
+            )
+    return result
 
 
 def _resolve_worker_source(

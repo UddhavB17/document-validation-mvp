@@ -194,10 +194,6 @@ def is_encrypted_secret(stored: str) -> bool:
     return stored.startswith(SECRET_VALUE_PREFIX)
 
 
-def _fernet() -> Fernet:
-    return secrets_fernet()
-
-
 def _source_checksum(source_path: Path) -> str:
     digest = hashlib.sha256()
     with source_path.open("rb") as source:
@@ -254,7 +250,7 @@ def persist_job_input(
         "settings_snapshot": safe_settings_snapshot(),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    encrypted = _fernet().encrypt(encoded).decode("ascii")
+    encrypted = secrets_fernet().encrypt(encoded).decode("ascii")
     checksum = _source_checksum(source)
     with get_connection() as connection:
         connection.execute(
@@ -352,7 +348,7 @@ def load_job_input(application_id: int, job_id: int | None = None) -> dict[str, 
     if row is None:
         raise JobInputUnavailableError("No secure recovery payload is available")
     try:
-        plaintext = _fernet().decrypt(str(row["encrypted_payload"]).encode("ascii"))
+        plaintext = secrets_fernet().decrypt(str(row["encrypted_payload"]).encode("ascii"))
         payload = json.loads(plaintext)
     except (InvalidToken, UnicodeEncodeError, json.JSONDecodeError) as exc:
         raise JobInputUnavailableError("Recovery payload failed decryption") from exc

@@ -17,6 +17,7 @@ from services.job_control import (
 )
 from services.job_runner import enqueue, submit_job
 from services.pipeline import run_pipeline
+from services.pipeline.tasks import _load_package_source_documents
 from services.progress_tracker import (
     RETRYABLE_PROGRESS_STATES,
     get_progress,
@@ -378,23 +379,6 @@ def _resolve_reprocess_source(
         if candidate.is_file() and candidate.suffix.lower() == ".pdf":
             return candidate
     raise FileNotFoundError("The original uploaded PDF is not available for reprocessing.")
-
-
-def _load_package_source_documents(package_id: str | None) -> list[dict[str, Any]]:
-    if not package_id:
-        return []
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT source_document_id, original_filename, file_type, page_count,
-                   internal_page_start, internal_page_end
-            FROM intake_documents
-            WHERE package_id = ?
-            ORDER BY internal_page_start
-            """,
-            (package_id,),
-        ).fetchall()
-    return [dict(row) for row in rows]
 
 
 def _decode_object(value: Any) -> dict[str, Any]:

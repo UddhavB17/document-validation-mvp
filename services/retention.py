@@ -94,26 +94,6 @@ def _has_column(table: str, column: str) -> bool:
     return True
 
 
-def _column_values(
-    connection: Any, table: str, column: str, where: str, params: tuple[Any, ...]
-) -> list[Any] | None:
-    """Return one column's values, or ``None`` when table/column is missing.
-
-    The probe runs in a separate connection so a missing-column error on
-    Postgres does not abort the caller's transaction (and roll back its
-    pending deletes). ``connection`` is kept for signature compatibility.
-    """
-    _ = connection
-    try:
-        with get_connection() as probe:
-            rows = probe.execute(
-                f"SELECT {column} FROM {table} WHERE {where}", params
-            ).fetchall()
-    except Exception:  # noqa: BLE001 - legacy databases predate diet columns
-        return None
-    return [row[column] for row in rows]
-
-
 def run_retention(now: Any = None, dry_run: bool = True) -> dict:
     """Delete expired rows/files per the retention budgets.
 
