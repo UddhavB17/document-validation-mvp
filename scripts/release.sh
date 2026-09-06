@@ -17,6 +17,8 @@
 #   FRONTEND_HOST           public frontend host for CORS_ORIGINS
 #   SKIP_DEPLOY=1           run migrations + checks only
 #   SKIP_MIGRATE=1          deploy only (not recommended)
+#   DMEF_HEALTH_ATTEMPTS    health attempts after deploy (default: 12)
+#   DMEF_HEALTH_RETRY_SECONDS seconds between health attempts (default: 10)
 #
 #   scripts/release.sh --dry-run
 #     renders deploy/cloudrun/*.yaml with the placeholder substitution and
@@ -160,9 +162,16 @@ fi
 render_yaml deploy/cloudrun/worker.yaml > "$TMPDIR_RELEASE/worker.yaml"
 
 echo "==> deploying dmef-api"
-gcloud run services replace "$TMPDIR_RELEASE/api.yaml" --region "$REGION" --project "$PROJECT_ID"
+gcloud run services replace "$TMPDIR_RELEASE/api.yaml" \
+  --region "$REGION" --project "$PROJECT_ID" --quiet
+# The API is internet-reachable for the browser frontend; every product route
+# except /health and /auth/login is still protected by DMEF authentication.
+gcloud run services update dmef-api \
+  --region "$REGION" --project "$PROJECT_ID" \
+  --no-invoker-iam-check --quiet
 echo "==> deploying dmef-worker"
-gcloud run services replace "$TMPDIR_RELEASE/worker.yaml" --region "$REGION" --project "$PROJECT_ID"
+gcloud run services replace "$TMPDIR_RELEASE/worker.yaml" \
+  --region "$REGION" --project "$PROJECT_ID" --quiet
 
 echo "==> deploying frontend (prebuilt ${FRONTEND_IMAGE})"
 # NOTE: the frontend ships as the deploy.yml-built image
@@ -173,14 +182,50 @@ echo "==> deploying frontend (prebuilt ${FRONTEND_IMAGE})"
 # silent no-op for the served UI and is intentionally not done.
 gcloud run deploy dmef-frontend \
   --image "${FRONTEND_IMAGE}" \
-  --region "$REGION" --project "$PROJECT_ID"
+  --region "$REGION" --project "$PROJECT_ID" \
+  --allow-unauthenticated --quiet
 
-API_URL="https://${API_HOST:-}"
 if [ -z "${API_HOST:-}" ]; then
   API_URL="$(gcloud run services describe dmef-api --region "$REGION" --project "$PROJECT_ID" --format 'value(status.url)')"
+elif [[ "$API_HOST" == http://* || "$API_HOST" == https://* ]]; then
+  API_URL="$API_HOST"
+else
+  API_URL="https://${API_HOST}"
 fi
 echo "==> health: ${API_URL}/health"
-curl -fsS --max-time 30 "${API_URL}/health" | python -m json.tool
+health_attempts="${DMEF_HEALTH_ATTEMPTS:-12}"
+health_retry_seconds="${DMEF_HEALTH_RETRY_SECONDS:-10}"
+health_payload=""
+health_ok=0
+for ((attempt = 1; attempt <= health_attempts; attempt++)); do
+  if health_payload="$(curl -fsS --max-time 30 "${API_URL}/health")" && \
+    HEALTH_PAYLOAD="$health_payload" python -c '
+import json
+import os
+import sys
+
+payload = json.loads(os.environ["HEALTH_PAYLOAD"])
+checks = {
+    "status": payload.get("status") == "ok",
+    "database": payload.get("database") == "ok",
+    "storage": payload.get("storage") == "ok",
+    "worker": (payload.get("worker") or {}).get("status") == "ok",
+}
+failed = [name for name, passed in checks.items() if not passed]
+if failed:
+    print("health not ready: " + ", ".join(failed), file=sys.stderr)
+    raise SystemExit(1)
+'; then
+    health_ok=1
+    break
+  fi
+  if [ "$attempt" -lt "$health_attempts" ]; then
+    echo "==> health not ready (${attempt}/${health_attempts}); retrying" >&2
+    sleep "$health_retry_seconds"
+  fi
+done
+printf '%s\n' "$health_payload" | python -m json.tool || true
+[ "$health_ok" = "1" ] || fail "API dependencies or worker did not become healthy"
 
 echo "release OK. Next (operator):"
 echo "  python scripts/smoke_batch.py --api ${API_URL} --email admin@example.com --password '...' --files <dir-with-10-pdfs> --timeout 1800"

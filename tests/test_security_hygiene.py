@@ -65,11 +65,22 @@ def test_cors_reflects_cors_origins_env(monkeypatch) -> None:
         importlib.reload(main)
 
 
-def test_health_reports_database_and_storage(isolated_db) -> None:
+def test_health_reports_database_and_storage(isolated_db, monkeypatch) -> None:
     import main
+    from database import worker_heartbeat
 
+    monkeypatch.setattr(
+        worker_heartbeat,
+        "get_heartbeat",
+        lambda: {
+            "last_heartbeat": "2026-01-01T00:00:00+00:00",
+            "status": "ok",
+        },
+    )
     client = TestClient(main.app)
-    payload = client.get("/health").json()
+    response = client.get("/health")
+    payload = response.json()
+    assert response.status_code == 200
     assert payload["status"] == "ok"
     assert payload["version"] == main.app.version
     # --- fx-schema: flat database contract (string, never a nested dict) ---
@@ -78,16 +89,58 @@ def test_health_reports_database_and_storage(isolated_db) -> None:
     assert payload["database_dialect"] in {"sqlite", "postgresql"}
     assert payload["storage"] == "ok"
     assert isinstance(payload["worker"], dict)
-    assert payload["worker"]["status"] in {"ok", "stale"}
+    assert payload["worker"]["status"] == "ok"
+
+
+def test_health_is_degraded_when_worker_is_stale(isolated_db, monkeypatch) -> None:
+    import main
+    from database import worker_heartbeat
+
+    monkeypatch.setattr(
+        worker_heartbeat,
+        "get_heartbeat",
+        lambda: {"last_heartbeat": None, "status": "stale"},
+    )
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+
+
+def test_health_fails_when_database_is_unreachable(isolated_db, monkeypatch) -> None:
+    import main
+
+    def broken_connection():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(main, "get_connection", broken_connection)
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "error"
+    assert response.json()["database"] == "error"
+
+
+def test_health_fails_when_storage_is_unreachable(isolated_db, monkeypatch) -> None:
+    import main
+
+    class BrokenStore:
+        def exists(self, _key: str) -> bool:
+            raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(main, "get_store", lambda: BrokenStore())
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "error"
+    assert response.json()["storage"] == "error"
 
 
 def test_secret_setting_round_trips_encrypted(isolated_db, monkeypatch) -> None:
     monkeypatch.setenv(SECRETS_KEY_ENV, Fernet.generate_key().decode("ascii"))
 
     plaintext = "super-secret-vision-key"
-    response = update_setting(
-        "google.vision.api_key", SettingUpdatePayload(config_value=plaintext)
-    )
+    response = update_setting("google.vision.api_key", SettingUpdatePayload(config_value=plaintext))
     assert response["config_value"] == SECRET_PLACEHOLDER
     assert response["is_set"] is True
 

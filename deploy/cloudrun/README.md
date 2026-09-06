@@ -32,6 +32,7 @@ Map each Secret Manager secret to the env name used in the YAMLs:
 - `dmef-database-url-pooled` -> `DATABASE_URL` (pooled Neon endpoint, `?sslmode=require`)
 - `dmef-gcs-bucket` -> `DMEF_GCS_BUCKET`
 - `dmef-auth-secret` -> `DMEF_AUTH_SECRET` (HS256, 12 h expiry)
+- `dmef-scheduler-token` -> `DMEF_SCHEDULER_TOKEN` (dedicated retention-job header)
 - `dmef-secrets-key` -> `DMEF_SECRETS_KEY` (Fernet; `DMEF_ENV=production` refuses to boot without it)
 - `dmef-bootstrap-admin-email` / `dmef-bootstrap-admin-password` -> first admin on empty `users`
 - `dmef-gemini-api-key` -> `GEMINI_API_KEY` (optional when ADC is available)
@@ -41,27 +42,22 @@ Service accounts:
 - API/worker runtime: `roles/storage.objectAdmin` on the bucket,
   `roles/cloudvision.user` (Vision) + `roles/aiplatform.user` (Gemini),
   `roles/secretmanager.secretAccessor` on the secrets above.
-- Scheduler invoker (`dmef-scheduler@...`): `roles/run.invoker` on `dmef-api`.
-
 ## Retention scheduler auth (`deploy/scheduler/retention.yaml`)
 
-`POST /admin/retention/run` accepts an admin JWT **or** the scheduler bearer
-`Authorization: Bearer <DMEF_SCHEDULER_TOKEN>` (see
+`POST /admin/retention/run` accepts an admin JWT **or** the dedicated
+`X-DMEF-Scheduler-Token: <DMEF_SCHEDULER_TOKEN>` header (see
 `routes/admin_ops.py::_admin_or_scheduler`; the token is read via
 `services.config.get_setting`, never a new `os.getenv`).
 
-- Cloud Scheduler must send the bearer header **in addition to** OIDC
-  (`httpTarget.headers.Authorization: Bearer DMEF_SCHEDULER_TOKEN_VALUE`
-  in `retention.yaml`). OIDC gets the request through Cloud Run IAM;
-  the bearer header authenticates it to DMEF.
-- OIDC alone is not a DMEF admin JWT: without the bearer header the
-  endpoint returns 401, so the daily job would silently never run.
-- The endpoint stays authenticated. Do not remove the bearer requirement
+- The API is publicly reachable and application-authenticated, so the
+  Scheduler job does not use OIDC. It sends only the dedicated DMEF header.
+  This avoids Cloud Scheduler replacing a custom `Authorization` header.
+- The endpoint stays authenticated. Do not remove the scheduler-token requirement
   or expose retention without auth.
-- Set `DMEF_SCHEDULER_TOKEN` on the `dmef-api` service (recommended: a new
-  Secret Manager secret following the mapping pattern in the secrets list
-  above); when unset, the endpoint is admin-JWT-only and schedulers get
-  401. Use a placeholder in YAML/docs, never a real secret.
+- Create `dmef-scheduler-token` in Secret Manager for the API, then substitute
+  the same value into the Scheduler job at creation time. When unset, the
+  endpoint is admin-JWT-only and schedulers get 401. Use placeholders in
+  YAML and docs; never commit the real value.
 
 Frontend build arg: `NEXT_PUBLIC_API_BASE_URL=https://<api-host>`
 (the brief calls this `NEXT_PUBLIC_API_URL`; the codebase name wins and the
@@ -87,9 +83,9 @@ PROJECT_ID=my-proj REGION=asia-south1 TAG=v1.2.3 bash scripts/release.sh --dry-r
 1. `DATABASE_URL=<direct-Neon-endpoint> alembic upgrade head`
    (direct endpoint, never the `-pooler` host; see `docs/DEPLOY_NEON.md`).
 2. Bootstrap-admin check (env present; creation happens on first API boot).
-3. Deploy `dmef-api`, `dmef-worker`, frontend (Cloud Run).
-4. `curl https://<api-host>/health` must show `database.status: ok`,
-   `storage: ok`, `worker.status: ok|stale`.
+3. Deploy public `dmef-api`, private `dmef-worker`, and public frontend.
+4. Release validation waits for `/health` to show `status`, `database`,
+   `storage`, and `worker.status` all `ok`; otherwise the release fails.
 5. `python scripts/smoke_batch.py --api https://<api-host> ... --files <10-pdfs>`.
 
 ## What cannot be validated here

@@ -1,18 +1,17 @@
 """Admin operations for deploy + smoke (owned by ``ws-j-deploy-smoke``).
 
 - ``POST /admin/retention/run?dry_run=true|false`` (admin, or Cloud
-  Scheduler with the scheduler bearer) runs ``services.retention.run_retention``
+  Scheduler with its dedicated header) runs ``services.retention.run_retention``
   and returns its counts dict.
 - ``GET /admin/worker/heartbeat`` (admin) returns the worker heartbeat
   (``{"last_heartbeat": iso|None, "status": "ok|stale"}``).
 
 Auth is enforced with ``services.auth.dependencies.require_role("admin")``
-(contracts §6). Scheduler escape (fx-integrate-df): Cloud Scheduler OIDC
-cannot mint a DMEF admin JWT, so ``POST /admin/retention/run`` additionally
-accepts ``Authorization: Bearer <DMEF_SCHEDULER_TOKEN>``. The token is read
-via ``services.config.get_setting`` (contracts §7); when unset, the endpoint
-is admin-only and schedulers get 401. File owned by ws-j; scheduler lines
-are a cross-stream addition, listed under NEEDS-COORDINATION.
+(contracts §6). Cloud Scheduler cannot mint a DMEF admin JWT, so the
+retention endpoint additionally accepts ``X-DMEF-Scheduler-Token``. Keeping
+the scheduler credential out of ``Authorization`` avoids its replacement by
+Cloud Scheduler OIDC. The token is read via ``services.config.get_setting``;
+when unset, the endpoint is admin-only and schedulers get 401.
 """
 
 from __future__ import annotations
@@ -37,20 +36,18 @@ def _admin_or_scheduler(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ):
-    """Admin JWT, or the Cloud Scheduler bearer stub (retention only).
+    """Admin JWT, or the Cloud Scheduler token (retention only).
 
-    Scheduler wiring lives in ``deploy/scheduler/retention.yaml``: Cloud
-    Scheduler sends ``Authorization: Bearer <DMEF_SCHEDULER_TOKEN>`` in the
-    ``headers`` map *in addition to* OIDC. OIDC alone is not a DMEF admin
-    JWT, so without the bearer header this dependency falls through to the
-    admin check and the scheduler gets 401.
+    Scheduler wiring lives in ``deploy/scheduler/retention.yaml``. The job
+    targets the public API and sends a dedicated secret header; normal users
+    continue to authenticate with a DMEF bearer JWT.
     """
     from services.auth.dependencies import get_current_user
     from services.config import get_setting
 
     expected = str(get_setting("DMEF_SCHEDULER_TOKEN", "") or "").strip()
-    presented = str(request.headers.get("authorization") or "").strip()
-    if expected and presented and secrets.compare_digest(presented, f"Bearer {expected}"):
+    presented = str(request.headers.get("x-dmef-scheduler-token") or "").strip()
+    if expected and presented and secrets.compare_digest(presented, expected):
         return None
     # Fall through to the normal admin check (401 without token, 403).
     user = get_current_user(credentials)

@@ -15,7 +15,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from database.db import get_connection
@@ -107,7 +107,7 @@ app.include_router(admin_ops.router)
 
 # ── Health ────────────────────────────────────
 @app.get("/health", tags=["meta"])
-def health_check() -> dict[str, object]:
+def health_check(response: Response) -> dict[str, object]:
     # --- fx-schema: flat database contract (string + dialect) ---
     from database.db import dialect
 
@@ -129,8 +129,19 @@ def health_check() -> dict[str, object]:
         worker: dict[str, object] = dict(get_heartbeat())
     except Exception:  # noqa: BLE001 - health must report, not raise
         worker = {"last_heartbeat": None, "status": "stale"}
+    critical_ok = database == "ok" and storage == "ok"
+    worker_ok = worker.get("status") == "ok"
+    if not critical_ok:
+        response.status_code = 503
+        status = "error"
+    elif not worker_ok:
+        # The API itself remains live while a separately deployed worker is
+        # starting, but release validation must not call the system ready.
+        status = "degraded"
+    else:
+        status = "ok"
     return {
-        "status": "ok",
+        "status": status,
         "version": app.version,
         "database": database,
         "database_dialect": dialect(),

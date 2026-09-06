@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from database.db import get_connection, init_db
 from database.models import ChecklistVerificationResponse
-from services.auth.dependencies import get_current_user
+from services.auth.dependencies import require_role
 from services.checklist_output import build_checklist_verification_response
 from services.reviewer import load_reviewer_summary
 from services.verification_report_store import load_verification_report
@@ -17,7 +17,7 @@ from services.verification_report_store import load_verification_report
 router = APIRouter(
     prefix="/verification",
     tags=["verification"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_role("admin"))],
 )
 
 

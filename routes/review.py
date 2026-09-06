@@ -43,9 +43,7 @@ from services.review.repository import (
 from services.review.worklist import build_worklist
 from services.reviewer import load_reviewer_summary, summarize_for_display
 
-router = APIRouter(
-    prefix="/review", tags=["review"], dependencies=[Depends(get_current_user)]
-)
+router = APIRouter(prefix="/review", tags=["review"], dependencies=[Depends(get_current_user)])
 LOGGER = logging.getLogger(__name__)
 
 # In-memory LRU of rendered evidence pages, keyed by
@@ -109,7 +107,7 @@ def get_worklist() -> dict[str, list[dict[str, Any]]]:
     return build_worklist()
 
 
-@router.get("/activity/today")
+@router.get("/activity/today", dependencies=[Depends(require_role("admin"))])
 def get_today_activity() -> dict[str, Any]:
     """Return today's reviewer decision summary."""
     init_db()
@@ -123,7 +121,10 @@ def get_today_activity() -> dict[str, Any]:
     }
 
 
-@router.get("/applications/{application_id}")
+@router.get(
+    "/applications/{application_id}",
+    dependencies=[Depends(require_role("admin"))],
+)
 def get_application_review(application_id: int) -> dict[str, Any]:
     """Return the full reviewer detail payload for one application."""
     init_db()
@@ -176,7 +177,11 @@ def get_application_review(application_id: int) -> dict[str, Any]:
     }
 
 
-@router.get("/applications/{application_id}/source-pdf", summary="View the original PDF evidence")
+@router.get(
+    "/applications/{application_id}/source-pdf",
+    summary="View the original PDF evidence",
+    dependencies=[Depends(require_role("admin"))],
+)
 def get_application_source_pdf(application_id: int) -> StreamingResponse:
     init_db()
     pdf_bytes, filename = _application_source_bytes(application_id)
@@ -217,9 +222,7 @@ def get_application_source_page(
             headers={"Cache-Control": "private, max-age=300"},
         )
     try:
-        image_bytes = render_source_page(
-            pdf_bytes, page_number, dpi=dpi, highlight=highlight
-        )
+        image_bytes = render_source_page(pdf_bytes, page_number, dpi=dpi, highlight=highlight)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="Source page not found") from exc
     except ValueError as exc:
@@ -239,7 +242,9 @@ def get_application_source_page(
 
 
 @router.post(
-    "/applications/{application_id}/reprocess", summary="Retry a stale or failed PDF pipeline"
+    "/applications/{application_id}/reprocess",
+    summary="Retry a stale or failed PDF pipeline",
+    dependencies=[Depends(require_role("admin"))],
 )
 def reprocess_application(application_id: int) -> dict[str, Any]:
     init_db()

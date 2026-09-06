@@ -161,13 +161,9 @@ def test_expired_token_is_rejected(client) -> None:
 
     assert client.get("/auth/me").status_code == 401
     assert (
-        client.get("/auth/me", headers={"Authorization": "Bearer not-a-token"}).status_code
-        == 401
+        client.get("/auth/me", headers={"Authorization": "Bearer not-a-token"}).status_code == 401
     )
-    assert (
-        client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code
-        == 401
-    )
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
 def test_inactive_user_cannot_login_and_token_stops_working(client) -> None:
@@ -175,21 +171,15 @@ def test_inactive_user_cannot_login_and_token_stops_working(client) -> None:
     ops = _create_ops_user(client, headers)
     ops_token = _login(client, OPS_EMAIL, OPS_PASSWORD)["token"]
 
-    response = client.patch(
-        f"/admin/users/{ops['id']}", headers=headers, json={"is_active": False}
-    )
+    response = client.patch(f"/admin/users/{ops['id']}", headers=headers, json={"is_active": False})
     assert response.status_code == 200
 
     assert (
-        client.post(
-            "/auth/login", json={"email": OPS_EMAIL, "password": OPS_PASSWORD}
-        ).status_code
+        client.post("/auth/login", json={"email": OPS_EMAIL, "password": OPS_PASSWORD}).status_code
         == 401
     )
     assert (
-        client.get(
-            "/review/worklist", headers={"Authorization": f"Bearer {ops_token}"}
-        ).status_code
+        client.get("/review/worklist", headers={"Authorization": f"Bearer {ops_token}"}).status_code
         == 401
     )
 
@@ -205,6 +195,26 @@ def test_operations_user_forbidden_on_settings_but_ok_on_worklist(client) -> Non
     worklist = client.get("/review/worklist", headers=ops_headers)
     assert worklist.status_code == 200
     assert worklist.json()["items"] == []
+
+    admin_only = [
+        ("GET", "/review/activity/today"),
+        ("GET", "/review/applications/1"),
+        ("GET", "/review/applications/1/source-pdf"),
+        ("POST", "/review/applications/1/reprocess"),
+        ("GET", "/verification/summary/1"),
+        ("GET", "/verification/checklist/1"),
+        ("GET", "/verification/1"),
+    ]
+    for method, path in admin_only:
+        response = client.request(method, path, headers=ops_headers)
+        assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
+
+    # Operations users retain the deliberately small, non-technical routes.
+    assert client.get("/ops/worklist", headers=ops_headers).status_code == 200
+    assert client.get("/review/applications/1/status", headers=ops_headers).status_code == 404
+    assert (
+        client.get("/review/applications/1/source-page/1", headers=ops_headers).status_code == 404
+    )
 
 
 def test_admin_can_create_operations_user(client) -> None:
@@ -274,9 +284,7 @@ def test_admin_cannot_deactivate_self(client) -> None:
     headers = _admin_headers(client)
     admin_id = client.get("/auth/me", headers=headers).json()["id"]
 
-    response = client.patch(
-        f"/admin/users/{admin_id}", headers=headers, json={"is_active": False}
-    )
+    response = client.patch(f"/admin/users/{admin_id}", headers=headers, json={"is_active": False})
     assert response.status_code == 400
 
     me = client.get("/auth/me", headers=headers)
@@ -316,9 +324,7 @@ def test_change_password_and_admin_reset(client) -> None:
     )
     assert changed.status_code == 200
     assert (
-        client.post(
-            "/auth/login", json={"email": OPS_EMAIL, "password": OPS_PASSWORD}
-        ).status_code
+        client.post("/auth/login", json={"email": OPS_EMAIL, "password": OPS_PASSWORD}).status_code
         == 401
     )
     fresh = _login(client, OPS_EMAIL, "New0psPassword!")
@@ -411,23 +417,38 @@ def test_every_route_requires_auth(tmp_path, monkeypatch) -> None:
     assert checked > 10
 
 
-def test_retention_run_accepts_scheduler_bearer(client, monkeypatch) -> None:
-    """POST /admin/retention/run: scheduler bearer or admin JWT; else 401/403."""
+def test_retention_run_accepts_scheduler_header(client, monkeypatch) -> None:
+    """Retention accepts the dedicated scheduler header or an admin JWT."""
     monkeypatch.setenv("DMEF_SCHEDULER_TOKEN", "scheduler-test-token")
     assert client.post("/admin/retention/run?dry_run=true").status_code == 401
     scheduled = client.post(
         "/admin/retention/run?dry_run=true",
-        headers={"Authorization": "Bearer scheduler-test-token"},
+        headers={"X-DMEF-Scheduler-Token": "scheduler-test-token"},
     )
     assert scheduled.status_code == 200
     assert scheduled.json()["dry_run"] is True
-    assert client.post(
-        "/admin/retention/run?dry_run=true",
-        headers=_admin_headers(client),
-    ).status_code == 200
+    # Scheduler OIDC owns Authorization; a DMEF scheduler secret must never
+    # depend on that header surviving Cloud Scheduler.
+    assert (
+        client.post(
+            "/admin/retention/run?dry_run=true",
+            headers={"Authorization": "Bearer scheduler-test-token"},
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/admin/retention/run?dry_run=true",
+            headers=_admin_headers(client),
+        ).status_code
+        == 200
+    )
     _create_ops_user(client, _admin_headers(client))
     ops_token = _login(client, OPS_EMAIL, OPS_PASSWORD)["token"]
-    assert client.post(
-        "/admin/retention/run?dry_run=true",
-        headers={"Authorization": f"Bearer {ops_token}"},
-    ).status_code == 403
+    assert (
+        client.post(
+            "/admin/retention/run?dry_run=true",
+            headers={"Authorization": f"Bearer {ops_token}"},
+        ).status_code
+        == 403
+    )
