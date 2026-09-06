@@ -13,19 +13,6 @@ import { CASE_TYPE_OPTIONS, getCaseType, getFormError, getSanitizedManifest } fr
 import { useZipPreparation } from "./useZipPreparation";
 import { CaseType, UploadFormProps } from "./types";
 
-const manifestTemplate = (packageId: string) => ({
-  schema_version: "1.0",
-  loan_id: "LN-" + packageId.slice(0, 6).toUpperCase(),
-  people: {
-    primary: {
-      applicant_name: "Ramesh Kumar",
-      pan_number: "ABCDE1234F",
-      aadhaar_number: "123456789012",
-    },
-  },
-  document_index: [],
-});
-
 export function ZipPackageForm({ onUploaded }: UploadFormProps) {
   const [file, setFile] = useState<File | null>(null);
   const [preparingPackageId, setPreparingPackageId] = useState<string | null>(null);
@@ -54,7 +41,7 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
     }
     if (progress.status === "prepared" && preparingPackageId) {
       setIsPreparing(false);
-      setManifestText(JSON.stringify(manifestTemplate(preparingPackageId), null, 2));
+      setManifestText((current) => current || "");
     }
   }, [preparingPackageId, progress]);
 

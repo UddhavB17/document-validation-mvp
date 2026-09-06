@@ -1190,7 +1190,13 @@ def test_trusted_permanent_and_communication_addresses_are_valid_variants() -> N
         ],
         trusted,
     )
-    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in unrelated)
+    # ws-f accuracy: the blanket utility-bill skip is replaced by the page
+    # eligibility gate, and utility bills legitimately carry addresses — so a
+    # genuinely conflicting utility-bill address now surfaces (page 3).
+    assert any(
+        "ADDRESS_MISMATCH" in item["rule_id"] and item["page_number"] == 3
+        for item in unrelated
+    )
 
 
 def test_utility_address_is_not_compared_for_coapplicant() -> None:
@@ -1220,7 +1226,9 @@ def test_utility_address_is_not_compared_for_coapplicant() -> None:
         trusted,
     )
 
-    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
+    # ws-f accuracy: utility bills legitimately carry addresses, so the
+    # co-applicant's conflicting utility-bill address is now compared.
+    assert any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
 
 
 def test_relative_token_tolerance_applies_only_to_holder_name() -> None:
@@ -1274,7 +1282,9 @@ def test_utility_flat_number_is_not_compared() -> None:
         trusted,
     )
 
-    assert not any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
+    # ws-f accuracy: the eligibility gate replaced the blanket utility-bill
+    # skip, so an explicit flat-number conflict (B-403 vs B-402) now surfaces.
+    assert any("ADDRESS_MISMATCH" in item["rule_id"] for item in anomalies)
 
 
 def test_equivalent_explicit_flat_number_formats_still_match() -> None:

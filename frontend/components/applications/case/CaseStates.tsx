@@ -52,7 +52,7 @@ export function CaseErrorState({ title, message, onRetry }: CaseErrorStateProps)
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-red-800">{message}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/worklist" className="rounded-lg border border-red-300 bg-white px-3.5 py-2 text-sm font-bold text-red-800 shadow-3xs transition-colors hover:bg-red-100">
+          <Link href="/admin/worklist" className="rounded-lg border border-red-300 bg-white px-3.5 py-2 text-sm font-bold text-red-800 shadow-3xs transition-colors hover:bg-red-100">
             Back to Worklist
           </Link>
           {onRetry ? (

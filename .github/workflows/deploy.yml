@@ -1,0 +1,104 @@
+name: Deploy
+
+# Release pipeline (ws-j-deploy-smoke). Triggers on a version tag, builds the
+# backend + frontend images, then runs scripts/release.sh (alembic upgrade
+# head against the DIRECT Neon endpoint, then Cloud Run deploys).
+# Branch protection must require the CI workflow to be green before a tag is
+# pushed; the deploy job below additionally re-runs pytest + ruff so a tag
+# can never ship an untested tree. The agent never runs this; the operator
+# pushes a tag after provisioning secrets (see deploy/cloudrun/README.md).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  verify:
+    name: Verify (pytest + ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install backend requirements
+        run: python -m pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: python -m pytest -q
+
+      - name: Run Ruff
+        run: ruff check .
+
+  deploy:
+    name: Build images and release to Cloud Run
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      REGION: ${{ secrets.GCP_REGION }}
+      TAG: ${{ github.ref_name }}
+      DATABASE_URL: ${{ secrets.NEON_DIRECT_DATABASE_URL }}
+      DMEF_BOOTSTRAP_ADMIN_EMAIL: ${{ secrets.DMEF_BOOTSTRAP_ADMIN_EMAIL }}
+      DMEF_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.DMEF_BOOTSTRAP_ADMIN_PASSWORD }}
+      FRONTEND_HOST: ${{ secrets.DMEF_FRONTEND_HOST }}
+      API_HOST: ${{ secrets.DMEF_API_HOST }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Artifact Registry auth
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push backend image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/dmef/api:${TAG}"
+          docker build -t "${IMAGE}" .
+          docker push "${IMAGE}"
+
+      - name: Build and push frontend image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/dmef/frontend:${TAG}"
+          docker build -f frontend/Dockerfile \
+            --build-arg "NEXT_PUBLIC_API_BASE_URL=https://${API_HOST}" \
+            -t "${IMAGE}" .
+          docker push "${IMAGE}"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install backend requirements
+        run: python -m pip install -r requirements.txt
+
+      - name: Run release script
+        run: bash scripts/release.sh

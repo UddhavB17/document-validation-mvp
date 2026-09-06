@@ -39,18 +39,25 @@ def test_secret_update_stores_google_api_key_without_returning_it(tmp_path, monk
 
     assert response["config_value"] == SECRET_PLACEHOLDER
     assert response["has_value"] is True
+    assert response["is_set"] is True
     with get_connection() as conn:
         stored = conn.execute(
             "SELECT config_value FROM system_settings WHERE config_key = 'google.vision.api_key'"
         ).fetchone()["config_value"]
-    assert stored == "fake-google-key"
+    # ws-h: secrets are encrypted at rest, so the raw DB value is ciphertext.
+    assert stored != "fake-google-key"
+    assert "fake-google-key" not in stored
+    from services.config import get_setting
+
+    assert get_setting("google.vision.api_key") == "fake-google-key"
 
     update_setting("google.vision.api_key", SettingUpdatePayload(config_value=SECRET_PLACEHOLDER))
     with get_connection() as conn:
         still_stored = conn.execute(
             "SELECT config_value FROM system_settings WHERE config_key = 'google.vision.api_key'"
         ).fetchone()["config_value"]
-    assert still_stored == "fake-google-key"
+    assert still_stored == stored
+    assert get_setting("google.vision.api_key") == "fake-google-key"
 
     cleared = update_setting(
         "google.vision.api_key", SettingUpdatePayload(config_value="", clear_secret=True)

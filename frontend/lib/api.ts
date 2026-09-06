@@ -7,6 +7,29 @@ export { normalizeDocumentType } from "./documentType";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+// --- ws-d auth: in-memory bearer token (set once by lib/auth.ts) ---
+// The JWT lives in an httpOnly cookie, so page code cannot read it directly.
+// lib/auth.ts loads it once via GET /api/session and registers a getter here;
+// every backend request below carries it as `Authorization: Bearer …`.
+type AuthTokenProvider = () => string | null;
+let authTokenProvider: AuthTokenProvider | null = null;
+
+export function setAuthTokenProvider(provider: AuthTokenProvider | null) {
+  authTokenProvider = provider;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = authTokenProvider?.() ?? null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function handleUnauthorized(status: number) {
+  if (typeof window === "undefined" || status !== 401 || window.location.pathname === "/login") return;
+  void fetch("/api/session", { method: "DELETE" }).finally(() => {
+    window.location.assign("/login");
+  });
+}
+
 // Shared schema pieces used by several response shapes.
 const nullableString = z.string().nullable().optional();
 const dynamicFieldsSchema = z.record(z.unknown());
@@ -191,6 +214,37 @@ export const checklistRowSchema = z.object({
   pages: z.string(),
 });
 
+export const anomalyEvidenceObjectSchema = z.object({
+  page: z.number().nullable().optional(),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]).nullable().optional(),
+  text: nullableString,
+});
+
+// The review API returns validation rows verbatim, so evidence_json arrives
+// as an object, a raw TEXT string, or null. Keep this a plain union (no
+// preprocess/transform effects): effect wrappers degrade to `unknown` when
+// inferred through react-query's generics. Callers narrow with
+// parseAnomalyEvidence below.
+export const anomalyEvidenceSchema = z
+  .union([anomalyEvidenceObjectSchema, z.string()])
+  .nullable()
+  .optional();
+
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** Narrow an anomaly's evidence_json (object | string | null) to an object. */
+export function parseAnomalyEvidence(value: unknown): z.infer<typeof anomalyEvidenceObjectSchema> | null {
+  const raw = typeof value === "string" ? safeJsonParse(value) : value;
+  const parsed = anomalyEvidenceObjectSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 export const anomalySchema = z.object({
   id: z.number().optional(),
   application_id: z.number().optional(),
@@ -205,6 +259,7 @@ export const anomalySchema = z.object({
   status: nullableString,
   created_at: nullableString,
   collapsed_page_numbers: z.array(z.number()).optional(),
+  evidence_json: anomalyEvidenceSchema,
 });
 
 export const applicationSchema = z.object({
@@ -440,29 +495,24 @@ async function parseApiResponse<T>(response: Response, schema: z.ZodType<T>): Pr
     throw new ApiError(text || "Backend returned a non-JSON response", response.status);
   }
   if (!response.ok) {
-    const detailPayload = getApiErrorDetail(payload);
+    handleUnauthorized(response.status);
+    const detailPayload =
+      typeof payload === "object" && payload !== null && "detail" in payload ? payload.detail : payload;
     const detail = typeof detailPayload === "string" ? detailPayload : JSON.stringify(detailPayload);
     throw new ApiError(detail || "Request failed", response.status);
   }
   return schema.parse(payload);
 }
 
-function getApiErrorDetail(payload: unknown): unknown {
-  if (typeof payload === "object" && payload !== null && "detail" in payload) {
-    return payload.detail;
-  }
-  return payload;
-}
-
 async function getJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() } });
   return parseApiResponse(response, schema);
 }
 
 async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return parseApiResponse(response, schema);
@@ -471,7 +521,7 @@ async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodTyp
 async function patchJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return parseApiResponse(response, schema);
@@ -511,7 +561,7 @@ export const api = {
     formData.append("case_type", payload.caseType);
     formData.append("application_date", payload.applicationDate);
     formData.append("file", payload.file);
-    const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, uploadResponseSchema);
   },
   uploadMapped: async (payload: { manifest?: string; caseType: "Normal Case" | "BT Case"; file: File }) => {
@@ -521,7 +571,7 @@ export const api = {
     }
     formData.append("case_type", payload.caseType);
     formData.append("file", payload.file);
-    const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, uploadResponseSchema);
   },
   uploadPartnerJson: (payload: unknown) => postJsonResponse("/upload/json", payload, uploadResponseSchema),
@@ -530,6 +580,7 @@ export const api = {
     formData.append("file", file);
     const response = await fetch(`${API_BASE_URL}/upload/package?background=true`, {
       method: "POST",
+      headers: { ...authHeaders() },
       body: formData,
     });
     return parseApiResponse(response, zipPackageUploadResponseSchema);
@@ -542,6 +593,7 @@ export const api = {
     formData.append("case_type", caseType);
     const response = await fetch(`${API_BASE_URL}/upload/package/${packageId}/verify`, {
       method: "POST",
+      headers: { ...authHeaders() },
       body: formData,
     });
     return parseApiResponse(response, uploadResponseSchema);
@@ -560,4 +612,312 @@ export const api = {
     return highlight ? `${base}?highlight=${encodeURIComponent(highlight)}` : base;
   },
   ocrJsonUrl: (applicationId: number) => `${API_BASE_URL}/review/applications/${applicationId}/ocr-json`,
+  uploadBatch: async (files: File[]) => {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+    const response = await fetch(`${API_BASE_URL}/upload/batch`, { method: "POST", headers: { ...authHeaders() }, body: formData });
+    return parseApiResponse(response, batchUploadResponseSchema);
+  },
+  batchStatus: (batchId: string) => getJsonResponse(`/upload/batch/${batchId}`, batchStatusSchema),
 };
+
+// --- ws-c batch ---
+export const batchItemSchema = z.object({
+  filename: z.string(),
+  application_id: z.number().nullable().optional(),
+  job_id: z.number().nullable().optional(),
+  status: z.string(),
+  reason: nullableString,
+});
+
+export const batchUploadResponseSchema = z.object({
+  batch_id: z.string(),
+  items: z.array(batchItemSchema),
+});
+
+export const batchStatusItemSchema = z.object({
+  application_id: z.number(),
+  filename: z.string(),
+  status: z.string(),
+  attempt: z.number(),
+  max_attempts: z.number().optional().default(3),
+  failure_reason: nullableString,
+  progress_percentage: z.number().nullable().optional(),
+  review_ready: z.boolean(),
+});
+
+export const batchStatusSchema = z.object({
+  batch_id: z.string(),
+  items: z.array(batchStatusItemSchema),
+});
+
+export type BatchItemUpload = z.infer<typeof batchItemSchema>;
+export type BatchUploadResponse = z.infer<typeof batchUploadResponseSchema>;
+export type BatchItem = z.infer<typeof batchStatusItemSchema>;
+export type BatchStatus = z.infer<typeof batchStatusSchema>;
+
+// --- ws-d auth ---
+export const authUserSchema = z.object({
+  id: z.number(),
+  email: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+});
+
+export const loginResponseSchema = z.object({
+  token: z.string(),
+  user: authUserSchema,
+});
+
+export const sessionResponseSchema = z.object({
+  token: z.string(),
+  role: z.string(),
+});
+
+export const adminUserSchema = z.object({
+  id: z.number(),
+  email: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+  is_active: z.boolean(),
+  created_at: z.string(),
+});
+
+export type AuthUser = z.infer<typeof authUserSchema>;
+export type LoginResponse = z.infer<typeof loginResponseSchema>;
+export type AdminUser = z.infer<typeof adminUserSchema>;
+
+export async function loginRequest(email: string, password: string): Promise<LoginResponse> {
+  return postJsonResponse("/auth/login", { email, password }, loginResponseSchema);
+}
+
+// --- ws-g gemini + llm ---
+const llmProvidersSchema = z.object({
+  providers: z.array(z.string()),
+  current_provider: z.string(),
+  current_model: z.string(),
+  gemini_models: z.array(z.string()),
+  costs: z.array(z.object({
+    model: z.string(),
+    calls: z.number(),
+    tokens_in: z.number(),
+    tokens_out: z.number(),
+    usd: z.number(),
+  })),
+});
+
+export type LlmProviders = z.infer<typeof llmProvidersSchema>;
+
+export const llmApi = {
+  providers: () => getJsonResponse("/settings/llm/providers", llmProvidersSchema),
+};
+
+export async function fetchCurrentUser(): Promise<AuthUser> {
+  return getJsonResponse("/auth/me", authUserSchema);
+}
+
+// --- ws-e ops ui ---
+// Operations payload (contracts §5). Everything a non-technical user sees
+// comes from GET /ops/applications/{id}: at most 5 findings, bilingual
+// strings, normalized bboxes. No rule ids, no OCR text, no JSON dumps.
+const opsTextSchema = z.object({
+  en: z.string(),
+  hi: z.string(),
+});
+
+// Contracts §5 status vocabulary; legacy reviewer values fold to needs_review.
+function mapOpsStatusValue(value: unknown): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "clean" || normalized === "processing" || normalized === "failed" ? normalized : "needs_review";
+}
+
+export const opsStatusSchema = z.preprocess(
+  mapOpsStatusValue,
+  z.enum(["needs_review", "clean", "processing", "failed"]),
+);
+
+// Contracts §11 finding codes, priority order.
+const OPS_FINDING_CODES = [
+  "NAME_MISMATCH",
+  "ID_MISMATCH",
+  "ADDRESS_MISMATCH",
+  "MISSING_DOCUMENT",
+  "BANK_STATEMENT_OLD",
+  "PAGE_UNREADABLE",
+  "OCR_FAILED",
+  "DATA_MISSING",
+  "PROCESSING_ERROR",
+] as const;
+
+// Display strings stay lenient: null/missing becomes "" so one empty field cannot fail the whole parse.
+const opsDisplayStringSchema = z.preprocess((value: unknown) => value ?? "", z.string());
+
+const opsBboxSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
+export const opsEvidenceSchema = z.object({
+  page: z.number(),
+  bbox: opsBboxSchema.nullable(),
+  text: z.string(),
+});
+
+export const opsFindingSchema = z.object({
+  code: z
+    .string()
+    .refine((value) => (OPS_FINDING_CODES as readonly string[]).includes(value), { message: "Unknown finding code" }),
+  severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
+  title: opsTextSchema,
+  detail: opsTextSchema,
+  pages: z.array(z.number()),
+  evidence: opsEvidenceSchema.nullable(),
+});
+
+export const opsPageToVerifySchema = z.object({
+  page: z.number(),
+  document: opsTextSchema,
+  problem: opsTextSchema,
+});
+
+export const opsChecklistRowSchema = z.object({
+  s_no: z.number(),
+  description: z.string(),
+  status: z.enum(["FOUND", "MISSING", "NOT_CHECKED"]),
+  pages: z.array(z.number()),
+});
+
+export const opsChecklistSchema = z.object({
+  total: z.number(),
+  found: z.number(),
+  missing: z.number(),
+  not_checked: z.number(),
+  rows: z.array(opsChecklistRowSchema),
+});
+
+export const opsProcessingSchema = z.object({
+  stage: z.string().nullable().optional(),
+  percentage: z.number().nullable().optional(),
+  attempt: z.number().nullable().optional(),
+  failure_reason: z.string().nullable().optional(),
+});
+
+export const opsApplicationSchema = z.object({
+  application_id: z.number(),
+  loan_id: opsDisplayStringSchema,
+  applicant_name: opsDisplayStringSchema,
+  status: opsStatusSchema,
+  processing: opsProcessingSchema,
+  summary: opsTextSchema,
+  top_findings: z.array(opsFindingSchema).max(5),
+  pages_to_verify: z.array(opsPageToVerifySchema),
+  checklist: opsChecklistSchema,
+});
+
+export const opsWorklistItemSchema = z.object({
+  application_id: z.number(),
+  loan_id: opsDisplayStringSchema.optional(),
+  applicant_name: opsDisplayStringSchema.optional(),
+  status: opsStatusSchema,
+  findings_count: z.number(),
+  updated_at: z.string().nullable().optional(),
+});
+
+export const opsWorklistSchema = z.object({
+  applications: z.array(opsWorklistItemSchema),
+});
+
+// Application processing status (contracts §8, ≤ 5 KB). The lightweight
+// GET /review/applications/{id}/status nests progress under `progress`
+// (routes/review_pages.py: stage, percentage, completed_pages, total_pages)
+// plus the latest job row. The ops header bar reads progress.percentage
+// from here while in-flight; extra keys are ignored.
+const statusProgressSchema = z
+  .object({
+    stage: z.string().nullable().optional(),
+    percentage: z.number().nullable().optional(),
+    completed_pages: z.number().nullable().optional(),
+    total_pages: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const statusJobSchema = z
+  .object({
+    id: z.number().nullable().optional(),
+    status: z.string().nullable().optional(),
+    attempt: z.number().nullable().optional(),
+    failure_reason: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export const applicationStatusSchema = z
+  .object({
+    application_id: z.number().optional(),
+    status: z.string(),
+    progress: statusProgressSchema.nullable().optional(),
+    updated_at: z.string().nullable().optional(),
+    job: statusJobSchema.nullable().optional(),
+  })
+  .passthrough();
+
+export type AnomalyEvidence = z.infer<typeof anomalyEvidenceSchema>;
+export type OpsText = z.infer<typeof opsTextSchema>;
+export type OpsEvidence = z.infer<typeof opsEvidenceSchema>;
+export type OpsFinding = z.infer<typeof opsFindingSchema>;
+export type OpsPageToVerify = z.infer<typeof opsPageToVerifySchema>;
+export type OpsChecklistRow = z.infer<typeof opsChecklistRowSchema>;
+export type OpsChecklist = z.infer<typeof opsChecklistSchema>;
+export type OpsApplication = z.infer<typeof opsApplicationSchema>;
+export type OpsWorklistItem = z.infer<typeof opsWorklistItemSchema>;
+export type OpsWorklist = z.infer<typeof opsWorklistSchema>;
+export type ApplicationStatus = z.infer<typeof applicationStatusSchema>;
+
+// Admin user management (ws-d endpoints in routes/admin_users.py).
+export const adminUserListSchema = z.object({
+  users: z.array(adminUserSchema),
+});
+
+export async function adminListUsersRequest(): Promise<z.infer<typeof adminUserListSchema>> {
+  return getJsonResponse("/admin/users", adminUserListSchema);
+}
+
+export async function adminCreateUserRequest(payload: {
+  email: string;
+  display_name: string;
+  role: string;
+  password: string;
+}): Promise<AdminUser> {
+  return postJsonResponse("/admin/users", payload, adminUserSchema);
+}
+
+export async function adminUpdateUserRequest(
+  userId: number,
+  payload: { display_name?: string; role?: string; is_active?: boolean },
+): Promise<AdminUser> {
+  return patchJsonResponse(`/admin/users/${userId}`, payload, adminUserSchema);
+}
+
+export async function adminResetPasswordRequest(userId: number, newPassword: string): Promise<void> {
+  await postJsonResponse(`/admin/users/${userId}/password`, { new_password: newPassword }, z.object({}));
+}
+
+export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {
+  // The ops schemas use z.preprocess for legacy-status mapping and null
+  // coercion. That is runtime-correct, but this toolchain infers preprocessed
+  // fields as unknown through the response generic (see the note on
+  // anomalyEvidenceSchema above), so the schema is asserted to its own
+  // inferred output type here. The assertion cannot drift: OpsApplication is
+  // derived from this same schema.
+  return getJsonResponse(
+    `/ops/applications/${applicationId}`,
+    opsApplicationSchema as z.ZodType<OpsApplication>,
+  );
+}
+
+export async function fetchOpsWorklist(): Promise<OpsWorklist> {
+  // Same preprocess note as fetchOpsApplication.
+  return getJsonResponse("/ops/worklist", opsWorklistSchema as z.ZodType<OpsWorklist>);
+}
+
+export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {
+  return getJsonResponse(`/review/applications/${applicationId}/status`, applicationStatusSchema);
+}

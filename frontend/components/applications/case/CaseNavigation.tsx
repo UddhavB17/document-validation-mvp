@@ -11,7 +11,7 @@ const CASE_TABS: ReadonlyArray<{ key: CaseTab; label: string }> = [
 ];
 
 function caseTabHref(applicationId: number, tab: CaseTab): string {
-  return tab === "review" ? `/applications/${applicationId}` : `/applications/${applicationId}?tab=${tab}`;
+  return tab === "review" ? `/admin/applications/${applicationId}` : `/admin/applications/${applicationId}?tab=${tab}`;
 }
 
 export function CaseNavigation({ applicationId, activeTab }: { applicationId: number; activeTab: CaseTab }) {

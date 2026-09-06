@@ -11,7 +11,11 @@ from rapidfuzz import fuzz
 
 from database.models import DocumentVerificationReport, FieldVerificationResult, GravitonRecord
 from services.llm_verifier import llm_verify_field
-from services.person_names import canonicalize_person_name
+from services.person_names import (
+    NAME_MATCH_THRESHOLD,
+    canonicalize_person_name,
+    name_match_score,
+)
 
 
 def verify_aadhaar(extracted: str, db_value: str) -> FieldVerificationResult:
@@ -109,7 +113,7 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
 
 
 def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
-    """Verify applicant names using rapidfuzz token-sort similarity."""
+    """Verify applicant names with the single unified matcher (person_names)."""
     extracted_candidate = canonicalize_person_name(extracted)
     db_candidate = canonicalize_person_name(db_value)
     if not extracted_candidate.valid or not db_candidate.valid:
@@ -122,35 +126,18 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
             method="fuzzy",
             mismatch_reason="Name candidate is unreliable and requires manual review",
         )
-    extracted_compact = re.sub(r"[^a-z0-9]", "", str(extracted or "").lower())
-    db_compact = re.sub(r"[^a-z0-9]", "", str(db_value or "").lower())
-    if extracted_compact and extracted_compact == db_compact:
+    score = name_match_score(extracted, db_value)
+    matched = score >= NAME_MATCH_THRESHOLD
+    if matched and score >= 99:
         return _exact_result("applicant_name", extracted, db_value, True)
-    # Transliteration variants (Unkar/Onkar/Ukar) that humans treat as the same.
-    try:
-        from services.consistency_checks import _names_equivalent
-
-        if _names_equivalent(extracted, db_value):
-            return FieldVerificationResult(
-                field_name="applicant_name",
-                extracted_value=extracted,
-                db_value=db_value,
-                match=True,
-                confidence=0.95,
-                method="fuzzy",
-                mismatch_reason=None,
-            )
-    except Exception:
-        pass
-    return _fuzzy_result(
+    return FieldVerificationResult(
         field_name="applicant_name",
-        extracted=_normalize_name(extracted),
-        db_value=_normalize_name(db_value),
-        scorer=fuzz.token_sort_ratio,
-        threshold=85,
-        reason="Name similarity below threshold",
-        original_extracted=extracted,
-        original_db_value=db_value,
+        extracted_value=extracted,
+        db_value=db_value,
+        match=matched,
+        confidence=round(score / 100.0, 3),
+        method="fuzzy",
+        mismatch_reason=None if matched else "Name similarity below threshold",
     )
 
 

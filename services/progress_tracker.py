@@ -200,7 +200,10 @@ def record_page_completed(
     status: str = "completed",
     error: str | None = None,
 ) -> None:
-    fields = extracted_fields or {}
+    # ``extracted_fields`` is accepted for caller compatibility but never
+    # persisted: page events carry status/timing only (ws-a data diet). The
+    # argument is intentionally ignored.
+    _ = extracted_fields
     completed_at = _utc_now_iso()
     with get_connection() as connection:
         connection.execute(
@@ -214,10 +217,9 @@ def record_page_completed(
                 status,
                 elapsed_seconds,
                 error,
-                extracted_fields,
                 completed_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(application_id, page_number) DO UPDATE SET
                 total_pages = excluded.total_pages,
                 page_type = excluded.page_type,
@@ -225,7 +227,6 @@ def record_page_completed(
                 status = excluded.status,
                 elapsed_seconds = excluded.elapsed_seconds,
                 error = excluded.error,
-                extracted_fields = excluded.extracted_fields,
                 completed_at = excluded.completed_at
             """,
             (
@@ -237,7 +238,6 @@ def record_page_completed(
                 status,
                 elapsed_seconds,
                 error,
-                json.dumps(fields, ensure_ascii=False),
                 completed_at,
             ),
         )
@@ -334,7 +334,7 @@ def get_progress(application_id: int) -> dict[str, Any] | None:
         page_rows = connection.execute(
             """
             SELECT page_number, total_pages, page_type, document_type, status,
-                   elapsed_seconds, error, extracted_fields, completed_at
+                    elapsed_seconds, error, completed_at
             FROM pipeline_page_events
             WHERE application_id = ?
             ORDER BY page_number
@@ -345,11 +345,7 @@ def get_progress(application_id: int) -> dict[str, Any] | None:
         return None
 
     payload = dict(row)
-    completed_pages = []
-    for page_row in page_rows:
-        page_payload = dict(page_row)
-        page_payload["extracted_fields"] = _decode_json(page_payload.get("extracted_fields"))
-        completed_pages.append(page_payload)
+    completed_pages = [dict(page_row) for page_row in page_rows]
     operational_status = operational_progress_status(payload)
     eta_seconds = _estimate_eta_seconds({**payload, "status": operational_status})
     payload["eta_seconds"] = eta_seconds
@@ -408,17 +404,19 @@ def create_pipeline_job(
                 (application_id,),
             ).fetchone()[0]
         )
-        cursor = connection.execute(
+        row = connection.execute(
             """
             INSERT INTO pipeline_jobs (
                 application_id, job_type, status, control_state, attempt,
+                max_attempts, next_run_at, failure_reason, batch_id,
                 parent_job_id, heartbeat_at, created_at
             )
-            VALUES (?, ?, 'queued', 'running', ?, ?, ?, ?)
+            VALUES (?, ?, 'queued', 'running', ?, 3, NULL, NULL, NULL, ?, ?, ?)
+            RETURNING id
             """,
             (application_id, job_type, attempt, parent_job_id, now, now),
-        )
-        return int(cursor.lastrowid)
+        ).fetchone()
+        return int(row["id"])
 
 
 def mark_job_started(job_id: int) -> None:
@@ -480,13 +478,3 @@ def _estimate_eta_seconds(progress: dict[str, Any]) -> int | None:
     seconds_per_page = elapsed_seconds / processed_pages
     remaining_pages = max(0, total_pages - processed_pages)
     return int(round(seconds_per_page * remaining_pages))
-
-
-def _decode_json(value: Any) -> dict[str, Any]:
-    if not value:
-        return {}
-    try:
-        decoded = json.loads(str(value))
-    except json.JSONDecodeError:
-        return {}
-    return decoded if isinstance(decoded, dict) else {}

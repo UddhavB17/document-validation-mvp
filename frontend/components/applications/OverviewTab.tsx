@@ -35,13 +35,13 @@ export function OverviewTab({
         <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">
           <div className="text-[#5C6B7A] text-[12.5px] font-medium">Purpose of Loan</div>
           <div className="mt-1 font-bold text-sm text-[#16202E]">
-            {asText(data.application.purpose) || "Business expansion — LAP"}
+            {asText(data.application.purpose) || "—"}
           </div>
         </div>
         <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">
           <div className="text-[#5C6B7A] text-[12.5px] font-medium">Property Details</div>
           <div className="mt-1 font-bold text-sm text-[#16202E]">
-            {asText(data.application.property_address) || "Residential, Jaipur (Malviya Nagar)"}
+            {asText(data.application.property_address) || "—"}
           </div>
         </div>
         <div className="bg-white border border-[#E1E5EB] rounded-xl p-4 shadow-3xs">

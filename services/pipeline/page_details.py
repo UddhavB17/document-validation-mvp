@@ -154,6 +154,9 @@ def _ensure_page_has_json_details(
     document_type: str,
     text: str,
     extracted_fields: dict[str, Any],
+    triage_category: str | None = None,
+    ocr_confidence: float | None = None,
+    page_type: str | None = None,
 ) -> dict[str, Any]:
     # Repayment tables are structural evidence.  Parse them even when the page
     # already has other public fields, and even when a continuation page was
@@ -184,7 +187,13 @@ def _ensure_page_has_json_details(
     if not str(text or "").strip():
         return extracted_fields
 
-    generic_fields = _extract_generic_page_details(document_type=document_type, text=text)
+    generic_fields = _extract_generic_page_details(
+        document_type=document_type,
+        text=text,
+        triage_category=triage_category or _triage_from_fields(extracted_fields),
+        ocr_confidence=ocr_confidence,
+        page_type=page_type,
+    )
     if not generic_fields:
         return extracted_fields
     return {
@@ -208,9 +217,35 @@ def _has_informative_public_fields(fields: dict[str, Any]) -> bool:
     return False
 
 
-def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str, Any]:
+def _extract_generic_page_details(
+    *,
+    document_type: str,
+    text: str,
+    triage_category: str | None = None,
+    ocr_confidence: float | None = None,
+    page_type: str | None = None,
+) -> dict[str, Any]:
     normalized_text = str(text or "").strip()
     if not normalized_text:
+        return {}
+    # ws-f accuracy: photo/blank/unreadable or low-confidence pages must not
+    # seed generic PAN / Aadhaar / phone observations that later become false
+    # mismatches. Gate through the shared page_eligible_for helper instead of
+    # inlining triage/confidence thresholds here. The probe field is
+    # intentionally absent from FIELD_DOCUMENT_TYPES so only the
+    # triage/OCR-confidence gates apply; missing ocr_confidence is ineligible
+    # except on digital pages (same rule as page_eligible_for).
+    from services.consistency_checks import page_eligible_for
+
+    probe = {
+        "triage_category": triage_category,
+        "ocr_confidence": ocr_confidence,
+        "page_type": page_type,
+        "document_type": document_type,
+        "classification_confidence": 1.0,
+        "detection_method": "detected",
+    }
+    if not page_eligible_for("generic_detail", probe):
         return {}
 
     details: dict[str, Any] = {}
@@ -220,6 +255,21 @@ def _extract_generic_page_details(*, document_type: str, text: str) -> dict[str,
             details[key] = value
 
     return details
+
+
+def _triage_from_fields(extracted_fields: dict[str, Any]) -> str | None:
+    fields = extracted_fields or {}
+    # Photo pages record triage at the top level of ``extracted_fields``;
+    # classified pages nest it under ``_classification``.
+    direct = fields.get("_triage")
+    if isinstance(direct, dict) and direct.get("category"):
+        return str(direct.get("category"))
+    classification = fields.get("_classification")
+    if isinstance(classification, dict):
+        triage = classification.get("triage")
+        if isinstance(triage, dict) and triage.get("category"):
+            return str(triage.get("category"))
+    return None
 
 
 def _generic_detected_values(text: str) -> dict[str, list[str]]:
@@ -243,19 +293,6 @@ def _generic_detected_values(text: str) -> dict[str, list[str]]:
             r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", text, flags=re.IGNORECASE
         ),
     }
-
-
-def _generic_keywords(text: str) -> list[str]:
-    lowered = text.lower()
-    keyword_map = {
-        "account": ("account", "a/c", "ifsc"),
-        "address": ("address", "village", "district", "tehsil", "pin code"),
-        "amount": ("amount", "loan", "emi", "tenure", "interest"),
-        "credit_report": ("cibil", "crif", "credit score", "score"),
-        "identity": ("pan", "aadhaar", "voter", "election commission", "date of birth"),
-        "property": ("property", "khasra", "plot", "patta", "registry"),
-    }
-    return [label for label, terms in keyword_map.items() if any(term in lowered for term in terms)]
 
 
 def _unique_matches(pattern: str, text: str, *, flags: int = 0, limit: int = 10) -> list[str]:

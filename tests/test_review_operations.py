@@ -26,9 +26,10 @@ def _seed_pdf_application(tmp_path: Path, *, progress_status: str = "failed") ->
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 ("OPS-001", "Ramesh Kumar", "LAP", "Delhi", "pipeline_failed"),
-            ).lastrowid
+            ).fetchone()["id"]
         )
         connection.execute(
             """
@@ -65,12 +66,14 @@ def test_progress_marks_old_processing_job_stale(tmp_path, monkeypatch) -> None:
     assert progress["retryable"] is True
 
 
-def test_source_pdf_endpoint_returns_inline_evidence(tmp_path, monkeypatch) -> None:
+def test_source_pdf_endpoint_returns_inline_evidence(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id, pdf_path = _seed_pdf_application(tmp_path)
     client = TestClient(app)
 
-    response = client.get(f"/review/applications/{application_id}/source-pdf")
+    response = client.get(
+        f"/review/applications/{application_id}/source-pdf", headers=auth_headers
+    )
 
     assert response.status_code == 200
     assert response.content == pdf_path.read_bytes()
@@ -78,17 +81,24 @@ def test_source_pdf_endpoint_returns_inline_evidence(tmp_path, monkeypatch) -> N
     assert response.headers["content-disposition"].startswith("inline")
 
 
-def test_source_page_endpoint_renders_exact_page_image(tmp_path, monkeypatch) -> None:
+def test_source_page_endpoint_renders_exact_page_image(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id, _ = _seed_pdf_application(tmp_path)
     client = TestClient(app)
 
-    response = client.get(f"/review/applications/{application_id}/source-page/1")
+    response = client.get(
+        f"/review/applications/{application_id}/source-page/1", headers=auth_headers
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.content.startswith(b"\x89PNG")
-    assert client.get(f"/review/applications/{application_id}/source-page/2").status_code == 404
+    assert (
+        client.get(
+            f"/review/applications/{application_id}/source-page/2", headers=auth_headers
+        ).status_code
+        == 404
+    )
 
 
 def test_failed_application_can_be_queued_for_reprocess(tmp_path, monkeypatch) -> None:

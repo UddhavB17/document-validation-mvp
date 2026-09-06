@@ -37,22 +37,24 @@ def _insert_application(
 ) -> int:
     with get_connection() as connection:
         if created_at is None:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (loan_id, applicant_name, product_type, "Delhi", status),
-            )
+            ).fetchone()
         else:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (loan_id, applicant_name, product_type, "Delhi", status, created_at),
-            )
-        return int(cursor.lastrowid)
+            ).fetchone()
+        return int(row["id"])
 
 
 def _insert_ground_truth(application_id: int, raw_json: dict) -> None:
@@ -157,14 +159,14 @@ def test_worklist_uses_batched_repository_queries(tmp_path, monkeypatch) -> None
     assert len(payload["items"]) == 2
 
 
-def test_worklist_item_payload_shape(tmp_path, monkeypatch) -> None:
+def test_worklist_item_payload_shape(tmp_path, monkeypatch, auth_headers) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
     application_id = _insert_application(loan_id="SHAPE-1")
     _insert_anomaly(application_id, rule_id="PAN_NUMBER_MISMATCH", page_number=1)
     client = TestClient(app)
 
-    response = client.get("/review/worklist")
+    response = client.get("/review/worklist", headers=auth_headers)
 
     assert response.status_code == 200
     payload = response.json()
@@ -402,7 +404,7 @@ def test_find_source_pages_skips_short_values() -> None:
     assert find_source_pages_for_value(pages, "AB", "loan_id") == []
 
 
-def test_application_review_payload_shape(tmp_path, monkeypatch) -> None:
+def test_application_review_payload_shape(tmp_path, monkeypatch, auth_headers) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
     application_id = _insert_application(loan_id="REVIEW-1")
@@ -421,7 +423,7 @@ def test_application_review_payload_shape(tmp_path, monkeypatch) -> None:
     )
     client = TestClient(app)
 
-    response = client.get(f"/review/applications/{application_id}")
+    response = client.get(f"/review/applications/{application_id}", headers=auth_headers)
 
     assert response.status_code == 200
     payload = response.json()
@@ -454,11 +456,11 @@ def test_application_review_payload_shape(tmp_path, monkeypatch) -> None:
     assert payload["latest_decision"] is None
 
 
-def test_application_review_not_found(tmp_path, monkeypatch) -> None:
+def test_application_review_not_found(tmp_path, monkeypatch, auth_headers) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
     client = TestClient(app)
 
-    response = client.get("/review/applications/99999")
+    response = client.get("/review/applications/99999", headers=auth_headers)
 
     assert response.status_code == 404

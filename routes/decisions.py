@@ -1,15 +1,18 @@
 """Reviewer decision API routes."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from database.db import get_connection, init_db
 from services.audit_service import log_action
+from services.auth.dependencies import get_current_user
 from services.reviewer import compute_final_status
 
-router = APIRouter(prefix="/decision", tags=["decision"])
+router = APIRouter(
+    prefix="/decision", tags=["decision"], dependencies=[Depends(get_current_user)]
+)
 
 VALID_DECISIONS = {"ACCEPT", "OVERRIDE", "REQUEST_DOCS"}
 STATUS_BY_DECISION = {
@@ -60,7 +63,7 @@ def create_decision(payload: DecisionRequest) -> dict[str, object]:
     if len(reviewer_note) <= 10:
         raise HTTPException(status_code=400, detail="Reviewer note must be more than 10 characters")
 
-    decided_at = datetime.now().isoformat()
+    decided_at = datetime.now(UTC).isoformat()
     new_status = STATUS_BY_DECISION[decision]
 
     with get_connection() as connection:
@@ -72,14 +75,18 @@ def create_decision(payload: DecisionRequest) -> dict[str, object]:
             raise HTTPException(status_code=404, detail="Application not found")
 
         previous_status = existing["status"]
-        cursor = connection.execute(
+        # ws-b storage+db: RETURNING instead of cursor.lastrowid (None on Postgres).
+        created = connection.execute(
             """
             INSERT INTO reviewer_decisions (application_id, decision, reviewer_note, decided_at)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             (payload.application_id, decision, reviewer_note, decided_at),
-        )
-        decision_id = cursor.lastrowid
+        ).fetchone()
+        if created is None:
+            raise HTTPException(status_code=500, detail="Failed to record decision")
+        decision_id = int(created["id"])
         connection.execute(
             "UPDATE applications SET status = ? WHERE id = ?",
             (new_status, payload.application_id),
@@ -122,8 +129,14 @@ def undo_decision(decision_id: int) -> dict[str, object]:
         if row is None:
             raise HTTPException(status_code=404, detail="Decision not found")
 
-        decided_at = datetime.fromisoformat(str(row["decided_at"]))
-        if datetime.now() - decided_at > timedelta(minutes=UNDO_WINDOW_MINUTES):
+        raw_decided_at = row["decided_at"]
+        if isinstance(raw_decided_at, datetime):
+            decided_at = raw_decided_at
+        else:
+            decided_at = datetime.fromisoformat(str(raw_decided_at))
+        if decided_at.tzinfo is None:
+            decided_at = decided_at.replace(tzinfo=UTC)
+        if datetime.now(UTC) - decided_at > timedelta(minutes=UNDO_WINDOW_MINUTES):
             raise HTTPException(status_code=400, detail="Undo window expired, contact supervisor")
 
         application_id = int(row["application_id"])

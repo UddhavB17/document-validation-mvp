@@ -84,3 +84,24 @@ def test_summarize_exceptions():
     result_str = summarize_exceptions(anomalies)
     assert result_str is not None
     assert "exception(s) require review" in result_str
+
+
+def test_llm_output_contract_is_json_not_toon():
+    """Input-TOON / output-JSON rule (ws-g): prompts must request JSON output."""
+    from services.llm_page_classifier import _build_classifier_prompt
+    from services.llm_service import _build_bilingual_prompt
+    from services.structured_llm_classifier import build_structured_classifier_prompt
+
+    page_prompt = _build_classifier_prompt("PAN ABCDE1234F")
+    assert "JSON" in page_prompt
+    assert "document_type" in page_prompt
+
+    bilingual = _build_bilingual_prompt([{"code": "DATA_MISSING", "severity": "LOW"}], {})
+    assert '{"en": "...", "hi": "..."}' in bilingual
+
+    structured = build_structured_classifier_prompt(
+        deterministic_document_type="Unknown",
+        structured_fields={"pan_number": "ABCDE1234F"},
+        ocr_text="PAN card",
+    )
+    assert "JSON" in structured

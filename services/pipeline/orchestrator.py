@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly
 from services.checklist_output import build_checklist_verification_response
+from services.config import get_setting
 from services.exception_aggregator import aggregate
 from services.input_classifier import classify_input_text
 from services.job_control import cooperate
-from services.llm_service import generate_explanation, summarize_exceptions
-from services.ocr_json_export import save_ocr_document_json
+from services.llm_service import generate_explanation, generate_summaries, summarize_exceptions
 from services.paths import processed_output_dir
 from services.pdf_processor import process_pdf_structure
 from services.pipeline.anomalies import (
@@ -62,10 +64,55 @@ def run_pipeline(
     refresh_cached_ocr: bool = False,
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
+    # Transient page renders live under the job work dir (contracts §2) so no
+    # durable page image is ever written next to processed outputs. Without a
+    # job id (tests, offline re-runs) fall back to the caller's output dir.
+    # The work dir is always removed in a ``finally``.
+    job_work_root = Path(
+        str(get_setting("dmef.job_work_dir", "/tmp/dmef-jobs") or "/tmp/dmef-jobs")
+    )
+    job_work_dir = job_work_root / str(job_id) if job_id is not None else None
+    try:
+        return _run_pipeline_impl(
+            pdf_path,
+            application_id,
+            output_dir=output_dir,
+            system_data=system_data,
+            product_type=product_type,
+            generate_llm_summary=generate_llm_summary,
+            mapped_manifest=mapped_manifest,
+            source_documents=source_documents,
+            job_id=job_id,
+            resume=resume,
+            refresh_cached_ocr=refresh_cached_ocr,
+            _job_work_dir=job_work_dir,
+        )
+    finally:
+        if job_work_dir is not None:
+            shutil.rmtree(job_work_dir, ignore_errors=True)
+
+
+def _run_pipeline_impl(
+    pdf_path: str | Path,
+    application_id: int,
+    output_dir: str | Path | None = None,
+    system_data: dict[str, Any] | None = None,
+    product_type: str = "LAP",
+    generate_llm_summary: bool | None = None,
+    mapped_manifest: dict[str, Any] | None = None,
+    source_documents: list[dict[str, Any]] | None = None,
+    job_id: int | None = None,
+    resume: bool = False,
+    refresh_cached_ocr: bool = False,
+    _job_work_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Inner pipeline body; ``run_pipeline`` owns the job work-dir lifetime."""
     pdf_path = Path(pdf_path)
     resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
-    application_output_dir = resolved_output_dir / f"application_{application_id}"
-    image_output_dir = application_output_dir / "pages"
+    if _job_work_dir is not None:
+        image_output_dir = _job_work_dir / "pages"
+    else:
+        image_output_dir = resolved_output_dir / f"application_{application_id}" / "pages"
 
     cooperate(job_id, application_id)
     structure = process_pdf_structure(pdf_path, image_output_dir)
@@ -94,11 +141,8 @@ def run_pipeline(
             **{key: value for key, value in ground_truth.items() if value},
         }
 
-    # Persist validated recovery data before page work begins. This is the same
-    # data the completed pipeline stores, but saving it here prevents a crash
-    # from losing the manifest/reference payload held only in memory.
-    _save_ground_truth(application_id, ground_truth)
-    touch_progress(application_id, "Saved secure recovery ground truth")
+    # ground_truth is saved once, after verification, at persisting_outputs
+    # (ws-a data diet: no duplicate raw-dump writes per run).
 
     input_classification = classify_input_text(digital_text_by_page)
     if input_classification["input_type"] == "unsupported" and mapped_manifest is None:
@@ -229,19 +273,12 @@ def run_pipeline(
             mapped_result["automatic_document_index"] = automatic_index["documents"]
             mapped_result["unclassified_pages"] = automatic_index["unclassified_pages"]
         verification_report = None
-        document_page_numbers = sorted(
-            {
-                int(number)
-                for item in mapped_manifest.get("documents") or []
-                for number in item.get("pages") or []
-            }
-        )
     else:
         cooperate(job_id, application_id)
         update_stage(
             application_id, "verifying_documents", "Comparing OCR fields with Graviton data"
         )
-        verification_report, document_page_numbers = _run_document_verification(
+        verification_report, _document_page_numbers = _run_document_verification(
             pdf_path, application_id, pages, ground_truth
         )
     cooperate(job_id, application_id)
@@ -266,16 +303,10 @@ def run_pipeline(
             for page in pages
         ]
     }
-    cooperate(job_id, application_id)
-    touch_progress(application_id, "Building OCR document JSON export")
-    ocr_json_path = save_ocr_document_json(
-        application_id,
-        pages,
-        output_dir=resolved_output_dir,
-        document_page_numbers=document_page_numbers,
-        page_events=progress_snapshot["completed_pages"],
-    )
-    touch_progress(application_id, "OCR document JSON export complete")
+    # The OCR document JSON export is generated on demand only
+    # (GET /review/applications/{id}/ocr-json); nothing is written at run end
+    # (ws-a data diet).
+    touch_progress(application_id, "OCR export deferred to on-demand download")
     if verification_report is not None:
         save_verification_report(application_id, verification_report)
     _update_uploaded_file_counts(application_id, structure)
@@ -301,6 +332,18 @@ def run_pipeline(
     anomalies.extend(processing_error_anomalies)
     touch_progress(application_id, f"Aggregating {len(anomalies)} checklist findings")
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
+    # fx-integrate-df (NEEDS-COORDINATION: orchestrator is shared pipeline
+    # code): persist the ops payload on the live path so
+    # ``applications.ops_findings_json`` is non-null after a successful run.
+    # Best-effort; the endpoint recomputes when needed.
+    try:
+        from services.ops_presentation import store_ops_payload
+
+        store_ops_payload(application_id)
+    except Exception:  # noqa: BLE001 - ops persistence is best-effort
+        logging.getLogger(__name__).warning(
+            "Could not store ops payload for application %s", application_id, exc_info=True
+        )
     pipeline_status = _pipeline_outcome(result["anomalies"], processing_error_anomalies)
     checklist_verification = build_checklist_verification_response(
         loan_file_id=str(ground_truth.get("loan_id") or application_id),
@@ -327,6 +370,8 @@ def run_pipeline(
         touch_progress(application_id, "LLM reviewer summary complete")
     if summary:
         _save_llm_summary(application_id, summary)
+    # --- fx-schema: persist bilingual ops summaries ---
+    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth})
 
     if mapped_result is not None:
         reviewer_summary = build_reviewer_summary(
@@ -384,7 +429,7 @@ def run_pipeline(
             "partial_failure_count": len(processing_error_anomalies),
             "llm_summary": summary,
             "report_path": str(report_path),
-            "ocr_json_path": str(ocr_json_path),
+            "ocr_json_path": None,
             "verification_report": (
                 verification_report.model_dump(mode="json")
                 if verification_report is not None

@@ -16,7 +16,7 @@ def test_prompt_contains_structured_fields_and_deterministic_result() -> None:
     assert "PAN" in prompt
     assert "ABCDE1234F" in prompt
     assert "_classification" not in prompt
-    assert "Return only TOON" in prompt
+    assert "Return only JSON" in prompt  # ws-g: input-TOON / output-JSON rule
 
 
 def test_structured_parser_accepts_fenced_json_from_small_local_model() -> None:

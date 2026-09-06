@@ -8,14 +8,15 @@ from main import app
 def _seed_application() -> int:
     init_db()
     with db.get_connection() as connection:
-        cursor = connection.execute(
+        created = connection.execute(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
             VALUES (?, ?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-DECISION-1", "Ramesh Kumar", "LAP", "Delhi", "NEEDS_REVIEW"),
-        )
-        application_id = cursor.lastrowid
+        ).fetchone()
+        application_id = int(created["id"])
         connection.execute(
             """
             INSERT INTO validation_results (application_id, rule_id, severity, reason)
@@ -26,26 +27,28 @@ def _seed_application() -> int:
     return application_id
 
 
-def test_decision_requires_note(tmp_path, monkeypatch) -> None:
+def test_decision_requires_note(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id = _seed_application()
     client = TestClient(app)
 
     response = client.post(
         "/decision",
+        headers=auth_headers,
         json={"application_id": application_id, "decision": "ACCEPT", "reviewer_note": ""},
     )
 
     assert response.status_code == 400
 
 
-def test_decision_updates_status(tmp_path, monkeypatch) -> None:
+def test_decision_updates_status(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id = _seed_application()
     client = TestClient(app)
 
     response = client.post(
         "/decision",
+        headers=auth_headers,
         json={
             "application_id": application_id,
             "decision": "ACCEPT",
@@ -64,13 +67,14 @@ def test_decision_updates_status(tmp_path, monkeypatch) -> None:
     assert application["status"] == "verified"
 
 
-def test_undo_decision_within_window(tmp_path, monkeypatch) -> None:
+def test_undo_decision_within_window(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id = _seed_application()
     client = TestClient(app)
 
     create_response = client.post(
         "/decision",
+        headers=auth_headers,
         json={
             "application_id": application_id,
             "decision": "ACCEPT",
@@ -79,7 +83,7 @@ def test_undo_decision_within_window(tmp_path, monkeypatch) -> None:
     )
     decision_id = create_response.json()["decision_id"]
 
-    undo_response = client.post(f"/decision/{decision_id}/undo")
+    undo_response = client.post(f"/decision/{decision_id}/undo", headers=auth_headers)
     assert undo_response.status_code == 200
     assert undo_response.json()["restored_status"] == "CRITICAL"
 
@@ -96,13 +100,14 @@ def test_undo_decision_within_window(tmp_path, monkeypatch) -> None:
     assert remaining["count"] == 0
 
 
-def test_audit_log_written(tmp_path, monkeypatch) -> None:
+def test_audit_log_written(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id = _seed_application()
     client = TestClient(app)
 
     client.post(
         "/decision",
+        headers=auth_headers,
         json={
             "application_id": application_id,
             "decision": "ACCEPT",
