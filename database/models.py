@@ -106,7 +106,14 @@ class DocumentVerificationReport(BaseModel):
         return round((self.matched_fields / self.total_fields_checked) * 100.0, 2)
 
 
-ChecklistStatus = Literal["verified", "needs_review", "missing", "unknown", "not_applicable"]
+ChecklistStatus = Literal[
+    "required_and_present",
+    "required_and_missing",
+    "not_applicable",
+    "not_evaluated_by_engine",
+    "manual_review",
+]
+OcrStatus = Literal["success", "failed", "no_text_extracted", "not_applicable"]
 ChecklistConfidence = Literal["high", "medium", "low"]
 ChecklistExtractionSource = Literal["deterministic", "llm_fallback"]
 
@@ -128,14 +135,14 @@ class ChecklistItem(BaseModel):
 
 
 class ChecklistSummary(BaseModel):
-    """Status counts for the 44-item NDC checklist response."""
+    """Status counts for the NDC checklist response."""
 
     total: int = 44
-    verified: int = 0
-    needs_review: int = 0
-    missing: int = 0
-    unknown: int = 0
+    required_and_present: int = 0
+    required_and_missing: int = 0
     not_applicable: int = 0
+    not_evaluated_by_engine: int = 0
+    manual_review: int = 0
 
 
 class ChecklistProcessingMetadata(BaseModel):
@@ -237,6 +244,7 @@ SCHEMA_STATEMENTS = [
         is_readable BOOLEAN,
         ocr_text TEXT,
         ocr_confidence REAL,
+        ocr_status TEXT CHECK(ocr_status IN ('success', 'failed', 'no_text_extracted', 'not_applicable')),
         ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured', 'google_vision')),
         ocr_escalated BOOLEAN NOT NULL DEFAULT 0,
         ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0,
@@ -426,6 +434,7 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE pages ADD COLUMN ocr_escalated BOOLEAN NOT NULL DEFAULT 0",
     "ALTER TABLE pages ADD COLUMN ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE pages ADD COLUMN structured_content TEXT",
+    "ALTER TABLE pages ADD COLUMN ocr_status TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN control_state TEXT NOT NULL DEFAULT 'running'",
     "ALTER TABLE pipeline_jobs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE pipeline_jobs ADD COLUMN parent_job_id INTEGER REFERENCES pipeline_jobs(id)",

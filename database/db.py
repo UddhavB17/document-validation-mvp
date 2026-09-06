@@ -152,6 +152,7 @@ def _migrate_pages_ocr_route_for_google_vision(connection: sqlite3.Connection) -
                 is_readable BOOLEAN,
                 ocr_text TEXT,
                 ocr_confidence REAL,
+                ocr_status TEXT CHECK(ocr_status IN ('success', 'failed', 'no_text_extracted', 'not_applicable')),
                 ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured', 'google_vision')),
                 ocr_escalated BOOLEAN NOT NULL DEFAULT 0,
                 ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0,
@@ -168,13 +169,15 @@ def _migrate_pages_ocr_route_for_google_vision(connection: sqlite3.Connection) -
             """
             INSERT INTO pages (
                 id, application_id, page_number, page_type, image_path, is_readable,
-                ocr_text, ocr_confidence, ocr_route, ocr_escalated, ocr_processing_time_ms,
+                ocr_text, ocr_confidence, ocr_status, ocr_route, ocr_escalated, ocr_processing_time_ms,
                 structured_content, document_type, classification_confidence,
                 detection_method, detected_page_number, extracted_fields
             )
             SELECT
                 id, application_id, page_number, page_type, image_path, is_readable,
-                ocr_text, ocr_confidence, ocr_route,
+                ocr_text, ocr_confidence,
+                NULL,
+                ocr_route,
                 COALESCE(ocr_escalated, 0),
                 COALESCE(ocr_processing_time_ms, 0),
                 structured_content, document_type, classification_confidence,

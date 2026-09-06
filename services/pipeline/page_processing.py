@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 import time
 import unicodedata
 from typing import Any
@@ -60,6 +61,31 @@ from services.validation_gates import attach_field_provenance
 run_ocr_on_page = run_fast_ocr_on_page
 
 _DEFAULT_FAST_OCR_PROCESSOR = run_fast_ocr_on_page
+
+_OCR_NO_TEXT_MIN_CHARS = 40
+
+
+def compute_ocr_status(
+    *,
+    page_type: str | None,
+    document_type: str | None,
+    text: str | None,
+    error: str | None,
+) -> str:
+    """Return the page-level OCR status.
+
+    ``not_applicable`` is reserved for pages where OCR genuinely does not
+    apply (digital pages and DB Data pages). Budget-skipped ``OCR Skipped``
+    pages map to ``no_text_extracted`` so they route to manual review.
+    """
+    if page_type == "digital" or (document_type or "") == "DB Data":
+        return "not_applicable"
+    if error:
+        return "failed"
+    stripped = re.sub(r"\s+", "", str(text or ""))
+    if not stripped or len(stripped) < _OCR_NO_TEXT_MIN_CHARS:
+        return "no_text_extracted"
+    return "success"
 
 
 def _pipeline_ocr_router() -> OCRRouter:
@@ -208,6 +234,12 @@ def _build_page_records(
                         "is_readable": is_readable,
                         "ocr_text": text,
                         "ocr_confidence": ocr_confidence,
+                        "ocr_status": compute_ocr_status(
+                            page_type=page_type,
+                            document_type=document_type,
+                            text=text,
+                            error=None,
+                        ),
                         "document_type": document_type,
                         "classification_confidence": classification.get("confidence", 0.0),
                         "detection_method": "db_data",
@@ -249,6 +281,12 @@ def _build_page_records(
                     "is_readable": is_readable,
                     "ocr_text": text,
                     "ocr_confidence": ocr_confidence,
+                    "ocr_status": compute_ocr_status(
+                        page_type=page_type,
+                        document_type=document_type,
+                        text=text,
+                        error=None,
+                    ),
                     "document_type": document_type,
                     "classification_confidence": classification.get("confidence", 0.0),
                     "detection_method": "skipped",
@@ -650,6 +688,14 @@ def _build_page_records(
             "is_readable": is_readable,
             "ocr_text": text,
             "ocr_confidence": ocr_confidence,
+            "ocr_status": compute_ocr_status(
+                page_type=page_type,
+                document_type=document_type,
+                text=text,
+                error=extracted_fields.get("_processing_error")
+                if isinstance(extracted_fields, dict)
+                else None,
+            ),
             "ocr_structure": _public_ocr_structure(ocr_metadata),
             "structured_content": ocr_metadata.get("structured_content"),
             "ocr_route": ocr_metadata.get("ocr_route"),

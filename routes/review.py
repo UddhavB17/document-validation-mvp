@@ -100,9 +100,11 @@ def get_application_review(application_id: int) -> dict[str, Any]:
         "manual_review_items": manual_items,
         "checklist": {
             "total": len(checklist_rows),
-            "found": len([row for row in checklist_rows if row["status"] == "FOUND"]),
-            "missing": len([row for row in checklist_rows if row["status"] == "MISSING"]),
-            "not_checked": len([row for row in checklist_rows if row["status"] == "NOT_CHECKED"]),
+            "found": len([row for row in checklist_rows if row["status"] == "required_and_present"]),
+            "missing": len([row for row in checklist_rows if row["status"] == "required_and_missing"]),
+            "not_checked": len(
+                [row for row in checklist_rows if row["status"] in {"not_evaluated_by_engine", "manual_review"}]
+            ),
             "rows": checklist_rows,
         },
         "ai_checklist": {

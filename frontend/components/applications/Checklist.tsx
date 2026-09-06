@@ -25,10 +25,10 @@ function statusLabel(status: string): string {
 
 function statusRank(status: string): number {
   const normalized = normalizedStatus(status);
-  if (normalized === "MISSING") return 0;
-  if (normalized === "NOT_CHECKED") return 1;
-  if (normalized === "NEEDS_REVIEW") return 2;
-  if (normalized === "FOUND") return 3;
+  if (normalized === "REQUIRED_AND_MISSING" || normalized === "MISSING") return 0;
+  if (normalized === "NOT_EVALUATED_BY_ENGINE" || normalized === "NOT_CHECKED") return 1;
+  if (normalized === "MANUAL_REVIEW" || normalized === "NEEDS_REVIEW") return 2;
+  if (normalized === "REQUIRED_AND_PRESENT" || normalized === "FOUND") return 3;
   return 4;
 }
 
@@ -43,9 +43,11 @@ function pageNumbersFor(row: ChecklistRow): number[] {
 
 function matchesFilter(row: ChecklistRow, filter: ChecklistFilter): boolean {
   const status = normalizedStatus(row.status);
-  if (filter === "attention") return status === "MISSING" || status === "NEEDS_REVIEW";
-  if (filter === "found") return status === "FOUND";
-  if (filter === "not_checked") return status === "NOT_CHECKED";
+  if (filter === "attention")
+    return status === "REQUIRED_AND_MISSING" || status === "MISSING" || status === "MANUAL_REVIEW" || status === "NEEDS_REVIEW";
+  if (filter === "found") return status === "REQUIRED_AND_PRESENT" || status === "FOUND";
+  if (filter === "not_checked")
+    return status === "NOT_EVALUATED_BY_ENGINE" || status === "NOT_CHECKED" || status === "MANUAL_REVIEW";
   return true;
 }
 

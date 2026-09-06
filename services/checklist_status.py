@@ -53,13 +53,15 @@ def build_checklist_status(
             else None
         )
         if applicability is False:
-            status = "NOT_APPLICABLE"
+            status = "not_applicable"
         elif matched_pages or system_state is True:
-            status = "FOUND"
+            status = "required_and_present"
         elif s_no in missing_by_sno:
-            status = "MISSING"
+            status = "required_and_missing"
+        elif applicability is None or system_state is None:
+            status = "not_evaluated_by_engine"
         else:
-            status = "NOT_CHECKED"
+            status = "manual_review"
 
         rows.append(
             {

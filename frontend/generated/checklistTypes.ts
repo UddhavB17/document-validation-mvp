@@ -1,7 +1,8 @@
 // Generated from database.models.ChecklistVerificationResponse.
 // Regenerate with scripts/export_checklist_types.py after schema changes.
 
-export type ChecklistStatus = "verified" | "needs_review" | "missing" | "unknown" | "not_applicable";
+export type ChecklistStatus = "required_and_present" | "required_and_missing" | "not_applicable" | "not_evaluated_by_engine" | "manual_review";
+export type OcrStatus = "success" | "failed" | "no_text_extracted" | "not_applicable";
 export type ChecklistConfidence = "high" | "medium" | "low";
 export type ChecklistExtractionSource = "deterministic" | "llm_fallback";
 
@@ -19,11 +20,11 @@ export interface ChecklistItem {
 
 export interface ChecklistSummary {
   total: number;
-  verified: number;
-  needs_review: number;
-  missing: number;
-  unknown: number;
+  required_and_present: number;
+  required_and_missing: number;
   not_applicable: number;
+  not_evaluated_by_engine: number;
+  manual_review: number;
 }
 
 export interface ChecklistProcessingMetadata {
