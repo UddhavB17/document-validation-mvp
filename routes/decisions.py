@@ -2,14 +2,17 @@
 
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from database.db import get_connection, init_db
 from services.audit_service import log_action
+from services.auth.dependencies import get_current_user
 from services.reviewer import compute_final_status
 
-router = APIRouter(prefix="/decision", tags=["decision"])
+router = APIRouter(
+    prefix="/decision", tags=["decision"], dependencies=[Depends(get_current_user)]
+)
 
 VALID_DECISIONS = {"ACCEPT", "OVERRIDE", "REQUEST_DOCS"}
 STATUS_BY_DECISION = {

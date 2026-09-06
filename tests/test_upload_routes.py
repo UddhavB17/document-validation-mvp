@@ -29,12 +29,13 @@ def _zip_bytes(files: list[tuple[str, bytes]]) -> bytes:
     return buffer.getvalue()
 
 
-def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
+def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     client = TestClient(app)
 
     response = client.post(
         "/upload/json",
+        headers=auth_headers,
         json={
             "loan_id": "LAP-JSON-001",
             "applicant_name": "Ramesh Kumar",
@@ -73,7 +74,7 @@ def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch) -> None:
     assert ground_truth["pan_number"] == "ABCDE1234F"
 
 
-def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> None:
+def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(
@@ -87,6 +88,7 @@ def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> No
 
     response = client.post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "LAP-UPLOAD-001",
             "applicant_name": "Ramesh Kumar",
@@ -104,7 +106,7 @@ def test_pdf_upload_route_returns_processing_queued(tmp_path, monkeypatch) -> No
     assert body["loan_id"] == "LAP-UPLOAD-001"
     assert body["progress_url"] == f"/upload/{body['application_id']}/progress"
 
-    progress_response = client.get(body["progress_url"])
+    progress_response = client.get(body["progress_url"], headers=auth_headers)
     assert progress_response.status_code == 200
     progress = progress_response.json()
     assert progress["application_id"] == body["application_id"]
@@ -137,7 +139,7 @@ def test_progress_poll_does_not_reinitialize_database(monkeypatch) -> None:
     assert upload_route.upload_progress(80) == {"application_id": 80, "status": "processing"}
 
 
-def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeypatch) -> None:
+def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setenv("MAX_UPLOAD_SIZE_MB", "1")
@@ -145,6 +147,7 @@ def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeyp
 
     response = client.post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "LAP-LARGE-001",
             "applicant_name": "Ramesh Kumar",
@@ -160,7 +163,7 @@ def test_pdf_upload_rejects_oversized_stream_before_validation(tmp_path, monkeyp
     assert not list((tmp_path / "uploads").glob("*.pdf"))
 
 
-def test_mapped_upload_rejects_page_outside_pdf(tmp_path, monkeypatch) -> None:
+def test_mapped_upload_rejects_page_outside_pdf(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     pdf_path = tmp_path / "mapped.pdf"
@@ -169,6 +172,7 @@ def test_mapped_upload_rejects_page_outside_pdf(tmp_path, monkeypatch) -> None:
 
     response = client.post(
         "/upload/mapped",
+        headers=auth_headers,
         data={
             "manifest": json.dumps(
                 {
@@ -186,7 +190,7 @@ def test_mapped_upload_rejects_page_outside_pdf(tmp_path, monkeypatch) -> None:
     assert not list((tmp_path / "uploads").glob("*.pdf"))
 
 
-def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
+def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
@@ -196,6 +200,7 @@ def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
 
     response = client.post(
         "/upload/mapped",
+        headers=auth_headers,
         data={
             "manifest": json.dumps(
                 {
@@ -222,7 +227,7 @@ def test_mapped_upload_queues_valid_manifest(tmp_path, monkeypatch) -> None:
     assert audit["action"] == "mapped_file_uploaded"
 
 
-def test_trusted_json_upload_queues_automatic_page_identification(tmp_path, monkeypatch) -> None:
+def test_trusted_json_upload_queues_automatic_page_identification(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
@@ -232,6 +237,7 @@ def test_trusted_json_upload_queues_automatic_page_identification(tmp_path, monk
 
     response = client.post(
         "/upload/mapped",
+        headers=auth_headers,
         data={
             "manifest": json.dumps(
                 {
@@ -253,7 +259,7 @@ def test_trusted_json_upload_queues_automatic_page_identification(tmp_path, monk
     body = response.json()
     assert body["automatic_mapping"] is True
     assert body["mapped_pages"] == []
-    progress = client.get(body["progress_url"]).json()
+    progress = client.get(body["progress_url"], headers=auth_headers).json()
     assert progress["total_pages"] == 1
 
 
@@ -338,7 +344,7 @@ def test_mapped_background_job_uses_shared_pdf_pipeline(tmp_path, monkeypatch) -
 
 
 def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, auth_headers
 ) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
@@ -351,8 +357,10 @@ def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
         ]
     )
 
-    response = TestClient(app).post(
+    client = TestClient(app)
+    response = client.post(
         "/upload/package",
+        headers=auth_headers,
         files={"file": ("loan-documents.zip", package, "application/zip")},
     )
 
@@ -375,7 +383,7 @@ def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
     assert document_count == 2
 
 
-def test_background_zip_preparation_exposes_frontend_logs(tmp_path, monkeypatch) -> None:
+def test_background_zip_preparation_exposes_frontend_logs(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(
@@ -386,8 +394,10 @@ def test_background_zip_preparation_exposes_frontend_logs(tmp_path, monkeypatch)
     pdf_path = tmp_path / "source.pdf"
     _create_pdf(pdf_path)
 
-    response = TestClient(app).post(
+    client = TestClient(app)
+    response = client.post(
         "/upload/package?background=true",
+        headers=auth_headers,
         files={
             "file": (
                 "loan.zip",
@@ -400,7 +410,7 @@ def test_background_zip_preparation_exposes_frontend_logs(tmp_path, monkeypatch)
     assert response.status_code == 200
     queued = response.json()
     assert queued["status"] == "queued"
-    progress = TestClient(app).get(queued["progress_url"])
+    progress = client.get(queued["progress_url"], headers=auth_headers)
     assert progress.status_code == 200
     body = progress.json()
     assert body["status"] == "prepared"
@@ -458,7 +468,7 @@ def test_zip_progress_lock_does_not_fail_package_task(tmp_path, monkeypatch) -> 
     assert not list(package_dir.glob("*.tmp"))
 
 
-def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) -> None:
+def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
@@ -467,6 +477,7 @@ def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) 
     client = TestClient(app)
     prepared = client.post(
         "/upload/package",
+        headers=auth_headers,
         files={
             "file": (
                 "loan.zip",
@@ -491,6 +502,7 @@ def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) 
 
     response = client.post(
         prepared["verify_url"],
+        headers=auth_headers,
         data={"manifest": json.dumps(manifest)},
     )
 
@@ -514,6 +526,7 @@ def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) 
 
     duplicate = client.post(
         prepared["verify_url"],
+        headers=auth_headers,
         data={"manifest": json.dumps(manifest)},
     )
     assert duplicate.status_code == 409
@@ -524,13 +537,14 @@ def test_zip_package_verification_reuses_mapped_pipeline(tmp_path, monkeypatch) 
         )
     retry = client.post(
         prepared["verify_url"],
+        headers=auth_headers,
         data={"manifest": json.dumps(manifest)},
     )
     assert retry.status_code == 200
     assert retry.json()["application_id"] != body["application_id"]
 
 
-def test_zip_package_rejects_mapping_to_page_owned_by_another_source(tmp_path, monkeypatch) -> None:
+def test_zip_package_rejects_mapping_to_page_owned_by_another_source(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     pdf_path = tmp_path / "source.pdf"
@@ -538,6 +552,7 @@ def test_zip_package_rejects_mapping_to_page_owned_by_another_source(tmp_path, m
     client = TestClient(app)
     prepared = client.post(
         "/upload/package",
+        headers=auth_headers,
         files={
             "file": (
                 "loan.zip",
@@ -566,12 +581,15 @@ def test_zip_package_rejects_mapping_to_page_owned_by_another_source(tmp_path, m
 
     response = client.post(
         prepared["verify_url"],
+        headers=auth_headers,
         data={"manifest": json.dumps(manifest)},
     )
 
     assert response.status_code == 422
     assert "do not belong" in response.json()["detail"]
-    inventory = client.get(f"/upload/package/{prepared['package_id']}").json()
+    inventory = client.get(
+        f"/upload/package/{prepared['package_id']}", headers=auth_headers
+    ).json()
     assert inventory["status"] == "prepared"
 
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
@@ -593,6 +611,7 @@ def test_zip_package_rejects_mapping_to_page_owned_by_another_source(tmp_path, m
     client = TestClient(app)
     response = client.post(
         "/upload/mapped",
+        headers=auth_headers,
         files={"file": ("mapped.zip", zip_path.read_bytes(), "application/zip")},
     )
 
@@ -609,7 +628,7 @@ def test_zip_package_rejects_mapping_to_page_owned_by_another_source(tmp_path, m
     assert uploaded["original_filename"] == "loan_file.pdf"
 
 
-def test_mapped_zip_upload_requires_manifest_when_not_pasted(tmp_path, monkeypatch) -> None:
+def test_mapped_zip_upload_requires_manifest_when_not_pasted(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
     pdf_path = tmp_path / "mapped.pdf"
@@ -621,6 +640,7 @@ def test_mapped_zip_upload_requires_manifest_when_not_pasted(tmp_path, monkeypat
     client = TestClient(app)
     response = client.post(
         "/upload/mapped",
+        headers=auth_headers,
         files={"file": ("mapped.zip", zip_path.read_bytes(), "application/zip")},
     )
 
@@ -628,7 +648,7 @@ def test_mapped_zip_upload_requires_manifest_when_not_pasted(tmp_path, monkeypat
     assert "JSON manifest" in response.json()["detail"]
 
 
-def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch) -> None:
+def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch, auth_headers) -> None:
     import json
 
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
@@ -654,6 +674,7 @@ def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch) 
     client = TestClient(app)
     response = client.post(
         "/upload/mapped",
+        headers=auth_headers,
         files={"file": ("mapped.zip", zip_path.read_bytes(), "application/zip")},
     )
 
@@ -665,3 +686,51 @@ def test_mapped_zip_upload_selects_pdf_named_in_manifest(tmp_path, monkeypatch) 
             (body["application_id"],),
         ).fetchone()
     assert uploaded["original_filename"] == "selected.pdf"
+
+
+def test_reprocess_store_backed_upload_without_file_path(
+    tmp_path, monkeypatch, auth_headers
+) -> None:
+    """Reprocess of a store-backed upload (NULL file_path) must not FileNotFoundError."""
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_INLINE_WORKER", "0")
+    monkeypatch.setattr(upload_route, "submit_job", lambda *_args, **_kwargs: None)
+    pdf_path = tmp_path / "reprocess.pdf"
+    _create_pdf(pdf_path)
+    client = TestClient(app)
+    uploaded = client.post(
+        "/upload",
+        headers=auth_headers,
+        data={
+            "loan_id": "LAP-REPROCESS-001",
+            "applicant_name": "Ramesh Kumar",
+            "coapplicant_name": "",
+            "product_type": "LAP",
+            "branch": "Delhi",
+        },
+        files={"file": ("reprocess.pdf", pdf_path.read_bytes(), "application/pdf")},
+    ).json()
+    application_id = int(uploaded["application_id"])
+    with db.get_connection() as connection:
+        row = connection.execute(
+            "SELECT file_path FROM uploaded_files WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+    assert row["file_path"] is None
+    # Make the application retryable for reprocessing.
+    with db.get_connection() as connection:
+        connection.execute(
+            "UPDATE pipeline_progress SET status = 'failed', stage = 'failed' WHERE application_id = ?",
+            (application_id,),
+        )
+    import services.reprocessing as reprocessing
+
+    monkeypatch.setattr(reprocessing, "submit_job", lambda *args, **kwargs: None)
+    result = reprocessing.queue_application_reprocess(application_id)
+    assert result["pipeline_status"] == "queued"
+    assert int(result["application_id"]) == application_id

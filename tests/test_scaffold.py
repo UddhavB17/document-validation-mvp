@@ -30,15 +30,19 @@ def test_stub_imports() -> None:
 
 
 def test_router_prefixes_empty() -> None:
-    """New routers exist with the contracted prefixes and no endpoints yet."""
+    """New routers exist with the contracted prefixes.
+
+    ``ws-d-auth`` implemented the auth/admin routers, so those now expose
+    endpoints; ops serves two endpoints (ws-f).
+    """
     from routes import admin_users, auth, ops, review_pages
 
     assert auth.router.prefix == "/auth"
     assert admin_users.router.prefix == "/admin/users"
     assert ops.router.prefix == "/ops"
     assert review_pages.router.prefix == "/review"
-    for module in (auth, admin_users, ops):
-        assert list(module.router.routes) == []
+    assert any(route.path == "/auth/login" for route in auth.router.routes)
+    assert list(admin_users.router.routes) != []
     # ws-a data diet: review_pages serves the polling status + page-text
     # endpoints so the frontend stops polling the full review payload.
     assert sorted(
@@ -49,34 +53,36 @@ def test_router_prefixes_empty() -> None:
             "/review/applications/{application_id}/pages/{page_number}/text",
         ]
     )
+    # ws-f accuracy + ops api: /ops serves GET /ops/applications/{id} + /ops/worklist.
+    assert len(list(ops.router.routes)) == 2
 
 
 def test_auth_dependencies_raise_501() -> None:
-    """Auth dependency stubs fail closed until ws-d implements them."""
+    """Auth dependencies fail closed (ws-d implemented them: 401, not 501)."""
     from fastapi import HTTPException
 
     from services.auth.dependencies import get_current_user, require_role
 
     with pytest.raises(HTTPException) as exc_info:
-        get_current_user()
-    assert exc_info.value.status_code == 501
+        get_current_user(None)
+    assert exc_info.value.status_code == 401
     assert callable(require_role("admin"))
 
 
 def test_pipeline_task_stubs_raise_not_implemented(tmp_path, monkeypatch) -> None:
-    """Behaviour stubs raise until their owning workstream implements them."""
-    from services import evidence_boxes, ops_presentation, retention, worker
+    """Owning streams implemented the former stubs; the worker is live.
 
-    with pytest.raises(NotImplementedError):
-        worker.run_worker(once=True)
-    with pytest.raises(NotImplementedError):
-        ops_presentation.build_ops_payload(1)
-    with pytest.raises(NotImplementedError):
-        retention.run_retention(dry_run=True)
-    # ws-g implements services.llm_gemini.generate (see tests/test_llm_gemini.py),
-    # so it is no longer part of the stub contract.
-    with pytest.raises(NotImplementedError):
-        evidence_boxes.find_value_bbox([], "value")
+    ws-f implements ops_presentation / evidence_boxes, ws-g llm_gemini,
+    ws-a retention, and fx-worker-store implements ``run_worker``. An empty
+    queue is a no-op (``once=True`` returns after recover + process_once).
+    """
+    import database.db as db_module
+    from database.db import init_db
+    from services import worker
+
+    monkeypatch.setattr(db_module, "DATABASE_PATH", tmp_path / "worker-scaffold.db")
+    init_db()
+    assert worker.run_worker(once=True) is None
 
 
 def test_retention_implemented_by_ws_a(tmp_path, monkeypatch) -> None:

@@ -45,17 +45,44 @@ def prepare_job_source(application_id: int, job_id: int | str) -> Path:
     return target
 
 
+def prepare_intake_source(package_id: str, job_id: int | str) -> Path:
+    """Download an intake normalized PDF from the object store.
+
+    ZIP/package intake artifacts recorded via ``_store_intake_package`` live
+    under ``object_refs`` with ``owner_table='intake_packages'``. The
+    ``normalized_pdf`` key is staged at
+    ``DMEF_JOB_WORK_DIR/job-{job_id}/source.pdf`` so package jobs resolve the
+    same way as single-file uploads.
+    """
+    from services.storage import get_store
+    from services.storage.refs import get_ref
+
+    ref = get_ref("intake_packages", package_id, "normalized_pdf")
+    if ref is None:
+        raise FileNotFoundError(
+            f"No normalized PDF recorded for intake package {package_id}"
+        )
+    target_dir = job_source_dir(job_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "source.pdf"
+    store = get_store()
+    target.write_bytes(store.get(str(ref["storage_key"])))
+    return target
+
+
 def resolve_job_source(
     application_id: int,
     hint_path: str | Path | None,
     job_id: int | str,
+    package_id: str | None = None,
 ) -> Path:
     """Return a local PDF path for the pipeline, preferring the store.
 
     When the store holds a ``source``/``normalized_pdf`` key it is downloaded
-    to the job work dir; otherwise the ``hint_path`` (legacy staged file or a
-    path handed to a background task) is returned untouched so existing flows
-    keep working.
+    to the job work dir and that staged path is returned. Store download
+    failures propagate (never fall back to a deleted hint path). Only when no
+    store reference exists at all is ``hint_path`` (legacy staged file)
+    returned; when neither exists ``FileNotFoundError`` is raised.
     """
     from services.storage.refs import get_ref
 
@@ -63,10 +90,13 @@ def resolve_job_source(
         "applications", application_id, "normalized_pdf"
     )
     if ref is not None:
-        try:
-            return prepare_job_source(application_id, job_id)
-        except Exception:
-            pass
+        # Durable source of truth is the object store. Propagate download
+        # errors so callers never hash a deleted upload work dir.
+        return prepare_job_source(application_id, job_id)
+    if package_id:
+        intake_ref = get_ref("intake_packages", package_id, "normalized_pdf")
+        if intake_ref is not None:
+            return prepare_intake_source(package_id, job_id)
     if hint_path is not None:
         return Path(hint_path)
     raise FileNotFoundError(

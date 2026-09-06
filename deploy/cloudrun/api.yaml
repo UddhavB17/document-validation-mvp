@@ -53,6 +53,11 @@ spec:
                 secretKeyRef:
                   name: dmef-auth-secret
                   key: latest
+            - name: DMEF_SCHEDULER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-scheduler-token
+                  key: latest
             - name: DMEF_SECRETS_KEY
               valueFrom:
                 secretKeyRef:

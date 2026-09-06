@@ -17,6 +17,13 @@
 #   FRONTEND_HOST           public frontend host for CORS_ORIGINS
 #   SKIP_DEPLOY=1           run migrations + checks only
 #   SKIP_MIGRATE=1          deploy only (not recommended)
+#   DMEF_HEALTH_ATTEMPTS    health attempts after deploy (default: 12)
+#   DMEF_HEALTH_RETRY_SECONDS seconds between health attempts (default: 10)
+#
+#   scripts/release.sh --dry-run
+#     renders deploy/cloudrun/*.yaml with the placeholder substitution and
+#     validates the tag, without touching alembic, gcloud, docker, or network.
+#     Safe for agents and CI (see tests/test_release_script.py).
 #
 # The agent never runs this against cloud; the operator does after provisioning.
 set -euo pipefail
@@ -24,6 +31,80 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 fail() { echo "release.sh: $*" >&2; exit 1; }
+
+DRY_RUN=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help)
+      echo "Usage: scripts/release.sh [--dry-run]"
+      echo "  (no args)  migrate + deploy API, worker, frontend to Cloud Run"
+      echo "  --dry-run  render deploy/cloudrun/*.yaml to stdout and validate the"
+      echo "             image tag (no alembic, gcloud, docker, or network)"
+      exit 0
+      ;;
+    *) fail "unknown argument: $arg (only --dry-run is supported)" ;;
+  esac
+done
+
+build_images() {
+  # Same tagged-image pattern deploy.yml pushes
+  # (${REGION}-docker.pkg.dev/${PROJECT_ID}/dmef/<svc>:${TAG}).
+  IMAGE="REGION-docker.pkg.dev/PROJECT_ID/dmef/api:TAG"
+  IMAGE="${IMAGE/REGION/${REGION}}"
+  IMAGE="${IMAGE/PROJECT_ID/${PROJECT_ID}}"
+  IMAGE="${IMAGE/:TAG/:${TAG}}"
+  FRONTEND_IMAGE="REGION-docker.pkg.dev/PROJECT_ID/dmef/frontend:TAG"
+  FRONTEND_IMAGE="${FRONTEND_IMAGE/REGION/${REGION}}"
+  FRONTEND_IMAGE="${FRONTEND_IMAGE/PROJECT_ID/${PROJECT_ID}}"
+  FRONTEND_IMAGE="${FRONTEND_IMAGE/:TAG/:${TAG}}"
+}
+
+render_yaml() {
+  # Substitute operator placeholders without editing the checked-in files.
+  # NOTE: ':TAG' needs a real substitute (s|...|...|). A bare
+  # `-e ":TAG"":${TAG}g"` is a sed *label*, not a substitution, and silently
+  # leaves the literal ':TAG' in the rendered image.
+  sed -e "s/PROJECT_ID/${PROJECT_ID}/g" \
+      -e "s/REGION/${REGION}/g" \
+      -e "s|:TAG|:${TAG}|g" \
+      -e "s|REGION-docker.pkg.dev/PROJECT_ID/dmef/api:TAG|${IMAGE}|g" \
+      "$1"
+}
+
+if [ "$DRY_RUN" = "1" ]; then
+  # Validate placeholder substitution without credentials, docker, gcloud,
+  # or network. Missing vars fall back to example values so bare
+  # `bash scripts/release.sh --dry-run` works in CI.
+  DATABASE_URL="${DATABASE_URL:-postgresql://operator:placeholder@localhost:5432/dmef?sslmode=require}"
+  PROJECT_ID="${PROJECT_ID:-example-project}"
+  REGION="${REGION:-asia-south1}"
+  TAG="${TAG:-v0.0.0-dryrun}"
+  build_images
+  echo "==> release.sh --dry-run (no alembic, gcloud, or network)"
+  echo "==> image: ${IMAGE}"
+  echo "==> frontend image: ${FRONTEND_IMAGE}"
+  TMPDIR_DRYRUN="$(mktemp -d)"
+  trap 'rm -rf "$TMPDIR_DRYRUN"' EXIT
+  if [ -n "${FRONTEND_HOST:-}" ]; then
+    render_yaml deploy/cloudrun/api.yaml | sed -e "s|https://FRONTEND_HOST|https://${FRONTEND_HOST}|g" > "$TMPDIR_DRYRUN/api.yaml"
+  else
+    render_yaml deploy/cloudrun/api.yaml > "$TMPDIR_DRYRUN/api.yaml"
+  fi
+  render_yaml deploy/cloudrun/worker.yaml > "$TMPDIR_DRYRUN/worker.yaml"
+  echo "----- rendered deploy/cloudrun/api.yaml -----"
+  cat "$TMPDIR_DRYRUN/api.yaml"
+  echo "----- rendered deploy/cloudrun/worker.yaml -----"
+  cat "$TMPDIR_DRYRUN/worker.yaml"
+  leftovers="$(grep -n -e ':TAG' -e 'PROJECT_ID' "$TMPDIR_DRYRUN/api.yaml" "$TMPDIR_DRYRUN/worker.yaml" || true)"
+  if [ -n "$leftovers" ]; then
+    echo "release.sh --dry-run FAILED: unsubstituted placeholders remain:" >&2
+    echo "$leftovers" >&2
+    exit 1
+  fi
+  echo "dry-run OK: image tag :${TAG} rendered, all placeholders substituted"
+  exit 0
+fi
 
 : "${DATABASE_URL:?Set DATABASE_URL to the DIRECT Neon endpoint (?sslmode=require)}"
 : "${PROJECT_ID:?Set PROJECT_ID}"
@@ -58,11 +139,9 @@ else
   echo "==> bootstrap admin env present for ${DMEF_BOOTSTRAP_ADMIN_EMAIL}"
 fi
 
-IMAGE="REGION-docker.pkg.dev/PROJECT_ID/dmef/api:TAG"
-IMAGE="${IMAGE/REGION/${REGION}}"
-IMAGE="${IMAGE/PROJECT_ID/${PROJECT_ID}}"
-IMAGE="${IMAGE/:TAG/:${TAG}}"
+build_images
 echo "==> image: ${IMAGE}"
+echo "==> frontend image: ${FRONTEND_IMAGE}"
 
 if [ "${SKIP_DEPLOY:-0}" = "1" ]; then
   echo "==> SKIP_DEPLOY=1: stopping after migrations + checks"
@@ -70,15 +149,6 @@ if [ "${SKIP_DEPLOY:-0}" = "1" ]; then
 fi
 
 command -v gcloud >/dev/null 2>&1 || fail "gcloud not found; install Google Cloud SDK to deploy"
-
-render_yaml() {
-  # Substitute operator placeholders without editing the checked-in files.
-  sed -e "s/PROJECT_ID/${PROJECT_ID}/g" \
-      -e "s/REGION/${REGION}/g" \
-      -e ":TAG"":${TAG}g" \
-      -e "s|REGION-docker.pkg.dev/PROJECT_ID/dmef/api:TAG|${IMAGE}|g" \
-      "$1"
-}
 
 TMPDIR_RELEASE="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_RELEASE"' EXIT
@@ -92,23 +162,70 @@ fi
 render_yaml deploy/cloudrun/worker.yaml > "$TMPDIR_RELEASE/worker.yaml"
 
 echo "==> deploying dmef-api"
-gcloud run services replace "$TMPDIR_RELEASE/api.yaml" --region "$REGION" --project "$PROJECT_ID"
-echo "==> deploying dmef-worker"
-gcloud run services replace "$TMPDIR_RELEASE/worker.yaml" --region "$REGION" --project "$PROJECT_ID"
-
-echo "==> deploying frontend (frontend/Dockerfile, standalone)"
-gcloud run deploy dmef-frontend \
-  --source . \
-  --dockerfile frontend/Dockerfile \
+gcloud run services replace "$TMPDIR_RELEASE/api.yaml" \
+  --region "$REGION" --project "$PROJECT_ID" --quiet
+# The API is internet-reachable for the browser frontend; every product route
+# except /health and /auth/login is still protected by DMEF authentication.
+gcloud run services update dmef-api \
   --region "$REGION" --project "$PROJECT_ID" \
-  --set-env-vars "NEXT_PUBLIC_API_BASE_URL=https://${API_HOST:-API_HOST_UNSET}"
+  --no-invoker-iam-check --quiet
+echo "==> deploying dmef-worker"
+gcloud run services replace "$TMPDIR_RELEASE/worker.yaml" \
+  --region "$REGION" --project "$PROJECT_ID" --quiet
 
-API_URL="https://${API_HOST:-}"
+echo "==> deploying frontend (prebuilt ${FRONTEND_IMAGE})"
+# NOTE: the frontend ships as the deploy.yml-built image
+# (${REGION}-docker.pkg.dev/${PROJECT_ID}/dmef/frontend:${TAG}), NOT
+# `gcloud run deploy --source .`. NEXT_PUBLIC_API_BASE_URL is inlined into
+# the Next.js client bundle at *build* time (deploy.yml passes it as a
+# --build-arg), so setting it here as a runtime --set-env-vars would be a
+# silent no-op for the served UI and is intentionally not done.
+gcloud run deploy dmef-frontend \
+  --image "${FRONTEND_IMAGE}" \
+  --region "$REGION" --project "$PROJECT_ID" \
+  --allow-unauthenticated --quiet
+
 if [ -z "${API_HOST:-}" ]; then
   API_URL="$(gcloud run services describe dmef-api --region "$REGION" --project "$PROJECT_ID" --format 'value(status.url)')"
+elif [[ "$API_HOST" == http://* || "$API_HOST" == https://* ]]; then
+  API_URL="$API_HOST"
+else
+  API_URL="https://${API_HOST}"
 fi
 echo "==> health: ${API_URL}/health"
-curl -fsS --max-time 30 "${API_URL}/health" | python -m json.tool
+health_attempts="${DMEF_HEALTH_ATTEMPTS:-12}"
+health_retry_seconds="${DMEF_HEALTH_RETRY_SECONDS:-10}"
+health_payload=""
+health_ok=0
+for ((attempt = 1; attempt <= health_attempts; attempt++)); do
+  if health_payload="$(curl -fsS --max-time 30 "${API_URL}/health")" && \
+    HEALTH_PAYLOAD="$health_payload" python -c '
+import json
+import os
+import sys
+
+payload = json.loads(os.environ["HEALTH_PAYLOAD"])
+checks = {
+    "status": payload.get("status") == "ok",
+    "database": payload.get("database") == "ok",
+    "storage": payload.get("storage") == "ok",
+    "worker": (payload.get("worker") or {}).get("status") == "ok",
+}
+failed = [name for name, passed in checks.items() if not passed]
+if failed:
+    print("health not ready: " + ", ".join(failed), file=sys.stderr)
+    raise SystemExit(1)
+'; then
+    health_ok=1
+    break
+  fi
+  if [ "$attempt" -lt "$health_attempts" ]; then
+    echo "==> health not ready (${attempt}/${health_attempts}); retrying" >&2
+    sleep "$health_retry_seconds"
+  fi
+done
+printf '%s\n' "$health_payload" | python -m json.tool || true
+[ "$health_ok" = "1" ] || fail "API dependencies or worker did not become healthy"
 
 echo "release OK. Next (operator):"
 echo "  python scripts/smoke_batch.py --api ${API_URL} --email admin@example.com --password '...' --files <dir-with-10-pdfs> --timeout 1800"

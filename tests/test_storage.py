@@ -259,7 +259,7 @@ def _snapshot_tree(root: Path) -> set[str]:
     return {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
 
 
-def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch) -> None:
+def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch, auth_headers) -> None:
     _use_tmp_env(tmp_path, monkeypatch)
     _ensure_schema()
     monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
@@ -279,6 +279,7 @@ def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch
     client = TestClient(app)
     response = client.post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "WSB-STORE-001",
             "applicant_name": "Ramesh Kumar",
@@ -312,19 +313,22 @@ def test_upload_route_stores_key_and_writes_no_local_files(tmp_path, monkeypatch
     assert list((tmp_path / "jobs").rglob("*")) == []
 
 
-def test_storage_route_serves_local_object(tmp_path, monkeypatch) -> None:
+def test_storage_route_serves_local_object(tmp_path, monkeypatch, auth_headers) -> None:
     _use_tmp_env(tmp_path, monkeypatch)
     store = LocalObjectStore()
     store.put("applications/9/source/doc.pdf", b"%PDF-stub", "application/pdf")
     client = TestClient(app)
 
-    served = client.get("/storage/applications/9/source/doc.pdf")
+    served = client.get("/storage/applications/9/source/doc.pdf", headers=auth_headers)
     assert served.status_code == 200
     assert served.content == b"%PDF-stub"
 
     # Traversal attempts never serve objects (client-normalized or rejected).
-    assert client.get("/storage/../escape.pdf").status_code in {400, 404}
-    assert client.get("/storage/applications/9/source/missing.pdf").status_code == 404
+    assert client.get("/storage/../escape.pdf", headers=auth_headers).status_code in {400, 404}
+    assert (
+        client.get("/storage/applications/9/source/missing.pdf", headers=auth_headers).status_code
+        == 404
+    )
 
     from fastapi import HTTPException
 
@@ -333,6 +337,76 @@ def test_storage_route_serves_local_object(tmp_path, monkeypatch) -> None:
     with pytest.raises(HTTPException) as exc_info:
         serve_stored_object("../escape.pdf")
     assert exc_info.value.status_code == 400
+
+
+def test_worker_reload_from_store_after_workdir_deleted(tmp_path, monkeypatch) -> None:
+    """Worker+store reload: deleted upload work dir still yields a real PDF.
+
+    Persist inputs for a temp file, delete the file (API ``finally`` cleanup),
+    then ``load_job_input`` must re-stage the durable store bytes into
+    ``DMEF_JOB_WORK_DIR`` before the checksum. The staged file must match the
+    stored bytes.
+    """
+    import hashlib
+    import shutil
+
+    _use_tmp_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_INLINE_WORKER", "0")
+    _ensure_schema()
+
+    from database.db import get_connection
+    from services.job_control import load_job_input
+    from services.job_runner import enqueue
+    from services.pipeline.input_preparation import resolve_job_source
+
+    pdf_path = tmp_path / "source.pdf"
+    _create_pdf(pdf_path)
+    pdf_bytes = pdf_path.read_bytes()
+    expected_sha = hashlib.sha256(pdf_bytes).hexdigest()
+
+    with get_connection() as connection:
+        application_id = int(
+            connection.execute(
+                "INSERT INTO applications (loan_id, status) VALUES ('STORE-RELOAD-001', 'processing')"
+                " RETURNING id"
+            ).fetchone()["id"]
+        )
+    # Durable bytes live in the store before enqueue (single /upload layout).
+    store_key = f"applications/{application_id}/source/source.pdf"
+    get_store().put(store_key, pdf_bytes, "application/pdf")
+    record_ref(
+        "applications",
+        application_id,
+        "source",
+        store_key,
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
+
+    # Enqueue hashes the temp file, then the API deletes the work dir.
+    staging = tmp_path / "jobs" / "upload-scratch" / "source.pdf"
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_bytes(pdf_bytes)
+    job_id = enqueue(
+        "pdf_pipeline",
+        application_id,
+        {"source_path": str(staging), "system_data": {}, "product_type": "LAP"},
+    )
+    shutil.rmtree(tmp_path / "jobs", ignore_errors=True)
+    (tmp_path / "jobs").mkdir(parents=True, exist_ok=True)
+    assert not staging.exists()
+
+    payload = load_job_input(application_id, job_id)
+    restored = Path(str(payload["source_path"]))
+    assert restored.is_file()
+    assert hashlib.sha256(restored.read_bytes()).hexdigest() == expected_sha
+    assert get_store().get(store_key) == pdf_bytes
+
+    # Explicit resolve prefers the store and never falls back to the deleted hint.
+    resolved = resolve_job_source(application_id, str(staging), job_id)
+    assert Path(resolved).is_file()
+    assert Path(resolved).read_bytes() == pdf_bytes
 
 
 @pytest.mark.skipif(

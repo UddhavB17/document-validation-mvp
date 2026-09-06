@@ -57,46 +57,125 @@ def failure_reason_for(exc: BaseException) -> str:
     return "Processing failed after 3 attempts. Contact an administrator."
 
 
-def recover_stale_jobs(*, stale_minutes: int = 10) -> int:
-    """Move crashed ``running`` jobs back to ``retrying`` without bumping attempt."""
-    cutoff = (_utc_now() - timedelta(minutes=stale_minutes)).isoformat()
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT id FROM pipeline_jobs
-            WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?)
-            """,
-            (cutoff,),
-        ).fetchall()
-        for row in rows:
-            connection.execute(
-                """
-                UPDATE pipeline_jobs
-                SET status = 'retrying', control_state = 'running', next_run_at = NULL
-                WHERE id = ?
-                """,
-                (row["id"],),
-            )
-        return len(rows)
+def _claim_select_sql() -> str:
+    """Return the dialect-branched dequeue SELECT (contracts §4).
 
+    Postgres uses ``FOR UPDATE SKIP LOCKED`` so concurrent workers never
+    claim the same row; SQLite uses the same query without the clause inside
+    ``BEGIN IMMEDIATE``.
+    """
+    import database.db as db_module
 
-def claim_next_job() -> dict[str, Any] | None:
-    """Claim one queued/retrying job that is due. Returns the job row or None."""
-    now_iso = _utc_now_iso()
-    with get_connection() as connection:
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-        except Exception:
-            pass
-        row = connection.execute(
-            """
+    base = """
             SELECT id, application_id, job_type, status, attempt, max_attempts,
                    batch_id, control_state
             FROM pipeline_jobs
             WHERE status IN ('queued', 'retrying')
               AND (next_run_at IS NULL OR next_run_at <= ?)
             ORDER BY id LIMIT 1
+            """
+    if db_module.dialect() == "postgresql":
+        return base + " FOR UPDATE SKIP LOCKED"
+    return base
+
+
+def recover_stale_jobs(*, stale_minutes: int = 10) -> int:
+    """Move crashed ``running`` jobs back to ``retrying`` without bumping attempt.
+
+    Jobs that already exhausted ``max_attempts`` are marked ``failed`` (with
+    the application/intake mirrored) so the next claim does not grant a run
+    beyond the budget.
+    """
+    cutoff = (_utc_now() - timedelta(minutes=stale_minutes)).isoformat()
+    now_iso = _utc_now_iso()
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, application_id, attempt, max_attempts
+            FROM pipeline_jobs
+            WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?)
             """,
+            (cutoff,),
+        ).fetchall()
+        for row in rows:
+            attempt = int(row["attempt"] or 0)
+            max_attempts = int(row["max_attempts"] or 3)
+            if attempt >= max_attempts:
+                reason = "Processing failed after 3 attempts. Contact an administrator."
+                connection.execute(
+                    """
+                    UPDATE pipeline_jobs
+                    SET status = 'failed', control_state = 'failed',
+                        error = ?, failure_reason = ?,
+                        completed_at = ?, heartbeat_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        "Worker heartbeat expired after exhausting attempts",
+                        reason,
+                        now_iso,
+                        now_iso,
+                        row["id"],
+                    ),
+                )
+                connection.execute(
+                    "UPDATE applications SET status = ? WHERE id = ?",
+                    ("failed", int(row["application_id"])),
+                )
+                try:
+                    connection.execute(
+                        """
+                        UPDATE pipeline_progress
+                        SET status = 'failed', stage = 'failed', error = ?,
+                            message = ?, completed_at = ?, updated_at = ?
+                        WHERE application_id = ?
+                        """,
+                        (
+                            reason,
+                            reason,
+                            now_iso,
+                            now_iso,
+                            int(row["application_id"]),
+                        ),
+                    )
+                except Exception:
+                    pass
+                try:
+                    connection.execute(
+                        "UPDATE intake_packages SET status = 'failed' WHERE application_id = ?",
+                        (int(row["application_id"]),),
+                    )
+                except Exception:
+                    pass
+                connection.execute(
+                    "INSERT INTO audit_log (application_id, action, details) VALUES (?, ?, ?)",
+                    (int(row["application_id"]), "pipeline_failed", reason),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE pipeline_jobs
+                    SET status = 'retrying', control_state = 'running', next_run_at = NULL
+                    WHERE id = ?
+                    """,
+                    (row["id"],),
+                )
+        return len(rows)
+
+
+def claim_next_job() -> dict[str, Any] | None:
+    """Claim one queued/retrying job that is due. Returns the job row or None."""
+    import database.db as db_module
+
+    now_iso = _utc_now_iso()
+    is_postgres = db_module.dialect() == "postgresql"
+    with get_connection() as connection:
+        if not is_postgres:
+            # SQLite: serialize claims. Postgres uses FOR UPDATE SKIP LOCKED
+            # instead (see _claim_select_sql); never run BEGIN IMMEDIATE there.
+            connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            _claim_select_sql(),
             (now_iso,),
         ).fetchone()
         if row is None:
@@ -195,7 +274,7 @@ def run_job_by_id(job: dict[str, Any]) -> None:
 
 
 def handle_job_exception(job_id: int, exc: BaseException) -> None:
-    from services.job_control import PipelineCancelled
+    from services.job_control import PipelineCancelled, PipelineFailedError
 
     if isinstance(exc, PipelineCancelled):
         return
@@ -210,7 +289,9 @@ def handle_job_exception(job_id: int, exc: BaseException) -> None:
     max_attempts = int(job["max_attempts"] or 3)
     application_id = int(job["application_id"])
     error_summary = str(exc).strip().split("\n")[0][:500] if str(exc).strip() else type(exc).__name__
-    if attempt < max_attempts:
+    # Clean pipeline failures are terminal: never retry, mark failed once.
+    is_terminal = isinstance(exc, PipelineFailedError)
+    if not is_terminal and attempt < max_attempts:
         wait = backoff_seconds(attempt)
         next_run = (_utc_now() + timedelta(seconds=wait)).isoformat()
         with get_connection() as connection:

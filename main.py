@@ -15,7 +15,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from database.db import get_connection
@@ -34,6 +34,7 @@ from routes import (
     upload,
     verification,
 )
+from services.auth.bootstrap import bootstrap_admin
 from services.config import log_effective_config
 from services.job_control import ensure_secrets_key
 from services.low_memory import apply_low_memory_defaults
@@ -65,6 +66,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     initialize_schema()
     # Fail fast in production when DMEF_SECRETS_KEY is missing.
     ensure_secrets_key()
+    bootstrap_admin()
     log_effective_config()
     logger.info("CORS origins: %s", ", ".join(_cors_origins()))
     yield
@@ -105,15 +107,16 @@ app.include_router(admin_ops.router)
 
 # ── Health ────────────────────────────────────
 @app.get("/health", tags=["meta"])
-def health_check() -> dict[str, object]:
+def health_check(response: Response) -> dict[str, object]:
+    # --- fx-schema: flat database contract (string + dialect) ---
     from database.db import dialect
 
     try:
         with get_connection() as connection:
             connection.execute("SELECT 1").fetchone()
-        database_status: dict[str, str] = {"status": "ok", "dialect": dialect()}
+        database: str = "ok"
     except Exception:  # noqa: BLE001 - health must report, not raise
-        database_status = {"status": "error", "dialect": dialect()}
+        database = "error"
     storage = "ok"
     try:
         get_store().exists("healthcheck")
@@ -126,10 +129,22 @@ def health_check() -> dict[str, object]:
         worker: dict[str, object] = dict(get_heartbeat())
     except Exception:  # noqa: BLE001 - health must report, not raise
         worker = {"last_heartbeat": None, "status": "stale"}
+    critical_ok = database == "ok" and storage == "ok"
+    worker_ok = worker.get("status") == "ok"
+    if not critical_ok:
+        response.status_code = 503
+        status = "error"
+    elif not worker_ok:
+        # The API itself remains live while a separately deployed worker is
+        # starting, but release validation must not call the system ready.
+        status = "degraded"
+    else:
+        status = "ok"
     return {
-        "status": "ok",
+        "status": status,
         "version": app.version,
-        "database": database_status,
+        "database": database,
+        "database_dialect": dialect(),
         "storage": storage,
         "worker": worker,
     }

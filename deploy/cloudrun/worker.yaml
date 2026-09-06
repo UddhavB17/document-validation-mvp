@@ -1,7 +1,8 @@
 # Cloud Run worker service (ws-j-deploy-smoke).
 # Same backend image as the API, different command:
 #   python -m services.worker --serve-health 8080
-# Single replica, CPU always allocated, internal ingress only.
+# Single replica, CPU always allocated, internal ingress only (enforced by the
+# run.googleapis.com/ingress annotation below, not by a console click).
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
@@ -9,6 +10,8 @@ metadata:
   labels:
     app: dmef
     component: worker
+  annotations:
+    run.googleapis.com/ingress: internal
 spec:
   template:
     metadata:

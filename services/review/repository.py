@@ -259,8 +259,9 @@ def load_today_activity() -> list[JsonRow]:
     """Load today's reviewer decisions in the API's existing order."""
     now = datetime.now(UTC)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    day_end = (now.replace(hour=0, minute=0, second=0, microsecond=0)
-               + timedelta(days=1)).isoformat()
+    day_end = (
+        now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    ).isoformat()
     with get_connection() as connection:
         activity_rows = connection.execute(
             """

@@ -147,7 +147,7 @@ def test_persist_job_input_failure_marks_job_and_application_failed(tmp_path, mo
     assert progress["status"] == "failed"
 
 
-def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch) -> None:
+def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     monkeypatch.setenv("DMEF_JOB_CONTROL_TOKEN", "control-secret")
     application_id, job_id, _ = _seed_job(tmp_path)
@@ -155,13 +155,91 @@ def test_job_control_endpoint_requires_configured_token(tmp_path, monkeypatch) -
         connection.execute("UPDATE pipeline_jobs SET status = 'running' WHERE id = ?", (job_id,))
     client = TestClient(app)
 
-    assert client.post(f"/review/applications/{application_id}/pause").status_code == 403
+    assert client.post(f"/review/applications/{application_id}/pause").status_code == 401
+    assert (
+        client.post(
+            f"/review/applications/{application_id}/pause", headers=auth_headers
+        ).status_code
+        == 403
+    )
     response = client.post(
         f"/review/applications/{application_id}/pause",
-        headers={"X-Job-Control-Token": "control-secret"},
+        headers={**auth_headers, "X-Job-Control-Token": "control-secret"},
     )
     assert response.status_code == 200
     assert response.json()["status"] == "pause_requested"
+
+
+def test_load_job_input_restores_store_bytes_after_source_deleted(
+    tmp_path, monkeypatch
+) -> None:
+    """Deleted upload work dir still loads via the object store (BLOCK 1)."""
+    import hashlib
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
+    application_id, job_id, source = _seed_job(tmp_path)
+    pdf_bytes = source.read_bytes()
+
+    from services.storage import get_store
+    from services.storage.refs import record_ref
+
+    store_key = f"applications/{application_id}/source/source.pdf"
+    get_store().put(store_key, pdf_bytes, "application/pdf")
+    record_ref(
+        "applications",
+        application_id,
+        "source",
+        store_key,
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
+    persist_job_input(
+        job_id, application_id, source_path=source, system_data={}, product_type="LAP"
+    )
+    source.unlink()
+    assert not source.exists()
+
+    recovered = load_job_input(application_id, job_id)
+    restored = Path(str(recovered["source_path"]))
+    assert restored.is_file()
+    assert hashlib.sha256(restored.read_bytes()).hexdigest() == hashlib.sha256(
+        pdf_bytes
+    ).hexdigest()
+
+
+def test_resolve_job_source_prefers_store_over_deleted_hint(tmp_path, monkeypatch) -> None:
+    """resolve_job_source downloads from the store, never a deleted hint."""
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
+    monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
+    init_db()
+
+    from services.pipeline.input_preparation import resolve_job_source
+    from services.storage import get_store
+    from services.storage.refs import record_ref
+
+    with get_connection() as connection:
+        application_id = int(
+            connection.execute(
+                "INSERT INTO applications (loan_id, status) VALUES ('RESOLVE-001', 'processing')"
+                " RETURNING id"
+            ).fetchone()["id"]
+        )
+    pdf_bytes = b"%PDF-1.4 resolve bytes"
+    store_key = f"applications/{application_id}/source/a.pdf"
+    get_store().put(store_key, pdf_bytes, "application/pdf")
+    record_ref(
+        "applications", application_id, "source", store_key, content_type="application/pdf"
+    )
+    deleted_hint = tmp_path / "gone.pdf"
+    resolved = resolve_job_source(application_id, str(deleted_hint), "job-99")
+    assert Path(resolved).is_file()
+    assert Path(resolved).read_bytes() == pdf_bytes
 
 
 def test_page_builder_skips_completed_checkpoint(tmp_path, monkeypatch) -> None:

@@ -273,8 +273,8 @@ SCHEMA_STATEMENTS = [
         found_value TEXT,
         page_number INTEGER,
         reason TEXT,
-        status TEXT DEFAULT 'open',
         evidence_json TEXT,
+        status TEXT DEFAULT 'open',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,

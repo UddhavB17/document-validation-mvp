@@ -1,13 +1,16 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from database.db import get_connection
+from services.auth.dependencies import require_role
 from services.config import is_secret_setting
 from services.job_control import encrypt_secret
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+router = APIRouter(
+    prefix="/settings", tags=["settings"], dependencies=[Depends(require_role("admin"))]
+)
 
 # Secret values are never returned by this API; a set secret reads back as
 # the placeholder below plus ``is_set: true``. (``has_value`` is the legacy

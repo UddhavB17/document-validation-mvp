@@ -46,6 +46,7 @@ from services.pipeline.page_details import (
     _extract_fields_with_layout,
     _is_starting_json_db_page,
     _record_completed_page_event,
+    _triage_from_fields,
 )
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
@@ -92,24 +93,6 @@ def _sync_page_meta(page: dict[str, Any]) -> dict[str, Any]:
         if str(key).startswith("_"):
             meta[key] = value
     return page
-
-
-def _public_page_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    """Return business keys only (no ``_``-prefixed private entries)."""
-    if not isinstance(fields, dict):
-        return {}
-    return {key: value for key, value in fields.items() if not str(key).startswith("_")}
-
-
-def page_meta(page: dict[str, Any]) -> dict[str, Any]:
-    """Return a page's private meta, with legacy ``extracted_fields`` fallback."""
-    meta = page.get("meta")
-    if isinstance(meta, dict) and meta:
-        return meta
-    fields = page.get("extracted_fields")
-    if isinstance(fields, dict):
-        return {key: value for key, value in fields.items() if str(key).startswith("_")}
-    return {}
 
 
 def _build_page_records(
@@ -362,6 +345,9 @@ def _build_page_records(
                         "raw_document_type": document_type,
                         "raw_confidence": triage["confidence"],
                         "detected_page_number": page_number,
+                        # Nested copy so eligibility helpers that read
+                        # ``_classification.triage`` see photo pages too.
+                        "triage": triage,
                     },
                 }
             elif triage["category"] == "handwritten" and (
@@ -510,7 +496,7 @@ def _build_page_records(
                     text = routed_ocr.text
                     ocr_confidence = routed_ocr.confidence
                     is_readable = bool(text.strip())
-                    ocr_metadata = routed_ocr.to_legacy_dict()
+                    ocr_metadata = _ocr_result_dict(routed_ocr.to_legacy_dict())
                     if routed_ocr.error:
                         extracted_fields["_processing_error"] = routed_ocr.error
                     if page_number % 5 == 0:
@@ -619,6 +605,11 @@ def _build_page_records(
             document_type=document_type,
             text=text,
             extracted_fields=extracted_fields,
+            triage_category=(
+                triage.get("category") if isinstance(triage, dict) else None
+            ),
+            ocr_confidence=ocr_confidence,
+            page_type=page_type,
         )
         # Run the structured classifier only after deterministic and generic
         # extraction has completed, and only for the two allowed fallback
@@ -700,6 +691,10 @@ def _build_page_records(
             # Compact in-memory word layout for evidence bboxes (ws-f);
             # never persisted (ws-a data diet).
             "words": list(ocr_metadata.get("words") or []),
+            # Provider boxes kept in memory as a fallback so page_words can
+            # coerce words even when derivation produced none; never
+            # persisted (ws-a data diet: _insert_page uses explicit columns).
+            "bounding_boxes": list(ocr_metadata.get("bounding_boxes") or []),
             # Small in-memory layout for field extraction/smoothing only;
             # never persisted (no "native" blob).
             "structured_content": ocr_metadata.get("structured_content"),
@@ -869,6 +864,9 @@ def _refresh_page_from_cached_ocr(
         document_type=document_type,
         text=text,
         extracted_fields=fields,
+        triage_category=_triage_from_fields(fields),
+        ocr_confidence=ocr_confidence,
+        page_type=refreshed.get("page_type"),
     )
     language_profile = analyze_text_languages(text)
     previous_language = (
@@ -1008,26 +1006,41 @@ def _clone_reused_page(
     return cloned
 
 
-def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Select small structured OCR fields kept in memory for the run.
-
-    Nothing returned here is persisted: ``pages`` rows carry no layout blobs
-    and ``pipeline_page_events`` carries no field payload at all. The full
-    provider response (``native``/``structure_json``) is never built.
-    """
-    keys = (
-        "ocr_pipeline",
-        "ocr_languages",
-        "ocr_language_hints",
-        "header_text",
-        "ocr_route",
-        "ocr_escalated",
-        "ocr_routing_rationale",
-        "ocr_original_confidence",
-        "ocr_processing_time_ms",
-    )
-    return {key: metadata[key] for key in keys if key in metadata}
-
-
 def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
-    return result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
+    # NEEDS-COORDINATION (ws-a): temporary ws-f derivation of the in-memory
+    # `words` list ([{"t","b","c"}], normalized 0-1) from provider bounding
+    # boxes until ws-a merges the canonical key.
+    payload = result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
+    words = payload.get("words")
+    if not (isinstance(words, list) and words):
+        payload["words"] = _words_from_bounding_boxes(payload)
+    return payload
+
+
+def _words_from_bounding_boxes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Derive normalized ``[{"t","b","c"}]`` words from provider boxes."""
+    # ponytail: pixel-to-0-1 normalization stays here. upgrade: canonical words key merges.
+    boxes = payload.get("bounding_boxes")
+    if not isinstance(boxes, list) or not boxes:
+        return []
+    try:
+        width = float(payload.get("image_width") or 0)
+        height = float(payload.get("image_height") or 0)
+    except (TypeError, ValueError):
+        width, height = 0.0, 0.0
+    words: list[dict[str, Any]] = []
+    for box in boxes:
+        if not isinstance(box, dict):
+            continue
+        text = box.get("text", box.get("t", ""))
+        bbox = box.get("bbox", box.get("b", []))
+        if text in (None, "") or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            coords = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            continue
+        if width > 0 and height > 0 and max(coords) > 1.0:
+            coords = [coords[0] / width, coords[1] / height, coords[2] / width, coords[3] / height]
+        words.append({"t": str(text), "b": coords, "c": box.get("confidence", box.get("c"))})
+    return words

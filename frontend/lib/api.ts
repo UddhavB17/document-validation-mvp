@@ -7,6 +7,29 @@ export { normalizeDocumentType } from "./documentType";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+// --- ws-d auth: in-memory bearer token (set once by lib/auth.ts) ---
+// The JWT lives in an httpOnly cookie, so page code cannot read it directly.
+// lib/auth.ts loads it once via GET /api/session and registers a getter here;
+// every backend request below carries it as `Authorization: Bearer …`.
+type AuthTokenProvider = () => string | null;
+let authTokenProvider: AuthTokenProvider | null = null;
+
+export function setAuthTokenProvider(provider: AuthTokenProvider | null) {
+  authTokenProvider = provider;
+}
+
+function authHeaders(): Record<string, string> {
+  const token = authTokenProvider?.() ?? null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function handleUnauthorized(status: number) {
+  if (typeof window === "undefined" || status !== 401 || window.location.pathname === "/login") return;
+  void fetch("/api/session", { method: "DELETE" }).finally(() => {
+    window.location.assign("/login");
+  });
+}
+
 // Shared schema pieces used by several response shapes.
 const nullableString = z.string().nullable().optional();
 const dynamicFieldsSchema = z.record(z.unknown());
@@ -218,9 +241,6 @@ function safeJsonParse(raw: string): unknown {
 /** Narrow an anomaly's evidence_json (object | string | null) to an object. */
 export function parseAnomalyEvidence(value: unknown): z.infer<typeof anomalyEvidenceObjectSchema> | null {
   const raw = typeof value === "string" ? safeJsonParse(value) : value;
-  if (typeof raw !== "object" || raw === null) {
-    return null;
-  }
   const parsed = anomalyEvidenceObjectSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
@@ -475,29 +495,24 @@ async function parseApiResponse<T>(response: Response, schema: z.ZodType<T>): Pr
     throw new ApiError(text || "Backend returned a non-JSON response", response.status);
   }
   if (!response.ok) {
-    const detailPayload = getApiErrorDetail(payload);
+    handleUnauthorized(response.status);
+    const detailPayload =
+      typeof payload === "object" && payload !== null && "detail" in payload ? payload.detail : payload;
     const detail = typeof detailPayload === "string" ? detailPayload : JSON.stringify(detailPayload);
     throw new ApiError(detail || "Request failed", response.status);
   }
   return schema.parse(payload);
 }
 
-function getApiErrorDetail(payload: unknown): unknown {
-  if (typeof payload === "object" && payload !== null && "detail" in payload) {
-    return payload.detail;
-  }
-  return payload;
-}
-
 async function getJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`);
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() } });
   return parseApiResponse(response, schema);
 }
 
 async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return parseApiResponse(response, schema);
@@ -506,7 +521,7 @@ async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodTyp
 async function patchJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   return parseApiResponse(response, schema);
@@ -546,7 +561,7 @@ export const api = {
     formData.append("case_type", payload.caseType);
     formData.append("application_date", payload.applicationDate);
     formData.append("file", payload.file);
-    const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, uploadResponseSchema);
   },
   uploadMapped: async (payload: { manifest?: string; caseType: "Normal Case" | "BT Case"; file: File }) => {
@@ -556,7 +571,7 @@ export const api = {
     }
     formData.append("case_type", payload.caseType);
     formData.append("file", payload.file);
-    const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload/mapped`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, uploadResponseSchema);
   },
   uploadPartnerJson: (payload: unknown) => postJsonResponse("/upload/json", payload, uploadResponseSchema),
@@ -565,6 +580,7 @@ export const api = {
     formData.append("file", file);
     const response = await fetch(`${API_BASE_URL}/upload/package?background=true`, {
       method: "POST",
+      headers: { ...authHeaders() },
       body: formData,
     });
     return parseApiResponse(response, zipPackageUploadResponseSchema);
@@ -577,6 +593,7 @@ export const api = {
     formData.append("case_type", caseType);
     const response = await fetch(`${API_BASE_URL}/upload/package/${packageId}/verify`, {
       method: "POST",
+      headers: { ...authHeaders() },
       body: formData,
     });
     return parseApiResponse(response, uploadResponseSchema);
@@ -600,7 +617,7 @@ export const api = {
     for (const file of files) {
       formData.append("files", file);
     }
-    const response = await fetch(`${API_BASE_URL}/upload/batch`, { method: "POST", body: formData });
+    const response = await fetch(`${API_BASE_URL}/upload/batch`, { method: "POST", headers: { ...authHeaders() }, body: formData });
     return parseApiResponse(response, batchUploadResponseSchema);
   },
   batchStatus: (batchId: string) => getJsonResponse(`/upload/batch/${batchId}`, batchStatusSchema),
@@ -641,6 +658,41 @@ export type BatchUploadResponse = z.infer<typeof batchUploadResponseSchema>;
 export type BatchItem = z.infer<typeof batchStatusItemSchema>;
 export type BatchStatus = z.infer<typeof batchStatusSchema>;
 
+// --- ws-d auth ---
+export const authUserSchema = z.object({
+  id: z.number(),
+  email: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+});
+
+export const loginResponseSchema = z.object({
+  token: z.string(),
+  user: authUserSchema,
+});
+
+export const sessionResponseSchema = z.object({
+  token: z.string(),
+  role: z.string(),
+});
+
+export const adminUserSchema = z.object({
+  id: z.number(),
+  email: z.string(),
+  display_name: z.string(),
+  role: z.string(),
+  is_active: z.boolean(),
+  created_at: z.string(),
+});
+
+export type AuthUser = z.infer<typeof authUserSchema>;
+export type LoginResponse = z.infer<typeof loginResponseSchema>;
+export type AdminUser = z.infer<typeof adminUserSchema>;
+
+export async function loginRequest(email: string, password: string): Promise<LoginResponse> {
+  return postJsonResponse("/auth/login", { email, password }, loginResponseSchema);
+}
+
 // --- ws-g gemini + llm ---
 const llmProvidersSchema = z.object({
   providers: z.array(z.string()),
@@ -675,6 +727,33 @@ const opsTextSchema = z.object({
   hi: z.string(),
 });
 
+// Contracts §5 status vocabulary; legacy reviewer values fold to needs_review.
+function mapOpsStatusValue(value: unknown): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "clean" || normalized === "processing" || normalized === "failed" ? normalized : "needs_review";
+}
+
+export const opsStatusSchema = z.preprocess(
+  mapOpsStatusValue,
+  z.enum(["needs_review", "clean", "processing", "failed"]),
+);
+
+// Contracts §11 finding codes, priority order.
+const OPS_FINDING_CODES = [
+  "NAME_MISMATCH",
+  "ID_MISMATCH",
+  "ADDRESS_MISMATCH",
+  "MISSING_DOCUMENT",
+  "BANK_STATEMENT_OLD",
+  "PAGE_UNREADABLE",
+  "OCR_FAILED",
+  "DATA_MISSING",
+  "PROCESSING_ERROR",
+] as const;
+
+// Display strings stay lenient: null/missing becomes "" so one empty field cannot fail the whole parse.
+const opsDisplayStringSchema = z.preprocess((value: unknown) => value ?? "", z.string());
+
 const opsBboxSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
 export const opsEvidenceSchema = z.object({
@@ -684,8 +763,10 @@ export const opsEvidenceSchema = z.object({
 });
 
 export const opsFindingSchema = z.object({
-  code: z.string(),
-  severity: z.string(),
+  code: z
+    .string()
+    .refine((value) => (OPS_FINDING_CODES as readonly string[]).includes(value), { message: "Unknown finding code" }),
+  severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
   title: opsTextSchema,
   detail: opsTextSchema,
   pages: z.array(z.number()),
@@ -701,7 +782,7 @@ export const opsPageToVerifySchema = z.object({
 export const opsChecklistRowSchema = z.object({
   s_no: z.number(),
   description: z.string(),
-  status: z.string(),
+  status: z.enum(["FOUND", "MISSING", "NOT_CHECKED"]),
   pages: z.array(z.number()),
 });
 
@@ -722,21 +803,21 @@ export const opsProcessingSchema = z.object({
 
 export const opsApplicationSchema = z.object({
   application_id: z.number(),
-  loan_id: z.string().nullable().optional(),
-  applicant_name: z.string().nullable().optional(),
-  status: z.string(),
+  loan_id: opsDisplayStringSchema,
+  applicant_name: opsDisplayStringSchema,
+  status: opsStatusSchema,
   processing: opsProcessingSchema,
   summary: opsTextSchema,
-  top_findings: z.array(opsFindingSchema),
+  top_findings: z.array(opsFindingSchema).max(5),
   pages_to_verify: z.array(opsPageToVerifySchema),
   checklist: opsChecklistSchema,
 });
 
 export const opsWorklistItemSchema = z.object({
   application_id: z.number(),
-  loan_id: z.string().nullable().optional(),
-  applicant_name: z.string().nullable().optional(),
-  status: z.string(),
+  loan_id: opsDisplayStringSchema.optional(),
+  applicant_name: opsDisplayStringSchema.optional(),
+  status: opsStatusSchema,
   findings_count: z.number(),
   updated_at: z.string().nullable().optional(),
 });
@@ -745,16 +826,36 @@ export const opsWorklistSchema = z.object({
   applications: z.array(opsWorklistItemSchema),
 });
 
-// Application processing status (contracts §8, ≤ 5 KB). The dedicated
-// GET /review/applications/{id}/status endpoint is owned by ws-a and is not
-// present in this branch yet; this tolerant schema accepts the status shape
-// once it lands and ignores any extra keys.
+// Application processing status (contracts §8, ≤ 5 KB). The lightweight
+// GET /review/applications/{id}/status nests progress under `progress`
+// (routes/review_pages.py: stage, percentage, completed_pages, total_pages)
+// plus the latest job row. The ops header bar reads progress.percentage
+// from here while in-flight; extra keys are ignored.
+const statusProgressSchema = z
+  .object({
+    stage: z.string().nullable().optional(),
+    percentage: z.number().nullable().optional(),
+    completed_pages: z.number().nullable().optional(),
+    total_pages: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+const statusJobSchema = z
+  .object({
+    id: z.number().nullable().optional(),
+    status: z.string().nullable().optional(),
+    attempt: z.number().nullable().optional(),
+    failure_reason: z.string().nullable().optional(),
+  })
+  .passthrough();
+
 export const applicationStatusSchema = z
   .object({
     application_id: z.number().optional(),
     status: z.string(),
-    percentage: z.number().nullable().optional(),
-    failure_reason: z.string().nullable().optional(),
+    progress: statusProgressSchema.nullable().optional(),
+    updated_at: z.string().nullable().optional(),
+    job: statusJobSchema.nullable().optional(),
   })
   .passthrough();
 
@@ -800,11 +901,21 @@ export async function adminResetPasswordRequest(userId: number, newPassword: str
 }
 
 export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {
-  return getJsonResponse(`/ops/applications/${applicationId}`, opsApplicationSchema);
+  // The ops schemas use z.preprocess for legacy-status mapping and null
+  // coercion. That is runtime-correct, but this toolchain infers preprocessed
+  // fields as unknown through the response generic (see the note on
+  // anomalyEvidenceSchema above), so the schema is asserted to its own
+  // inferred output type here. The assertion cannot drift: OpsApplication is
+  // derived from this same schema.
+  return getJsonResponse(
+    `/ops/applications/${applicationId}`,
+    opsApplicationSchema as z.ZodType<OpsApplication>,
+  );
 }
 
 export async function fetchOpsWorklist(): Promise<OpsWorklist> {
-  return getJsonResponse("/ops/worklist", opsWorklistSchema);
+  // Same preprocess note as fetchOpsApplication.
+  return getJsonResponse("/ops/worklist", opsWorklistSchema as z.ZodType<OpsWorklist>);
 }
 
 export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {

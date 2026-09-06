@@ -9,8 +9,8 @@ import {
 
 test("status poll runs while processing and stops when terminal", () => {
   assert.equal(getStatusPollInterval("processing"), 2000);
-  assert.equal(getStatusPollInterval("uploaded"), 2000);
-  assert.equal(getStatusPollInterval("ocr_completed"), 2000);
+  assert.equal(getStatusPollInterval("uploaded"), false);
+  assert.equal(getStatusPollInterval("ocr_completed"), false);
   assert.equal(getStatusPollInterval("needs_review"), false);
   assert.equal(getStatusPollInterval("clean"), false);
   assert.equal(getStatusPollInterval("failed"), false);
@@ -20,5 +20,7 @@ test("status poll runs while processing and stops when terminal", () => {
 test("review payload is fetched once, never polled", () => {
   assert.equal(getApplicationReviewPollInterval(), false);
   assert.equal(isApplicationReviewPollingStatus("processing"), true);
+  assert.equal(isApplicationReviewPollingStatus("uploaded"), false);
+  assert.equal(isApplicationReviewPollingStatus("ocr_completed"), false);
   assert.equal(isApplicationReviewPollingStatus("clean"), false);
 });

@@ -350,7 +350,6 @@ def _build_bilingual_prompt(findings: list[dict], ground_truth: dict) -> str:
 
 def _persist_ops_summaries(application_id: int, result: dict[str, str]) -> None:
     try:
-        _ensure_ops_summary_columns()
         with get_connection() as connection:
             connection.execute(
                 "UPDATE applications SET ops_summary_en = ?, ops_summary_hi = ? WHERE id = ?",
@@ -358,17 +357,6 @@ def _persist_ops_summaries(application_id: int, result: dict[str, str]) -> None:
             )
     except Exception as exc:  # noqa: BLE001 - summary persistence is best effort
         logger.warning("Could not persist ops summaries for %s: %s", application_id, exc)
-
-
-def _ensure_ops_summary_columns() -> None:
-    with get_connection() as connection:
-        for column in ("ops_summary_en", "ops_summary_hi"):
-            try:
-                connection.execute(f"ALTER TABLE applications ADD COLUMN {column} TEXT")
-            except Exception as exc:  # noqa: BLE001 - column already exists
-                message = str(exc).lower()
-                if "duplicate" not in message and "already exists" not in message:
-                    raise
 
 
 def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:
