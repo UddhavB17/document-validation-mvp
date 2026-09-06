@@ -174,5 +174,19 @@ def test_rowcount_and_lastrowid(tmp_path, monkeypatch) -> None:
 def test_dialect_follows_database_url(monkeypatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert dialect() == "sqlite"
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///data/dmef.db")
+    assert dialect() == "sqlite"
     monkeypatch.setenv("DATABASE_URL", "postgresql://dmef:dmef@localhost:5432/dmef")
     assert dialect() == "postgresql"
+
+
+def test_sqlite_database_url_initializes_schema(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'url.db'}")
+
+    db_module.init_db()
+
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'applications'"
+        ).fetchone()
+    assert row is not None
