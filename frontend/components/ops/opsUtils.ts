@@ -31,8 +31,5 @@ export function clampPercentage(value: unknown): number {
  */
 export function statusProgressPercentage(status: ApplicationStatus | null | undefined): number | null {
   const raw = status?.progress?.percentage;
-  if (typeof raw !== "number" || !Number.isFinite(raw)) {
-    return null;
-  }
-  return clampPercentage(raw);
+  return typeof raw === "number" && Number.isFinite(raw) ? clampPercentage(raw) : null;
 }

@@ -5,14 +5,10 @@ const SESSION_COOKIE = "dmef_session";
 
 /** Decode the role claim without verifying; the API verifies on every call. */
 function roleFromSession(session: string | undefined): string | null {
-  if (!session) {
-    return null;
-  }
+  if (!session) return null;
   try {
     const segment = session.split(".")[1];
-    if (!segment) {
-      return null;
-    }
+    if (!segment) return null;
     const payload = JSON.parse(
       Buffer.from(segment.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf-8"),
     ) as { role?: unknown };

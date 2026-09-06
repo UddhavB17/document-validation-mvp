@@ -24,12 +24,7 @@ function authHeaders(): Record<string, string> {
 }
 
 function handleUnauthorized(status: number) {
-  if (typeof window === "undefined" || status !== 401) {
-    return;
-  }
-  if (window.location.pathname === "/login") {
-    return;
-  }
+  if (typeof window === "undefined" || status !== 401 || window.location.pathname === "/login") return;
   void fetch("/api/session", { method: "DELETE" }).finally(() => {
     window.location.assign("/login");
   });
@@ -246,9 +241,6 @@ function safeJsonParse(raw: string): unknown {
 /** Narrow an anomaly's evidence_json (object | string | null) to an object. */
 export function parseAnomalyEvidence(value: unknown): z.infer<typeof anomalyEvidenceObjectSchema> | null {
   const raw = typeof value === "string" ? safeJsonParse(value) : value;
-  if (typeof raw !== "object" || raw === null) {
-    return null;
-  }
   const parsed = anomalyEvidenceObjectSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
@@ -504,18 +496,12 @@ async function parseApiResponse<T>(response: Response, schema: z.ZodType<T>): Pr
   }
   if (!response.ok) {
     handleUnauthorized(response.status);
-    const detailPayload = getApiErrorDetail(payload);
+    const detailPayload =
+      typeof payload === "object" && payload !== null && "detail" in payload ? payload.detail : payload;
     const detail = typeof detailPayload === "string" ? detailPayload : JSON.stringify(detailPayload);
     throw new ApiError(detail || "Request failed", response.status);
   }
   return schema.parse(payload);
-}
-
-function getApiErrorDetail(payload: unknown): unknown {
-  if (typeof payload === "object" && payload !== null && "detail" in payload) {
-    return payload.detail;
-  }
-  return payload;
 }
 
 async function getJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
@@ -741,20 +727,10 @@ const opsTextSchema = z.object({
   hi: z.string(),
 });
 
-// Contracts §5 status vocabulary. The reviewer still emits its legacy
-// uppercase values (services/reviewer.py: CLEAN / NEEDS_REVIEW / CRITICAL),
-// so the parser maps them here instead of leaking raw values into the pill.
-const OPS_STATUS_MAP: Record<string, "needs_review" | "clean" | "processing" | "failed"> = {
-  needs_review: "needs_review",
-  clean: "clean",
-  processing: "processing",
-  failed: "failed",
-  critical: "needs_review",
-};
-
+// Contracts §5 status vocabulary; legacy reviewer values fold to needs_review.
 function mapOpsStatusValue(value: unknown): string {
   const normalized = String(value ?? "").trim().toLowerCase();
-  return OPS_STATUS_MAP[normalized] ?? "needs_review";
+  return normalized === "clean" || normalized === "processing" || normalized === "failed" ? normalized : "needs_review";
 }
 
 export const opsStatusSchema = z.preprocess(
@@ -775,16 +751,8 @@ const OPS_FINDING_CODES = [
   "PROCESSING_ERROR",
 ] as const;
 
-function isOpsFindingCode(value: unknown): boolean {
-  return (OPS_FINDING_CODES as readonly string[]).includes(String(value));
-}
-
-// Display strings stay lenient: null or a missing key becomes "" so one
-// empty field cannot fail the whole payload parse.
-const opsDisplayStringSchema = z.preprocess(
-  (value: unknown) => (value === null || value === undefined ? "" : value),
-  z.string(),
-);
+// Display strings stay lenient: null/missing becomes "" so one empty field cannot fail the whole parse.
+const opsDisplayStringSchema = z.preprocess((value: unknown) => value ?? "", z.string());
 
 const opsBboxSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
@@ -795,7 +763,9 @@ export const opsEvidenceSchema = z.object({
 });
 
 export const opsFindingSchema = z.object({
-  code: z.string().refine(isOpsFindingCode, { message: "Unknown finding code" }),
+  code: z
+    .string()
+    .refine((value) => (OPS_FINDING_CODES as readonly string[]).includes(value), { message: "Unknown finding code" }),
   severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
   title: opsTextSchema,
   detail: opsTextSchema,

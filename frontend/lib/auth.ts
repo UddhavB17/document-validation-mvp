@@ -18,9 +18,7 @@ export interface SessionValue {
 export function getRoleFromToken(token: string): string | null {
   try {
     const segment = token.split(".")[1];
-    if (!segment) {
-      return null;
-    }
+    if (!segment) return null;
     const payload = JSON.parse(atob(segment.replace(/-/g, "+").replace(/_/g, "/")));
     const role = payload?.role;
     return typeof role === "string" ? role : null;

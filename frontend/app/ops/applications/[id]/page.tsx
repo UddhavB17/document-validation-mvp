@@ -15,10 +15,6 @@ import { OpsFinding } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
 import { isApplicationReviewPollingStatus, useApplicationStatus, useOpsApplication } from "@/lib/queries";
 
-function isTerminalStatus(status: string | null | undefined): boolean {
-  return !isApplicationReviewPollingStatus(status);
-}
-
 export default function OpsApplicationPage() {
   const params = useParams<{ id: string }>();
   const applicationId = Number(params.id);
@@ -42,7 +38,7 @@ export default function OpsApplicationPage() {
   // status endpoint is unreachable the page keeps the last payload plus a
   // manual refresh button.
   useEffect(() => {
-    if (wasProcessing.current && liveStatus && isTerminalStatus(liveStatus)) {
+    if (wasProcessing.current && liveStatus && !isApplicationReviewPollingStatus(liveStatus)) {
       wasProcessing.current = false;
       void ops.refetch();
     }
