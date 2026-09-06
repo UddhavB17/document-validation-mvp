@@ -409,3 +409,25 @@ def test_every_route_requires_auth(tmp_path, monkeypatch) -> None:
         assert response.status_code == 401, f"{method} {path} -> {response.status_code}"
         checked += 1
     assert checked > 10
+
+
+def test_retention_run_accepts_scheduler_bearer(client, monkeypatch) -> None:
+    """POST /admin/retention/run: scheduler bearer or admin JWT; else 401/403."""
+    monkeypatch.setenv("DMEF_SCHEDULER_TOKEN", "scheduler-test-token")
+    assert client.post("/admin/retention/run?dry_run=true").status_code == 401
+    scheduled = client.post(
+        "/admin/retention/run?dry_run=true",
+        headers={"Authorization": "Bearer scheduler-test-token"},
+    )
+    assert scheduled.status_code == 200
+    assert scheduled.json()["dry_run"] is True
+    assert client.post(
+        "/admin/retention/run?dry_run=true",
+        headers=_admin_headers(client),
+    ).status_code == 200
+    _create_ops_user(client, _admin_headers(client))
+    ops_token = _login(client, OPS_EMAIL, OPS_PASSWORD)["token"]
+    assert client.post(
+        "/admin/retention/run?dry_run=true",
+        headers={"Authorization": f"Bearer {ops_token}"},
+    ).status_code == 403
