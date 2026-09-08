@@ -18,6 +18,7 @@ outputs/*
 data/uploads/*
 data/pages/*
 data/reports/*
+data/audits/
 data/dmef.db
 data/*.db
 data/*.db.bak
@@ -50,3 +51,10 @@ data/surya_cache/*
 # Logs
 data/logs/*
 *.log
+
+# Private audit artifacts and local auxiliary checkouts never belong in Git.
+.worktrees/
+*.zip
+*.jsonl
+*.sqlite
+*.sqlite3

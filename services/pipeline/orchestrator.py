@@ -80,7 +80,6 @@ def run_pipeline(
     )
     update_stage(application_id, "extracting_digital_text", "Extracting digital text")
     digital_text_by_page = _extract_digital_text_by_page(pdf_path)
-    ground_truth = dict(extract_ground_truth(pdf_path))
     if mapped_manifest is not None:
         ground_truth = _mapped_ground_truth(mapped_manifest, system_data)
         if system_data is not None:
@@ -88,15 +87,15 @@ def run_pipeline(
                 system_data["reference_data"] = ground_truth.get("reference_data")
             if "people" not in system_data:
                 system_data["people"] = ground_truth.get("reference_data")
-    elif system_data:
-        ground_truth = {
-            **system_data,
-            **{key: value for key, value in ground_truth.items() if value},
-        }
+    else:
+        ground_truth = dict(extract_ground_truth(pdf_path))
+        if system_data:
+            ground_truth = {
+                **system_data,
+                **{key: value for key, value in ground_truth.items() if value},
+            }
 
-    # Persist validated recovery data before page work begins. This is the same
-    # data the completed pipeline stores, but saving it here prevents a crash
-    # from losing the manifest/reference payload held only in memory.
+    # Persist reference data before page work so a crash cannot lose it.
     _save_ground_truth(application_id, ground_truth)
     touch_progress(application_id, "Saved secure recovery ground truth")
 
@@ -246,8 +245,6 @@ def run_pipeline(
         )
     cooperate(job_id, application_id)
     update_stage(application_id, "persisting_outputs", "Saving extracted data")
-    _save_ground_truth(application_id, ground_truth)
-    touch_progress(application_id, "Saved ground truth")
     _save_pages(application_id, pages)
     touch_progress(application_id, f"Saved {len(pages)} page records")
     # Avoid loading every page-event payload (can be huge with LLM metadata) just

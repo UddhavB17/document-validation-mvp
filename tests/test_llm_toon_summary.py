@@ -60,7 +60,7 @@ def test_build_default_summary():
             "severity": "HIGH",
             "reason": "PAN number does not match ground truth.",
             "expected_value": "ABCDE1234F",
-            "found_value": "ABCDE5678F",
+            "found_value": "TSTPA7002Z",
         }
     ]
     ground_truth = {"loan_id": "LAP-101", "applicant_name": "Ramesh Kumar"}

@@ -208,6 +208,10 @@ def _should_call_llm(
         # corporate PAN.  A generic field model must not choose one of those as
         # the debtor when deterministic Search Criteria extraction is missing.
         return False
+    if document_type == "Bank Statement":
+        # Continuation pages need not name the holder. A model must not fill
+        # that gap with a transaction counterparty or their banking details.
+        return False
     if deterministic_changes:
         return True
     primary_fields = _PRIMARY_FIELDS.get(document_type, ())

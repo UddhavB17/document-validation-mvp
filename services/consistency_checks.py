@@ -624,6 +624,10 @@ def _field_is_semantically_valid(
         # application number.  It is not the loan application identifier.
         return False
     document_key = str(document_type or "").strip().casefold()
+    if document_key == "bank statement" and field == "application_number":
+        # A supporting loan-account statement identifies that account's
+        # application, not necessarily the loan currently being reviewed.
+        return False
     if (
         document_key in {"insurance form", "life insurance form", "property insurance form"}
         and field == "application_number"
@@ -887,7 +891,11 @@ def _cross_document_matches(
 ) -> list[dict]:
     anomalies: list[dict] = []
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
-    consistency_fields = PERSON_FIELDS | LOAN_FIELDS | NAME_FIELDS | ADDRESS_FIELDS
+    # A person can hold several bank accounts. Account-number differences alone
+    # are not contradictions; explicit trusted-account checks remain separate.
+    consistency_fields = (PERSON_FIELDS | LOAN_FIELDS | NAME_FIELDS | ADDRESS_FIELDS) - {
+        "account_number"
+    }
     for obs in observations:
         if obs["field"] in consistency_fields and not (
             obs["person_id"] == "unassigned" and obs["field"] in PERSON_FIELDS
@@ -1159,10 +1167,8 @@ def _relationship_name_matches(left: Any, right: Any) -> bool:
     """
     if _matches("applicant_name", left, right):
         return True
-    left_tokens = list(dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(left)))
-    right_tokens = list(
-        dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(right))
-    )
+    left_tokens = list(dict.fromkeys(_name_tokens(left)))
+    right_tokens = list(dict.fromkeys(_name_tokens(right)))
     if min(len(left_tokens), len(right_tokens)) < 2:
         return False
     if len(left_tokens) <= len(right_tokens):
@@ -1722,7 +1728,7 @@ def _matches(field: str, left: Any, right: Any) -> bool:
         right_tokens = address_tokens(right)
         shared = left_tokens & right_tokens
         # Trusted dumps sometimes contain only the relationship/address prefix
-        # (for example "S/O: Unkar Lal").  A full document address containing
+        # (for example "S/O: Sample Parent").  A full document address containing
         # that exact prefix is consistent, not a mismatch.
         if min(len(left_tokens), len(right_tokens)) >= 2 and (
             left_tokens <= right_tokens or right_tokens <= left_tokens
@@ -1908,10 +1914,8 @@ def _without_honorific(value: Any) -> str:
 
 def _related_names_equivalent(left: Any, right: Any) -> bool:
     """Compare parent names without holder-only extra-relative tolerance."""
-    left_tokens = list(dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(left)))
-    right_tokens = list(
-        dict.fromkeys(_canonical_name_token(token) for token in _name_tokens(right))
-    )
+    left_tokens = list(dict.fromkeys(_name_tokens(left)))
+    right_tokens = list(dict.fromkeys(_name_tokens(right)))
     if not left_tokens or not right_tokens or len(left_tokens) != len(right_tokens):
         return False
     if left_tokens == right_tokens or set(left_tokens) == set(right_tokens):
@@ -1926,34 +1930,18 @@ def _related_names_equivalent(left: Any, right: Any) -> bool:
     )
 
 
-# Common North-Indian OCR/transliteration variants that humans treat as the same person.
-_NAME_VARIANT_GROUPS = (
-    frozenset({"unkar", "onkar", "ukar", "unkarlal", "onkarlal", "ukarlal"}),
-    frozenset({"peeru", "peerulal"}),
-    frozenset({"radha", "radhabai", "radhe", "radhebai"}),
-)
-
-
 def _name_tokens(value: Any) -> list[str]:
     text = _without_honorific(value).lower()
     text = re.sub(r"([a-z])(lal|bai|devi|singh|kumar)\b", r"\1 \2", text)
     return re.findall(r"[a-z]+", text)
 
 
-def _canonical_name_token(token: str) -> str:
-    compact = re.sub(r"[^a-z]", "", token.lower())
-    for group in _NAME_VARIANT_GROUPS:
-        if compact in group:
-            return next(iter(sorted(group)))
-    return compact
-
-
 def _names_equivalent(left: Any, right: Any) -> bool:
     """True when two person names match after honorific/transliteration normalization."""
-    # Trusted dumps sometimes duplicate a token ("Kuldeep KULDEEP"); compare
+    # Trusted dumps sometimes duplicate a token ("Sample SAMPLE"); compare
     # unique tokens in order so duplication does not create a mismatch.
-    left_tokens = list(dict.fromkeys(_canonical_name_token(tok) for tok in _name_tokens(left)))
-    right_tokens = list(dict.fromkeys(_canonical_name_token(tok) for tok in _name_tokens(right)))
+    left_tokens = list(dict.fromkeys(_name_tokens(left)))
+    right_tokens = list(dict.fromkeys(_name_tokens(right)))
     if not left_tokens or not right_tokens:
         return False
     if left_tokens == right_tokens:
@@ -1962,7 +1950,7 @@ def _names_equivalent(left: Any, right: Any) -> bool:
     # preserving the same complete token set.
     if len(left_tokens) == len(right_tokens) and set(left_tokens) == set(right_tokens):
         return True
-    # Allow substring containment for "Unkar" vs "Unkar Lal" style pairs.
+    # Allow substring containment for a given name versus the same name with a surname style pairs.
     if len(left_tokens) <= len(right_tokens):
         short, long = left_tokens, right_tokens
     else:

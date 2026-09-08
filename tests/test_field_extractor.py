@@ -20,11 +20,11 @@ def test_cam_extracts_only_unambiguous_application_details() -> None:
     text = """CREDIT APPROVAL MEMO
 APPLICATION DETAILS
 Application Id
-RJ000028546
+RJ900000001
 Loan Type
 LAP_RAJ
 Name
-Peeru Lal
+Veeru Lal
 Tenure
 60
 Mobile Number
@@ -39,8 +39,8 @@ Requested IRR
 26.00
 """
     result = extract_fields("CAM", text)
-    assert result["application_number"] == "RJ000028546"
-    assert result["applicant_name"] == "Peeru Lal"
+    assert result["application_number"] == "RJ900000001"
+    assert result["applicant_name"] == "Veeru Lal"
     assert result["phone_number"] == "9000000001"
     assert result["tenure"] == 60
     assert result["requested_amount"] == "275000"
@@ -52,17 +52,17 @@ def test_cam_extracts_person_scoped_mobile_rows() -> None:
 APPLICATION DETAILS
 PERSONAL DETAILS
 Applicant
-Peeru Lal
+Veeru Lal
 9000000001
 18-May-1994
 32
 Coapplicant
-Unkar  Lal
+Ambar  Lal
 9000000002
 05-June-1961
 65
 Coapplicant
-Radha  Bai
+Sudha  Bai
 9000000002
 01-January-
 1962
@@ -71,17 +71,17 @@ Radha  Bai
     records = extract_fields("CAM", text)["person_records"]
     assert records == [
         {
-            "applicant_name": "Peeru Lal",
+            "applicant_name": "Veeru Lal",
             "phone_number": "9000000001",
             "date_of_birth": "1994-05-18",
         },
         {
-            "applicant_name": "Unkar Lal",
+            "applicant_name": "Ambar Lal",
             "phone_number": "9000000002",
             "date_of_birth": "1961-06-05",
         },
         {
-            "applicant_name": "Radha Bai",
+            "applicant_name": "Sudha Bai",
             "phone_number": "9000000002",
             "date_of_birth": "1962-01-01",
         },
@@ -92,49 +92,49 @@ def test_cam_extracts_person_scoped_kyc_address_and_scores() -> None:
     text = """CREDIT APPROVAL MEMO
 KYC DOCUMENTS
 Applicant
-Peeru Lal
+Veeru Lal
 XXXXXXXX0001
 TSTAA0001T
 CoApplicant
-Radha  Bai
+Sudha  Bai
 ********0003
 TSTCC0003T
 ADDRESSES
 Applicant
-Peeru Lal
+Veeru Lal
 Owned
 Current
-S/O: Unkar Lal, Semlibakta, Rajasthan, India, 326502
+S/O: Ambar Lal, Semlibakta, Rajasthan, India, 326502
 Co-Applicant
-Radha Bai
+Sudha Bai
 Owned
 Permanent
 W/O: Ukar Lal, Semlibakta, Rajasthan, India, 326502
 CREDIT SCORE
 Applicant
-Peeru Lal
+Veeru Lal
 CRIF
 786
 Coapplicant
-Radha Bai
+Sudha Bai
 CIBIL
 714
 Coapplicant
-Radha Bai
+Sudha Bai
 CRIF
 NA
 """
     records = extract_fields("CAM", text)["person_records"]
     assert {
-        "applicant_name": "Peeru Lal",
+        "applicant_name": "Veeru Lal",
         "aadhaar_last4": "0001",
         "pan_number": "TSTAA0001T",
     } in records
     assert any(
         record.get("permanent_address", "").startswith("W/O: Ukar Lal") for record in records
     )
-    assert {"applicant_name": "Peeru Lal", "crif_score": "786"} in records
-    assert {"applicant_name": "Radha Bai", "cibil_score": "714"} in records
+    assert {"applicant_name": "Veeru Lal", "crif_score": "786"} in records
+    assert {"applicant_name": "Sudha Bai", "cibil_score": "714"} in records
     assert not any(record.get("crif_score") == "NA" for record in records)
 
 
@@ -145,11 +145,11 @@ Account Number
 11111111111111
 REPAYMENT BANK DETAILS
 Account Number
-83770100000605
+90000000001023
 IFSC Code
 BARB0DBHARA
 Account Holder Name
-ANUPKUMAR CHETANBHAI SUTHAR
+AJAYKUMAR KIRANBHAI SUTAR
 DECISION
 Sanction Loan Amount
 Sanction Tenure
@@ -176,9 +176,9 @@ msfc1500 - Rohit Kumar Banthia
     assert result["tenure"] == 84
     assert result["roi"] == pytest.approx(21.0)
     assert result["emi"] == "10266"
-    assert result["account_number"] == "83770100000605"
+    assert result["account_number"] == "90000000001023"
     assert result["ifsc"] == "BARB0DBHARA"
-    assert result["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
+    assert result["account_holder_name"] == "AJAYKUMAR KIRANBHAI SUTAR"
 
 
 def test_cam_extracts_sanction_table_when_decision_heading_is_on_previous_page() -> None:
@@ -216,11 +216,11 @@ def test_application_form_keeps_coapplicant_kyc_rows_person_scoped() -> None:
 APPLICANT NAME
 AADHAAR
 PAN
-Unkar  Lal
+Ambar  Lal
 XXXXXXXX0002
 TSTBB0002T
 Not Provided
-Radha  Bai
+Sudha  Bai
 ********0003
 TSTCC0003T
 Not Provided
@@ -228,8 +228,8 @@ Not Provided
     result = extract_fields("Application Form", text)
     assert result["pan_number"] is None
     assert result["person_records"] == [
-        {"applicant_name": "Unkar Lal", "aadhaar_last4": "0002", "pan_number": "TSTBB0002T"},
-        {"applicant_name": "Radha Bai", "aadhaar_last4": "0003", "pan_number": "TSTCC0003T"},
+        {"applicant_name": "Ambar Lal", "aadhaar_last4": "0002", "pan_number": "TSTBB0002T"},
+        {"applicant_name": "Sudha Bai", "aadhaar_last4": "0003", "pan_number": "TSTCC0003T"},
     ]
 
 
@@ -292,24 +292,24 @@ def test_kfs_repayment_summary_and_schedule_rows_are_structured() -> None:
 
 
 def test_pan_extracts_name_when_ocr_prefixes_name_label() -> None:
-    text = "Permanent Account Number TSTCC0003T HName Radha Bai a9 Date 01/01/1962 of Birth"
-    assert extract_fields("PAN", text)["applicant_name"] == "Radha Bai"
+    text = "Permanent Account Number TSTCC0003T HName Sudha Bai a9 Date 01/01/1962 of Birth"
+    assert extract_fields("PAN", text)["applicant_name"] == "Sudha Bai"
 
 
 def test_pan_extractor_requires_pan_anchor_before_accepting_property_names() -> None:
     text = """Endorsement of Execution
-Name: MOHAN LAL Age: 40
+Name: SOHAN LAL Age: 40
 The lease deed or allotment order issued by the Gram Panchayat
 """
     assert extract_fields("PAN", text) == {}
 
 
 def test_aadhaar_xml_keeps_relationship_out_of_physical_address() -> None:
-    text = """<UidData uid="XXXXXXXX0001"><Poi name="Peeru Lal" dob="18-05-1994" gender="M"/><Poa co="S/O: Unkar Lal" lm="mehar basti" loc="semli bakhta" vtc="Semlibakta" dist="Jhalawar" state="Rajasthan" country="India" pc="326502"/></UidData>"""
+    text = """<UidData uid="XXXXXXXX0001"><Poi name="Veeru Lal" dob="18-05-1994" gender="M"/><Poa co="S/O: Ambar Lal" lm="mehar basti" loc="semli bakhta" vtc="Semlibakta" dist="Jhalawar" state="Rajasthan" country="India" pc="326502"/></UidData>"""
     result = extract_fields("Aadhaar", text)
-    assert result["applicant_name"] == "Peeru Lal"
+    assert result["applicant_name"] == "Veeru Lal"
     assert result["relationship_qualifier"] == "S/O"
-    assert result["related_person_name"] == "Unkar Lal"
+    assert result["related_person_name"] == "Ambar Lal"
     assert (
         result["address"]
         == "mehar basti, semli bakhta, Semlibakta, Jhalawar, Rajasthan, India, 326502"
@@ -329,15 +329,15 @@ Account Information
 def test_crif_extracts_subject_name_from_report_header() -> None:
     text = """CRIF HIGH MARK
 Credit Information Report
-For PEERU LAL
+For VEERU LAL
 Inquiry Input Information
-Name: PEERU LAL DOB/Age: 18-05-1994 Gender: MALE
+Name: VEERU LAL DOB/Age: 18-05-1994 Gender: MALE
 CRIF HM Score(S):
 SCORE NAME RANGE SCORE
 PERFORM CONSUMER 2.2 300-900 786
 """
     result = extract_fields("CRIF Report", text)
-    assert result["applicant_name"] == "PEERU LAL"
+    assert result["applicant_name"] == "VEERU LAL"
     assert result["credit_score"] == "786"
 
 
@@ -353,8 +353,8 @@ S No. Opening Balance EMI (In Rs.) Principal Interest Closing Balance
 def test_bank_statement_extracts_account_from_stacked_sbi_header() -> None:
     text = """STATE BANK OF INDIA
 Name: Mrs.
-RADHA
-S/0/H/0 : UNKAR LAL
+SUDHA
+S/0/H/0 : AMBAR LAL
 CIF Number:
 Account No.:
 A/C Type
@@ -377,11 +377,11 @@ def test_passbook_extracts_shri_account_holder_name() -> None:
     text = """PUNJAB NATIONAL BANK
 Account Particulars
 A/C No.: 0071000100264386
-SHRI PEERU LAL
+SHRI VEERU LAL
 IFSC Code: PUNB0007100
 """
     result = extract_fields("Passbook", text)
-    assert result["account_holder_name"] == "PEERU LAL"
+    assert result["account_holder_name"] == "VEERU LAL"
     assert result["account_number"] == "0071000100264386"
 
 
@@ -411,13 +411,13 @@ HUSBAND'S NAME
 जन्म की तारीख
 DATE OF BIRTH
 राधा बाई
-RADHA BAI
+SUDHA BAI
 उकार लाल
-UNKAR LAL
+AMBAR LAL
 FEMALE
 """
 
-    assert extract_fields("Voter ID", text)["applicant_name"] == "RADHA BAI"
+    assert extract_fields("Voter ID", text)["applicant_name"] == "SUDHA BAI"
 
 
 @pytest.mark.parametrize(
@@ -449,13 +449,13 @@ xxxxxxxx0001
 semli bakhta
 2026-06-11T14:31:29.346+05:30
 2026-06-11T14:31:29.346+05:30
-Peeru Lal
+Veeru Lal
 18-05-1994
 Male
-S/O: Unkar Lal
+S/O: Ambar Lal
 326502
 Rajasthan
-S/O: Unkar Lal,mehar basti,semli
+S/O: Ambar Lal,mehar basti,semli
 bakhta,Semlibakta,Pachpahar,Sulia,Jhalawar,R
 ajasthan,326502
 Jhalawar
@@ -464,10 +464,10 @@ Pachpahar
 
     result = extract_fields("Aadhaar", text)
 
-    assert result["applicant_name"] == "Peeru Lal"
+    assert result["applicant_name"] == "Veeru Lal"
     assert result["aadhaar_last4"] == "0001"
     assert result["dob"] == "1994-05-18"
-    assert result["related_person_name"] == "Unkar Lal"
+    assert result["related_person_name"] == "Ambar Lal"
     assert result["relationship_qualifier"] == "S/O"
     assert result["pin_code"] == "326502"
     assert result["address"].startswith("mehar basti")
@@ -486,10 +486,10 @@ def test_aadhaar_number_does_not_join_unrelated_numbers_across_lines() -> None:
 def test_bank_approval_does_not_assign_employee_signature_mobile_to_customer() -> None:
     text = """Request for Approval - new bank accounts
 A/c No.: 0071000100264386
-Name: Mr. Peeru Lal
+Name: Mr. Veeru Lal
 E NACH done
 Designation: BM | Department: Sales
-Mobile: 9166511960
+Mobile: 9000000402
 """
     result = extract_fields("Bank Statement", text)
     assert result["phone_number"] is None
@@ -506,14 +506,14 @@ def test_utility_bill_extracts_flattened_inline_address_without_billing_month_as
 
 def test_application_extracts_coapplicant_table_rows() -> None:
     text = """CO-APPLICANT DETAILS
-Unkar  Lal
+Ambar  Lal
 05-June-
 1961
 Kanha
 9000000002
 FATHER
 No
-Radha  Bai
+Sudha  Bai
 01-January-
 1962
 Ukar Lal
@@ -522,7 +522,7 @@ MOTHER
 No
 """
     records = extract_fields("Application Form", text)["person_records"]
-    assert [record["applicant_name"] for record in records] == ["Unkar Lal", "Radha Bai"]
+    assert [record["applicant_name"] for record in records] == ["Ambar Lal", "Sudha Bai"]
     assert [record["phone_number"] for record in records] == ["9000000002", "9000000003"]
 
 
@@ -530,12 +530,12 @@ def test_cersai_uses_debtor_pan_not_cersai_corporate_pan() -> None:
     text = """Debtor Based Search Report
 CERSAI Details
 PAN
-AAECC5770G
+TSTPA7000Z
 Search Reference Number
 4186439765923
 Search Criteria Entered
 Name of the Debtor
-PEERU LAL
+VEERU LAL
 PAN
 TSTAA0001T
 Date Of Birth
@@ -545,9 +545,9 @@ No Match Found
 """
     result = extract_fields("CERSAI Report", text)
     assert result["cersai_search_type"] == "debtor_based"
-    assert result["debtor_name"] == "PEERU LAL"
+    assert result["debtor_name"] == "VEERU LAL"
     assert result["debtor_pan_number"] == "TSTAA0001T"
-    assert result["applicant_name"] == "PEERU LAL"
+    assert result["applicant_name"] == "VEERU LAL"
     assert result["pan_number"] == "TSTAA0001T"
     assert result["date_of_birth"] == "1994-12-05"
 
@@ -555,7 +555,7 @@ No Match Found
 def test_asset_cersai_does_not_expose_cersai_corporate_pan_as_borrower_pan() -> None:
     result = extract_fields(
         "CERSAI Report",
-        "Asset Based Search Report\nCERSAI Details\nPAN\nAAECC5770G\nSearch Criteria Entered\nAsset Category\nImmovable",
+        "Asset Based Search Report\nCERSAI Details\nPAN\nTSTPA7000Z\nSearch Criteria Entered\nAsset Category\nImmovable",
     )
     assert result["cersai_search_type"] == "asset_based"
     assert result["debtor_name"] is None
@@ -569,21 +569,21 @@ def test_cersai_debtor_extraction_ignores_people_in_search_output() -> None:
         """Debtor Based Search Report
 CERSAI Details
 PAN
-AAECC5770G
+TSTPA7000Z
 Search Criteria Entered
 Name of the Debtor
-RADHA BAI
+SUDHA BAI
 PAN
 TSTCC0003T
 Search Output Details
-Applicant PEERU LAL PAN TSTAA0001T
-Co-Applicant UNKAR LAL PAN TSTBB0002T
+Applicant VEERU LAL PAN TSTAA0001T
+Co-Applicant AMBAR LAL PAN TSTBB0002T
 """,
     )
 
-    assert result["debtor_name"] == "RADHA BAI"
+    assert result["debtor_name"] == "SUDHA BAI"
     assert result["debtor_pan_number"] == "TSTCC0003T"
-    assert result["applicant_name"] == "RADHA BAI"
+    assert result["applicant_name"] == "SUDHA BAI"
     assert result["pan_number"] == "TSTCC0003T"
 
 
@@ -602,14 +602,32 @@ def test_cheque_extracts_printed_signature_holder_instead_of_bank_name() -> None
         """PAY
 State Bank Of India
 Alc No
-41249946368
+90000001005
 Mr. Kala Singh
 Please sign abovs
 """,
     )
 
     assert result["account_holder_name"] == "Kala Singh"
-    assert result["account_number"] == "41249946368"
+    assert result["account_number"] == "90000001005"
+
+
+def test_cheque_number_requires_label_or_micr_evidence() -> None:
+    header = "State Bank Of India\nBranch postal code 110001\n"
+    assert extract_fields("Cheque", header)["cheque_number"] is None
+    assert (
+        extract_fields("Cheque", header + "⑈012345⑈ 110002098⑆ 003003⑈ 31")["cheque_number"]
+        == "012345"
+    )
+    assert extract_fields("Cheque", header + "Cheque No: 012345")["cheque_number"] == "012345"
+
+
+def test_april_ledger_dates_do_not_become_annual_percentage_rates() -> None:
+    for text in ["10-APR-2024", "10 APR 2025", "APR 2026"]:
+        assert extract_fields("Loan Agreement", text)["apr"] is None
+        assert extract_fields("Loan Agreement", text + "\nAPR: 21.54%")["apr"] == 21.54
+    assert extract_fields("Loan Agreement", "Annual percentage rate: 21.54")["apr"] == 21.54
+    assert extract_fields("Loan Agreement", "APR 21.54")["apr"] == 21.54
 
 
 # ════════════════════════════════════════════
@@ -745,6 +763,28 @@ class TestLoanAgreement:
             assert key in result
 
 
+def test_hindi_agreement_schedule_extracts_labelled_name_and_amount() -> None:
+    result = extract_fields(
+        "Loan Agreement",
+        "ऋण अनुबंध की अनुसूची\nआवेदक का विवरण\nनाम\nपता का प्रकार\nपता\n"
+        "Mr. Sample Person\nPermanent\nExample Address\n"
+        "6\nऋण की राशि\n610000.00\n7\nअवधि / कार्यकाल\n84\n",
+    )
+    assert result["borrower_name"] == "Sample Person"
+    assert result["loan_amount"] == "610000"
+
+
+def test_hindi_schedule_does_not_invent_missing_primary_fields() -> None:
+    result = extract_fields(
+        "Loan Agreement",
+        "सह-आवेदक का विवरण\nनाम\nपता का प्रकार\nपता\n"
+        "Mr. Other Person\nPermanent\nExample Address\n"
+        "ऋण की राशि\nअवधि / कार्यकाल\n84\n",
+    )
+    assert result["borrower_name"] is None
+    assert result["loan_amount"] is None
+
+
 def test_kfs_uses_loan_detail_extractor() -> None:
     result = extract_fields(
         "KFS",
@@ -849,11 +889,11 @@ CREDITVISION SCORE
 def test_end_use_letter_extracts_purpose_for_json_comparison() -> None:
     result = extract_fields(
         "End-Use Letter",
-        "END-USE LETTER FROM THE BORROWER\nRef.: GJ000030765\n"
+        "END-USE LETTER FROM THE BORROWER\nRef.: GJ900000002\n"
         "The said Loan is for the purpose of: Business Use and\nRunning Loan Closer\n"
         "I / We hereby confirm the purpose is valid.",
     )
-    assert result["application_number"] == "GJ000030765"
+    assert result["application_number"] == "GJ900000002"
     assert result["loan_purpose"] == "Business Use and Running Loan Closer"
 
 
@@ -941,9 +981,9 @@ class TestPAN:
 
     def test_inline_bilingual_pan_card_extracts_name_and_dob(self) -> None:
         result = self._extract(
-            "Permanent TSTCC0003T Account Number नामWName Radha Bai जम fafuDate 01701/1962 ofBnu"
+            "Permanent TSTCC0003T Account Number नामWName Sudha Bai जम fafuDate 01701/1962 ofBnu"
         )
-        assert result["applicant_name"] == "Radha Bai"
+        assert result["applicant_name"] == "Sudha Bai"
         assert result["dob"] == "1962-01-01"
 
 
@@ -968,30 +1008,30 @@ class TestAadhaar:
 
     def test_digitally_signed_xml_uses_holder_poa_not_certificate_address(self) -> None:
         text = (
-            '<UidData uid="xxxxxxxx0001"><Poi dob="18-05-1994" gender="M" name="Peeru Lal"/>'
-            '<Poa co="S/O: Unkar Lal" country="India" dist="Jhalawar" pc="326502" '
+            '<UidData uid="xxxxxxxx0001"><Poi dob="18-05-1994" gender="M" name="Veeru Lal"/>'
+            '<Poa co="S/O: Ambar Lal" country="India" dist="Jhalawar" pc="326502" '
             'state="Rajasthan" street="mehar basti" vtc="Semlibakta"/>'
             "<X509SubjectName>postalCode=110003,O=DIGITAL INDIA CORPORATION</X509SubjectName>"
         )
         result = self._extract(text)
-        assert result["applicant_name"] == "Peeru Lal"
+        assert result["applicant_name"] == "Veeru Lal"
         assert result["aadhaar_last4"] == "0001"
         assert result["relationship_qualifier"] == "S/O"
         assert result["address"].startswith("mehar basti")
         assert "DIGITAL INDIA" not in result["address"]
-        assert result["related_person_name"] == "Unkar Lal"
+        assert result["related_person_name"] == "Ambar Lal"
 
     def test_xml_back_without_poi_uses_poa_before_signature_metadata(self) -> None:
         text = (
             '<UidData uid="xxxxxxxx1641"><Poa co="W/O: Kala Singh" country="India" '
             'dist="Ganganagar" loc="v p o 27 f kaminpura" pc="335027" '
-            'state="Rajasthan"/><LData co="W/O: Kala Singh" name="Seeta" pc="335027"/>'
+            'state="Rajasthan"/><LData co="W/O: Kala Singh" name="Geeta" pc="335027"/>'
             "<X509SubjectName>postalCode=110003,O=DIGITAL INDIA</X509SubjectName>"
         )
 
         result = self._extract(text)
 
-        assert result["applicant_name"] == "Seeta"
+        assert result["applicant_name"] == "Geeta"
         assert result["pin_code"] == "335027"
         assert result["relationship_qualifier"] == "W/O"
         assert result["related_person_name"] == "Kala Singh"
@@ -1115,7 +1155,7 @@ Blood Group
 Unknown
 28/11/1994
 नाम / Name
-KULDEEP SINGH
+SANDEEP SINGH
 """
         )
 
@@ -1173,9 +1213,106 @@ class TestCRIFReport:
         result = self._extract("Report Generated: 15/03/2025\nScore: 720")
         assert result["report_date"] == "2025-03-15"
 
-    def test_report_date_near_as_on(self) -> None:
+    def test_report_date_ignores_bare_as_on(self) -> None:
+        # Generic AS ON is not report-specific (often an employment snapshot).
         result = self._extract("As On: 01/01/2025\nCredit Score: 750")
-        assert result["report_date"] == "2025-01-01"
+        assert result["report_date"] is None
+
+    def test_cibil_header_date_beats_later_employment_as_on(self) -> None:
+        text = (
+            "CIBIL COMBO REPORT\n"
+            "DATE: 04-07-2026\n"
+            "Consumer Name: Arjun Sample\n"
+            "EMPLOYMENT INFORMATION AS ON 01-06-2018\n"
+            "Account Opened: 05-03-2015\n"
+        )
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] == "2026-07-04"
+
+    def test_employment_as_on_only_returns_none(self) -> None:
+        text = (
+            "CIBIL COMBO REPORT\n"
+            "Consumer Name: Arjun Sample\n"
+            "EMPLOYMENT INFORMATION AS ON 01-06-2018\n"
+        )
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] is None
+
+    def test_crif_date_of_issue_beats_inquiry_and_account_dates(self) -> None:
+        text = (
+            "CRIF HIGH MARK\n"
+            "Credit Information Report\n"
+            "Date of Issue: 12-03-2025\n"
+            "Account Opened: 05-03-2015\n"
+            "Date Reported: 10-02-2025\n"
+            "Enquiry Date: 01-02-2025\n"
+            "Last Payment Date: 15-01-2025\n"
+            "Credit Score: 742\n"
+        )
+        result = self._extract(text)
+        assert result["report_date"] == "2025-03-12"
+
+    def test_report_date_near_date_of_report(self) -> None:
+        result = self._extract("Date of Report: 20/04/2025\nScore: 720")
+        assert result["report_date"] == "2025-04-20"
+
+    def test_cibil_header_date_newline(self) -> None:
+        text = "CIBIL COMBO REPORT\nDATE\n04-07-2026\nConsumer Name: Arjun Sample\n"
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] == "2026-07-04"
+
+    def test_preceding_account_date_ignored_when_report_label_has_no_date(self) -> None:
+        text = (
+            "CIBIL COMBO REPORT\n"
+            "Account Opened: 01-01-2010\n"
+            "Report Generated: unavailable\n"
+            "Credit Score: 750\n"
+        )
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] is None
+
+    def test_missing_report_date_returns_none(self) -> None:
+        text = "CIBIL COMBO REPORT\nConsumer Name: Arjun Sample\nCredit Score: 750\n"
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] is None
+
+    def test_body_continuation_date_is_not_report_date(self) -> None:
+        text = (
+            "CIBIL COMBO REPORT\n"
+            "Consumer Name: Arjun Sample\n"
+            "ACCOUNT INFORMATION\n"
+            "Account Opened: 05-03-2015\n"
+            "Transaction Date: 04-07-2026\n"
+            "CIBIL COMBO REPORT - Page 2\n"
+        )
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] is None
+
+    def test_birth_date_only_returns_none(self) -> None:
+        text = "CIBIL COMBO REPORT\nConsumer Name: Arjun Sample\nBirth Date: 01-06-1990\n"
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] is None
+
+    def test_continuation_transaction_date_with_footer_returns_none(self) -> None:
+        text = (
+            "ACCOUNT INFORMATION\n"
+            "Account Number: FAKEACCT01\n"
+            "DATE: 04-07-2026\n"
+            "CIBIL COMBO REPORT - Page 2\n"
+        )
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] is None
+
+    def test_enquiry_id_metadata_does_not_block_header_date(self) -> None:
+        text = (
+            "CIBIL COMBO REPORT\n"
+            "ENQUIRY ID: FAKEENQ001\n"
+            "DATE\n"
+            "04-07-2026\n"
+            "Consumer Name: Arjun Sample\n"
+        )
+        result = extract_fields("CIBIL Report", text)
+        assert result["report_date"] == "2026-07-04"
 
     def test_applicant_name_extracted(self) -> None:
         text = "Applicant Name: Vikram Nair\nCredit Score: 790"
@@ -1188,7 +1325,7 @@ class TestCRIFReport:
 
     def test_bureau_columns_are_not_current_loan_fields(self) -> None:
         result = self._extract(
-            "Consumer Name:\nRADHA BAI\nBRANCH ID:\nBRANCH3217\n"
+            "Consumer Name:\nSUDHA BAI\nBRANCH ID:\nBRANCH3217\n"
             "APR MAR MAY\nSanctioned Amount: 285,000"
         )
         assert "branch" not in result
@@ -1217,10 +1354,10 @@ def test_kfs_does_not_use_unrelated_percentage_as_roi() -> None:
 def test_bilingual_application_form_extracts_primary_values_not_header_phone() -> None:
     result = extract_fields(
         "Application Form",
-        "Ph.: 9374200200\nAPPLICATION DETAILS\nLOAN AMOUNT\nऋण राशि\n275000.00 /-\n"
-        "APPLICANT DETAILS\nNAME\nनाम\nPeeru Lal\nDATE OF BIRTH\nजन्म\n18-May-1994",
+        "Ph.: 9000000403\nAPPLICATION DETAILS\nLOAN AMOUNT\nऋण राशि\n275000.00 /-\n"
+        "APPLICANT DETAILS\nNAME\nनाम\nVeeru Lal\nDATE OF BIRTH\nजन्म\n18-May-1994",
     )
-    assert result["applicant_name"] == "Peeru Lal"
+    assert result["applicant_name"] == "Veeru Lal"
     assert result["date_of_birth"] == "1994-05-18"
     assert result["loan_amount"] == "275000"
     assert result["phone_number"] is None
@@ -1246,7 +1383,7 @@ YEARS AT CURRENT ADDRESS
 LANDMARK
 TEHSIL
 Page 2 of 128
-Signed by: Peeru Lal
+Signed by: Veeru Lal
 Reason: Applied For Loan
 Date: 2026-06-20
 """,
@@ -1259,20 +1396,20 @@ def test_coapplicant_address_keeps_value_before_page_footer() -> None:
     result = extract_fields(
         "Application Form",
         """CO-APPLICANT DETAILS
-Unkar Lal
+Ambar Lal
 05-June-
 1961
 Kanha
-9509341692
+9000000404
 FATHER
 CO-APPLICANT ADDRESS
 COMMUNICATION ADDRESS
 NAME
 ADDRESS
-Unkar Lal
+Ambar Lal
 S/O: Kanha, mehar basti, Semlibakta, Pachpahar, Sulia, Jhalawar,
 Page 4 of 128
-Signed by: Peeru Lal
+Signed by: Veeru Lal
 Reason: Applied For Loan
 Date: 2026-06-20
 """,
@@ -1288,7 +1425,7 @@ Date: 2026-06-20
 def test_real_address_survives_when_page_counter_is_appended() -> None:
     result = extract_fields(
         "Application Form",
-        "Permanent Resi. Address: 12 Market Road Delhi 110001 Page 2 of 128\nSigned by: Peeru Lal",
+        "Permanent Resi. Address: 12 Market Road Delhi 110001 Page 2 of 128\nSigned by: Veeru Lal",
     )
 
     assert result["permanent_address"] == "12 Market Road Delhi 110001"
@@ -1301,13 +1438,13 @@ def test_coapplicant_stacked_name_is_not_extracted_as_address() -> None:
 COMMUNICATION ADDRESS
 NAME
 ADDRESS
-AARATIBEN ANUPKUMAR SUTHAR
+BHARATIBEN AJAYKUMAR SUTAR
 B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD,
 Ahmedabad, Gujarat, India, 382445, HATHIJAN
 PERMANENT ADDRESS
 NAME
 ADDRESS
-AARATIBEN ANUPKUMAR SUTHAR
+BHARATIBEN AJAYKUMAR SUTAR
 81 MODI VAS, HARNIVAV, AHMEDABAD, Gujarat, India, 382435
 OFFICE ADDRESS
 """,
@@ -1317,7 +1454,7 @@ OFFICE ADDRESS
     assert result["permanent_address"] is None
     assert result["person_records"] == [
         {
-            "applicant_name": "AARATIBEN ANUPKUMAR SUTHAR",
+            "applicant_name": "BHARATIBEN AJAYKUMAR SUTAR",
             "current_address": (
                 "B 402 PANDIT DINDAYAL-2, NR V NAGAR HATHIJAN, AHMEDABAD "
                 "Ahmedabad, Gujarat, India, 382445, HATHIJAN"
@@ -1356,7 +1493,7 @@ MS Fincap Private Limited
 I confirm that my address as per the OVD / Aadhar is different.
 I authorize the lender to use my Aadhar information to verify my details from UIDAI.
 Name & Signature
-Aarti""",
+Bharti""",
     )
 
     assert result == {}
@@ -1369,8 +1506,8 @@ def test_facility_schedule_extracts_line_broken_borrower_name() -> None:
 NAME
 ADDRESS TYPE
 ADDRESS
-Mr. SUTHAR
-ANUPKUMAR
+Mr. SUTAR
+AJAYKUMAR
 Permanent
 MODIVAS, HARNIYAV, AHMEDABAD, GUJARAT, 382435
 Amount of Facility (in Rs.)
@@ -1378,7 +1515,7 @@ Amount of Facility (in Rs.)
 """,
     )
 
-    assert result["borrower_name"] == "SUTHAR ANUPKUMAR"
+    assert result["borrower_name"] == "SUTAR AJAYKUMAR"
     assert result["loan_amount"] == "450000"
 
 
@@ -1387,13 +1524,13 @@ def test_insurance_form_keeps_insurer_and_loan_identifiers_separate() -> None:
         "Insurance Form",
         """Care Health Insurance Limited
 Insurance Application Form - Group Care Scheme
-Loan Application No: GJ000030765
-Loan Account Number: 5000030765
+Loan Application No: GJ900000002
+Loan Account Number: 5000090002
 Application No: 0030705
 Proposal No: CARE-8842
 Policy No: POL-17
-Proposer Name: Suthar Anupkumar
-Nominee Name: Aartiben Suthar
+Proposer Name: Sutar Ajaykumar
+Nominee Name: Bhartiben Sutar
 Policy Tenure: 5 Years
 Sum Insured: 4,50,000
 Total Premium: 5,707
@@ -1404,8 +1541,8 @@ Total Premium: 5,707
     assert result["insurance_application_number"] == "0030705"
     assert result["insurance_proposal_number"] == "CARE-8842"
     assert result["insurance_policy_number"] == "POL-17"
-    assert result["loan_application_number"] == "GJ000030765"
-    assert result["loan_account_number"] == "5000030765"
+    assert result["loan_application_number"] == "GJ900000002"
+    assert result["loan_account_number"] == "5000090002"
     assert result["policy_tenure_months"] == 60
     assert result["sum_insured"] == "450000"
     assert result["total_premium"] == "5707"
@@ -1434,13 +1571,13 @@ def test_bank_statement_profile_extracts_two_line_holder_name() -> None:
     text = (
         "Statement From : 27 Jul 2025\nStatement To : 27 Jul 2026\n"
         "Account Number : XXXX0605\nPROFILE\nName\nDoB\nMobile\nLandline\nEmail\nPAN\n"
-        "Address\nHolding Nature\nNominee\nCKYC\nANUPKUMAR CHETANBHAI\nSUTHAR\n"
-        "2001-06-18\n9328577271\nNBRPS4867N\nTRANSACTIONS\nTrxn ID\nBalance"
+        "Address\nHolding Nature\nNominee\nCKYC\nAJAYKUMAR KIRANBHAI\nSUTAR\n"
+        "2001-06-18\n9000001033\nTSTPA1051Z\nTRANSACTIONS\nTrxn ID\nBalance"
     )
 
     result = extract_fields("Bank Statement", text)
 
-    assert result["account_holder_name"] == "Anupkumar Chetanbhai Suthar"
+    assert result["account_holder_name"] == "Ajaykumar Kiranbhai Sutar"
     assert result["account_number"] == "0605"
 
 
@@ -1450,8 +1587,8 @@ def test_bank_statement_profile_extracts_title_case_holder_after_ckyc() -> None:
         "Statement From : 29 Jul 2025\nStatement To : 29 Jul 2026\n"
         "Bank\n: STATE BANK OF INDIA\nAccount Number\n: XXXXXXXXXXXXX6368\n"
         "PROFILE\nName\nDoB\nMobile\nLandline\nEmail\nPAN\nAddress\n"
-        "Holding Nature\nNominee\nCKYC\nKala Singh\n1968-01-01\n6377994745\n"
-        "VCQPS7972L\nS/O: Nand Singh, Kaminpura\nSINGLE\nTRUE\n"
+        "Holding Nature\nNominee\nCKYC\nKala Singh\n1968-01-01\n9000000401\n"
+        "TSTPA1055Z\nS/O: Nand Singh, Kaminpura\nSINGLE\nTRUE\n"
         "IFSC\nSBIN0031538\nTRANSACTIONS"
     )
 
@@ -1467,12 +1604,12 @@ def test_bank_statement_welcome_header_beats_relation_and_transaction_text() -> 
         "Bank Statement",
         """Account Summary
 Welcome:
-Mr. Kuldeep Singh
-Mr. Kuldeep Singh
+Mr. Sandeep Singh
+Mr. Sandeep Singh
 Not Available
 S/O: Kala Singh, Ward No 11
 Date of Statement: 31-07-2026
-Account Number: 42833598283
+Account Number: 90000001006
 STATEMENT OF ACCOUNT
 State Bank of India
 Balance
@@ -1480,30 +1617,30 @@ Balance
 """,
     )
 
-    assert result["account_holder_name"] == "Kuldeep Singh"
+    assert result["account_holder_name"] == "Sandeep Singh"
     assert result["account_holder_name"] != "WDL TFR"
 
 
 def test_nach_status_screen_extracts_holder_and_register_success() -> None:
     text = (
-        "NACH Mandate UPI Mandate\n9328577271\nANUPKUMAR CHETANBHAI SUTHAR\n"
+        "NACH Mandate UPI Mandate\n9000001033\nAJAYKUMAR KIRANBHAI SUTAR\n"
         "CRN: GJ000030786\nSRN: APPLICANT\nREGISTER_SUCCESS\n2026-07-31 21:26:00"
     )
 
     result = extract_fields("NACH Form", text)
 
     assert result["registration_status"] == "registered"
-    assert result["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
+    assert result["account_holder_name"] == "AJAYKUMAR KIRANBHAI SUTAR"
 
 
 def test_passbook_holder_allows_ocr_symbols_after_honorific() -> None:
     result = extract_fields(
         "Passbook",
-        "Bank of Baroda\nAccount No 83770100000605\nA/C Holder\n"
-        "MR- ★ ANUPKUMAR CHSTAHBHAI SUTHAR\nBranch Address: HARANIYAV",
+        "Bank of Baroda\nAccount No 90000000001023\nA/C Holder\n"
+        "MR- ★ AJAYKUMAR KIRAHBHAI SUTAR\nBranch Address: HARANIYAV",
     )
 
-    assert result["account_holder_name"] == "ANUPKUMAR CHSTAHBHAI SUTHAR"
+    assert result["account_holder_name"] == "AJAYKUMAR KIRAHBHAI SUTAR"
 
 
 # ════════════════════════════════════════════
@@ -1524,10 +1661,10 @@ class TestBankStatement:
         result = self._extract(
             "Statement From : 19 Jun 2025\nStatement To : 19 Jun 2026\n"
             "Bank\n: Punjab National Bank\nAccount Number\n: XXXXXXXXXXXX4386\n"
-            "Name\nDoB\nMobile\nPAN\nCKYC\nPEERU LAL\n1994-05-18\n"
+            "Name\nDoB\nMobile\nPAN\nCKYC\nVEERU LAL\n1994-05-18\n"
             "9000000001\nTSTAA0001T\nIFSC PUNB0007100"
         )
-        assert result["account_holder_name"] == "Peeru Lal"
+        assert result["account_holder_name"] == "Veeru Lal"
         assert result["bank_name"] == "Punjab National Bank"
         assert result["pan_number"] == "TSTAA0001T"
         assert result["statement_period_start"] == "2025-06-19"
@@ -1570,6 +1707,14 @@ class TestSalarySlip:
         assert result["applicant_name"] == "Neha Rao"
         assert result["salary_month"] == "March 2026"
         assert result["net_salary"] == "62500"
+
+    def test_wrapped_employee_name_stops_before_designation_and_company(self) -> None:
+        result = self._extract(
+            "Job Experience Letter\nEmployee Details\nName :- Neha Ajay.\n"
+            "Kumar\nRao\nDesignation: Beautician\n"
+            "Company Details\nName :- Example Beauty Academy\n"
+        )
+        assert result["applicant_name"] == "Neha Ajay. Kumar Rao"
 
 
 # ════════════════════════════════════════════
@@ -1621,9 +1766,9 @@ class TestNameLabelRejection:
     def test_valid_name_still_extracted(self) -> None:
         """A genuine name after the Name label must still be extracted correctly."""
         result = self._extract_aadhaar(
-            "Government of India\nName: Peeru Lal\nDate of Birth: 18/05/1994\n1234 5678 9012"
+            "Government of India\nName: Veeru Lal\nDate of Birth: 18/05/1994\n1234 5678 9012"
         )
-        assert result.get("applicant_name") == "Peeru Lal"
+        assert result.get("applicant_name") == "Veeru Lal"
 
     @pytest.mark.parametrize(
         "label",
@@ -1639,24 +1784,24 @@ class TestNameLabelRejection:
     def test_digilocker_split_address_is_reconstructed(self) -> None:
         text = (
             "DigiLocker verified e-Aadhaar\nName\nDate of Birth\nGender\nAddress\n"
-            "xxxxxxxx2791\nTika Ram Meena\n01-01-1963\nMale\nS/O: Nanga Ram\n"
-            "304023\nRajasthan\nS/O: Nanga\nRam,Deoli,Uniara,Tonk,Rajasthan,30402\n3\n"
+            "xxxxxxxx2791\nDika Ram Deena\n01-01-1963\nMale\nS/O: Manga Ram\n"
+            "304023\nRajasthan\nS/O: Manga\nRam,Deoli,Uniara,Tonk,Rajasthan,30402\n3\n"
         )
         result = extract_fields("Aadhaar", text)
         assert result["address"] == "Deoli,Uniara,Tonk,Rajasthan,304023"
-        assert result["related_person_name"] == "Nanga Ram"
+        assert result["related_person_name"] == "Manga Ram"
 
     def test_address_column_headers_are_not_an_address(self) -> None:
         result = extract_fields(
             "Aadhaar",
-            "Name\nPeeru Lal\nAddress\nLandmark Locality City / District Pin Code",
+            "Name\nVeeru Lal\nAddress\nLandmark Locality City / District Pin Code",
         )
         assert result.get("address") is None
 
     def test_xml_signature_stripped_from_aadhaar(self) -> None:
         """X509Certificate block in digital Aadhaar text must not pollute address."""
         text = (
-            "Name: Radha Bai\n"
+            "Name: Sudha Bai\n"
             "Address: Village Semli, Jhalawar, Rajasthan 326502\n"
             "EGOVERNANCE DIVISION 4th FLOOR</X509SubjectName>"
             "<X509Certificate>MIIHoDCCBoigAwIBAgIQQ57Nm==</X509Certificate>"
@@ -1732,14 +1877,14 @@ def test_passbook_stacked_name_and_branch_are_not_swapped() -> None:
 SAVING ACCOUNT PASS BOOK
 A/c No. :
 Name :
-83770100000605
-Branch : ANUPKUMAR CHETANBHAI SUTHAR
+90000000001023
+Branch : AJAYKUMAR KIRANBHAI SUTAR
 HARANIYAV
 IFSC Code : BARB0DBHARA
 """,
     )
-    assert fields["account_number"] == "83770100000605"
-    assert fields["account_holder_name"] == "ANUPKUMAR CHETANBHAI SUTHAR"
+    assert fields["account_number"] == "90000000001023"
+    assert fields["account_holder_name"] == "AJAYKUMAR KIRANBHAI SUTAR"
     assert fields["branch"] == "HARANIYAV"
 
 
@@ -1751,14 +1896,14 @@ Address:
 भारतीय विशिष्ट पहचान प्राधिकरण
 Unique Identification Authority of India
 पता:
-S/O Teeka Ram Meena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023
+S/O Deeka Ram Deena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023
 3575 9300 0596
 help@uidai.gov.in
 """,
     )
 
     assert fields["address"] == (
-        "S/O Teeka Ram Meena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023"
+        "S/O Deeka Ram Deena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023"
     )
     assert "authority" not in fields["address"].casefold()
 
@@ -1771,33 +1916,33 @@ Corporate Office: Jaipur
 Customer Application Form
 APPLICANT DETAILS
 NAME
-Batti Lal Meena
+Mannu Lal Deena
 DATE OF BIRTH
 02-12-1992
 CO-APPLICANT ADDRESS
 COMMUNICATION ADDRESS
 NAME
 ADDRESS
-Tika Ram Meena
+Dika Ram Deena
 44 Ward 2 Deoli Rajasthan 304023
 PERMANENT ADDRESS
 NAME
 ADDRESS
-Tika Ram Meena
+Dika Ram Deena
 44 Ward 2 Deoli Rajasthan 304023
 OFFICE ADDRESS
 """,
     )
 
-    assert fields["applicant_name"] == "Batti Lal Meena"
-    assert fields["person_records"][0]["applicant_name"] == "Tika Ram Meena"
+    assert fields["applicant_name"] == "Mannu Lal Deena"
+    assert fields["person_records"][0]["applicant_name"] == "Dika Ram Deena"
     assert all("FINCAP" not in str(record) for record in fields["person_records"])
 
 
 def test_coapplicant_address_extracted_from_its_own_section() -> None:
     text = """APPLICANT DETAILS
 NAME
-Batti Lal Meena
+Mannu Lal Deena
 DATE OF BIRTH
 02-12-1992
 PERMANENT ADDRESS
@@ -1807,17 +1952,17 @@ ADDRESS
 CO-APPLICANT ADDRESS
 PERMANENT ADDRESS
 NAME
-Aaratiben Suthar
+Bharatiben Sutar
 ADDRESS
 81 Modi Vas Harnivav Gujarat 382435
 """
     fields = extract_fields("Application Form", text)
 
-    assert fields["applicant_name"] == "Batti Lal Meena"
+    assert fields["applicant_name"] == "Mannu Lal Deena"
     assert fields["permanent_address"] == "44 Ward 2 Deoli Rajasthan 304023"
 
     co_records = [
-        r for r in fields["person_records"] if r.get("applicant_name") == "Aaratiben Suthar"
+        r for r in fields["person_records"] if r.get("applicant_name") == "Bharatiben Sutar"
     ]
     assert len(co_records) == 1
     assert co_records[0]["permanent_address"] == "81 Modi Vas Harnivav Gujarat 382435"
@@ -1858,7 +2003,7 @@ Graduate Postgraduate
 RAJASTHAN
 Aadhaar No 641
 Professionally qualified (Doctors, CA, Engineers etc)
-Mobile 8690456870
+Mobile 9000001027
 VANYANAMAR
 335027
 Business Constitution
@@ -1877,7 +2022,7 @@ Driving License No.
 Graduate Postgraduate
 Aadhaar No 641
 Professionally qualified (Doctors, CA, Engineers etc)
-Mobile 8690456870
+Mobile 9000001027
 335027
 Business Constitution
 """
@@ -1961,7 +2106,7 @@ def test_lender_statement_of_account_is_not_blocked_as_amortization() -> None:
         """AAVAS FINANCIERS LIMITED
 Customer's Statement of Account
 Name
-TIKARAM MEENA
+DAYARAM DEENA
 Loan Account No.
 221205302480415
 Principal Interest EMI Balance
@@ -1972,5 +2117,5 @@ Txn Date 2026-01-01 Value Date 2026-01-01 Receipt No R1
     )
 
     assert fields.get("_validation_blocked_reason") is None
-    assert fields["account_holder_name"] == "TIKARAM MEENA"
+    assert fields["account_holder_name"] == "DAYARAM DEENA"
     assert fields["account_number"] == "221205302480415"

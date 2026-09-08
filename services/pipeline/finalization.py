@@ -8,7 +8,6 @@ from services.audit_service import log_action
 from services.exception_aggregator import aggregate
 from services.llm_service import generate_explanation, summarize_exceptions
 from services.pipeline.persistence import (
-    _save_ground_truth,
     _save_llm_summary,
     _save_pages,
     _should_call_llm,
@@ -27,7 +26,6 @@ def _finalize_pipeline_result(
     partial_failure_count: int,
     generate_llm_summary: bool | None,
 ) -> dict[str, Any]:
-    _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
     summary = summarize_exceptions(result["anomalies"])

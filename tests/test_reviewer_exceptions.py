@@ -206,8 +206,112 @@ def test_missing_trusted_person_scope_collapses_separately_by_role() -> None:
     assert coapplicant["collapsed_count"] == 2
 
     business, processing = split_reviewer_anomalies(collapsed)
-    assert len(business) == 2
-    assert processing == []
+    assert business == []
+    assert len(processing) == 2
+
+
+def test_trusted_person_scope_missing_raw_and_summary_are_processing_warnings() -> None:
+    raw = {
+        "rule_id": "TRUSTED_PERSON_SCOPE_MISSING",
+        "severity": "MEDIUM",
+        "person_role": "guarantor",
+        "page_number": 30,
+        "reason": "Documents belong to a participant role that is absent from trusted data",
+        "found_value": "guarantor docs on page 30",
+    }
+    business, processing = split_reviewer_anomalies([raw])
+    assert business == []
+    assert processing == [raw]
+
+    multi_page = [
+        {
+            "rule_id": "TRUSTED_PERSON_SCOPE_MISSING",
+            "severity": "MEDIUM",
+            "person_role": "coapplicant",
+            "page_number": page,
+            "reason": "Documents belong to a participant role that is absent from trusted data",
+            "found_value": f"coapplicant docs on page {page}",
+        }
+        for page in (20, 21)
+    ]
+    collapsed = collapse_for_reviewer(multi_page)
+    assert len(collapsed) == 1
+    summary = collapsed[0]
+    assert summary["rule_id"] == "TRUSTED_PERSON_SCOPE_MISSING_SUMMARY"
+    assert summary["collapsed_count"] == 2
+    assert summary["collapsed_page_numbers"] == [20, 21]
+    assert summary["person_role"] == "coapplicant"
+    assert "absent from trusted data" in str(summary["reason"])
+
+    display = summarize_for_display(multi_page)
+    assert display["business_anomalies"] == []
+    assert len(display["processing_warnings"]) == 1
+    assert display["processing_warning_count"] == 1
+    assert display["business_count"] == 0
+    assert display["processing_warnings"][0]["collapsed_count"] == 2
+    assert display["processing_warnings"][0]["collapsed_page_numbers"] == [20, 21]
+
+
+def test_only_scope_missing_stays_needs_review() -> None:
+    anomalies = [
+        {
+            "rule_id": "TRUSTED_PERSON_SCOPE_MISSING",
+            "severity": "MEDIUM",
+            "person_role": "coapplicant",
+            "page_number": 20,
+            "reason": "Documents belong to a participant role that is absent from trusted data",
+        }
+    ]
+    assert compute_final_status(anomalies) == "NEEDS_REVIEW"
+    display = summarize_for_display(anomalies)
+    assert display["business_anomalies"] == []
+    assert len(display["processing_warnings"]) == 1
+    assert display["processing_warnings"][0]["rule_id"] == "TRUSTED_PERSON_SCOPE_MISSING"
+
+
+def test_genuine_mismatch_stays_business_critical_with_scope_missing() -> None:
+    scope_warning = {
+        "rule_id": "TRUSTED_PERSON_SCOPE_MISSING",
+        "severity": "MEDIUM",
+        "person_role": "guarantor",
+        "page_number": 30,
+        "reason": "Documents belong to a participant role that is absent from trusted data",
+    }
+    pan_mismatch = {
+        "rule_id": "PAN_NUMBER_MISMATCH",
+        "severity": "HIGH",
+        "person_id": "primary",
+        "page_number": 10,
+        "expected_value": "ABCDE1234F",
+        "found_value": "TSTPA7003Z",
+        "reason": "PAN differs from trusted data",
+    }
+    dob_mismatch = {
+        "rule_id": "DATE_OF_BIRTH_MISMATCH",
+        "severity": "HIGH",
+        "person_id": "primary",
+        "page_number": 11,
+        "expected_value": "1990-01-01",
+        "found_value": "1991-02-02",
+        "reason": "DOB differs from trusted data",
+    }
+    anomalies = [scope_warning, pan_mismatch, dob_mismatch]
+    collapsed = collapse_for_reviewer(anomalies)
+    business, processing = split_reviewer_anomalies(collapsed)
+    assert {item["rule_id"] for item in business} == {
+        "PAN_NUMBER_MISMATCH",
+        "DATE_OF_BIRTH_MISMATCH",
+    }
+    assert [item["rule_id"] for item in processing] == ["TRUSTED_PERSON_SCOPE_MISSING"]
+    assert compute_final_status(anomalies) == "CRITICAL"
+
+    display = summarize_for_display(anomalies)
+    assert display["business_count"] == 2
+    assert display["processing_warning_count"] == 1
+    assert {item["rule_id"] for item in display["business_anomalies"]} == {
+        "PAN_NUMBER_MISMATCH",
+        "DATE_OF_BIRTH_MISMATCH",
+    }
 
 
 def test_repayment_total_checks_collapse_with_contributing_evidence() -> None:

@@ -35,7 +35,7 @@ ADDRESS
 LANDMARK
 TEHSIL
 Page 2 of 128
-Signed by: Peeru Lal
+Signed by: Veeru Lal
 Reason: Applied For Loan
 Date: 2026-06-20
 """,
@@ -44,7 +44,7 @@ Date: 2026-06-20
         ),
         _page(
             2,
-            "APPLICANT KYC DETAILS\nPeeru Lal\nXXXXXXXX9108\nBCXPL9010K",
+            "APPLICANT KYC DETAILS\nVeeru Lal\nXXXXXXXX9108\nTSTPA7005Z",
             document_type="Application Form",
             confidence=0.85,
             detected=1,
@@ -225,7 +225,7 @@ Search Criteria Entered
 Name of the Debtor
 SITA KUMAR
 PAN
-FGHIJ5678K
+TSTPA7009Z
 Search Output Details
 """
     pages = [
@@ -253,7 +253,7 @@ Search Output Details
         pages,
         {
             "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
-            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "TSTPA7009Z"},
         },
         source_documents=[
             {
@@ -316,7 +316,7 @@ def test_intrinsic_aadhaar_inference_ignores_phone_numbers() -> None:
 
     # A 91-prefixed mobile number must not count as an Aadhaar number even
     # next to an authority phrase quoted in a form.
-    text = "Contact: 919374200200\nRegistered with Unique Identification Authority of India"
+    text = "Contact: 919000000403\nRegistered with Unique Identification Authority of India"
     result = infer_document_type_from_evidence(text)
     assert result is None or result["document_type"] != "Aadhaar"
 
@@ -347,12 +347,12 @@ def test_zip_role_absent_from_trusted_stays_unassigned_through_index() -> None:
     pages = [
         _page(
             1,
-            "Income Tax Department\nPermanent Account Number\nSXPPS4453F\nSUTHAR AARATIBEN ANUPKUMAR",
+            "Income Tax Department\nPermanent Account Number\nTSTPA1053Z\nSUTAR BHARATIBEN AJAYKUMAR",
             document_type="PAN",
             confidence=0.95,
             fields={
-                "applicant_name": "SUTHAR AARATIBEN ANUPKUMAR",
-                "pan_number": "SXPPS4453F",
+                "applicant_name": "SUTAR BHARATIBEN AJAYKUMAR",
+                "pan_number": "TSTPA1053Z",
             },
         )
     ]
@@ -368,7 +368,7 @@ def test_zip_role_absent_from_trusted_stays_unassigned_through_index() -> None:
     trusted = {
         "primary": {
             "role": "primary",
-            "applicant_name": "Suthar Anupkumar",
+            "applicant_name": "Sutar Ajaykumar",
             "pan_number": "TSTAA0001T",
         }
     }
@@ -401,7 +401,7 @@ Policy Tenure Sum Insured Total Premium
     ]
     resolve_trusted_evidence(
         pages,
-        {"primary": {"application_number": "GJ000030765"}},
+        {"primary": {"application_number": "GJ900000002"}},
     )
     assert pages[0]["document_type"] == "Insurance Form"
     assert pages[0]["extracted_fields"]["_evidence_resolution"]["document_type_changed"] is True

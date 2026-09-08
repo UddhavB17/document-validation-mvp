@@ -238,7 +238,7 @@ def test_comparison_matrix_multiple_people_and_missing_values(tmp_path, monkeypa
                 "person_id": "coapp_1",
                 "role": "coapplicant",
                 "applicant_name": "Sita Kumar",
-                "pan_number": "FGHIJ5678K",
+                "pan_number": "TSTPA7009Z",
                 "relationship": "WIFE",
                 "father_name": "Ramesh Kumar",
             },
@@ -256,7 +256,7 @@ def test_comparison_matrix_multiple_people_and_missing_values(tmp_path, monkeypa
         application_id,
         page_number=2,
         document_type="PAN Card",
-        ocr_text="FGHIJ5678K",
+        ocr_text="TSTPA7009Z",
         extracted_fields={"applicant_name": "Sita Kumar"},
     )
 
@@ -273,7 +273,7 @@ def test_comparison_matrix_multiple_people_and_missing_values(tmp_path, monkeypa
             {
                 "page_number": 2,
                 "document_type": "PAN Card",
-                "ocr_text": "FGHIJ5678K",
+                "ocr_text": "TSTPA7009Z",
                 "extracted_fields": {"applicant_name": "Sita Kumar"},
             },
         ],
@@ -357,8 +357,8 @@ def test_comparison_matrix_respects_anomaly_status(tmp_path, monkeypatch) -> Non
             {
                 "page_number": 1,
                 "document_type": "PAN Card",
-                "ocr_text": "WRONG1234F",
-                "extracted_fields": {"pan_number": "WRONG1234F"},
+                "ocr_text": "TSTPA7023Z",
+                "extracted_fields": {"pan_number": "TSTPA7023Z"},
             }
         ],
         "anomalies": anomalies,
@@ -389,7 +389,7 @@ def test_comparison_matrix_respects_anomaly_status(tmp_path, monkeypatch) -> Non
             "primary",
             "pan_number",
             "ABCDE1234F",
-            "WRONG1234F",
+            "TSTPA7023Z",
             anomalies,
             {1: "primary"},
         )
