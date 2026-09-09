@@ -1,0 +1,22 @@
+# Local development dependencies (owned by ws-b-storage-db).
+# Usage: docker compose -f docker-compose.dev.yml up -d
+# Then: DATABASE_URL=postgresql://dmef:dmef@localhost:5432/dmef python -m pytest -q
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: dmef
+      POSTGRES_PASSWORD: dmef
+      POSTGRES_DB: dmef
+    ports:
+      - "5432:5432"
+    volumes:
+      - dmef-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dmef -d dmef"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dmef-postgres-data:

@@ -2,13 +2,132 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
 import fitz
 
+from services.paths import job_work_dir
 from services.pipeline.page_details import _build_db_data_fields, _is_starting_json_db_page
 from services.text_extractor import extract_digital_text
+
+
+def job_source_dir(job_id: int | str) -> Path:
+    """Working directory for one job under ``DMEF_JOB_WORK_DIR``."""
+    return job_work_dir() / f"job-{job_id}"
+
+
+def prepare_job_source(application_id: int, job_id: int | str) -> Path:
+    """Download the application source PDF from the object store.
+
+    The ``source`` (falling back to ``normalized_pdf``) key is read from
+    ``object_refs`` and staged at
+    ``DMEF_JOB_WORK_DIR/job-{job_id}/source.pdf``. Callers hand the returned
+    path to the existing pipeline code and delete the directory (via
+    :func:`cleanup_job_source`) when the pipeline returns, success or failure.
+    """
+    from services.storage import get_store
+    from services.storage.refs import get_ref
+
+    ref = get_ref("applications", application_id, "source") or get_ref(
+        "applications", application_id, "normalized_pdf"
+    )
+    if ref is None:
+        raise FileNotFoundError(
+            f"No source object recorded for application {application_id}"
+        )
+    target_dir = job_source_dir(job_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "source.pdf"
+    store = get_store()
+    target.write_bytes(store.get(str(ref["storage_key"])))
+    return target
+
+
+def prepare_intake_source(package_id: str, job_id: int | str) -> Path:
+    """Download an intake normalized PDF from the object store.
+
+    ZIP/package intake artifacts recorded via ``_store_intake_package`` live
+    under ``object_refs`` with ``owner_table='intake_packages'``. The
+    ``normalized_pdf`` key is staged at
+    ``DMEF_JOB_WORK_DIR/job-{job_id}/source.pdf`` so package jobs resolve the
+    same way as single-file uploads.
+    """
+    from services.storage import get_store
+    from services.storage.refs import get_ref
+
+    ref = get_ref("intake_packages", package_id, "normalized_pdf")
+    if ref is None:
+        raise FileNotFoundError(
+            f"No normalized PDF recorded for intake package {package_id}"
+        )
+    target_dir = job_source_dir(job_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "source.pdf"
+    store = get_store()
+    target.write_bytes(store.get(str(ref["storage_key"])))
+    return target
+
+
+def resolve_job_source(
+    application_id: int,
+    hint_path: str | Path | None,
+    job_id: int | str,
+    package_id: str | None = None,
+) -> Path:
+    """Return a local PDF path for the pipeline, preferring the store.
+
+    When the store holds a ``source``/``normalized_pdf`` key it is downloaded
+    to the job work dir and that staged path is returned. Store download
+    failures propagate (never fall back to a deleted hint path). Only when no
+    store reference exists at all is ``hint_path`` (legacy staged file)
+    returned; when neither exists ``FileNotFoundError`` is raised.
+    """
+    from services.storage.refs import get_ref
+
+    ref = get_ref("applications", application_id, "source") or get_ref(
+        "applications", application_id, "normalized_pdf"
+    )
+    if ref is not None:
+        # Durable source of truth is the object store. Propagate download
+        # errors so callers never hash a deleted upload work dir.
+        return prepare_job_source(application_id, job_id)
+    if package_id:
+        intake_ref = get_ref("intake_packages", package_id, "normalized_pdf")
+        if intake_ref is not None:
+            return prepare_intake_source(package_id, job_id)
+    if hint_path is not None:
+        return Path(hint_path)
+    raise FileNotFoundError(
+        f"No source PDF available for application {application_id}"
+    )
+
+
+def cleanup_job_source(path: str | Path | None) -> None:
+    """Delete ``DMEF_JOB_WORK_DIR``-scoped pipeline inputs.
+
+    Only directories inside the configured job work dir are removed, so
+    legacy paths (``data/uploads``, test tmp dirs) are never deleted here.
+    """
+    if path is None:
+        return
+    candidate = Path(path)
+    if candidate.is_dir():
+        root = candidate
+    else:
+        root = candidate.parent
+    try:
+        work_root = job_work_dir().resolve()
+    except Exception:
+        return
+    try:
+        resolved = root.resolve()
+    except Exception:
+        return
+    if resolved == work_root or work_root in resolved.parents:
+        shutil.rmtree(resolved, ignore_errors=True)
+
 
 
 def _mapped_ground_truth(

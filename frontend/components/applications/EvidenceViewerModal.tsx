@@ -7,14 +7,14 @@ import type { FormEvent } from "react";
 import { AiExplanationDisclosure } from "@/components/applications/AiAuditInsights";
 import { HighlightedEvidenceText } from "@/components/applications/EvidenceHighlight";
 import { EvidenceValue } from "@/components/applications/EvidenceValue";
-import { getAffectedPages, getReviewIssueKey } from "@/components/applications/review/issueQueue";
-import {
+import { bboxToStyle, severityBoxClass } from "@/components/ops/bbox";
+import { getAffectedPages, getReviewIssueKey } from "@/components/applications/review/issueQueue";import {
   getReviewIssueState,
   markReviewIssueCheckedWithTasks,
   markReviewIssueViewed,
 } from "@/components/applications/review/sessionState";
 import { EvidenceSelection } from "@/components/applications/types";
-import { api, ApplicationReview } from "@/lib/api";
+import { api, ApplicationReview, parseAnomalyEvidence } from "@/lib/api";
 import { asText } from "@/lib/format";
 
 const MAX_OCR_PREVIEW = 5000;
@@ -82,6 +82,15 @@ export function EvidenceViewerModal({
     ? api.sourcePageImageUrl(applicationId, adjacentPage, imageHighlight)
     : null;
   const evidenceReady = hasPageEvidence ? imageReady : fileLevelDetailsReady;
+  // ws-e: bbox overlay from evidence_json when present (PDF text search stays
+  // as the fallback highlight via the `highlight` query param above).
+  const evidenceDetail = parseAnomalyEvidence(selectedEvidence.anomaly.evidence_json);
+  const evidenceBox = evidenceDetail?.bbox ?? null;
+  const evidenceBoxPage = evidenceDetail?.page ?? null;
+  const showEvidenceBox =
+    Array.isArray(evidenceBox) &&
+    evidenceBox.length === 4 &&
+    (evidenceBoxPage === null || evidenceBoxPage === undefined || evidenceBoxPage === renderedPage);
 
   useEffect(() => {
     if (!hasPageEvidence) {
@@ -298,27 +307,36 @@ export function EvidenceViewerModal({
                 <div className="flex min-h-full min-w-full items-start justify-center">
                   <div className="relative flex min-h-48 min-w-48 items-center justify-center" style={{ transform: `scale(${zoom}) rotate(${rotation}deg)`, transformOrigin: "top center" }}>
                     {!imageReady ? <span role="status" className="absolute z-10 rounded bg-slate-900/80 px-3 py-2 text-xs font-semibold text-white">Loading page image…</span> : null}
-                    <Image
-                      key={renderedPage}
-                      src={api.sourcePageImageUrl(
-                        applicationId,
-                        renderedPage!,
-                        imageHighlight,
-                      )}
-                      alt={`Original source PDF page ${renderedPage}`}
-                      width={720}
-                      height={1020}
-                      unoptimized
-                      onLoad={() => {
-                        setImageReady(true);
-                        markReviewIssueViewed(issueKey);
-                      }}
-                      onError={() => {
-                        setImageReady(false);
-                        setImageError(true);
-                      }}
-                      className="h-auto max-w-full rounded-sm border border-slate-200 bg-white shadow"
-                    />
+                    <div className="relative inline-block leading-none">
+                      <Image
+                        key={renderedPage}
+                        src={api.sourcePageImageUrl(
+                          applicationId,
+                          renderedPage!,
+                          imageHighlight,
+                        )}
+                        alt={`Original source PDF page ${renderedPage}`}
+                        width={720}
+                        height={1020}
+                        unoptimized
+                        onLoad={() => {
+                          setImageReady(true);
+                          markReviewIssueViewed(issueKey);
+                        }}
+                        onError={() => {
+                          setImageReady(false);
+                          setImageError(true);
+                        }}
+                        className="block h-auto max-w-full rounded-sm border border-slate-200 bg-white shadow"
+                      />
+                      {showEvidenceBox && evidenceBox ? (
+                        <div
+                          aria-hidden="true"
+                          className={`pointer-events-none absolute rounded-[2px] border-[3px] p-1 ${severityBoxClass(selectedEvidence.anomaly.severity)}`}
+                          style={bboxToStyle([evidenceBox[0], evidenceBox[1], evidenceBox[2], evidenceBox[3]])}
+                        />
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               )}

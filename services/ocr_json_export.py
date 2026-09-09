@@ -18,8 +18,15 @@ def build_ocr_document_json(
     document_page_numbers: set[int] | None = None,
     page_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Convert OCR-processed document pages into comparison-ready JSON."""
+    """Convert OCR-processed document pages into comparison-ready JSON.
+
+    Generated on demand only (``GET /review/applications/{id}/ocr-json``).
+    Each page appears exactly once under ``documents``; ``page_refs`` lists
+    page numbers so former ``raw_ocr_pages``/``page_details`` duplicates are
+    references, not copies.
+    """
     selected_pages = _select_document_pages(pages, document_page_numbers)
+    _backfill_missing_ocr_text(application_id, selected_pages)
     page_events_by_number = _page_events_by_number(page_events or [])
     documents = [
         _page_to_document_json(page, page_events_by_number.get(int(page.get("page_number") or 0)))
@@ -34,9 +41,40 @@ def build_ocr_document_json(
         "structured_extracted_data": build_structured_extracted_data(
             selected_pages, combined_fields
         ),
-        "raw_ocr_pages": _raw_ocr_pages(documents),
+        "page_refs": [{"page_number": page.get("page_number")} for page in selected_pages],
         "documents": documents,
     }
+
+
+def _backfill_missing_ocr_text(
+    application_id: int, pages: list[dict[str, Any]]
+) -> None:
+    """Fill ``ocr_text`` from the ``pages`` table when callers pass summaries.
+
+    The review repository returns page summaries without OCR text (payload
+    diet); the on-demand admin export still needs the text, so it loads just
+    that column instead of every page row.
+    """
+    missing = [page for page in pages if not page.get("ocr_text")]
+    if not missing:
+        return
+    try:
+        from database.db import get_connection
+    except Exception:  # noqa: BLE001 - export must work even without a DB
+        return
+    try:
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT page_number, ocr_text FROM pages WHERE application_id = ?",
+                (application_id,),
+            ).fetchall()
+    except Exception:  # noqa: BLE001 - legacy DBs predate the diet schema
+        return
+    text_by_page = {int(row["page_number"]): row["ocr_text"] or "" for row in rows}
+    for page in missing:
+        page_number = page.get("page_number")
+        if page_number is not None:
+            page["ocr_text"] = text_by_page.get(int(page_number), "")
 
 
 def save_ocr_document_json(
@@ -348,7 +386,7 @@ def _document_page_summary(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "page_number": page.get("page_number"),
                 "document_type": page.get("document_type") or "Unknown",
-                "llm_document_type": _llm_document_type(fields)
+                "llm_document_type": _llm_document_type(page, fields)
                 if isinstance(fields, dict)
                 else None,
                 "ocr_confidence": page.get("ocr_confidence"),
@@ -358,19 +396,17 @@ def _document_page_summary(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return summary
 
 
-def _raw_ocr_pages(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "page_number": document.get("page_number"),
-            "document_type": document.get("document_type"),
-            "llm_document_type": document.get("llm_document_type"),
-            "ocr_confidence": document.get("ocr_confidence"),
-            "ocr_text": document.get("ocr_text") or "",
-            "ocr_structure": document.get("ocr_structure") or {},
-            "extracted_fields": document.get("extracted_fields") or {},
+def _page_meta(page: dict[str, Any]) -> dict[str, Any]:
+    """Private per-page JSON with legacy ``extracted_fields`` fallback."""
+    meta = page.get("meta")
+    if isinstance(meta, dict) and meta:
+        return meta
+    fields = page.get("extracted_fields")
+    if isinstance(fields, dict):
+        return {
+            key: value for key, value in fields.items() if str(key).startswith("_")
         }
-        for document in documents
-    ]
+    return {}
 
 
 def _page_events_by_number(page_events: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
@@ -384,21 +420,26 @@ def _page_events_by_number(page_events: list[dict[str, Any]]) -> dict[int, dict[
 def _page_to_document_json(
     page: dict[str, Any], event: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    # Single copy of each page: no page_details / processing_event / raw-copy
+    # duplicates (ws-a data diet). Timing/status stay as scalar references.
     event = event or {}
     fields = page.get("extracted_fields") or {}
     if not isinstance(fields, dict):
         fields = {}
-    fields = _json_safe(fields)
-    page_details = _json_safe(page)
-    processing_event = _json_safe(event)
+    public_fields = _json_safe(
+        {
+            key: value
+            for key, value in fields.items()
+            if not str(key).startswith("_") and value not in (None, "", [], {})
+        }
+    )
     return {
         "page_number": page.get("page_number"),
         "page_type": page.get("page_type"),
         "total_pages": event.get("total_pages"),
         "status": event.get("status") or page.get("status") or "completed",
         "document_type": page.get("document_type") or "Unknown",
-        "llm_document_type": _llm_document_type(fields),
-        "image_path": page.get("image_path"),
+        "llm_document_type": _llm_document_type(page, public_fields),
         "is_readable": page.get("is_readable"),
         "ocr_confidence": page.get("ocr_confidence"),
         "classification_confidence": page.get("classification_confidence"),
@@ -408,14 +449,15 @@ def _page_to_document_json(
         "completed_at": event.get("completed_at") or page.get("completed_at"),
         "error": event.get("error") or page.get("error"),
         "ocr_text": page.get("ocr_text") or "",
-        "extracted_fields": fields,
-        "page_details": page_details,
-        "processing_event": processing_event,
+        "extracted_fields": public_fields,
     }
 
 
-def _llm_document_type(fields: dict[str, Any]) -> str | None:
-    result = fields.get("_structured_llm_classification")
+def _llm_document_type(page: dict[str, Any], fields: dict[str, Any]) -> str | None:
+    meta = _page_meta(page)
+    result = meta.get("_structured_llm_classification")
+    if not isinstance(result, dict):
+        result = fields.get("_structured_llm_classification")
     if not isinstance(result, dict):
         return None
     document_type = str(result.get("document_type") or "").strip()

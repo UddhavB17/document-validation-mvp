@@ -113,6 +113,77 @@ def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# On-demand evidence rendering (ws-b storage + db)
+# ---------------------------------------------------------------------------
+
+
+def render_source_page(
+    pdf_bytes: bytes,
+    page_number: int,
+    *,
+    dpi: int = 150,
+    highlight: str | None = None,
+) -> bytes:
+    """Render one source PDF page to PNG bytes for evidence review.
+
+    The PDF is opened from memory so evidence can be served straight from the
+    object store without staging files. ``dpi`` selects the raster scale
+    (72 dpi is the PDF native scale). When ``highlight`` has 3+ characters,
+    matching text is highlighted before rendering, mirroring the review route.
+    """
+    import re
+
+    if page_number < 1:
+        raise ValueError("Page number must be one or greater")
+    scale = max(0.5, min(4.0, float(dpi) / 72.0))
+    try:
+        document = fitz.open(stream=bytes(pdf_bytes), filetype="pdf")
+    except Exception as exc:
+        raise ValueError("Source PDF could not be opened") from exc
+    try:
+        if page_number > document.page_count:
+            raise LookupError("Source page not found")
+        page = document.load_page(page_number - 1)
+        if highlight and len(highlight.strip()) >= 3:
+            rects = page.search_for(highlight)
+            if not rects:
+                exclude_words = {
+                    "and",
+                    "the",
+                    "for",
+                    "with",
+                    "india",
+                    "pincode",
+                    "gujarat",
+                    "state",
+                    "district",
+                    "p.o.",
+                    "post",
+                    "office",
+                }
+                words = []
+                for word in re.split(r"[,\s:\-\[\]\(\)]+", highlight):
+                    word_clean = word.strip().lower()
+                    if len(word_clean) >= 3 and word_clean not in exclude_words:
+                        words.append(word.strip())
+                for word in sorted(set(words), key=len, reverse=True)[:5]:
+                    word_rects = page.search_for(word)
+                    if word_rects:
+                        rects.extend(word_rects)
+            for rect in rects:
+                annot = page.add_highlight_annot(rect)
+                annot.update()
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        return bytes(pixmap.tobytes("png"))
+    except (LookupError, ValueError):
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("Source PDF could not be rendered") from exc
+    finally:
+        document.close()
+
+
+# ---------------------------------------------------------------------------
 # Internal TypedDict helpers
 # ---------------------------------------------------------------------------
 

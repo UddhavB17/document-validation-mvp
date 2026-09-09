@@ -52,6 +52,9 @@ class OCRResult(BaseModel):
     def to_legacy_dict(self) -> dict[str, Any]:
         """Expose the existing OCR dictionary contract during migration."""
         structure = self.structured_content or {}
+        words = structure.get("words", [])
+        if not isinstance(words, list):
+            words = []
         return {
             "ocr_text": self.text,
             "confidence": self.confidence,
@@ -62,6 +65,12 @@ class OCRResult(BaseModel):
             "ocr_original_confidence": self.original_confidence,
             "ocr_processing_time_ms": self.processing_time_ms,
             "bounding_boxes": self.bounding_boxes,
+            # Compact word layout for in-memory evidence bboxes (ws-f). The
+            # full provider response ("native"/"structure_json") is never
+            # built or persisted (ws-a data diet).
+            "words": words,
+            # Small layout dict (header/regions/tables/seals/formulas/words)
+            # for in-memory field extraction only; never persisted.
             "structured_content": self.structured_content,
             "char_count": self.char_count,
             "word_count": self.word_count,
@@ -82,8 +91,35 @@ class OCRResult(BaseModel):
             "tables": structure.get("tables", []),
             "seals": structure.get("seals", []),
             "formulas": structure.get("formulas", []),
-            "structure_json": structure.get("native", []),
         }
+
+
+def _coerce_compact_words(value: Any) -> list[dict[str, Any]]:
+    """Coerce a provider ``words`` payload to the compact in-memory layout."""
+    if not isinstance(value, list):
+        return []
+    compact: list[dict[str, Any]] = []
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        text = str(entry.get("t") or entry.get("text") or "")
+        if not text:
+            continue
+        box = entry.get("b") or entry.get("bbox") or [0.0, 0.0, 0.0, 0.0]
+        try:
+            bbox = [min(max(float(coord), 0.0), 1.0) for coord in list(box)[:4]]
+            while len(bbox) < 4:
+                bbox.append(0.0)
+        except (TypeError, ValueError):
+            bbox = [0.0, 0.0, 0.0, 0.0]
+        try:
+            confidence = round(float(entry.get("c", entry.get("confidence") or 0.0)), 2)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        compact.append({"t": text, "b": bbox, "c": confidence})
+        if len(compact) >= 3000:
+            break
+    return compact
 
 
 class OCRRoutingDecision(BaseModel):
@@ -462,7 +498,7 @@ def _coerce_google_vision_result(value: OCRResult | dict[str, Any]) -> OCRResult
         "tables": list(value.get("tables") or []),
         "seals": list(value.get("seals") or []),
         "formulas": list(value.get("formulas") or []),
-        "native": list(value.get("structure_json") or []),
+        "words": _coerce_compact_words(value.get("words")),
     }
     return OCRResult(
         text=str(value.get("text") or value.get("ocr_text") or ""),
@@ -493,7 +529,7 @@ def _coerce_structured_result(value: OCRResult | dict[str, Any]) -> OCRResult:
         "tables": list(value.get("tables") or []),
         "seals": list(value.get("seals") or []),
         "formulas": list(value.get("formulas") or []),
-        "native": list(value.get("structure_json") or []),
+        "words": _coerce_compact_words(value.get("words")),
     }
     return OCRResult(
         text=str(value.get("text") or value.get("ocr_text") or ""),

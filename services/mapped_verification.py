@@ -948,11 +948,17 @@ def compare_processed_pages(
             reference_data=reference_data,
             anomalies=anomalies,
             unreliable_fields=document_unreliable_fields,
+            mapped_pages=mapped_page_records,
         )
         checked_fields += field_stats["checked"]
         matched_fields += field_stats["matched"]
 
     for bucket in aggregated.values():
+        bucket_pages = [
+            pages_by_number[number]
+            for number in sorted(set(bucket["readable_pages"]))
+            if number in pages_by_number
+        ]
         field_stats = _verify_document_fields(
             expected=bucket["expected"],
             document_observations=bucket["observations"],
@@ -963,6 +969,7 @@ def compare_processed_pages(
             anomalies=anomalies,
             prefer_any_match=True,
             unreliable_fields=bucket.get("unreliable_fields") or {},
+            mapped_pages=bucket_pages,
         )
         checked_fields += field_stats["checked"]
         matched_fields += field_stats["matched"]
@@ -974,6 +981,12 @@ def compare_processed_pages(
         source_documents or [],
     )
     _attach_source_provenance(anomalies, source_documents or [])
+    try:
+        from services.evidence_boxes import attach_evidence_to_anomalies
+
+        attach_evidence_to_anomalies(anomalies, pages)
+    except (ImportError, TypeError, ValueError, KeyError, AttributeError):
+        pass
     people_verification = _build_people_verification(
         reference_data, resolved_documents, observations, anomalies
     )
@@ -987,6 +1000,36 @@ def compare_processed_pages(
     }
 
 
+def _eligible_field_pages(
+    field: str,
+    mapped_pages: list[dict[str, Any]] | None,
+    provided_type: str,
+) -> list[int]:
+    """Page numbers of the mapped document that may legitimately carry `field`.
+
+    Uses the page's own classified type when present, else the mapped
+    (provided) document type, with the shared `page_eligible_for` gate.
+    """
+    from services.consistency_checks import page_eligible_for
+
+    if not mapped_pages:
+        return []
+    eligible: list[int] = []
+    for page in mapped_pages:
+        page_number = page.get("page_number")
+        if page_number is None:
+            continue
+        effective = dict(page)
+        if str(page.get("document_type") or "").strip().casefold() in {"", "unknown", "none"}:
+            effective["document_type"] = provided_type
+        try:
+            if page_eligible_for(field, effective):
+                eligible.append(int(page_number))
+        except (TypeError, ValueError):
+            continue
+    return sorted(eligible)
+
+
 def _verify_document_fields(
     *,
     expected: dict[str, Any],
@@ -998,6 +1041,7 @@ def _verify_document_fields(
     anomalies: list[dict[str, Any]],
     prefer_any_match: bool = False,
     unreliable_fields: dict[str, list[dict[str, Any]]] | None = None,
+    mapped_pages: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """Compare extracted observations against expected values for one document unit."""
     checked = 0
@@ -1044,7 +1088,29 @@ def _verify_document_fields(
                     )
                 )
                 continue
-            page_number = readable_pages[0] if readable_pages else None
+            eligible_numbers = _eligible_field_pages(field, mapped_pages, provided_type)
+            if mapped_pages is not None and not eligible_numbers:
+                checked += 1
+                anomalies.append(
+                    _anomaly(
+                        f"{field.upper()}_EXTRACTION_UNRELIABLE",
+                        "LOW",
+                        readable_pages[0] if readable_pages else None,
+                        provided_type,
+                        expected_value,
+                        None,
+                        "No page of this document can legitimately carry the field "
+                        "(photo/blank/unreadable page, low OCR confidence, or "
+                        "wrong document type).",
+                        field,
+                        "MANUAL_REVIEW_REQUIRED",
+                        person_id,
+                    )
+                )
+                continue
+            page_number = eligible_numbers[0] if eligible_numbers else (
+                readable_pages[0] if readable_pages else None
+            )
             # If the first readable page has low OCR confidence, suppress the
             # NOT_FOUND anomaly and emit a LOW_CONFIDENCE_PAGE once per page.
             first_page_conf = _page_ocr_confidence(document_observations, readable_pages)

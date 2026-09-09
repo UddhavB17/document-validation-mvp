@@ -1,43 +1,100 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { LanguageToggle } from "@/components/ops/LanguageToggle";
 import { StatusBadge } from "@/components/StatusBadge";
+import { useSession } from "@/lib/auth";
+import { t, useLocale } from "@/lib/i18n";
+import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
 import { useApplicationReview, useHealth } from "@/lib/queries";
 import type { FieldComparison } from "@/lib/api";
 
-type IconName = "worklist" | "intake" | "activity" | "settings" | "menu" | "close" | "collapse" | "expand" | "api" | "stop";
+type IconName = "worklist" | "intake" | "activity" | "settings" | "users" | "menu" | "close" | "collapse" | "expand" | "api" | "ops";
 
-const primaryNavItems: Array<{ href: string; label: string; icon: IconName; id: string }> = [
-  { href: "/worklist", label: "Worklist", icon: "worklist", id: "worklist" },
-  { href: "/upload", label: "Intake", icon: "intake", id: "intake" },
-  { href: "/activity", label: "My Activity", icon: "activity", id: "activity" },
+interface NavItem {
+  href: string;
+  labelKey: Parameters<typeof t>[1];
+  fallback: string;
+  icon: IconName;
+  id: string;
+}
+
+const OPERATIONS_NAV: NavItem[] = [
+  { href: "/ops", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "ops" },
+];
+
+const ADMIN_NAV: NavItem[] = [
+  { href: "/admin/worklist", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "worklist" },
+  { href: "/admin/upload", labelKey: "nav.intake", fallback: "Intake", icon: "intake", id: "intake" },
+  { href: "/admin/activity", labelKey: "nav.activity", fallback: "My Activity", icon: "activity", id: "activity" },
+];
+
+const ADMIN_UTILITY_NAV: NavItem[] = [
+  { href: "/admin/settings", labelKey: "nav.settings", fallback: "Settings", icon: "settings", id: "settings" },
+  { href: "/admin/users", labelKey: "nav.users", fallback: "Users", icon: "users", id: "users" },
+  { href: "/admin/llm", labelKey: "nav.llm", fallback: "LLM", icon: "api", id: "llm" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const session = useSession();
+
+  // Backstop for sessions middleware did not reroute (soft navigation onto
+  // an invalid session). Null while hydrating or on public paths, so this
+  // can never bounce between targets.
+  const redirectTarget = sessionRedirectTarget(session.status, pathname);
+  useEffect(() => {
+    if (redirectTarget !== null) {
+      router.replace(redirectTarget);
+    }
+  }, [redirectTarget, router]);
+
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
+
+  if (!shouldRenderProtectedChildren(session.status, pathname)) {
+    // Hydration gate: mounting protected children (and their queries) while
+    // the bearer is still loading sends unauthenticated requests whose 401s
+    // would delete a valid session. Hold a placeholder instead.
+    return (
+      <div className="app-shell">
+        <main id="main-content" className="app-shell__main" tabIndex={-1}>
+          <p role="status">Loading…</p>
+        </main>
+      </div>
+    );
+  }
+
+  return <ShellChrome pathname={pathname} role={session.role} onLogout={() => void session.logout()}>{children}</ShellChrome>;
+}
+
+function ShellChrome({
+  children,
+  pathname,
+  role,
+  onLogout,
+}: {
+  children: React.ReactNode;
+  pathname: string;
+  role: string | null;
+  onLogout: () => void;
+}) {
+  const { locale } = useLocale();
   const health = useHealth();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
-  const [isStopDialogOpen, setIsStopDialogOpen] = useState(false);
-  const [stopNotice, setStopNotice] = useState<string | null>(null);
   const applicationId = getApplicationIdFromPath(pathname);
   const healthStatus = health.data?.status === "ok" ? "ok" : "failed";
+  const isAdmin = role === "admin";
+  const primaryNav = isAdmin ? ADMIN_NAV : OPERATIONS_NAV;
+  const homeHref = isAdmin ? "/admin/worklist" : "/ops";
 
   const closeMobileNavigation = () => setIsMobileNavOpen(false);
-  const handleStopDmef = async () => {
-    setIsStopDialogOpen(false);
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-      await fetch(`${baseUrl}/shutdown`, { method: "POST" });
-      setStopNotice("Stop request sent. You can close this browser tab.");
-    } catch {
-      setStopNotice("The stop request could not reach the local API.");
-    }
-  };
 
   return (
     <div className="app-shell">
@@ -52,7 +109,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="app-shell__sidebar-top">
           <div className="app-shell__brand-row">
-            <Link href="/worklist" className="app-shell__brand" aria-label="DMEF operations review home" onClick={closeMobileNavigation}>
+            <Link href={homeHref} className="app-shell__brand" aria-label="DMEF operations review home" onClick={closeMobileNavigation}>
               <span className="app-shell__brand-mark" aria-hidden="true">D</span>
               <span className="app-shell__brand-copy">
                 <span className="app-shell__brand-name">DMEF</span>
@@ -72,9 +129,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <nav className="app-shell__primary-nav" aria-label="Primary">
             <div className="app-shell__nav-label">Workspace</div>
             <ul className="app-shell__nav-list">
-              {primaryNavItems.map((item) => {
+              {primaryNav.map((item) => {
                 const active = isNavItemActive(item.id, item.href, pathname, applicationId);
-                const showSubmenu = item.id === "worklist" && applicationId !== null;
+                const showSubmenu = isAdmin && item.id === "worklist" && applicationId !== null;
 
                 return (
                   <li key={item.href}>
@@ -82,11 +139,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       href={item.href}
                       className={`app-shell__nav-link${active ? " is-active" : ""}`}
                       aria-current={active ? "page" : undefined}
-                      aria-label={item.label}
+                      aria-label={item.fallback}
                       onClick={closeMobileNavigation}
                     >
                       <Icon name={item.icon} />
-                      <span className="app-shell__nav-text">{item.label}</span>
+                      <span className="app-shell__nav-text">{t(locale, item.labelKey)}</span>
                     </Link>
                     {showSubmenu ? (
                       <Suspense fallback={null}>
@@ -96,6 +153,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </li>
                 );
               })}
+              {isAdmin && applicationId !== null ? (
+                <li>
+                  <Link
+                    href={`/ops/applications/${applicationId}`}
+                    className="app-shell__nav-link"
+                    aria-label={t(locale, "nav.viewAsOperations")}
+                    onClick={closeMobileNavigation}
+                  >
+                    <Icon name="ops" />
+                    <span className="app-shell__nav-text">{t(locale, "nav.viewAsOperations")}</span>
+                  </Link>
+                </li>
+              ) : null}
             </ul>
           </nav>
         </div>
@@ -103,16 +173,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="app-shell__sidebar-bottom">
           <nav className="app-shell__utility-nav" aria-label="Utilities">
             <div className="app-shell__nav-label">Utilities</div>
-            <Link
-              href="/settings"
-              className={`app-shell__nav-link${pathname.startsWith("/settings") ? " is-active" : ""}`}
-              aria-current={pathname.startsWith("/settings") ? "page" : undefined}
-              aria-label="Settings"
-              onClick={closeMobileNavigation}
+            {isAdmin ? ADMIN_UTILITY_NAV.map((item) => {
+              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`app-shell__nav-link${active ? " is-active" : ""}`}
+                  aria-current={active ? "page" : undefined}
+                  aria-label={item.fallback}
+                  onClick={closeMobileNavigation}
+                >
+                  <Icon name={item.icon} />
+                  <span className="app-shell__nav-text">{t(locale, item.labelKey)}</span>
+                </Link>
+              );
+            }) : null}
+            <div className="app-shell__nav-row">
+              <LanguageToggle />
+            </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="app-shell__nav-link app-shell__signout"
+              aria-label={t(locale, "nav.signOut")}
             >
-              <Icon name="settings" />
-              <span className="app-shell__nav-text">Settings</span>
-            </Link>
+              <Icon name="close" />
+              <span className="app-shell__nav-text">{t(locale, "nav.signOut")}</span>
+            </button>
           </nav>
 
           <div className="app-shell__health" aria-label="API health">
@@ -126,20 +214,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <StatusBadge status={healthStatus} />
             )}
             <code className="app-shell__endpoint">127.0.0.1:8000</code>
-          </div>
-
-          <div className="app-shell__stop-area">
-            {stopNotice ? <div className="app-shell__stop-notice" role="status">{stopNotice}</div> : null}
-            <button
-              type="button"
-              className="app-shell__stop-button"
-              onClick={() => setIsStopDialogOpen(true)}
-              disabled={health.isLoading || health.isError || !health.data}
-              aria-label="Stop DMEF"
-            >
-              <Icon name="stop" />
-              <span className="app-shell__nav-text">Stop DMEF</span>
-            </button>
           </div>
         </div>
       </aside>
@@ -177,26 +251,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
         <main id="main-content" className="app-shell__main" tabIndex={-1}>{children}</main>
       </div>
-
-      <ConfirmDialog
-        open={isStopDialogOpen}
-        title="Stop DMEF?"
-        description="This will shut down the local backend and UI servers. Any work currently processing may be interrupted. Continue only if you are ready to stop the local workspace."
-        confirmLabel="Stop DMEF"
-        onConfirm={handleStopDmef}
-        onCancel={() => setIsStopDialogOpen(false)}
-      />
     </div>
   );
 }
 
 function getApplicationIdFromPath(pathname: string): number | null {
-  const applicationPathMatch = pathname.match(/^\/applications\/(\d+)/);
+  const applicationPathMatch = pathname.match(/^\/(?:admin\/applications|ops\/applications|applications)\/(\d+)/);
   return applicationPathMatch ? Number(applicationPathMatch[1]) : null;
 }
 
 function isNavItemActive(itemId: string, href: string, pathname: string, applicationId: number | null) {
-  if (itemId === "worklist" && applicationId !== null) {
+  if (itemId === "worklist" && applicationId !== null && pathname.startsWith("/admin/applications/")) {
+    return true;
+  }
+  if (itemId === "ops" && applicationId !== null && pathname.startsWith("/ops/applications/")) {
     return true;
   }
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -204,7 +272,7 @@ function isNavItemActive(itemId: string, href: string, pathname: string, applica
 
 function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
   const searchParams = useSearchParams();
-  const activeTab = searchParams.get("tab") || "overview";
+  const activeTab = searchParams.get("tab") || "review";
   const applicationReview = useApplicationReview(applicationId);
 
   const coreParameters = applicationReview.data?.comparison_matrix?.core_parameters ?? [];
@@ -216,12 +284,11 @@ function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
   const anomalyCount = comparisonFields.filter((field) => field.status === "mismatch" || field.status === "attention").length;
 
   const tabs: Array<{ key: string; label: string; icon: IconName; showCount?: boolean }> = [
-    { key: "overview", label: "Overview", icon: "worklist" },
+    { key: "review", label: "Review", icon: "worklist" },
     { key: "extracted", label: "Extracted data", icon: "intake" },
-    { key: "anomalies", label: "Anomalies & flags", icon: "stop", showCount: true },
-    { key: "checklist", label: "Checklist & decisions", icon: "worklist" },
-    { key: "logs", label: "Processing logs", icon: "activity" },
-    { key: "downloads", label: "Downloads", icon: "intake" },
+    { key: "checklist", label: "Checklist", icon: "worklist" },
+    { key: "processing", label: "Processing", icon: "activity" },
+    { key: "files", label: "Files", icon: "intake" },
   ];
 
   return (
@@ -231,7 +298,7 @@ function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
         return (
           <li key={tab.key}>
             <Link
-              href={`/applications/${applicationId}?tab=${tab.key}`}
+              href={tab.key === "review" ? `/admin/applications/${applicationId}` : `/admin/applications/${applicationId}?tab=${tab.key}`}
               className={`app-shell__submenu-link${active ? " is-active" : ""}`}
               aria-current={active ? "page" : undefined}
             >
@@ -252,12 +319,13 @@ function Icon({ name }: { name: IconName }) {
     intake: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M4 21h16" /></>,
     activity: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3 2" /></>,
     settings: <><path d="M12 3v2M12 19v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" /><circle cx="12" cy="12" r="3.5" /></>,
+    users: <><circle cx="9" cy="8" r="3.5" /><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" /><circle cx="17" cy="9" r="2.5" /><path d="M16 14.6c2.6.3 5 2.3 5 5.4" /></>,
     menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
     close: <><path d="m6 6 12 12M18 6 6 18" /></>,
     collapse: <><path d="m15 6-6 6 6 6" /><path d="m21 6-6 6 6 6" /></>,
     expand: <><path d="m9 6 6 6-6 6" /><path d="m3 6 6 6-6 6" /></>,
     api: <><path d="M7 5v14M17 5v14M5 7h4M15 17h4" /><path d="M9 9h6v6H9z" /></>,
-    stop: <><path d="M8 5h8l3 3v8l-3 3H8l-3-3V8l3-3Z" /><path d="M9 9h6v6H9z" /></>,
+    ops: <><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12.5 2.5 2.5 4.5-5.5" /></>,
   };
 
   return (

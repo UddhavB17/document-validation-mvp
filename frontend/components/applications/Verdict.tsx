@@ -13,7 +13,7 @@ export function Verdict({ data }: { data: ApplicationReview }) {
   let detail = `${reviewerCount} issue(s) to check`;
   let classes = "border-[#A0701C] bg-[#FBF2E1] text-[#A0701C]";
   if (processingState === "blocked" && (data.progress?.is_stale || pipelineStatus.toLowerCase() === "stale")) {
-    title = "STALE";
+    title = "OUT OF DATE";
     detail = "Processing stopped reporting progress; recovery is required";
     classes = "border-[#AF3B2E] bg-[#FBEBE8] text-[#AF3B2E]";
   } else if (processingState === "blocked" && ["failed", "pipeline_failed"].includes(pipelineStatus.toLowerCase())) {

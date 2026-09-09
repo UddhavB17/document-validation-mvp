@@ -3,9 +3,12 @@
 import logging
 import os
 import re
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from difflib import SequenceMatcher
 from math import ceil
 from typing import Any
+
+from dateutil.relativedelta import relativedelta
 
 from services import checklist_service
 from services.config import effective_config
@@ -16,17 +19,17 @@ from services.processing_policy import is_ocr_skipped_page
 
 LOGGER = logging.getLogger(__name__)
 
-try:
-    from rapidfuzz import fuzz
-except ImportError as exc:
-    from difflib import SequenceMatcher
+# ws-f accuracy: all name comparison routes through field_verification.verify_name
+# (single threshold in services.person_names). Generic text similarity uses the
+# local difflib helper below — never rapidfuzz directly in this module.
 
-    LOGGER.warning("rapidfuzz is unavailable; using the slower checklist scorer fallback: %s", exc)
 
-    class fuzz:
-        @staticmethod
-        def ratio(left: str, right: str) -> int:
-            return int(SequenceMatcher(None, left, right).ratio() * 100)
+def _text_ratio(left: str, right: str) -> int:
+    """Return 0-100 text similarity (SequenceMatcher; rapidfuzz-free)."""
+    left_text, right_text = str(left or ""), str(right or "")
+    if not left_text or not right_text:
+        return 0
+    return int(SequenceMatcher(None, left_text, right_text).ratio() * 100)
 
 
 def _parse_date(value: object) -> datetime:
@@ -112,7 +115,19 @@ def check_field_match(
             if str(system_val).upper() != str(extracted_val).upper():
                 anomalies.append({"field": field, "expected": system_val, "found": extracted_val})
         else:
-            score = fuzz.ratio(str(system_val).lower(), str(extracted_val).lower())
+            if field in {"applicant_name", "borrower_name", "account_holder_name", "name"}:
+                from services.field_verification import verify_name
+
+                if not verify_name(str(system_val), str(extracted_val)).match:
+                    anomalies.append(
+                        {
+                            "field": field,
+                            "expected": system_val,
+                            "found": extracted_val,
+                        }
+                    )
+                continue
+            score = _text_ratio(str(system_val).lower(), str(extracted_val).lower())
             if score < 85:
                 anomalies.append(
                     {
@@ -126,15 +141,170 @@ def check_field_match(
     return anomalies
 
 
-def check_date_range(extracted_fields: dict, min_months: int) -> dict:
+def calendar_months_between(earlier: date | datetime, later: date | datetime) -> int:
+    """Whole calendar months from `earlier` to `later` (hand-rolled, no dep)."""
+    if isinstance(earlier, datetime):
+        earlier = earlier.date()
+    if isinstance(later, datetime):
+        later = later.date()
+    months = (later.year - earlier.year) * 12 + (later.month - earlier.month)
+    if later.day < earlier.day:
+        months -= 1
+    return max(0, months)
+
+
+def application_reference_date(*contexts: dict | None) -> date:
+    """Application reference date for age/recency maths (never wall clock).
+
+    Reads `applications.created_at` / manifest / system-data date keys; falls
+    back to today only when no reference is available at all.
+    """
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        manifest = context.get("manifest")
+        sources = [context] + ([manifest] if isinstance(manifest, dict) else [])
+        for source in sources:
+            for key in (
+                "reference_date",
+                "created_at",
+                "application_date",
+                "application_opened_at",
+                "application_open_date",
+                "case_opened_at",
+                "case_open_date",
+                "case_login_date",
+                "login_date",
+            ):
+                value = source.get(key)
+                if value in (None, ""):
+                    continue
+                try:
+                    parsed = _parse_date(value)
+                except Exception:
+                    continue
+                return parsed.date() if isinstance(parsed, datetime) else parsed
+    return datetime.now(UTC).date()
+
+
+_STATEMENT_DATE_FIELDS = (
+    "statement_period_end",
+    "statement_date",
+    "period_end",
+    "statement_end_date",
+)
+
+
+def latest_statement_date(pages: list[dict], fields: tuple[str, ...] = _STATEMENT_DATE_FIELDS):
+    """Latest parsable statement date across ALL pages of a document."""
+    latest = None
+    for page in pages:
+        extracted = page.get("extracted_fields") or {} if isinstance(page, dict) else {}
+        for field in fields:
+            value = extracted.get(field)
+            if value in (None, ""):
+                continue
+            try:
+                parsed = _parse_date(value)
+            except Exception:
+                continue
+            parsed_date = parsed.date() if isinstance(parsed, datetime) else parsed
+            if latest is None or parsed_date > latest:
+                latest = parsed_date
+    return latest
+
+
+def is_bank_statement_old(
+    latest: date | datetime | str | None,
+    reference: date | datetime | str | None,
+    max_months: int = 3,
+) -> bool:
+    """True when the latest statement date is older than `max_months`.
+
+    Calendar months via ``relativedelta``; any leftover days round up, so a
+    statement dated 2026-05-30 is old against reference 2026-09-04
+    (3 months + 5 days) while 2026-06-15 (2 months + 20 days) is not.
+    """
+    if latest in (None, "") or reference in (None, ""):
+        return False
+    try:
+        latest_date = _parse_date(latest)
+        reference_date = _parse_date(reference)
+    except Exception:
+        return False
+    if isinstance(latest_date, datetime):
+        latest_date = latest_date.date()
+    if isinstance(reference_date, datetime):
+        reference_date = reference_date.date()
+    if reference_date < latest_date:
+        return False
+    delta = relativedelta(reference_date, latest_date)
+    months = delta.years * 12 + delta.months + (1 if delta.days > 0 else 0)
+    return months > int(max_months)
+
+
+def check_date_range(
+    extracted_fields: dict,
+    min_months: int,
+    reference_date: date | datetime | str | None = None,
+) -> dict:
     date_val = extracted_fields.get("statement_period_end")
     if not date_val:
         return {"passed": False, "reason": "Statement date not found"}
 
     try:
         parsed = _parse_date(date_val)
-        months_old = (datetime.now() - parsed).days / 30
-        if months_old > min_months:
+        parsed_date = parsed.date() if isinstance(parsed, datetime) else parsed
+        reference = (
+            _parse_date(reference_date).date()
+            if reference_date not in (None, "")
+            else application_reference_date(extracted_fields)
+        )
+        if isinstance(reference, datetime):
+            reference = reference.date()
+        # Single decider for statement recency (see is_bank_statement_old).
+        if is_bank_statement_old(parsed_date, reference, int(min_months)):
+            months_old = calendar_months_between(parsed_date, reference)
+            return {
+                "passed": False,
+                "found_value": f"{int(months_old)} months old",
+                "expected_value": f"Within {min_months} months",
+            }
+        return {"passed": True}
+    except Exception:
+        return {"passed": False, "reason": "Could not parse statement date"}
+
+
+def check_date_range_for_pages(
+    doc_pages: list[dict],
+    min_months: int,
+    reference_date: date | datetime | str | None = None,
+) -> dict:
+    """Statement recency over the latest date found on ANY page of the document.
+
+    ``application_reference_date`` wins: when the caller passes no explicit
+    reference, it is resolved from the pages' own extracted fields (which
+    carry the application/manifest dates). The wall clock is only a last
+    resort when no reference exists anywhere.
+    """
+    latest = latest_statement_date(doc_pages)
+    if latest is None:
+        return {"passed": False, "reason": "Statement date not found"}
+    try:
+        if reference_date not in (None, ""):
+            reference = _parse_date(reference_date).date()
+        else:
+            contexts = [
+                page.get("extracted_fields")
+                for page in doc_pages
+                if isinstance(page, dict)
+            ]
+            reference = application_reference_date(*contexts)
+        if isinstance(reference, datetime):
+            reference = reference.date()
+        # Single decider for statement recency (see is_bank_statement_old).
+        if is_bank_statement_old(latest, reference, int(min_months)):
+            months_old = calendar_months_between(latest, reference)
             return {
                 "passed": False,
                 "found_value": f"{int(months_old)} months old",
@@ -1040,8 +1210,13 @@ def _run_accuracy_checks(
         elif check_type == "date_range":
             doc_pages = _matching_pages(pages, document_type)
             if doc_pages:
-                result = check_date_range(
-                    doc_pages[0].get("extracted_fields", {}), item["min_months"]
+                # Statement period end is the latest parsable date on ANY page
+                # of the document, measured against the application reference
+                # date (never the wall clock).
+                result = check_date_range_for_pages(
+                    doc_pages,
+                    item["min_months"],
+                    application_reference_date(system_data, item),
                 )
                 if not result["passed"]:
                     anomalies.append(
@@ -1096,7 +1271,13 @@ def _run_accuracy_checks(
                     )
                     continue
                 try:
-                    age_months = (datetime.now() - _parse_date(date_value)).days / 30
+                    # Calendar months against the application reference date.
+                    parsed_date = _parse_date(date_value)
+                    if isinstance(parsed_date, datetime):
+                        parsed_date = parsed_date.date()
+                    age_months = calendar_months_between(
+                        parsed_date, application_reference_date(system_data, item)
+                    )
                 except Exception:
                     age_months = maximum + 1
                 if age_months > maximum:
@@ -1539,8 +1720,11 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
             except Exception:
                 pass
         if ground_name and pan_name:
-            score = fuzz.ratio(str(ground_name).strip().lower(), str(pan_name).strip().lower())
-            if 75 <= score < 90:
+            from services.field_verification import verify_name
+
+            name_result = verify_name(str(ground_name), str(pan_name))
+            score = int(round(name_result.confidence * 100))
+            if 75 <= score < 90 and not name_result.match:
                 anomalies.append(
                     build_anomaly(
                         "BORDERLINE_NAME_MATCH",

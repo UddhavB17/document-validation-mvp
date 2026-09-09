@@ -9,7 +9,7 @@ from typing import Any
 
 from services.config import get_bool, get_float, get_int
 from services.document_classifier import registry_document_types
-from services.llm_client import call_llm_api
+from services.llm_client import call_llm_messages
 
 VALID_DOCUMENT_TYPES = tuple(registry_document_types(include_unknown=True))
 
@@ -246,7 +246,13 @@ def classify_page_with_llm(text: str) -> dict[str, Any] | None:
 
     prompt = _build_classifier_prompt(cleaned[:_MAX_TEXT_CHARS])
     try:
-        response_text = call_llm_api(prompt, max_tokens=120, timeout=120)
+        response_text = call_llm_messages(
+            [{"role": "user", "content": prompt}],
+            purpose="page_classification",
+            max_tokens=120,
+            timeout=120,
+            response_format="json",
+        )
     except Exception:
         return None
 
@@ -306,10 +312,8 @@ def _build_classifier_prompt(text: str) -> str:
         'Do not merge bank documents: choose "Passbook" for passbook/pass book pages, '
         '"Cheque" for cheque or cancelled cheque pages, "PDC" only for post-dated/security cheques, '
         'and "Bank Statement" only for statement/account-statement pages.\n'
-        "Respond with TOON (Token-Oriented Object Notation) format only, no markdown, no json:\n"
-        'document_type: "..."\n'
-        "confidence: 0.9\n"
-        'reason: "short reason"\n\n'
+        "Respond with JSON only, no markdown, no TOON:\n"
+        '{"document_type": "...", "confidence": 0.9, "reason": "short reason"}\n\n'
         "Page text:\n"
         f"{text}"
     )
@@ -337,14 +341,27 @@ def _contains_evidence(haystack: str, phrase: str) -> bool:
 
 
 def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
+    """Parse the classifier answer: JSON with a schema check, TOON as fallback.
+
+    The model is instructed to answer in JSON (input-TOON / output-JSON rule);
+    TOON decoding is kept as a fallback so older local models that ignore the
+    instruction still produce a usable classification.
+    """
     cleaned = response_text.strip()
     if not cleaned:
         return None
 
-    # Strip markdown code blocks (handling both toon, json, or generic code fences)
-    fence_match = re.search(r"```(?:toon|json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
+    # Strip markdown code blocks (handling json, toon, or generic fences)
+    fence_match = re.search(r"```(?:json|toon)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
     if fence_match:
         cleaned = fence_match.group(1).strip()
+
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict) and parsed.get("document_type"):
+            return parsed
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
 
     try:
         from toon import decode
@@ -353,15 +370,5 @@ def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
         if isinstance(parsed, dict) and parsed.get("document_type"):
             return parsed
     except Exception:
-        pass
-
-    # Small local models occasionally return valid JSON despite an explicit
-    # TOON-only instruction. Accept the equivalent object instead of discarding
-    # an otherwise usable classification.
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict) and parsed.get("document_type"):
-            return parsed
-    except (TypeError, ValueError, json.JSONDecodeError):
         pass
     return None

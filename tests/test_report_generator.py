@@ -11,14 +11,15 @@ from services.report_generator import build_report, generate_excel_report, save_
 def _seed_application() -> int:
     init_db()
     with db.get_connection() as connection:
-        cursor = connection.execute(
+        created = connection.execute(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
             VALUES (?, ?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-REPORT-1", "Ramesh Kumar", "LAP", "Delhi", "CRITICAL"),
-        )
-        application_id = cursor.lastrowid
+        ).fetchone()
+        application_id = int(created["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -90,14 +91,15 @@ def test_excel_empty_anomalies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(report_generator, "REPORT_DIR", tmp_path)
     init_db()
     with db.get_connection() as connection:
-        cursor = connection.execute(
+        created = connection.execute(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
             VALUES (?, ?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-CLEAN-1", "Ramesh Kumar", "LAP", "Delhi", "CLEAN"),
-        )
-        application_id = cursor.lastrowid
+        ).fetchone()
+        application_id = int(created["id"])
 
     workbook = openpyxl.load_workbook(generate_excel_report(application_id))
 

@@ -1,0 +1,103 @@
+# Cloud Run worker service (ws-j-deploy-smoke).
+# Same backend image as the API, different command:
+#   python -m services.worker --serve-health 8080
+# Single replica, CPU always allocated, internal ingress only (enforced by the
+# run.googleapis.com/ingress annotation below, not by a console click).
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: dmef-worker
+  labels:
+    app: dmef
+    component: worker
+  annotations:
+    run.googleapis.com/ingress: internal
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      serviceAccountName: dmef-worker@PROJECT_ID.iam.gserviceaccount.com
+      containerConcurrency: 1
+      timeoutSeconds: 3600
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/dmef/api:TAG
+          name: worker
+          command: ["python", "-m", "services.worker", "--serve-health", "8080"]
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          env:
+            - name: DMEF_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-database-url-pooled
+                  key: latest
+            - name: DMEF_STORAGE_BACKEND
+              value: gcs
+            - name: DMEF_GCS_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-gcs-bucket
+                  key: latest
+            - name: DMEF_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-auth-secret
+                  key: latest
+            - name: DMEF_SECRETS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-secrets-key
+                  key: latest
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-gemini-api-key
+                  key: latest
+            # Operator-selected model id (REQUIRED, no default): same
+            # `dmef-gemini-model` secret as the API so both services share
+            # one evaluated model. See api.yaml for the retirement note.
+            - name: GEMINI_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-gemini-model
+                  key: latest
+            - name: LLM_PROVIDER
+              value: gemini
+            - name: DMEF_JOB_WORK_DIR
+              value: /tmp/dmef-jobs
+            - name: DMEF_WORKER_POLL_SECONDS
+              value: "5"
+            - name: DMEF_RETENTION_SOURCE_DAYS
+              value: "60"
+            - name: DMEF_RETENTION_EXPORT_DAYS
+              value: "7"
+            - name: DMEF_RETENTION_TELEMETRY_DAYS
+              value: "30"
+            - name: DMEF_RETENTION_JOB_ATTEMPTS
+              value: "3"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 30
+  traffic:
+    - percent: 100
+      latestRevision: true

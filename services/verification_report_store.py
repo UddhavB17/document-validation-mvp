@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 from database.db import get_connection
 from database.models import DocumentVerificationReport
@@ -11,6 +12,7 @@ from database.models import DocumentVerificationReport
 def save_verification_report(application_id: int, report: DocumentVerificationReport) -> None:
     """Store the latest verification report for an application."""
     payload = json.dumps(report.model_dump(mode="json"), ensure_ascii=False)
+    now = datetime.now(UTC).isoformat()
     with get_connection() as connection:
         connection.execute(
             """
@@ -20,12 +22,12 @@ def save_verification_report(application_id: int, report: DocumentVerificationRe
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(application_id) DO UPDATE SET
                 report_json = excluded.report_json,
-                updated_at = CURRENT_TIMESTAMP
+                updated_at = excluded.updated_at
             """,
-            (application_id, payload),
+            (application_id, payload, now, now),
         )
 
 
