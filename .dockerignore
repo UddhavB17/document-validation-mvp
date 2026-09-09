@@ -8,3 +8,35 @@ outputs/
 frontend/node_modules/
 frontend/.next/
 .pytest_cache/
+
+# Local secrets must never be baked into the image (Dockerfile does COPY . .).
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Large/alternate checkouts must stay out of the build context.
+.worktrees/
+**/.worktrees/
+
+# Local agent/tooling config (not part of the runtime image).
+.opencode/
+**/.opencode/
+.agents/
+**/.agents/
+
+# Local credential and key artifacts.
+*.pem
+**/*.pem
+*.key
+**/*.key
+*.p12
+*.pfx
+*_key.json
+credentials.json
+**/credentials.json
+service-account*.json
+.gcloud/
+.aws/

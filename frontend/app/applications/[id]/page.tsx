@@ -1,12 +1,14 @@
 import { redirect } from "next/navigation";
 
-export default function LegacyApplicationRedirect({
+export default async function LegacyApplicationRedirect({
   params,
   searchParams,
 }: {
-  params: { id: string };
-  searchParams?: { tab?: string };
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<{ tab?: string }>;
 }) {
-  const tab = searchParams?.tab ? `?tab=${encodeURIComponent(searchParams.tab)}` : "";
-  redirect(`/admin/applications/${params.id}${tab}`);
+  const { id } = await params;
+  const resolvedSearchParams = await searchParams;
+  const tab = resolvedSearchParams?.tab ? `?tab=${encodeURIComponent(resolvedSearchParams.tab)}` : "";
+  redirect(`/admin/applications/${id}${tab}`);
 }

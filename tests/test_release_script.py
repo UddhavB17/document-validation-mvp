@@ -169,3 +169,34 @@ def test_scheduler_uses_dedicated_header_without_oidc() -> None:
     assert "\n      Authorization:" not in manifest
     assert "name: DMEF_SCHEDULER_TOKEN" in api_manifest
     assert "name: dmef-scheduler-token" in api_manifest
+
+
+def test_deploy_gemini_model_is_shared_operator_secret_without_retired_default() -> None:
+    """GEMINI_MODEL must be an operator-selected secret shared by API+worker.
+
+    The retired ``gemini-2.0-flash`` default (shut down June 1 2026) must not
+    appear as a deployment value, and both services must reference the same
+    secret so they can never drift to different models.
+    """
+    api_manifest = (ROOT / "deploy" / "cloudrun" / "api.yaml").read_text(encoding="utf-8")
+    worker_manifest = (ROOT / "deploy" / "cloudrun" / "worker.yaml").read_text(encoding="utf-8")
+
+    for manifest in (api_manifest, worker_manifest):
+        assert "name: GEMINI_MODEL" in manifest
+        assert "value: gemini-" not in manifest  # no hardcoded model value
+        block = manifest.split("name: GEMINI_MODEL", 1)[1].split("- name:", 1)[0]
+        assert "secretKeyRef" in block
+        assert "name: dmef-gemini-model" in block
+
+    readme = (ROOT / "deploy" / "cloudrun" / "README.md").read_text(encoding="utf-8")
+    assert "dmef-gemini-model" in readme
+
+
+def test_deploy_neon_uses_current_head_verification() -> None:
+    """DEPLOY_NEON.md must not recommend ``alembic check`` (unsupported with
+    ``target_metadata = None``); it documents current-vs-heads instead."""
+    docs = (ROOT / "docs" / "DEPLOY_NEON.md").read_text(encoding="utf-8")
+    assert "alembic check  # no-op when at head" not in docs
+    assert "target_metadata = None" in docs
+    assert "alembic current" in docs
+    assert "alembic heads" in docs

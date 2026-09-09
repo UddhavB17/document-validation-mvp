@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
 import database.db as db
@@ -7,6 +9,7 @@ from main import app
 
 def _seed_application() -> int:
     init_db()
+    now = datetime.now(UTC).isoformat()
     with db.get_connection() as connection:
         created = connection.execute(
             """
@@ -23,6 +26,33 @@ def _seed_application() -> int:
             VALUES (?, ?, ?, ?)
             """,
             (application_id, "MISSING_DOC_S1", "HIGH", "Application form missing"),
+        )
+        # Fixture applications are explicitly completed: the decision guard
+        # fails closed without positive pipeline-completion evidence.
+        connection.execute(
+            """
+            INSERT INTO pipeline_progress (
+                application_id, stage, total_pages, processed_pages,
+                percentage, status, started_at, updated_at, completed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(application_id) DO UPDATE SET
+                stage = excluded.stage,
+                status = excluded.status,
+                completed_at = excluded.completed_at,
+                updated_at = excluded.updated_at
+            """,
+            (application_id, "completed", 1, 1, 100.0, "completed", now, now, now),
+        )
+        connection.execute(
+            """
+            INSERT INTO pipeline_jobs (
+                application_id, job_type, status, control_state,
+                attempt, max_attempts, created_at, completed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (application_id, "pdf_pipeline", "completed", "completed", 1, 3, now, now),
         )
     return application_id
 

@@ -46,6 +46,12 @@ RETAINED_AUDIT_ACTIONS = frozenset(
 #: (queued/running/retrying, plus paused/cancelled/stale) are never deleted.
 TERMINAL_JOB_STATUSES = ("completed", "failed")
 
+#: Source-like purposes that are deleted once their application is archived
+#: (and no non-terminal job still needs them). ``ocr_export`` rows expire on
+#: their own age (``DMEF_RETENTION_EXPORT_DAYS``); ``report`` rows are
+#: reviewer data and are never deleted here.
+SOURCE_PURPOSES = ("source", "manifest", "normalized_pdf")
+
 # --- fx-schema: stale-job subquery (terminal only, newest N kept per app) ---
 _STALE_JOBS_SUBQUERY = (
     "SELECT id FROM ("
@@ -71,6 +77,46 @@ def _resolve_now(now: Any) -> datetime:
 def _cutoff_text(moment: datetime) -> str:
     """Space-separated UTC timestamp, comparable with ``CURRENT_TIMESTAMP``."""
     return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_ts(raw: Any) -> datetime | None:
+    """Parse a stored timestamp in either retention format.
+
+    Retention writes space-separated UTC (``_cutoff_text``) while
+    ``record_ref`` writes ISO-8601; both must compare correctly. ``None``
+    means unparseable — callers keep such rows instead of deleting them.
+    """
+    if isinstance(raw, datetime):
+        parsed = raw
+    elif isinstance(raw, str) and raw.strip():
+        text = raw.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            try:
+                parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _active_job_guard(table_exists: bool) -> str:
+    """SQL fragment excluding applications with resumable (non-terminal) jobs.
+
+    ``queued/running/retrying/paused/stale/cancelled`` jobs may resume, so
+    their application's source objects are never deletion candidates.
+    """
+    if not table_exists:
+        return ""
+    return (
+        " AND NOT EXISTS (SELECT 1 FROM pipeline_jobs j"
+        " WHERE j.application_id = applications.id"
+        " AND j.status NOT IN ('completed','failed'))"
+    )
 
 
 def _table_exists(connection: Any, table: str) -> bool:
@@ -104,8 +150,10 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
     max_attempts = get_int("DMEF_RETENTION_JOB_ATTEMPTS", 3, minimum=1)
     telemetry_days = get_int("DMEF_RETENTION_TELEMETRY_DAYS", 30, minimum=1)
     source_days = get_int("DMEF_RETENTION_SOURCE_DAYS", 60, minimum=1)
+    export_days = get_int("DMEF_RETENTION_EXPORT_DAYS", 7, minimum=1)
     telemetry_cutoff = _cutoff_text(moment - timedelta(days=telemetry_days))
     source_cutoff = _cutoff_text(moment - timedelta(days=source_days))
+    export_cutoff = moment - timedelta(days=export_days)
     archived_at = _cutoff_text(moment)
 
     result: dict[str, Any] = {
@@ -116,6 +164,7 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
         "audit_log_deleted": 0,
         "applications_archived": 0,
         "source_keys_deleted": 0,
+        "ocr_exports_deleted": 0,
     }
 
     with get_connection() as connection:
@@ -238,54 +287,133 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
                 except Exception:  # noqa: BLE001 - legacy table; counts stand
                     pass
 
-        # 6. Count (dry-run) or collect (real run) archived source keys
-        # via object_refs. Keys live in object_refs (owner_table/owner_id),
-        # never in uploaded_files.storage_key or intake_packages.*_key.
+        # 6. Collect (real run) or count (dry-run) archived source keys via
+        # object_refs. Only source-like purposes of archived applications
+        # with no resumable job are candidates; failed store deletions keep
+        # their row so the next run retries them, while successful deletions
+        # remove the row (idempotent subsequent runs). Dry-run counts both
+        # not-yet-archived candidates and already-archived retry leftovers.
         # --- fx-schema: object_refs lookup with IN (SELECT ...) ---
-        source_keys: list[str] = []
-        if _table_exists(connection, "object_refs") and has_archived_col:
-            try:
-                if dry_run:
-                    row = connection.execute(
-                        "SELECT COUNT(*) AS count FROM object_refs WHERE "
-                        "(owner_table = 'applications' AND owner_id IN "
-                        "(SELECT CAST(id AS TEXT) FROM applications "
-                        "WHERE created_at < ? AND archived_at IS NULL)) "
-                        "OR (owner_table = 'intake_packages' AND owner_id IN "
-                        "(SELECT package_id FROM intake_packages WHERE application_id IN "
-                        "(SELECT id FROM applications "
-                        "WHERE created_at < ? AND archived_at IS NULL)))",
-                        (source_cutoff, source_cutoff),
-                    ).fetchone()
-                    result["source_keys_deleted"] = int(row["count"])
-                elif result["applications_archived"]:
-                    rows = connection.execute(
-                        "SELECT storage_key FROM object_refs WHERE "
-                        "(owner_table = 'applications' AND owner_id IN "
-                        "(SELECT CAST(id AS TEXT) FROM applications "
-                        "WHERE archived_at = ?)) "
-                        "OR (owner_table = 'intake_packages' AND owner_id IN "
-                        "(SELECT package_id FROM intake_packages WHERE application_id IN "
-                        "(SELECT id FROM applications WHERE archived_at = ?)))",
-                        (archived_at, archived_at),
-                    ).fetchall()
-                    for key_row in rows:
-                        key = key_row["storage_key"]
-                        if isinstance(key, str) and key and not key.startswith("/"):
-                            if ".." not in key:
-                                source_keys.append(key)
-            except Exception:  # noqa: BLE001 - legacy shape; no source keys
-                pass
+        source_candidates: list[dict[str, Any]] = []
+        has_refs = _table_exists(connection, "object_refs")
+        has_packages = _table_exists(connection, "intake_packages")
+        has_jobs = _table_exists(connection, "pipeline_jobs")
+        if has_refs and has_archived_col:
+            job_guard = _active_job_guard(has_jobs)
+            purposes = ",".join("?" for _ in SOURCE_PURPOSES)
+            app_filter_new = (
+                "SELECT CAST(id AS TEXT) FROM applications "
+                "WHERE (archived_at IS NOT NULL"
+                " OR (created_at < ? AND archived_at IS NULL))"
+                f"{job_guard}"
+            )
+            count_sql = (
+                "SELECT COUNT(*) AS count FROM object_refs WHERE purpose IN "
+                f"({purposes}) AND ((owner_table = 'applications' AND owner_id IN "
+                f"({app_filter_new}))"
+            )
+            collect_sql = (
+                "SELECT id, storage_key FROM object_refs WHERE purpose IN "
+                f"({purposes}) AND ((owner_table = 'applications' AND owner_id IN "
+                "(SELECT CAST(id AS TEXT) FROM applications "
+                f"WHERE archived_at IS NOT NULL{job_guard}))"
+            )
+            if has_packages:
+                count_sql += (
+                    " OR (owner_table = 'intake_packages' AND owner_id IN "
+                    "(SELECT package_id FROM intake_packages WHERE application_id IN "
+                    f"(SELECT id FROM applications WHERE (archived_at IS NOT NULL OR "
+                    "(created_at < ? AND archived_at IS NULL))"
+                    f"{job_guard})))"
+                )
+                collect_sql += (
+                    " OR (owner_table = 'intake_packages' AND owner_id IN "
+                    "(SELECT package_id FROM intake_packages WHERE application_id IN "
+                    "(SELECT id FROM applications "
+                    f"WHERE archived_at IS NOT NULL{job_guard})))"
+                )
+            count_sql += ")"
+            collect_sql += ")"
+            if dry_run:
+                params: tuple[Any, ...] = (
+                    (*SOURCE_PURPOSES, source_cutoff)
+                    + ((source_cutoff,) if has_packages else ())
+                )
+                row = connection.execute(count_sql, params).fetchone()
+                result["source_keys_deleted"] = int(row["count"])
+            else:
+                rows = connection.execute(
+                    collect_sql, tuple(SOURCE_PURPOSES)
+                ).fetchall()
+                for key_row in rows:
+                    key = key_row["storage_key"]
+                    if (
+                        isinstance(key, str)
+                        and key
+                        and not key.startswith("/")
+                        and ".." not in key
+                    ):
+                        source_candidates.append(
+                            {"id": key_row["id"], "storage_key": key}
+                        )
 
-    deleted = 0
-    if source_keys and not dry_run:
-        store = get_store()
-        for key in source_keys:
-            try:
-                store.delete(key)
-                deleted += 1
-            except Exception:  # noqa: BLE001 - best effort per key
-                continue
-    if not dry_run:
-        result["source_keys_deleted"] = deleted
+        # 7. OCR-export expiry (DMEF_RETENTION_EXPORT_DAYS). Exports are
+        # regenerable on demand; any ocr_export ref older than the window is
+        # deleted regardless of application age. Age is compared in Python
+        # because refs are written in ISO-8601 (record_ref) as well as the
+        # space-separated retention format. Regenerating an export refreshes
+        # its row (record_ref updates created_at), restarting the window.
+        export_candidates: list[dict[str, Any]] = []
+        if has_refs:
+            export_rows = connection.execute(
+                "SELECT id, storage_key, created_at FROM object_refs "
+                "WHERE purpose = ?",
+                ("ocr_export",),
+            ).fetchall()
+            for export_row in export_rows:
+                created = _parse_ts(export_row["created_at"])
+                if created is None or created >= export_cutoff:
+                    continue
+                key = export_row["storage_key"]
+                if (
+                    isinstance(key, str)
+                    and key
+                    and not key.startswith("/")
+                    and ".." not in key
+                ):
+                    export_candidates.append(
+                        {"id": export_row["id"], "storage_key": key}
+                    )
+            if dry_run:
+                result["ocr_exports_deleted"] = len(export_candidates)
+
+    if dry_run:
+        return result
+
+    store = get_store()
+    sources_deleted = 0
+    for candidate in source_candidates:
+        try:
+            store.delete(candidate["storage_key"])
+        except Exception:  # noqa: BLE001 - row kept so a later run retries
+            continue
+        with get_connection() as cleanup:
+            cleanup.execute(
+                "DELETE FROM object_refs WHERE id = ?", (candidate["id"],)
+            )
+        sources_deleted += 1
+    result["source_keys_deleted"] = sources_deleted
+
+    exports_deleted = 0
+    for candidate in export_candidates:
+        try:
+            store.delete(candidate["storage_key"])
+        except Exception:  # noqa: BLE001 - row kept so a later run retries
+            continue
+        with get_connection() as cleanup:
+            cleanup.execute(
+                "DELETE FROM object_refs WHERE id = ?", (candidate["id"],)
+            )
+        exports_deleted += 1
+    result["ocr_exports_deleted"] = exports_deleted
     return result

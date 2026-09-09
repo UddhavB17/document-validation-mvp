@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { evidenceProxyOcrJsonUrl, evidenceProxyPageImageUrl, evidenceProxyPdfUrl } from "./evidenceProxy";
 export { normalizeDocumentType } from "./documentType";
 
 // The API module owns two concerns: validating backend payloads and exposing
@@ -9,8 +10,10 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8
 
 // --- ws-d auth: in-memory bearer token (set once by lib/auth.ts) ---
 // The JWT lives in an httpOnly cookie, so page code cannot read it directly.
-// lib/auth.ts loads it once via GET /api/session and registers a getter here;
-// every backend request below carries it as `Authorization: Bearer …`.
+// lib/auth.ts loads it once via GET /api/session — which verifies the cookie
+// against backend GET /auth/me and returns the current DB role — and
+// registers a getter here; every backend request below carries the token as
+// `Authorization: Bearer …`.
 type AuthTokenProvider = () => string | null;
 let authTokenProvider: AuthTokenProvider | null = null;
 
@@ -603,15 +606,15 @@ export const api = {
   undoDecision: (decisionId: number) => postJsonResponse(`/decision/${decisionId}/undo`, {}, decisionSchema),
   reprocessApplication: (applicationId: number) =>
     postJsonResponse(`/review/applications/${applicationId}/reprocess`, {}, reprocessResponseSchema),
-  sourcePdfUrl: (applicationId: number, pageNumber?: number) => {
-    const base = `${API_BASE_URL}/review/applications/${applicationId}/source-pdf`;
-    return pageNumber ? `${base}#page=${pageNumber}&zoom=page-width` : base;
-  },
-  sourcePageImageUrl: (applicationId: number, pageNumber: number, highlight?: string) => {
-    const base = `${API_BASE_URL}/review/applications/${applicationId}/source-page/${pageNumber}`;
-    return highlight ? `${base}?highlight=${encodeURIComponent(highlight)}` : base;
-  },
-  ocrJsonUrl: (applicationId: number) => `${API_BASE_URL}/review/applications/${applicationId}/ocr-json`,
+  // Evidence URLs go through the same-origin proxy
+  // (frontend/app/api/evidence/[...path]/route.ts), which forwards the
+  // dmef_session cookie as the backend bearer token. Direct backend URLs
+  // cannot carry the in-memory token from <img>/<a> subresources (401).
+  sourcePdfUrl: (applicationId: number, pageNumber?: number) =>
+    evidenceProxyPdfUrl(applicationId, pageNumber),
+  sourcePageImageUrl: (applicationId: number, pageNumber: number, highlight?: string) =>
+    evidenceProxyPageImageUrl(applicationId, pageNumber, highlight),
+  ocrJsonUrl: (applicationId: number) => evidenceProxyOcrJsonUrl(applicationId),
   uploadBatch: async (files: File[]) => {
     const formData = new FormData();
     for (const file of files) {

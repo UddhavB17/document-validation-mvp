@@ -64,8 +64,14 @@ spec:
                 secretKeyRef:
                   name: dmef-gemini-api-key
                   key: latest
+            # Operator-selected model id (REQUIRED, no default): same
+            # `dmef-gemini-model` secret as the API so both services share
+            # one evaluated model. See api.yaml for the retirement note.
             - name: GEMINI_MODEL
-              value: gemini-2.0-flash
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-gemini-model
+                  key: latest
             - name: LLM_PROVIDER
               value: gemini
             - name: DMEF_JOB_WORK_DIR

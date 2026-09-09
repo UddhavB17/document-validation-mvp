@@ -1,13 +1,14 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { LanguageToggle } from "@/components/ops/LanguageToggle";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
+import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
 import { useApplicationReview, useHealth } from "@/lib/queries";
 import type { FieldComparison } from "@/lib/api";
 
@@ -39,10 +40,34 @@ const ADMIN_UTILITY_NAV: NavItem[] = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const session = useSession();
+
+  // Backstop for sessions middleware did not reroute (soft navigation onto
+  // an invalid session). Null while hydrating or on public paths, so this
+  // can never bounce between targets.
+  const redirectTarget = sessionRedirectTarget(session.status, pathname);
+  useEffect(() => {
+    if (redirectTarget !== null) {
+      router.replace(redirectTarget);
+    }
+  }, [redirectTarget, router]);
 
   if (pathname === "/login") {
     return <>{children}</>;
+  }
+
+  if (!shouldRenderProtectedChildren(session.status, pathname)) {
+    // Hydration gate: mounting protected children (and their queries) while
+    // the bearer is still loading sends unauthenticated requests whose 401s
+    // would delete a valid session. Hold a placeholder instead.
+    return (
+      <div className="app-shell">
+        <main id="main-content" className="app-shell__main" tabIndex={-1}>
+          <p role="status">Loading…</p>
+        </main>
+      </div>
+    );
   }
 
   return <ShellChrome pathname={pathname} role={session.role} onLogout={() => void session.logout()}>{children}</ShellChrome>;
