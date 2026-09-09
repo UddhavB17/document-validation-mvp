@@ -448,7 +448,6 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE pages ADD COLUMN ocr_route TEXT",
     "ALTER TABLE pages ADD COLUMN ocr_escalated BOOLEAN NOT NULL DEFAULT 0",
     "ALTER TABLE pages ADD COLUMN ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE pages ADD COLUMN structured_content TEXT",
     "ALTER TABLE pages ADD COLUMN ocr_status TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3",
     "ALTER TABLE pipeline_jobs ADD COLUMN next_run_at TEXT",

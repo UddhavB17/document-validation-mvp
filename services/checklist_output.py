@@ -23,9 +23,7 @@ from services.checklist_status_map import CHECKLIST_STATUSES
 from services.page_quality import confident_pages_for_types
 
 
-def _matched_pages_with_ocr_failure(
-    pages: list[dict[str, Any]], document_types: list[str]
-) -> bool:
+def _matched_pages_with_ocr_failure(pages: list[dict[str, Any]], document_types: list[str]) -> bool:
     """True when a type-matching page failed OCR, even if it missed the confidence gate."""
     return any(
         page.get("document_type") in document_types and page.get("ocr_status") == "failed"
@@ -238,7 +236,10 @@ def _confidence_for_item(
     if status == "manual_review":
         if item_anomalies:
             return "medium", _anomaly_detail(item_anomalies[0])
-        return "low", "manual review required: no deterministic checklist rule could verify this item"
+        return (
+            "low",
+            "manual review required: no deterministic checklist rule could verify this item",
+        )
     if status == "not_evaluated_by_engine":
         return "low", "not evaluated by the deterministic engine for this loan file"
     raise ValueError(f"unhandled checklist status: {status!r}")
