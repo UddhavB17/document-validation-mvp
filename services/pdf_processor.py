@@ -15,10 +15,9 @@ from typing import TypedDict
 
 import fitz  # PyMuPDF
 
-from services.config import get_float, get_int
+from services.config import get_float
 from services.image_limits import downscale_if_needed, max_image_side_px
 from services.processing_policy import selected_scanned_page_numbers
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -101,7 +100,9 @@ def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
     import cv2
     import numpy as np
 
-    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(pixmap.height, pixmap.width, pixmap.n)
+    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
+        pixmap.height, pixmap.width, pixmap.n
+    )
     if pixmap.n == 4:
         image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
     elif pixmap.n == 1:
@@ -109,6 +110,77 @@ def convert_page_to_image(fitz_page: fitz.Page, output_path: str | Path) -> str:
     image = downscale_if_needed(image, max_side=max_image_side_px())
     cv2.imwrite(str(output_path), image)
     return str(output_path.resolve())
+
+
+# ---------------------------------------------------------------------------
+# On-demand evidence rendering (ws-b storage + db)
+# ---------------------------------------------------------------------------
+
+
+def render_source_page(
+    pdf_bytes: bytes,
+    page_number: int,
+    *,
+    dpi: int = 150,
+    highlight: str | None = None,
+) -> bytes:
+    """Render one source PDF page to PNG bytes for evidence review.
+
+    The PDF is opened from memory so evidence can be served straight from the
+    object store without staging files. ``dpi`` selects the raster scale
+    (72 dpi is the PDF native scale). When ``highlight`` has 3+ characters,
+    matching text is highlighted before rendering, mirroring the review route.
+    """
+    import re
+
+    if page_number < 1:
+        raise ValueError("Page number must be one or greater")
+    scale = max(0.5, min(4.0, float(dpi) / 72.0))
+    try:
+        document = fitz.open(stream=bytes(pdf_bytes), filetype="pdf")
+    except Exception as exc:
+        raise ValueError("Source PDF could not be opened") from exc
+    try:
+        if page_number > document.page_count:
+            raise LookupError("Source page not found")
+        page = document.load_page(page_number - 1)
+        if highlight and len(highlight.strip()) >= 3:
+            rects = page.search_for(highlight)
+            if not rects:
+                exclude_words = {
+                    "and",
+                    "the",
+                    "for",
+                    "with",
+                    "india",
+                    "pincode",
+                    "gujarat",
+                    "state",
+                    "district",
+                    "p.o.",
+                    "post",
+                    "office",
+                }
+                words = []
+                for word in re.split(r"[,\s:\-\[\]\(\)]+", highlight):
+                    word_clean = word.strip().lower()
+                    if len(word_clean) >= 3 and word_clean not in exclude_words:
+                        words.append(word.strip())
+                for word in sorted(set(words), key=len, reverse=True)[:5]:
+                    word_rects = page.search_for(word)
+                    if word_rects:
+                        rects.extend(word_rects)
+            for rect in rects:
+                annot = page.add_highlight_annot(rect)
+                annot.update()
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        return bytes(pixmap.tobytes("png"))
+    except (LookupError, ValueError):
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("Source PDF could not be rendered") from exc
+    finally:
+        document.close()
 
 
 # ---------------------------------------------------------------------------

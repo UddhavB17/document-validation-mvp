@@ -1,0 +1,41 @@
+# Cloud Scheduler retention job (ws-j-deploy-smoke; scheduler auth fx-hygiene).
+# Daily 02:00 IST -> POST /admin/retention/run?dry_run=false.
+#
+# AUTH: the endpoint accepts an admin JWT or the dedicated
+# `X-DMEF-Scheduler-Token` header (see routes/admin_ops.py). The API is
+# publicly reachable but application-authenticated, so this job deliberately
+# does not use OIDC: Scheduler OIDC would replace an Authorization header.
+# The endpoint stays authenticated; never remove the scheduler token.
+# Create once (operator only; substitute the real token, never commit it):
+#   gcloud scheduler jobs create http dmef-retention-daily \
+#     --location=asia-south1 \
+#     --schedule="0 2 * * *" \
+#     --time-zone="Asia/Kolkata" \
+#     --uri="https://dmef-api-PROJECT_HASH-REGION.a.run.app/admin/retention/run?dry_run=false" \
+#     --http-method=POST \
+#     --headers="Content-Type=application/json,X-DMEF-Scheduler-Token=DMEF_SCHEDULER_TOKEN_VALUE" \
+#     --message-body="{}"
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: dmef-retention-daily
+labels:
+  app: dmef
+  component: retention
+spec:
+  schedule: "0 2 * * *"
+  timeZone: Asia/Kolkata
+  httpTarget:
+    httpMethod: POST
+    uri: https://dmef-api-PROJECT_HASH-REGION.a.run.app/admin/retention/run?dry_run=false
+    headers:
+      Content-Type: application/json
+      # The operator substitutes the real DMEF_SCHEDULER_TOKEN value here.
+      # This repository contains a placeholder only, never the secret.
+      X-DMEF-Scheduler-Token: DMEF_SCHEDULER_TOKEN_VALUE
+    body: "{}"
+  retryConfig:
+    retryCount: 3
+    maxRetryDuration: 600s
+    minBackoffDuration: 60s
+    maxBackoffDuration: 600s

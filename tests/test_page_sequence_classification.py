@@ -88,9 +88,25 @@ def test_pan_never_inherits_into_unclassified_following_pages() -> None:
 
 def test_smoothing_does_not_turn_unknown_page_into_identity_document() -> None:
     pages = [
-        {"page_number": 1, "document_type": "PAN", "classification_confidence": 0.95, "extracted_fields": {}},
-        {"page_number": 2, "document_type": "Unknown", "classification_confidence": 0.0, "ocr_text": "property deed", "extracted_fields": {}},
-        {"page_number": 3, "document_type": "PAN", "classification_confidence": 0.95, "extracted_fields": {}},
+        {
+            "page_number": 1,
+            "document_type": "PAN",
+            "classification_confidence": 0.95,
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 2,
+            "document_type": "Unknown",
+            "classification_confidence": 0.0,
+            "ocr_text": "property deed",
+            "extracted_fields": {},
+        },
+        {
+            "page_number": 3,
+            "document_type": "PAN",
+            "classification_confidence": 0.95,
+            "extracted_fields": {},
+        },
     ]
 
     smoothed = _smooth_page_classifications(pages, application_id=None, total_pages=3)
@@ -231,8 +247,10 @@ def test_agreement_references_do_not_open_false_kfs_or_moa_documents() -> None:
         ],
         texts=[
             "FACILITY AGREEMENT Borrower Lender",
-            "Event of Default: charges are listed in the KFS. Borrower shall repay the Lender. " * 8,
-            "The Borrower represents that its Memorandum and Articles do not conflict with this Agreement. " * 8,
+            "Event of Default: charges are listed in the KFS. Borrower shall repay the Lender. "
+            * 8,
+            "The Borrower represents that its Memorandum and Articles do not conflict with this Agreement. "
+            * 8,
             "કલમ 7 ઉધારકર્તા લોનદાતા લોન કરાર ચુકવણીની શરતો",
         ],
     )
@@ -269,7 +287,8 @@ def test_embedded_kfs_heading_breaks_agreement_and_keeps_kfs_tables_together() -
         ],
         texts=[
             (
-                "Borrower consent and information sharing clauses. " * 20
+                "Borrower consent and information sharing clauses. "
+                * 20
                 + "\nKEY FACT STATEMENT (KFS)\nPART - 1 (Interest Rate & Fees/Charges)\n"
                 "Loan Proposal/Ac No. GJ000030765\nSanctioned loan Amount (in Rs.) 450000.00"
             ),
@@ -311,7 +330,8 @@ def test_agreement_sentence_referencing_sanction_letter_is_not_a_new_heading() -
                 "Any other terms not specifically covered herein but stipulated in the "
                 "Sanction Letter should be complied with. The Borrower shall pay charges "
                 "as per the schedule of charges/KFS. The Lender may require documents. "
-            ) * 6,
+            )
+            * 6,
         ],
     )
 
@@ -399,8 +419,10 @@ def test_sanction_conditions_do_not_split_on_property_agreement_or_stamp_referen
         ],
         texts=[
             "SANCTION LETTER\nSanctioned amount loan tenure and interest rate",
-            "Credit verification before disbursement. Property security documents and sanction conditions. " * 6,
-            "The offer and terms and conditions remain valid until loan disbursement. Sanction conditions apply. " * 6,
+            "Credit verification before disbursement. Property security documents and sanction conditions. "
+            * 6,
+            "The offer and terms and conditions remain valid until loan disbursement. Sanction conditions apply. "
+            * 6,
             "મંજૂરી પત્રની શરતો લોન વિતરણ વ્યાજ દર અને સ્ટેમ્પ ડ્યુટી અંગે લાગુ પડશે. " * 8,
             "FACILITY AGREEMENT\nThis agreement is between the Borrower and the Lender",
         ],
@@ -425,11 +447,13 @@ def test_self_attested_sanction_condition_is_not_a_new_document_boundary() -> No
                 "Credit Verification: Disbursement is subject to satisfactory credit verification.\n"
                 "Self-Attestation: All documents must be self-attested by the applicant.\n"
                 "Disbursement Conditions: loan and security documents must satisfy the lender. "
-            ) * 6,
+            )
+            * 6,
             (
                 "Security for Loan: the property secures the loan. The borrower must provide "
                 "documents before disbursement under these sanction conditions. "
-            ) * 7,
+            )
+            * 7,
             "FACILITY AGREEMENT\nThis agreement is between the Borrower and the Lender",
         ],
     )
@@ -523,8 +547,13 @@ def test_archive_root_folder_keywords_do_not_leak_into_every_member() -> None:
     # A shared ZIP root ("Quality_Checker_Documents") once matched the bare
     # "check" keyword and stamped "Cheque" onto all 175 unknown pages of a run.
     root = "26000_Quality_Checker_Documents"
-    assert _infer_document_type_from_filename(f"{root}/LOAN/TASK/Batti lal jambandi.pdf") != "Cheque"
-    assert _infer_document_type_from_filename(f"{root}/LOAN/TASK/Technical Valuation Report (8).pdf") != "Cheque"
+    assert (
+        _infer_document_type_from_filename(f"{root}/LOAN/TASK/Batti lal jambandi.pdf") != "Cheque"
+    )
+    assert (
+        _infer_document_type_from_filename(f"{root}/LOAN/TASK/Technical Valuation Report (8).pdf")
+        != "Cheque"
+    )
     assert (
         _infer_document_type_from_filename(f"{root}/Co-Applicant/KYC/8955707373_aadhaar.pdf")
         == "Aadhaar"
@@ -546,7 +575,12 @@ def test_short_filename_keywords_require_word_boundaries() -> None:
 
 def test_smoothed_unknown_page_marks_unanchored_identity_unreliable() -> None:
     pages = [
-        {"page_number": 1, "document_type": "Application Form", "classification_confidence": 0.95, "extracted_fields": {}},
+        {
+            "page_number": 1,
+            "document_type": "Application Form",
+            "classification_confidence": 0.95,
+            "extracted_fields": {},
+        },
         {
             "page_number": 2,
             "document_type": "Unknown",
@@ -554,7 +588,12 @@ def test_smoothed_unknown_page_marks_unanchored_identity_unreliable() -> None:
             "ocr_text": "APPLICATION DETAILS\nApplicant Name\nRamesh Kumar\n",
             "extracted_fields": {"_classification": {"raw_document_type": "Unknown"}},
         },
-        {"page_number": 3, "document_type": "Application Form", "classification_confidence": 0.95, "extracted_fields": {}},
+        {
+            "page_number": 3,
+            "document_type": "Application Form",
+            "classification_confidence": 0.95,
+            "extracted_fields": {},
+        },
     ]
 
     smoothed = _smooth_page_classifications(pages, application_id=None, total_pages=3)
@@ -568,11 +607,19 @@ def test_smoothed_unknown_page_marks_unanchored_identity_unreliable() -> None:
 def test_evidentiary_filenames_have_safe_specific_fallbacks() -> None:
     assert _infer_document_type_from_filename("Loan/TASK/peeru spdc.pdf") == "PDC"
     assert _infer_document_type_from_filename("Loan/TASK/insurance Calu.pdf") == "Insurance Form"
-    assert _infer_document_type_from_filename("Loan/TASK/Radha bai 6 month banking.pdf") == "Bank Statement"
+    assert (
+        _infer_document_type_from_filename("Loan/TASK/Radha bai 6 month banking.pdf")
+        == "Bank Statement"
+    )
     assert _infer_document_type_from_filename("LOAN/COLLATERAL/IMG-1.jpg") == "Property Image"
-    assert _infer_document_type_from_filename("LOAN/COLLATERAL/peeru lal proprty paper.pdf") == "Property Document"
+    assert (
+        _infer_document_type_from_filename("LOAN/COLLATERAL/peeru lal proprty paper.pdf")
+        == "Property Document"
+    )
     assert _infer_document_type_from_filename("Loan/TASK/House Photo.pdf") == "House Photo"
-    assert _infer_document_type_from_filename("Loan/TASK/Working Place Visit.pdf") == "Workplace Photo"
+    assert (
+        _infer_document_type_from_filename("Loan/TASK/Working Place Visit.pdf") == "Workplace Photo"
+    )
 
 
 def test_cached_spdc_filename_overrides_bank_statement_content_classification() -> None:
@@ -589,12 +636,14 @@ def test_cached_spdc_filename_overrides_bank_statement_content_classification() 
         current_type="Unknown",
         current_confidence=0.0,
         current_detected_page=None,
-        source_documents=[{
-            "source_document_id": "file-0018",
-            "original_filename": "LOAN/TASK/peeru spdc.pdf",
-            "internal_page_start": 59,
-            "internal_page_end": 60,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0018",
+                "original_filename": "LOAN/TASK/peeru spdc.pdf",
+                "internal_page_start": 59,
+                "internal_page_end": 60,
+            }
+        ],
     )
 
     assert refreshed["document_type"] == "PDC"
@@ -695,7 +744,8 @@ def test_explicit_facility_title_breaks_open_loan_agreement_run() -> None:
     )
 
     assert [page["document_type"] for page in assigned] == [
-        "Loan Agreement", "Facility Agreement",
+        "Loan Agreement",
+        "Facility Agreement",
     ]
     assert assigned[1]["detection_method"] == "detected"
 
@@ -730,7 +780,8 @@ def test_agreement_body_misclassified_as_affidavit_does_not_split_facility_run()
                 "name. The Borrower and Guarantor shall comply with this Agreement and repay "
                 "the Facility. " * 5
             ),
-            "The Borrower shall provide statements and comply with covenants under this Agreement. " * 6,
+            "The Borrower shall provide statements and comply with covenants under this Agreement. "
+            * 6,
         ],
     )
 

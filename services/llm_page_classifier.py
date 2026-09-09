@@ -9,7 +9,7 @@ from typing import Any
 
 from services.config import get_bool, get_float, get_int
 from services.document_classifier import registry_document_types
-from services.llm_client import call_llm_api
+from services.llm_client import call_llm_messages
 
 VALID_DOCUMENT_TYPES = tuple(registry_document_types(include_unknown=True))
 
@@ -89,11 +89,13 @@ _EVIDENCE_REQUIRED: dict[str, tuple[str, ...]] = {
 
 def is_llm_page_classifier_enabled() -> bool:
     import os
+
     raw_env = os.getenv("ENABLE_LLM_PAGE_CLASSIFIER")
     if raw_env is not None:
         return raw_env.strip().lower() in ("1", "true", "yes", "on")
 
     from services.config import get_setting
+
     db_enabled = get_setting("llm_enabled")
     if db_enabled is not None:
         return bool(db_enabled)
@@ -193,7 +195,12 @@ def normalize_llm_document_type(doc_type: str) -> str:
         return "MNREGA Job Card"
     if "npr" in cleaned:
         return "NPR Letter"
-    if "electricity" in cleaned or "utility bill" in cleaned or "water bill" in cleaned or "gas bill" in cleaned:
+    if (
+        "electricity" in cleaned
+        or "utility bill" in cleaned
+        or "water bill" in cleaned
+        or "gas bill" in cleaned
+    ):
         return "Utility Bill"
     if "bank statement" in cleaned or "account statement" in cleaned:
         return "Bank Statement"
@@ -239,7 +246,13 @@ def classify_page_with_llm(text: str) -> dict[str, Any] | None:
 
     prompt = _build_classifier_prompt(cleaned[:_MAX_TEXT_CHARS])
     try:
-        response_text = call_llm_api(prompt, max_tokens=120, timeout=120)
+        response_text = call_llm_messages(
+            [{"role": "user", "content": prompt}],
+            purpose="page_classification",
+            max_tokens=120,
+            timeout=120,
+            response_format="json",
+        )
     except Exception:
         return None
 
@@ -283,26 +296,24 @@ def _build_classifier_prompt(text: str) -> str:
     return (
         "You classify one page from an Indian NBFC loan file.\n"
         f"Choose exactly one document_type from this list: {types_list}.\n"
-        "Use \"None\" when the page is blank, unreadable, or you are unsure.\n"
-        "CRITICAL: \"Form 97\" (and old \"Form 60\") is ONLY a declaration in lieu of PAN. "
+        'Use "None" when the page is blank, unreadable, or you are unsure.\n'
+        'CRITICAL: "Form 97" (and old "Form 60") is ONLY a declaration in lieu of PAN. '
         "Choose Form 97 only when the page title/body literally says Form 97 / Form No. 97 / "
         "Form 60 / declaration in lieu of PAN. Never use Form 97 for loan agreements, "
         "sanction letters, stamp papers, electricity bills, application forms, or bureau reports.\n"
-        "If a PAN card image/text is present, choose \"PAN Card\", not Form 97.\n"
-        "Choose \"Income Tax Return\" only when the page contains return-specific evidence such as "
+        'If a PAN card image/text is present, choose "PAN Card", not Form 97.\n'
+        'Choose "Income Tax Return" only when the page contains return-specific evidence such as '
         "Income Tax Return, ITR acknowledgement, assessment year, return of income, or total income. "
-        "A PAN heading and PAN number alone are \"PAN Card\".\n"
-        "Electricity/water/gas invoices are \"Utility Bill\". Non-judicial stamp papers are \"Stamp Duty\".\n"
-        "Do not merge credit bureaus: choose \"CIBIL Report\" only for TransUnion CIBIL/CIBIL pages, "
-        "and choose \"CRIF Report\" only for CRIF High Mark/CRIF pages.\n"
-        "Choose \"CERSAI Report\" for CERSAI, debtor-based search, or Central Registry of Securitisation pages.\n"
-        "Do not merge bank documents: choose \"Passbook\" for passbook/pass book pages, "
-        "\"Cheque\" for cheque or cancelled cheque pages, \"PDC\" only for post-dated/security cheques, "
-        "and \"Bank Statement\" only for statement/account-statement pages.\n"
-        "Respond with TOON (Token-Oriented Object Notation) format only, no markdown, no json:\n"
-        "document_type: \"...\"\n"
-        "confidence: 0.9\n"
-        "reason: \"short reason\"\n\n"
+        'A PAN heading and PAN number alone are "PAN Card".\n'
+        'Electricity/water/gas invoices are "Utility Bill". Non-judicial stamp papers are "Stamp Duty".\n'
+        'Do not merge credit bureaus: choose "CIBIL Report" only for TransUnion CIBIL/CIBIL pages, '
+        'and choose "CRIF Report" only for CRIF High Mark/CRIF pages.\n'
+        'Choose "CERSAI Report" for CERSAI, debtor-based search, or Central Registry of Securitisation pages.\n'
+        'Do not merge bank documents: choose "Passbook" for passbook/pass book pages, '
+        '"Cheque" for cheque or cancelled cheque pages, "PDC" only for post-dated/security cheques, '
+        'and "Bank Statement" only for statement/account-statement pages.\n'
+        "Respond with JSON only, no markdown, no TOON:\n"
+        '{"document_type": "...", "confidence": 0.9, "reason": "short reason"}\n\n'
         "Page text:\n"
         f"{text}"
     )
@@ -313,7 +324,9 @@ def _normalize_evidence_text(value: str) -> str:
     lowered = lowered.replace("\u2013", "-").replace("\u2014", "-")
     normalized = "".join(
         character
-        if character.isalnum() or character == "." or unicodedata.category(character).startswith("M")
+        if character.isalnum()
+        or character == "."
+        or unicodedata.category(character).startswith("M")
         else " "
         for character in lowered
     )
@@ -328,30 +341,34 @@ def _contains_evidence(haystack: str, phrase: str) -> bool:
 
 
 def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
+    """Parse the classifier answer: JSON with a schema check, TOON as fallback.
+
+    The model is instructed to answer in JSON (input-TOON / output-JSON rule);
+    TOON decoding is kept as a fallback so older local models that ignore the
+    instruction still produce a usable classification.
+    """
     cleaned = response_text.strip()
     if not cleaned:
         return None
 
-    # Strip markdown code blocks (handling both toon, json, or generic code fences)
-    fence_match = re.search(r"```(?:toon|json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
+    # Strip markdown code blocks (handling json, toon, or generic fences)
+    fence_match = re.search(r"```(?:json|toon)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
     if fence_match:
         cleaned = fence_match.group(1).strip()
 
-    try:
-        from toon import decode
-        parsed = decode(cleaned)
-        if isinstance(parsed, dict) and parsed.get("document_type"):
-            return parsed
-    except Exception:
-        pass
-
-    # Small local models occasionally return valid JSON despite an explicit
-    # TOON-only instruction. Accept the equivalent object instead of discarding
-    # an otherwise usable classification.
     try:
         parsed = json.loads(cleaned)
         if isinstance(parsed, dict) and parsed.get("document_type"):
             return parsed
     except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    try:
+        from toon import decode
+
+        parsed = decode(cleaned)
+        if isinstance(parsed, dict) and parsed.get("document_type"):
+            return parsed
+    except Exception:
         pass
     return None

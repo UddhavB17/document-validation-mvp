@@ -68,11 +68,11 @@ class VerificationManifest(BaseModel):
         payload = dict(raw)
         if "people" not in payload:
             reference = payload.get("reference_data") or {}
-            if isinstance(reference, dict) and any(isinstance(value, dict) for value in reference.values()):
+            if isinstance(reference, dict) and any(
+                isinstance(value, dict) for value in reference.values()
+            ):
                 people = {
-                    str(key): value
-                    for key, value in reference.items()
-                    if isinstance(value, dict)
+                    str(key): value for key, value in reference.items() if isinstance(value, dict)
                 }
             else:
                 people = {"primary": reference}
@@ -89,7 +89,7 @@ class VerificationManifest(BaseModel):
         return payload
 
     @model_validator(mode="after")
-    def validate_relationships(self) -> "VerificationManifest":
+    def validate_relationships(self) -> VerificationManifest:
         normalized_people: dict[str, PersonReference] = {}
         for key, person in self.people.items():
             person_id = str(key).strip()

@@ -14,7 +14,6 @@ from services.validation_gates import (
     has_passbook_anchor,
 )
 
-
 _DOCUMENT_TYPE_ALIASES: dict[str, set[str]] = {
     "Technical Clearance Report": {"Technical Report"},
 }
@@ -23,7 +22,9 @@ _DOCUMENT_TYPE_ALIASES: dict[str, set[str]] = {
 def is_confident_document_match(page: dict[str, Any], document_type: str) -> bool:
     """Return True when a page can safely satisfy a checklist document type."""
     actual_type = page.get("document_type")
-    if actual_type != document_type and actual_type not in _DOCUMENT_TYPE_ALIASES.get(document_type, set()):
+    if actual_type != document_type and actual_type not in _DOCUMENT_TYPE_ALIASES.get(
+        document_type, set()
+    ):
         if not _is_legal_clearance_evidence(page, document_type):
             return False
 
@@ -41,7 +42,9 @@ def is_confident_document_match(page: dict[str, Any], document_type: str) -> boo
         return False
     if expected_key == "cheque" and not has_cheque_anchor(text, fields):
         return False
-    if expected_key in {"crif report", "cibil report"} and not has_bureau_anchor(text, fields, "applicant_name"):
+    if expected_key in {"crif report", "cibil report"} and not has_bureau_anchor(
+        text, fields, "applicant_name"
+    ):
         return False
 
     return True
@@ -50,7 +53,10 @@ def is_confident_document_match(page: dict[str, Any], document_type: str) -> boo
 def _meets_confidence_threshold(page: dict[str, Any]) -> bool:
     config = effective_config()
     classification_confidence = page.get("classification_confidence")
-    if classification_confidence is not None and float(classification_confidence) < config.min_classification_confidence:
+    if (
+        classification_confidence is not None
+        and float(classification_confidence) < config.min_classification_confidence
+    ):
         return False
 
     ocr_confidence = page.get("ocr_confidence")
@@ -78,10 +84,12 @@ def _is_legal_clearance_evidence(page: dict[str, Any], expected_type: str) -> bo
         # Operational legal clearance can arrive as an approval email thread
         # bundled with the OTC/PDD list.  Require the explicit legal-approval
         # subject so an ordinary OTC/PDD inventory cannot satisfy S37.
-        return bool(re.search(
-            r"\brequest\s+legal\s+(?:otc\s*/?\s*pdd|pdd\s*/?\s*otc)\s+approval\b",
-            text,
-        ))
+        return bool(
+            re.search(
+                r"\brequest\s+legal\s+(?:otc\s*/?\s*pdd|pdd\s*/?\s*otc)\s+approval\b",
+                text,
+            )
+        )
 
     # Agreement/sanction boilerplate often contains isolated words such as
     # "legal", "security" and "clear".  Only accept it as alternate legal
@@ -103,7 +111,9 @@ def is_exact_confident_document_match(page: dict[str, Any], document_type: str) 
     return _meets_confidence_threshold(page)
 
 
-def confident_pages_for_types(pages: list[dict[str, Any]], document_types: list[str]) -> list[dict[str, Any]]:
+def confident_pages_for_types(
+    pages: list[dict[str, Any]], document_types: list[str]
+) -> list[dict[str, Any]]:
     return [
         page
         for page in pages

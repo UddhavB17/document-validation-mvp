@@ -6,8 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Any
-
+from typing import Any, cast
 
 NAME_FIELD_ALIASES = {
     "name",
@@ -264,10 +263,7 @@ def canonicalize_person_name(value: Any) -> NameCandidate:
         return NameCandidate(None, False, "blank")
     if normalized in {_normalize_for_rules(label) for label in _LABEL_ONLY_VALUES}:
         return NameCandidate(None, False, "field_label")
-    if any(
-        piece.strip(" :,.–—\-/()[]|'\"") in _INDIC_LABEL_TOKENS
-        for piece in candidate.split()
-    ):
+    if any(piece.strip(" :,.–—\-/()[]|'\"") in _INDIC_LABEL_TOKENS for piece in candidate.split()):
         return NameCandidate(None, False, "indic_field_label")
     if normalized in _PLACEHOLDER_VALUES:
         return NameCandidate(None, False, "placeholder")
@@ -279,7 +275,9 @@ def canonicalize_person_name(value: Any) -> NameCandidate:
         return NameCandidate(None, False, "relationship_or_care_of_value")
     if re.search(r"\d", candidate):
         return NameCandidate(None, False, "contains_digits")
-    if any(part in candidate.lower() for part in ("xmlns", "http://", "https://", "<", ">", "=", "/>")):
+    if any(
+        part in candidate.lower() for part in ("xmlns", "http://", "https://", "<", ">", "=", "/>")
+    ):
         return NameCandidate(None, False, "metadata_or_markup")
     if not any(character.isalpha() for character in candidate):
         return NameCandidate(None, False, "no_letters")
@@ -323,7 +321,7 @@ def is_name_field(field: Any) -> bool:
 
 def comparable_name(value: Any) -> str:
     candidate = canonicalize_person_name(value)
-    text = candidate.value if candidate.valid else str(value or "")
+    text = cast(str, candidate.value) if candidate.valid else str(value or "")
     return _compact_unicode(_HONORIFIC_RE.sub("", text).casefold())
 
 
@@ -343,7 +341,14 @@ def name_similarity(left: Any, right: Any) -> float:
 
 def has_independent_identity_anchor(fields: dict[str, Any]) -> bool:
     """Return true when a page has identity evidence stronger than name text."""
-    for field in ("pan_number", "aadhaar_number", "aadhaar_last4", "phone_number", "date_of_birth", "dob"):
+    for field in (
+        "pan_number",
+        "aadhaar_number",
+        "aadhaar_last4",
+        "phone_number",
+        "date_of_birth",
+        "dob",
+    ):
         value = fields.get(field)
         if value not in (None, "", [], {}):
             return True
@@ -378,3 +383,153 @@ def _compact_unicode(value: Any) -> str:
         for character in str(value or "").casefold()
         if character.isalnum() or unicodedata.category(character).startswith("M")
     )
+
+
+# --- Unified name matching (single threshold, single place) -----------------
+# Every name comparison in the codebase routes through `names_equivalent` /
+# `name_match_score` (via `field_verification.verify_name`). Thresholds live
+# here and nowhere else.
+
+#: Fuzzy match threshold on the 0-100 scale (mirrors rapidfuzz convention).
+NAME_MATCH_THRESHOLD = 85
+#: Same threshold on the 0-1 scale used by `names_match`.
+NAME_MATCH_THRESHOLD_RATIO = 0.85
+
+# Small table-driven Devanagari romaniser (transliteration-lite). Deliberately
+# dependency-free: `indic-transliteration` is not installed. Covers consonants,
+# vowels, vowel signs (matras), anusvara/visarga and nukta; anything unmapped
+# is dropped so comparison degrades gracefully instead of failing.
+_DEVANAGARI_ROMAN: dict[str, str] = {
+    "अ": "a", "आ": "aa", "इ": "i", "ई": "ii", "उ": "u", "ऊ": "uu",
+    "ऋ": "ri", "ए": "e", "ऐ": "ai", "ओ": "o", "औ": "au",
+    "अं": "an", "अः": "ah",
+    "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "ङ": "ng",
+    "च": "ch", "छ": "chh", "ज": "j", "झ": "jh", "ञ": "ny",
+    "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh", "ण": "n",
+    "त": "t", "थ": "th", "द": "d", "ध": "dh", "न": "n",
+    "प": "p", "फ": "ph", "ब": "b", "भ": "bh", "म": "m",
+    "य": "y", "र": "r", "ल": "l", "व": "v", "श": "sh",
+    "ष": "sh", "स": "s", "ह": "h",
+    "क्ष": "ksh", "त्र": "tr", "ज्ञ": "gy",
+    "ड़": "d", "ढ़": "dh",
+    "ा": "aa", "ि": "i", "ी": "ii", "ु": "u", "ू": "uu",
+    "ृ": "ri", "े": "e", "ै": "ai", "ो": "o", "ौ": "au",
+    "ं": "n", "ँ": "n", "ः": "h", "़": "", "्": "",
+    "०": "0", "१": "1", "२": "2", "३": "3", "४": "4",
+    "५": "5", "६": "6", "७": "7", "८": "8", "९": "9",
+}
+
+# Gujarati subset seen on loan documents (same table-driven approach).
+_GUJARATI_ROMAN: dict[str, str] = {
+    "અ": "a", "આ": "aa", "ઇ": "i", "ઈ": "ii", "ઉ": "u", "ઊ": "uu",
+    "એ": "e", "ઐ": "ai", "ઓ": "o", "ઔ": "au",
+    "ક": "k", "ખ": "kh", "ગ": "g", "ઘ": "gh", "ચ": "ch",
+    "છ": "chh", "જ": "j", "ઝ": "jh", "ટ": "t", "ઠ": "th",
+    "ડ": "d", "ઢ": "dh", "ણ": "n", "ત": "t", "થ": "th",
+    "દ": "d", "ધ": "dh", "ન": "n", "પ": "p", "ફ": "ph",
+    "બ": "b", "ભ": "bh", "મ": "m", "ય": "y", "ર": "r",
+    "લ": "l", "વ": "v", "શ": "sh", "ષ": "sh", "સ": "s", "હ": "h",
+    "ા": "aa", "િ": "i", "ી": "ii", "ુ": "u", "ૂ": "uu",
+    "ે": "e", "ૈ": "ai", "ો": "o", "ૌ": "au",
+    "ં": "n", "ઃ": "h", "્": "",
+}
+
+_ROMANISER = {**_DEVANAGARI_ROMAN, **_GUJARATI_ROMAN}
+
+# Honorifics stripped before comparison (Latin + Devanagari forms).
+_MATCH_HONORIFICS = frozenset(
+    {
+        "mr", "mrs", "ms", "miss", "master", "shri", "smt", "kumari",
+        "dr", "shree", "sree", "late", "sri",
+    }
+)
+
+
+def romanise_indic(text: Any) -> str:
+    """Romanise Devanagari/Gujarati characters with the built-in tables."""
+    return "".join(_ROMANISER.get(char, char) for char in str(text or ""))
+
+
+def normalize_name_text(value: Any) -> str:
+    """Lowercase, romanise, strip honorifics/punctuation for name comparison."""
+    text = romanise_indic(value).casefold()
+    # Split glued OCR tokens such as "UkarLal" before tokenising.
+    text = re.sub(r"([a-z])(lal|bai|devi|singh|kumar)\b", r"\1 \2", text)
+    tokens = re.findall(r"[a-z]+", text)
+    tokens = [token for token in tokens if token not in _MATCH_HONORIFICS]
+    return " ".join(tokens)
+
+
+def name_match_tokens(value: Any) -> list[str]:
+    """Order-preserving de-duplicated normalized tokens for one name."""
+    return list(dict.fromkeys(normalize_name_text(value).split()))
+
+
+def _initials_compatible(short: list[str], long: list[str]) -> bool:
+    """True when every single-letter token in `short` matches a `long` initial."""
+    if not short or not long or len(short) > len(long):
+        return False
+    long_initials = [token[0] for token in long]
+    short_initials = [token[0] for token in short]
+    if any(len(token) > 1 for token in short):
+        return False
+    return short_initials == long_initials[: len(short_initials)]
+
+
+def _token_set_ratio(left: str, right: str) -> float:
+    """Token-set similarity on the 0-100 scale (order-insensitive)."""
+    try:
+        from rapidfuzz import fuzz as _fuzz
+
+        return round(float(_fuzz.token_set_ratio(left, right)), 1)
+    except ImportError:
+        return round(SequenceMatcher(None, left, right).ratio() * 100.0, 1)
+
+
+def name_match_score(left: Any, right: Any) -> float:
+    """Return 0-100 similarity using the single unified name matcher."""
+    left_tokens = name_match_tokens(left)
+    right_tokens = name_match_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    if left_tokens == right_tokens:
+        return 100.0
+    # Indian documents rotate given/father/surname order; the token set is
+    # what identifies the person.
+    if len(left_tokens) == len(right_tokens) and set(left_tokens) == set(right_tokens):
+        return 100.0
+    # "Unkar" vs "Unkar Lal": the shorter token list prefixes the longer one.
+    if len(left_tokens) <= len(right_tokens):
+        short, long = left_tokens, right_tokens
+    else:
+        short, long = right_tokens, left_tokens
+    if short == long[: len(short)]:
+        return 95.0
+    # Initials: "R Kumar" vs "Ramesh Kumar".
+    expanded_short = [t for t in short if len(t) > 1]
+    if _initials_compatible([t for t in short if len(t) == 1], long) and all(
+        token in long for token in expanded_short
+    ):
+        return 95.0
+    if _initials_compatible([t for t in long if len(t) == 1], short) and all(
+        token in short for token in [t for t in long if len(t) > 1]
+    ):
+        return 95.0
+    left_compact = "".join(left_tokens)
+    right_compact = "".join(right_tokens)
+    if left_compact == right_compact:
+        return 100.0
+    if len(left_compact) >= 4 and (
+        left_compact in right_compact or right_compact in left_compact
+    ):
+        return 90.0
+    # Token-set ratio on the normalised (romanised, honorific-free) forms.
+    # Deliberately no vowel-collapsing here: pairs such as MOSMEE/MOSAMI or
+    # Peeru/Piru differ only by vowels yet are pinned as mismatches by the
+    # test suite, so they must stay below threshold and go to human review.
+    return _token_set_ratio(" ".join(left_tokens), " ".join(right_tokens))
+
+
+def names_equivalent(left: Any, right: Any, *, threshold: float = NAME_MATCH_THRESHOLD) -> bool:
+    """True when two person names match under the unified matcher."""
+    return name_match_score(left, right) >= threshold

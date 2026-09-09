@@ -12,12 +12,10 @@ Strategy
 from __future__ import annotations
 
 from pathlib import Path
-import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Image creation helpers (no PDF or OCR dependency)
@@ -51,7 +49,6 @@ def _make_blurry_png(path: Path, size: int = 200) -> None:
 
 
 class TestCheckReadability:
-
     def test_sharp_image_is_readable(self, tmp_path: Path) -> None:
         """A high-contrast checkerboard must be classified as readable."""
         pytest.importorskip("cv2")
@@ -95,7 +92,6 @@ class TestCheckReadability:
 
 
 class TestPreprocessImage:
-
     def test_returns_numpy_array(self, tmp_path: Path) -> None:
         """preprocess_image must return a numpy ndarray."""
         pytest.importorskip("cv2")
@@ -124,7 +120,6 @@ class TestPreprocessImage:
 
 
 class TestRunOcrOnPage:
-
     # ── test_blurry_image_flagged ────────────────────────────────────────────
 
     def test_blurry_image_still_runs_ocr(self, tmp_path: Path) -> None:
@@ -136,7 +131,7 @@ class TestRunOcrOnPage:
         img_path = tmp_path / "blurry.png"
         _make_blurry_png(img_path)
 
-        fake_ocr_output = [[ [None, ["Blurry Passbook Page", 0.42]] ]]
+        fake_ocr_output = [[[None, ["Blurry Passbook Page", 0.42]]]]
         mock_model = MagicMock()
         mock_model.predict.return_value = fake_ocr_output
         with patch.object(ocr_engine, "structure_models", {"hi": mock_model, "en": mock_model}):
@@ -202,7 +197,9 @@ class TestRunOcrOnPage:
         assert "ABCDE1234F" in result["ocr_text"]
         assert result["confidence"] == pytest.approx(0.965)
 
-    def test_clear_image_returns_text_from_wrapped_paddleocr_v3_result(self, tmp_path: Path) -> None:
+    def test_clear_image_returns_text_from_wrapped_paddleocr_v3_result(
+        self, tmp_path: Path
+    ) -> None:
         """PaddleOCR 3.x result JSON may wrap fields under a res key."""
         pytest.importorskip("cv2")
         from services import ocr_engine

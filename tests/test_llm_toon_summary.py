@@ -1,5 +1,4 @@
-import pytest
-from services.llm_service import parse_llm_summary, build_default_summary, generate_explanation, summarize_exceptions
+from services.llm_service import build_default_summary, parse_llm_summary, summarize_exceptions
 
 
 def test_parse_llm_summary_valid():
@@ -23,9 +22,11 @@ page_summaries[2]:
     assert len(result["page_summaries"]) == 2
     assert result["page_summaries"][0]["page_number"] == 3
     assert result["page_summaries"][0]["document_type"] == "Bank Statement"
-    assert result["page_summaries"][0]["summary_points"] == ["Transaction history for John Doe", "Covers April to June 2026"]
+    assert result["page_summaries"][0]["summary_points"] == [
+        "Transaction history for John Doe",
+        "Covers April to June 2026",
+    ]
     assert result["page_summaries"][0]["problem_description"] == "Name misspelling on account."
-
 
 
 def test_parse_llm_summary_fenced():
@@ -59,12 +60,12 @@ def test_build_default_summary():
             "severity": "HIGH",
             "reason": "PAN number does not match ground truth.",
             "expected_value": "ABCDE1234F",
-            "found_value": "ABCDE5678F"
+            "found_value": "ABCDE5678F",
         }
     ]
     ground_truth = {"loan_id": "LAP-101", "applicant_name": "Ramesh Kumar"}
     result = build_default_summary(anomalies, ground_truth)
-    
+
     assert result["overall_summary"] == "1 exception(s) require review: 1 high-severity"
     assert result["final_recommendation"] == "MANUAL REVIEW"
     assert len(result["page_summaries"]) == 1
@@ -72,13 +73,35 @@ def test_build_default_summary():
     assert result["page_summaries"][0]["document_type"] == "PAN Card"
     assert result["page_summaries"][0]["rule_id"] == "PAN_NUMBER_MISMATCH"
     assert "Expected value was: ABCDE1234F." in result["page_summaries"][0]["summary_points"]
-    assert result["page_summaries"][0]["problem_description"] == "PAN number does not match ground truth."
+    assert (
+        result["page_summaries"][0]["problem_description"]
+        == "PAN number does not match ground truth."
+    )
 
 
 def test_summarize_exceptions():
-    anomalies = [
-        {"severity": "HIGH", "rule_id": "TEST_RULE"}
-    ]
+    anomalies = [{"severity": "HIGH", "rule_id": "TEST_RULE"}]
     result_str = summarize_exceptions(anomalies)
     assert result_str is not None
     assert "exception(s) require review" in result_str
+
+
+def test_llm_output_contract_is_json_not_toon():
+    """Input-TOON / output-JSON rule (ws-g): prompts must request JSON output."""
+    from services.llm_page_classifier import _build_classifier_prompt
+    from services.llm_service import _build_bilingual_prompt
+    from services.structured_llm_classifier import build_structured_classifier_prompt
+
+    page_prompt = _build_classifier_prompt("PAN ABCDE1234F")
+    assert "JSON" in page_prompt
+    assert "document_type" in page_prompt
+
+    bilingual = _build_bilingual_prompt([{"code": "DATA_MISSING", "severity": "LOW"}], {})
+    assert '{"en": "...", "hi": "..."}' in bilingual
+
+    structured = build_structured_classifier_prompt(
+        deterministic_document_type="Unknown",
+        structured_fields={"pan_number": "ABCDE1234F"},
+        ocr_text="PAN card",
+    )
+    assert "JSON" in structured

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from services.consistency_checks import run_consistency_checks
+from services.field_extractor import extract_fields
 from services.person_ownership import (
     assign_page_owners,
     name_matches_trusted_person,
     ownership_anomalies_for_unassigned,
     resolve_person_owner,
 )
-from services.field_extractor import extract_fields
-
 
 PEERU_FAMILY = {
     "primary": {
@@ -304,8 +303,7 @@ def test_cheque_owner_resolves_from_printed_signature_holder_name() -> None:
         {
             "document_type": "Cheque",
             "ocr_text": (
-                "State Bank Of India\nA/c No.\n41249946368\n"
-                "Mr. Kala Singh\nPlease sign above"
+                "State Bank Of India\nA/c No.\n41249946368\nMr. Kala Singh\nPlease sign above"
             ),
             # Reproduce the old extractor mistake from application 93.
             "extracted_fields": {"account_holder_name": "State Bank Of India"},
@@ -546,8 +544,7 @@ def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
     trusted = [
         item
         for item in anomalies
-        if item["rule_id"].startswith("TRUSTED_")
-        and "MISMATCH" in item["rule_id"]
+        if item["rule_id"].startswith("TRUSTED_") and "MISMATCH" in item["rule_id"]
     ]
     assert trusted == [], [item["rule_id"] for item in trusted]
 
@@ -610,21 +607,15 @@ def test_name_with_trusted_father_token_matches_same_person() -> None:
 
     # "Anupkumar Chetanbhai Suthar" = given name + father's name + surname:
     # the same person under Gujarati naming conventions.
-    assert name_matches_trusted_person(
-        "Anupkumar Chetanbhai Suthar", SINGLE_PERSON["primary"]
-    )
+    assert name_matches_trusted_person("Anupkumar Chetanbhai Suthar", SINGLE_PERSON["primary"])
     # A relative sharing the father/surname tokens is still a different person.
-    assert not name_matches_trusted_person(
-        "Aaratiben Anupkumar Suthar", SINGLE_PERSON["primary"]
-    )
+    assert not name_matches_trusted_person("Aaratiben Anupkumar Suthar", SINGLE_PERSON["primary"])
 
 
 def test_duplicated_trusted_name_tokens_still_match() -> None:
     from services.person_ownership import name_matches_trusted_person
 
-    assert name_matches_trusted_person(
-        "Kuldeep", {"applicant_name": "Kuldeep KULDEEP"}
-    )
+    assert name_matches_trusted_person("Kuldeep", {"applicant_name": "Kuldeep KULDEEP"})
 
 
 def test_passbook_owner_uses_duplicate_aware_name_matching() -> None:

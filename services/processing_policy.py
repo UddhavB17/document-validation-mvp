@@ -32,9 +32,7 @@ def full_scan_ocr_enabled() -> bool:
 def selected_scanned_page_numbers(page_structure: list[dict[str, Any]]) -> set[int]:
     """Choose scanned pages for OCR using a front/tail/even-sample strategy."""
     scanned_pages = [
-        int(page["page_number"])
-        for page in page_structure
-        if page.get("page_type") == "scanned"
+        int(page["page_number"]) for page in page_structure if page.get("page_type") == "scanned"
     ]
     if not scanned_pages:
         return set()
@@ -87,7 +85,6 @@ def is_internal_document_type(document_type: object) -> bool:
 
 def is_ocr_skipped_page(page: dict[str, Any]) -> bool:
     extracted_fields = page.get("extracted_fields") or {}
-    return (
-        page.get("document_type") == OCR_SKIPPED_DOCUMENT_TYPE
-        or (isinstance(extracted_fields, dict) and bool(extracted_fields.get("_ocr_skipped")))
+    return page.get("document_type") == OCR_SKIPPED_DOCUMENT_TYPE or (
+        isinstance(extracted_fields, dict) and bool(extracted_fields.get("_ocr_skipped"))
     )

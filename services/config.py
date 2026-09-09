@@ -1,4 +1,19 @@
-"""Runtime configuration with safe environment parsing."""
+"""Runtime configuration with safe environment parsing.
+
+Settings precedence (applies to every key, including ``LLM_*``):
+
+1. Non-empty environment variable (``KEY.WITH.DOTS`` maps to ``KEY_WITH_DOTS``).
+   Blank/whitespace-only env values are treated as unset.
+2. ``system_settings`` row in the database. Rows whose ``value_type`` is
+   ``secret`` (or whose key ends in ``api_key``/``token``) are stored
+   Fernet-encrypted (see ``services.job_control``) and are decrypted here on
+   read; legacy plaintext rows still read back as-is.
+3. The ``default`` argument passed by the caller.
+
+Environment always wins over the database so ops toggles and test overrides
+take effect even when a Settings-UI copy exists in SQLite. The Settings UI
+writes through to the database; it never overrides a non-empty env value.
+"""
 
 from __future__ import annotations
 
@@ -52,7 +67,9 @@ def get_bool(name: str, default: bool) -> bool:
     return default
 
 
-def get_int(name: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+def get_int(
+    name: str, default: int, *, minimum: int | None = None, maximum: int | None = None
+) -> int:
     raw = os.getenv(name)
     if raw is not None:
         try:
@@ -77,7 +94,9 @@ def get_int(name: str, default: int, *, minimum: int | None = None, maximum: int
     return value
 
 
-def get_float(name: str, default: float, *, minimum: float | None = None, maximum: float | None = None) -> float:
+def get_float(
+    name: str, default: float, *, minimum: float | None = None, maximum: float | None = None
+) -> float:
     raw = os.getenv(name)
     if raw is not None:
         try:
@@ -185,24 +204,36 @@ def log_effective_config() -> None:
 
 _MISSING = object()
 
-# Settings UI keys: database wins over a leftover .env copy.
-_UI_MANAGED_SETTING_KEYS = frozenset({
-    "ocr.provider",
-    "llm_enabled",
-    "llm_provider",
-    "llm_model",
-    "min_confidence",
-    "classification_profile",
-})
+
+def is_secret_setting(config_key: str, value_type: str | None) -> bool:
+    """Return True when a setting must be encrypted at rest and masked in APIs."""
+    return str(value_type or "").lower() == "secret" or str(config_key or "").lower().endswith(
+        ("api_key", "token")
+    )
+
+
+def _decrypt_stored_secret(config_key: str, stored: str) -> str | None:
+    """Decrypt an encrypted secret setting; None when undecryptable.
+
+    Legacy plaintext rows (no envelope prefix) are returned as-is.
+    """
+    from services.job_control import decrypt_secret, is_encrypted_secret
+
+    if not is_encrypted_secret(stored):
+        return stored
+    try:
+        return decrypt_secret(stored)
+    except Exception as exc:
+        logger.warning("Stored secret %r failed decryption; treating as unset: %s", config_key, exc)
+        return None
 
 
 def get_setting(key: str, default: Any = None) -> Any:
-    """Read a setting from system_settings, with non-empty env as fallback.
+    """Read a setting with env-overrides-database precedence.
 
-    UI-managed keys prefer the database so Settings changes apply even when a
-    copied ``.env`` still defines the matching variable. Blank env values are
-    treated as unset. Non-UI keys keep env-first override behavior for tests
-    and ops toggles.
+    A non-empty environment variable always wins (see the module docstring).
+    Blank env values fall through to the database, then to ``default``.
+    Secret settings are decrypted on read.
     """
     import json
 
@@ -229,6 +260,7 @@ def get_setting(key: str, default: Any = None) -> Any:
             return value
 
     db_value: Any = _MISSING
+    db_value_type: str | None = None
     from database.db import get_connection
 
     try:
@@ -240,6 +272,7 @@ def get_setting(key: str, default: Any = None) -> Any:
             if row:
                 val = row["config_value"]
                 val_type = row["value_type"]
+                db_value_type = str(val_type) if val_type is not None else None
                 if val_type == "bool":
                     db_value = str(val).strip().lower() in ("1", "true", "yes", "on")
                 elif val_type == "int":
@@ -257,13 +290,16 @@ def get_setting(key: str, default: Any = None) -> Any:
             exc,
         )
 
-    prefer_db = key in _UI_MANAGED_SETTING_KEYS or key.startswith("google.vision.")
-    if prefer_db and db_value is not _MISSING:
-        # Empty stored strings mean "unset" so a non-empty env fallback can apply.
-        if not (isinstance(db_value, str) and str(db_value).strip() == ""):
-            return db_value
+    # Environment always wins; a blank env value means "unset".
     if env_val is not None:
         return _coerce_env(env_val)
     if db_value is not _MISSING:
+        if (
+            isinstance(db_value, str)
+            and db_value.strip() != ""
+            and is_secret_setting(key, db_value_type)
+        ):
+            decrypted = _decrypt_stored_secret(key, db_value)
+            return decrypted if decrypted is not None else default
         return db_value
     return default

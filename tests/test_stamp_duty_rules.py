@@ -1,6 +1,5 @@
 from services.stamp_duty_rules import evaluate_stamp_duty, load_stamp_duty_rules
 
-
 RULES = [
     {
         "rule_id": "test-gujarat-article-5h-2025",

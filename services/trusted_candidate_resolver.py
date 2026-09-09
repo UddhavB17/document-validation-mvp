@@ -9,7 +9,8 @@ ambiguous.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from services.field_verification import (
     verify_aadhaar,
@@ -21,7 +22,6 @@ from services.field_verification import (
     verify_pincode,
 )
 from services.person_names import is_person_name_candidate
-
 
 RECOVERABLE_TRUSTED_FIELDS = frozenset(
     {
@@ -301,10 +301,10 @@ def _label_blocks(
         if match is None or (reject_label is not None and reject_label.search(line)):
             continue
         parts: list[str] = []
-        same_line = line[match.end():].strip(" :-/|\t")
+        same_line = line[match.end() :].strip(" :-/|\t")
         if same_line:
             parts.append(same_line)
-        for candidate in lines[index + 1:index + 1 + max_lines]:
+        for candidate in lines[index + 1 : index + 1 + max_lines]:
             if stop_at_next_field and _NEXT_FIELD_LABEL.search(candidate):
                 break
             if candidate:

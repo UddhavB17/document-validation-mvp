@@ -1,17 +1,21 @@
 import json
 
+from services.exception_aggregator import aggregate
 from services.pipeline import _build_page_records
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
     full_scan_ocr_enabled,
     selected_scanned_page_numbers,
 )
-from services.exception_aggregator import aggregate
 
 
 def _scanned_pages(count: int) -> list[dict]:
     return [
-        {"page_number": page_number, "page_type": "scanned", "image_path": f"page_{page_number}.png"}
+        {
+            "page_number": page_number,
+            "page_type": "scanned",
+            "image_path": f"page_{page_number}.png",
+        }
         for page_number in range(1, count + 1)
     ]
 
@@ -90,9 +94,13 @@ def test_build_page_records_skips_scanned_pages_outside_budget(monkeypatch) -> N
 
     def fake_ocr(image_path: str) -> dict:
         ocr_calls.append(image_path)
-        return {"ocr_text": "Permanent Account Number ABCDE1234F", "is_readable": True, "confidence": 0.95}
+        return {
+            "ocr_text": "Permanent Account Number ABCDE1234F",
+            "is_readable": True,
+            "confidence": 0.95,
+        }
 
-    monkeypatch.setattr("services.pipeline.run_ocr_on_page", fake_ocr)
+    monkeypatch.setattr("services.pipeline.page_processing.run_ocr_on_page", fake_ocr)
 
     pages = _build_page_records(_scanned_pages(5), {})
 

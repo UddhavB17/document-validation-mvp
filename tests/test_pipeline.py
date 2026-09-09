@@ -1,19 +1,19 @@
-from pathlib import Path
 import os
+from pathlib import Path
 
 import pytest
 
 import database.db as db
 from database.db import get_connection, init_db
-from services.pipeline import run_pipeline
+from services.ocr_router import OCRRouter
 from services.pipeline import (
     _build_page_records,
     _build_page_reuse_map,
     _build_unsupported_page_records,
     _clone_reused_page,
     _ensure_page_has_json_details,
+    run_pipeline,
 )
-from services.ocr_router import OCRRouter
 
 
 @pytest.fixture(autouse=True)
@@ -78,12 +78,14 @@ def test_unknown_premium_calculator_does_not_emit_semantic_loan_amount() -> None
     "source_documents",
     [
         None,
-        [{
-            "source_document_id": "zip-doc-1",
-            "original_filename": "Applicant/KYC/page.png",
-            "internal_page_start": 1,
-            "internal_page_end": 1,
-        }],
+        [
+            {
+                "source_document_id": "zip-doc-1",
+                "original_filename": "Applicant/KYC/page.png",
+                "internal_page_start": 1,
+                "internal_page_end": 1,
+            }
+        ],
     ],
     ids=["pdf", "normalized-zip"],
 )
@@ -97,27 +99,32 @@ def test_google_provider_uses_one_api_ocr_and_no_local_ocr(
     router = OCRRouter(
         fast_processor=lambda path: local_calls.append(str(path)) or {},
         structured_processor=lambda path: local_calls.append(str(path)) or {},
-        google_vision_processor=lambda path: google_calls.append(str(path)) or {
-            "ocr_text": "Loan Application Form\nApplicant Name: Ramesh Kumar\nLoan Amount: 500000",
-            "confidence": 0.94,
-            "char_count": 79,
-            "word_count": 10,
-            "line_count": 3,
-            "image_width": 1000,
-            "image_height": 1400,
-            "text_density": 56.4,
-        },
+        google_vision_processor=lambda path: (
+            google_calls.append(str(path))
+            or {
+                "ocr_text": "Loan Application Form\nApplicant Name: Ramesh Kumar\nLoan Amount: 500000",
+                "confidence": 0.94,
+                "char_count": 79,
+                "word_count": 10,
+                "line_count": 3,
+                "image_width": 1000,
+                "image_height": 1400,
+                "text_density": 56.4,
+            }
+        ),
         event_recorder=lambda **_event: None,
     )
-    monkeypatch.setattr("services.pipeline.get_ocr_router", lambda: router)
+    monkeypatch.setattr("services.pipeline.page_processing.get_ocr_router", lambda: router)
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (
             {"document_type": "Application Form", "confidence": 0.95},
             {"source": "rules", "rule_document_type": "Application Form", "rule_confidence": 0.95},
         ),
     )
-    monkeypatch.setattr("services.pipeline.classify_with_structured_llm", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        "services.pipeline.page_processing.classify_with_structured_llm", lambda **_kwargs: None
+    )
 
     pages = _build_page_records(
         [{"page_number": 1, "page_type": "scanned", "image_path": "page.png"}],
@@ -129,6 +136,9 @@ def test_google_provider_uses_one_api_ocr_and_no_local_ocr(
     assert google_calls == ["page.png"]
     assert local_calls == []
     assert pages[0]["ocr_route"] == "google_vision"
+    expected_document_type = "KYC Card Photo" if source_documents else "Application Form"
+    assert pages[0]["document_type"] == expected_document_type
+    assert "_processing_error" not in pages[0]["extracted_fields"]
 
 
 def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -144,10 +154,11 @@ def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.Monke
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PIPE-001", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -220,7 +231,9 @@ def test_run_pipeline_saves_rule_summary_when_llm_fails(
     pdf_path = tmp_path / "application.pdf"
     output_dir = tmp_path / "processed"
     monkeypatch.setattr(db, "DATABASE_PATH", db_path)
-    monkeypatch.setattr("services.pipeline.generate_explanation", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "services.pipeline.orchestrator.generate_explanation", lambda *args, **kwargs: None
+    )
     _create_application_pdf(pdf_path)
 
     init_db()
@@ -229,10 +242,11 @@ def test_run_pipeline_saves_rule_summary_when_llm_fails(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PIPE-002", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -273,7 +287,10 @@ def test_run_pipeline_continues_when_page_processing_errors(
     output_dir = tmp_path / "processed"
     monkeypatch.setattr(db, "DATABASE_PATH", db_path)
     _create_application_pdf(pdf_path)
-    monkeypatch.setattr("services.pipeline.extract_fields", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        "services.pipeline.page_details.extract_fields",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
 
     init_db()
     with get_connection() as connection:
@@ -281,10 +298,11 @@ def test_run_pipeline_continues_when_page_processing_errors(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PIPE-003", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -310,6 +328,10 @@ def test_run_pipeline_continues_when_page_processing_errors(
             "SELECT extracted_fields FROM pages WHERE application_id = ? ORDER BY page_number ASC LIMIT 1",
             (application_id,),
         ).fetchone()
+        meta = connection.execute(
+            "SELECT meta_json FROM pages_meta WHERE application_id = ? ORDER BY page_number ASC LIMIT 1",
+            (application_id,),
+        ).fetchone()
         progress = connection.execute(
             "SELECT stage, status, processed_pages, total_pages FROM pipeline_progress WHERE application_id = ?",
             (application_id,),
@@ -317,7 +339,9 @@ def test_run_pipeline_continues_when_page_processing_errors(
 
     assert result["pipeline_status"] == "partial_failed"
     assert result["partial_failure_count"] == 1
-    assert "\"_processing_error\": \"boom\"" in page["extracted_fields"]
+    # Diet: private keys live in pages_meta, business keys only in pages.
+    assert '"_processing_error"' not in page["extracted_fields"]
+    assert '"_processing_error": "boom"' in meta["meta_json"]
     assert progress["stage"] == "completed"
     assert progress["status"] == "partial_failed"
     assert progress["processed_pages"] == progress["total_pages"] == 1
@@ -336,7 +360,7 @@ def test_run_pipeline_marks_partial_scan_and_preserves_skipped_readability(
     _create_blank_scanned_pdf(pdf_path, pages=5)
 
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "Permanent Account Number ABCDE1234F",
             "is_readable": True,
@@ -350,10 +374,11 @@ def test_run_pipeline_marks_partial_scan_and_preserves_skipped_readability(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-PARTIAL-001", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -403,7 +428,7 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
     _create_blank_scanned_pdf(pdf_path, pages=1)
 
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "",
             "is_readable": False,
@@ -418,10 +443,11 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES (?, ?, ?, ?)
+            RETURNING id
             """,
             ("LAP-OCR-ERR-001", "Ramesh Kumar", "LAP", "Delhi"),
         )
-        application_id = cursor.lastrowid
+        application_id = int(cursor.fetchone()["id"])
         connection.execute(
             """
             INSERT INTO uploaded_files (
@@ -451,13 +477,21 @@ def test_run_pipeline_records_ocr_error_as_partial_failure(
             "SELECT extracted_fields FROM pages WHERE application_id = ?",
             (application_id,),
         ).fetchone()
+        meta = connection.execute(
+            "SELECT meta_json FROM pages_meta WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
 
-    assert "OCR exceeded hard timeout" in page["extracted_fields"]
+    # Diet: private keys live in pages_meta, business keys only in pages.
+    assert "OCR exceeded hard timeout" not in page["extracted_fields"]
+    assert "OCR exceeded hard timeout" in meta["meta_json"]
 
 
-def test_build_page_records_routes_photo_without_classification(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_page_records_routes_photo_without_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "",
             "is_readable": False,
@@ -471,8 +505,10 @@ def test_build_page_records_routes_photo_without_classification(monkeypatch: pyt
         },
     )
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("classification should be skipped")),
+        "services.pipeline.page_processing.classify_page_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("classification should be skipped")
+        ),
     )
 
     pages = _build_page_records(
@@ -540,10 +576,12 @@ def test_cloned_duplicate_continuation_does_not_create_false_document_boundary()
     assert cloned["ocr_processing_time_ms"] == 0
 
 
-def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_page_records_flags_low_confidence_handwritten(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     llm_calls: list[dict] = []
     monkeypatch.setattr(
-        "services.pipeline.run_ocr_on_page",
+        "services.pipeline.page_processing.run_ocr_on_page",
         lambda *_args, **_kwargs: {
             "ocr_text": "rent paid 4500",
             "is_readable": True,
@@ -557,7 +595,7 @@ def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest
         },
     )
     monkeypatch.setattr(
-        "services.pipeline.classify_with_structured_llm",
+        "services.pipeline.page_processing.classify_with_structured_llm",
         lambda **kwargs: llm_calls.append(kwargs) or None,
     )
 
@@ -574,9 +612,11 @@ def test_build_page_records_flags_low_confidence_handwritten(monkeypatch: pytest
     assert llm_calls[0]["ocr_confidence"] == 0.45
 
 
-def test_build_page_records_marks_only_starting_json_as_db_data(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_page_records_marks_only_starting_json_as_db_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
-        "services.pipeline.classify_with_structured_llm",
+        "services.pipeline.page_processing.classify_with_structured_llm",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("known pages with good OCR must not reach the LLM")
         ),
@@ -596,18 +636,20 @@ def test_build_page_records_does_not_mark_normal_digital_document_as_db_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (
             {"document_type": "Application Form", "confidence": 0.95},
             {"source": "test_classifier"},
         ),
     )
     monkeypatch.setattr(
-        "services.pipeline.extract_fields",
-        lambda document_type, _text: {"applicant_name": "Ramesh Kumar"} if document_type == "Application Form" else {},
+        "services.pipeline.page_details.extract_fields",
+        lambda document_type, _text: (
+            {"applicant_name": "Ramesh Kumar"} if document_type == "Application Form" else {}
+        ),
     )
     monkeypatch.setattr(
-        "services.pipeline.classify_with_structured_llm",
+        "services.pipeline.page_processing.classify_with_structured_llm",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("known pages with good OCR must not reach the LLM")
         ),
@@ -637,13 +679,15 @@ def test_unknown_page_reaches_structured_llm_after_generic_extraction(
 ) -> None:
     captured: dict = {}
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (
             {"document_type": "Unknown", "confidence": 0.0},
             {"source": "test_classifier"},
         ),
     )
-    monkeypatch.setattr("services.pipeline.extract_fields", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        "services.pipeline.page_details.extract_fields", lambda *_args, **_kwargs: {}
+    )
 
     def fake_structured_llm(**kwargs):
         captured.update(kwargs)
@@ -654,7 +698,9 @@ def test_unknown_page_reaches_structured_llm_after_generic_extraction(
             "trigger": "unknown_document_type",
         }
 
-    monkeypatch.setattr("services.pipeline.classify_with_structured_llm", fake_structured_llm)
+    monkeypatch.setattr(
+        "services.pipeline.page_processing.classify_with_structured_llm", fake_structured_llm
+    )
 
     pages = _build_page_records(
         [{"page_number": 4, "page_type": "digital", "image_path": None}],
@@ -665,21 +711,26 @@ def test_unknown_page_reaches_structured_llm_after_generic_extraction(
     assert captured["deterministic_document_type"] == "Unknown"
     assert captured["ocr_confidence"] is None
     assert captured["structured_fields"]["generic_pan_numbers"] == ["ABCDE1234F"]
-    assert pages[0]["extracted_fields"]["_structured_llm_classification"]["document_type"] == "PAN Card"
+    assert (
+        pages[0]["extracted_fields"]["_structured_llm_classification"]["document_type"]
+        == "PAN Card"
+    )
 
 
 def test_stamp_page_records_rule_not_configured_instead_of_guessing_rate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (
             {"document_type": "Stamp Duty", "confidence": 1.0},
             {"source": "test_classifier"},
         ),
     )
-    monkeypatch.setattr("services.pipeline.classify_with_structured_llm", lambda **_kwargs: None)
-    monkeypatch.setattr("services.pipeline.load_stamp_duty_rules", lambda: [])
+    monkeypatch.setattr(
+        "services.pipeline.page_processing.classify_with_structured_llm", lambda **_kwargs: None
+    )
+    monkeypatch.setattr("services.pipeline.page_processing.load_stamp_duty_rules", lambda: [])
     text = (
         "Government of Gujarat\nCertificate No: GJ-12345\n"
         "Certificate Issued Date: 02/04/2025\n"
@@ -702,15 +753,17 @@ def test_build_page_records_does_not_mark_later_json_page_as_db_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "services.pipeline.classify_page_text",
+        "services.pipeline.page_processing.classify_page_text",
         lambda *_args, **_kwargs: (
             {"document_type": "Unknown", "confidence": 0.0},
             {"source": "test_classifier"},
         ),
     )
-    monkeypatch.setattr("services.pipeline.extract_fields", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
-        "services.pipeline.classify_with_structured_llm",
+        "services.pipeline.page_details.extract_fields", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        "services.pipeline.page_processing.classify_with_structured_llm",
         lambda **_kwargs: None,
     )
 
@@ -803,7 +856,7 @@ def test_cached_ocr_refresh_reclassifies_without_calling_ocr(monkeypatch) -> Non
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("OCR provider must not run for cached-text revalidation")
 
-    monkeypatch.setattr("services.pipeline.run_ocr_on_page", fail_if_called)
+    monkeypatch.setattr("services.pipeline.page_processing.run_ocr_on_page", fail_if_called)
     statement = "Customer's Statement of Account Date Particulars Debit Credit Balance"
     narration = (
         "Amount Received Mode - NACH Instrument No X Loan Allocation Amount 10195 "
@@ -838,7 +891,11 @@ def test_cached_ocr_refresh_reclassifies_without_calling_ocr(monkeypatch) -> Non
 
     pages = _build_page_records(
         [
-            {"page_number": item["page_number"], "page_type": "scanned", "image_path": item["image_path"]}
+            {
+                "page_number": item["page_number"],
+                "page_type": "scanned",
+                "image_path": item["image_path"],
+            }
             for item in checkpoints
         ],
         {},
@@ -847,7 +904,10 @@ def test_cached_ocr_refresh_reclassifies_without_calling_ocr(monkeypatch) -> Non
     )
 
     assert [page["document_type"] for page in pages] == [
-        "Bank Statement", "Bank Statement", "Facility Agreement", "Facility Agreement",
+        "Bank Statement",
+        "Bank Statement",
+        "Facility Agreement",
+        "Facility Agreement",
     ]
     assert pages[1]["detection_method"] == "inherited"
     assert pages[3]["detection_method"] == "inherited"

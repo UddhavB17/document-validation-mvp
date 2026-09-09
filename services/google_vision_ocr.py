@@ -44,7 +44,9 @@ def run_google_vision_ocr_on_page(page_image: str | Path) -> dict[str, Any]:
             return _result_from_payload(path, payload, auth_mode=auth_mode)
         except Exception as exc:  # noqa: BLE001
             if attempt >= attempts or not _is_retryable_error(exc):
-                return _error_result(path, f"Google Vision OCR failed after {attempt} attempt(s): {exc}")
+                return _error_result(
+                    path, f"Google Vision OCR failed after {attempt} attempt(s): {exc}"
+                )
             time.sleep(min(0.5 * (2 ** (attempt - 1)), 2.0))
 
     return _error_result(path, "Google Vision OCR failed without a response")
@@ -75,7 +77,11 @@ def _is_retryable_error(exc: Exception) -> bool:
 
 
 def _auth_mode() -> str:
-    requested = str(get_setting("google.vision.auth", os.getenv("GOOGLE_VISION_AUTH") or "auto") or "auto").strip().lower()
+    requested = (
+        str(get_setting("google.vision.auth", os.getenv("GOOGLE_VISION_AUTH") or "auto") or "auto")
+        .strip()
+        .lower()
+    )
     if requested in {"api_key", "apikey", "key"}:
         return "api_key"
     if requested in {"adc", "service_account", "client"}:
@@ -88,11 +94,18 @@ def _auth_mode() -> str:
 def _api_key() -> str:
     # Settings DB wins; the environment variable remains a fallback for
     # deployments configured outside the settings table.
-    return str(get_setting("google.vision.api_key", "") or os.getenv("GOOGLE_VISION_API_KEY") or "").strip()
+    return str(
+        get_setting("google.vision.api_key", "") or os.getenv("GOOGLE_VISION_API_KEY") or ""
+    ).strip()
 
 
 def _feature_type() -> str:
-    raw = str(get_setting("google.vision.feature", os.getenv("GOOGLE_VISION_FEATURE") or "DOCUMENT_TEXT_DETECTION") or "")
+    raw = str(
+        get_setting(
+            "google.vision.feature", os.getenv("GOOGLE_VISION_FEATURE") or "DOCUMENT_TEXT_DETECTION"
+        )
+        or ""
+    )
     normalized = raw.strip().upper()
     if normalized not in {"DOCUMENT_TEXT_DETECTION", "TEXT_DETECTION"}:
         return "DOCUMENT_TEXT_DETECTION"
@@ -108,7 +121,11 @@ def _call_rest_api_key(path: Path) -> dict[str, Any]:
     if not key:
         raise RuntimeError("GOOGLE_VISION_API_KEY is not configured")
     endpoint = str(
-        get_setting("google.vision.rest_url", os.getenv("GOOGLE_VISION_REST_URL") or "https://vision.googleapis.com/v1/images:annotate")
+        get_setting(
+            "google.vision.rest_url",
+            os.getenv("GOOGLE_VISION_REST_URL")
+            or "https://vision.googleapis.com/v1/images:annotate",
+        )
         or "https://vision.googleapis.com/v1/images:annotate"
     ).rstrip("?")
     content = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -142,10 +159,18 @@ def _call_client_library(path: Path) -> dict[str, Any]:
         raise RuntimeError("Install google-cloud-vision to use GOOGLE_VISION_AUTH=adc") from exc
 
     client_options = None
-    endpoint = str(os.getenv("GOOGLE_VISION_API_ENDPOINT") or get_setting("google.vision.api_endpoint", "") or "").strip()
+    endpoint = str(
+        os.getenv("GOOGLE_VISION_API_ENDPOINT")
+        or get_setting("google.vision.api_endpoint", "")
+        or ""
+    ).strip()
     if endpoint:
         client_options = {"api_endpoint": endpoint}
-    client = vision.ImageAnnotatorClient(client_options=client_options) if client_options else vision.ImageAnnotatorClient()
+    client = (
+        vision.ImageAnnotatorClient(client_options=client_options)
+        if client_options
+        else vision.ImageAnnotatorClient()
+    )
     image = vision.Image(content=path.read_bytes())
     hints = _language_hints()
     request_kwargs: dict[str, Any] = {
@@ -198,8 +223,103 @@ def _result_from_payload(path: Path, payload: Any, *, auth_mode: str) -> dict[st
         "tables": [],
         "seals": [],
         "formulas": [],
-        "structure_json": [mapping] if mapping else [],
+        # Compact in-memory word layout for evidence bboxes (ws-f). The full
+        # Vision response is never persisted; see services/ocr_router.py.
+        "words": build_compact_words(mapping, image_width=width, image_height=height),
     }
+
+
+def build_compact_words(
+    mapping: dict[str, Any], *, image_width: int = 0, image_height: int = 0
+) -> list[dict[str, Any]]:
+    """Build a compact normalized word layout from a Vision response mapping.
+
+    Walks ``fullTextAnnotation`` pages → blocks → paragraphs → words →
+    symbols. Each entry is ``{"t": text, "b": [x0, y0, x1, y1], "c": conf}``
+    with 0–1 normalized coordinates and confidence rounded to 2 dp. Capped at
+    3,000 words per page. In-memory only; never persisted.
+    """
+    full = mapping.get("fullTextAnnotation") or mapping.get("full_text_annotation") or {}
+    pages = full.get("pages") if isinstance(full, dict) else []
+    words: list[dict[str, Any]] = []
+    for page in pages or []:
+        if not isinstance(page, dict):
+            continue
+        for block in page.get("blocks") or []:
+            if not isinstance(block, dict):
+                continue
+            for paragraph in block.get("paragraphs") or []:
+                if not isinstance(paragraph, dict):
+                    continue
+                for word in paragraph.get("words") or []:
+                    if not isinstance(word, dict):
+                        continue
+                    symbols = word.get("symbols") or []
+                    text = "".join(
+                        str(symbol.get("text") or "")
+                        for symbol in symbols
+                        if isinstance(symbol, dict)
+                    )
+                    if not text:
+                        continue
+                    try:
+                        confidence = round(float(word.get("confidence") or 0.0), 2)
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    bbox = _normalized_word_bbox(word, image_width, image_height)
+                    words.append({"t": text, "b": bbox, "c": confidence})
+                    if len(words) >= 3000:
+                        return words
+    return words
+
+
+def _normalized_word_bbox(
+    word: dict[str, Any], image_width: int, image_height: int
+) -> list[float]:
+    """Return a 0–1 ``[x0, y0, x1, y1]`` box for one Vision word dict."""
+    box = word.get("boundingBox") or word.get("bounding_box") or {}
+    poly = box.get("vertices") or box.get("normalizedVertices") or box.get("normalized_vertices")
+    if isinstance(box, dict) and not poly:
+        poly = box.get("vertices") or box.get("normalizedVertices")
+    vertices = poly if isinstance(poly, list) else []
+    points: list[tuple[float, float]] = []
+    normalized = any(
+        isinstance(vertex, dict)
+        and ("x" in vertex or "y" in vertex)
+        and isinstance(vertex.get("x"), float)
+        and 0.0 <= float(vertex.get("x") or 0.0) <= 1.0
+        for vertex in vertices
+    )
+    for vertex in vertices:
+        if not isinstance(vertex, dict):
+            continue
+        try:
+            raw_x = float(vertex.get("x") or 0.0)
+            raw_y = float(vertex.get("y") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if normalized or (image_width <= 0 or image_height <= 0):
+            # Normalized vertices are already 0–1. When image dimensions are
+            # unknown, absolute pixels cannot be scaled; clamp into range so a
+            # missing dimension never produces an out-of-range box.
+            if normalized:
+                points.append((min(max(raw_x, 0.0), 1.0), min(max(raw_y, 0.0), 1.0)))
+            else:
+                points.append(
+                    (min(max(raw_x / 1000.0, 0.0), 1.0), min(max(raw_y / 1000.0, 0.0), 1.0))
+                )
+        else:
+            points.append(
+                (
+                    min(max(raw_x / image_width, 0.0), 1.0),
+                    min(max(raw_y / image_height, 0.0), 1.0),
+                )
+            )
+    if not points:
+        return [0.0, 0.0, 0.0, 0.0]
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return [round(min(xs), 4), round(min(ys), 4), round(max(xs), 4), round(max(ys), 4)]
 
 
 def _full_text(mapping: dict[str, Any]) -> str:
@@ -257,7 +377,9 @@ def _detected_languages(mapping: dict[str, Any]) -> list[str]:
     best: dict[str, float] = {}
     for code, confidence in found:
         best[code] = max(confidence, best.get(code, 0.0))
-    return [code for code, _confidence in sorted(best.items(), key=lambda item: (-item[1], item[0]))]
+    return [
+        code for code, _confidence in sorted(best.items(), key=lambda item: (-item[1], item[0]))
+    ]
 
 
 def _text_annotation_boxes(annotations: Any) -> list[dict[str, Any]]:
@@ -272,15 +394,17 @@ def _text_annotation_boxes(annotations: Any) -> list[dict[str, Any]]:
             continue
         poly = annotation.get("boundingPoly") or annotation.get("bounding_poly") or {}
         vertices = poly.get("vertices") if isinstance(poly, dict) else []
-        boxes.append({
-            "text": description,
-            "confidence": annotation.get("confidence"),
-            "bbox": [
-                {"x": int(vertex.get("x") or 0), "y": int(vertex.get("y") or 0)}
-                for vertex in vertices or []
-                if isinstance(vertex, dict)
-            ],
-        })
+        boxes.append(
+            {
+                "text": description,
+                "confidence": annotation.get("confidence"),
+                "bbox": [
+                    {"x": int(vertex.get("x") or 0), "y": int(vertex.get("y") or 0)}
+                    for vertex in vertices or []
+                    if isinstance(vertex, dict)
+                ],
+            }
+        )
     return boxes
 
 
@@ -295,13 +419,15 @@ def _layout_blocks(mapping: dict[str, Any]) -> list[dict[str, Any]]:
             if not isinstance(block, dict):
                 continue
             text = _block_text(block)
-            blocks.append({
-                "type": str(block.get("blockType") or block.get("block_type") or "TEXT"),
-                "text": text,
-                "page_index": page_index,
-                "confidence": block.get("confidence"),
-                "bounding_box": block.get("boundingBox") or block.get("bounding_box") or {},
-            })
+            blocks.append(
+                {
+                    "type": str(block.get("blockType") or block.get("block_type") or "TEXT"),
+                    "text": text,
+                    "page_index": page_index,
+                    "confidence": block.get("confidence"),
+                    "bounding_box": block.get("boundingBox") or block.get("bounding_box") or {},
+                }
+            )
     return blocks
 
 
@@ -312,7 +438,11 @@ def _block_text(block: dict[str, Any]) -> str:
             continue
         for word in paragraph.get("words") or []:
             symbols = word.get("symbols") if isinstance(word, dict) else []
-            token = "".join(str(symbol.get("text") or "") for symbol in symbols or [] if isinstance(symbol, dict))
+            token = "".join(
+                str(symbol.get("text") or "")
+                for symbol in symbols or []
+                if isinstance(symbol, dict)
+            )
             if token:
                 words.append(token)
     return " ".join(words)
@@ -389,6 +519,6 @@ def _error_result(path: Path, message: str) -> dict[str, Any]:
         "tables": [],
         "seals": [],
         "formulas": [],
-        "structure_json": [],
+        "words": [],
         "error": message,
     }

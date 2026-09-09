@@ -53,19 +53,25 @@ def test_resolver_returns_observed_labeled_identifier(
 
 
 def test_resolver_rejects_relative_name_as_applicant_name() -> None:
-    assert resolve_trusted_candidate(
-        "applicant_name",
-        "Ramesh Kumar",
-        "Father Name\nRAMESH KUMAR",
-    ) is None
+    assert (
+        resolve_trusted_candidate(
+            "applicant_name",
+            "Ramesh Kumar",
+            "Father Name\nRAMESH KUMAR",
+        )
+        is None
+    )
 
 
 def test_resolver_rejects_property_address_as_person_address() -> None:
-    assert resolve_trusted_candidate(
-        "address",
-        "12 Market Road Delhi 110001",
-        "Property Address\n12 Market Road\nDelhi 110001",
-    ) is None
+    assert (
+        resolve_trusted_candidate(
+            "address",
+            "12 Market Road Delhi 110001",
+            "Property Address\n12 Market Road\nDelhi 110001",
+        )
+        is None
+    )
 
 
 def test_recovery_provenance_survives_standard_provenance_refresh() -> None:

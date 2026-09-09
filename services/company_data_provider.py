@@ -27,8 +27,7 @@ class CompanyReferenceData(BaseModel):
 class CompanyDataProvider(Protocol):
     """Interface the future authenticated Google/company client implements."""
 
-    def get_reference_data(self, loan_id: str) -> CompanyReferenceData:
-        ...
+    def get_reference_data(self, loan_id: str) -> CompanyReferenceData: ...
 
 
 class LocalJsonCompanyDataProvider:

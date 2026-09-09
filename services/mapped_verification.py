@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+from database.models import FieldVerificationResult
 from services.cersai import (
     ASSET_BASED as CERSAI_ASSET_BASED,
+)
+from services.cersai import (
     DEBTOR_BASED as CERSAI_DEBTOR_BASED,
+)
+from services.cersai import (
     UNKNOWN as CERSAI_UNKNOWN,
+)
+from services.cersai import (
     report_search_type as cersai_report_search_type,
 )
 from services.exception_aggregator import aggregate
@@ -27,18 +35,21 @@ from services.field_verification import (
     verify_pincode,
 )
 from services.ocr_router import OCRRouter, run_fast_ocr_on_page
+from services.paths import processed_output_dir
 from services.pdf_processor import convert_page_to_image, open_pdf
 from services.person_names import is_person_name_candidate
-from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.progress_tracker import update_page_progress, update_stage
+from services.reviewer import build_reviewer_summary, save_reviewer_summary
 from services.text_extractor import extract_digital_text
 from services.trusted_candidate_resolver import (
     RECOVERABLE_TRUSTED_FIELDS,
     resolve_trusted_candidate,
 )
-from services.validation_gates import attach_field_provenance, canonical_field, field_reliable_for_validation
-from database.models import FieldVerificationResult
-
+from services.validation_gates import (
+    attach_field_provenance,
+    canonical_field,
+    field_reliable_for_validation,
+)
 
 # Backward-compatible seam used by existing mapped-verification integrations.
 run_ocr_on_page = run_fast_ocr_on_page
@@ -105,8 +116,16 @@ ALIASES = {
 
 DOCUMENT_FIELDS = {
     "cam": {
-        "application_number", "applicant_name", "phone_number", "loan_amount",
-        "sanction_amount", "tenure", "emi", "roi", "account_number", "ifsc",
+        "application_number",
+        "applicant_name",
+        "phone_number",
+        "loan_amount",
+        "sanction_amount",
+        "tenure",
+        "emi",
+        "roi",
+        "account_number",
+        "ifsc",
     },
     "aadhaar": {"aadhaar_number", "applicant_name", "date_of_birth", "address", "pin_code"},
     "pan": {"pan_number", "applicant_name", "date_of_birth"},
@@ -116,8 +135,14 @@ DOCUMENT_FIELDS = {
     "loan agreement": {"applicant_name", "loan_amount"},
     "facility agreement": {"applicant_name", "loan_amount"},
     "application form": {
-        "applicant_name", "aadhaar_number", "pan_number", "date_of_birth",
-        "phone_number", "address", "pin_code", "loan_amount",
+        "applicant_name",
+        "aadhaar_number",
+        "pan_number",
+        "date_of_birth",
+        "phone_number",
+        "address",
+        "pin_code",
+        "loan_amount",
     },
     # Utility bills are presence/classification evidence only. Provider fields,
     # service addresses, dates and account holders are not cross-checked.
@@ -171,9 +196,7 @@ _LOW_OCR_CONFIDENCE_THRESHOLD = 0.55
 # still validate a name when one is observed, but must not report a missing
 # name merely because a multi-page statement has no name-bearing page in the
 # mapped fragment.
-_OPTIONAL_ON_MULTIPAGE_BANKING_DOC_TYPES = frozenset(
-    {"bank statement", "passbook", "cheque"}
-)
+_OPTIONAL_ON_MULTIPAGE_BANKING_DOC_TYPES = frozenset({"bank statement", "passbook", "cheque"})
 
 
 def _name_optional_for_multipage_document(
@@ -227,8 +250,7 @@ def _passbook_has_unique_account_identity(
             if _canonical(key) == "account_number" and value not in (None, "")
         ]
         if any(
-            "".join(character for character in str(value) if character.isdigit())
-            == expected_digits
+            "".join(character for character in str(value) if character.isdigit()) == expected_digits
             for value in candidate_accounts
         ):
             owners.append(str(candidate_id))
@@ -257,16 +279,18 @@ def _mapped_ocr_router() -> OCRRouter:
         **kwargs,
     )
 
+
 def run_mapped_verification(
     pdf_path: str | Path,
     application_id: int,
     manifest: dict[str, Any],
     *,
-    output_dir: str | Path = "data/processed",
+    output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Extract mapped pages and compare their fields with trusted reference JSON."""
     pdf_path = Path(pdf_path)
-    target = Path(output_dir) / f"application_{application_id}" / "mapped_pages"
+    resolved_output_dir = Path(output_dir) if output_dir is not None else processed_output_dir()
+    target = resolved_output_dir / f"application_{application_id}" / "mapped_pages"
     document = open_pdf(pdf_path)
     total_pages = len(document)
     reference_data = _verification_reference_data(manifest)
@@ -277,7 +301,11 @@ def run_mapped_verification(
     checked_fields = 0
     matched_fields = 0
     total_mapped_pages = len(
-        {int(number) for item in manifest.get("documents") or [] for number in item.get("pages") or []}
+        {
+            int(number)
+            for item in manifest.get("documents") or []
+            for number in item.get("pages") or []
+        }
     )
     processed_page_numbers: set[int] = set()
     digital_page_numbers: set[int] = set()
@@ -301,9 +329,18 @@ def run_mapped_verification(
             if not mapped_pages:
                 resolved_documents.append(dict(mapping))
                 if mapping.get("required", True):
-                    anomalies.append(_anomaly("DOCUMENT_MISSING", "HIGH", None, document_type, None, None,
-                                              "No page was mapped for this required document.",
-                                              person_id=person_id))
+                    anomalies.append(
+                        _anomaly(
+                            "DOCUMENT_MISSING",
+                            "HIGH",
+                            None,
+                            document_type,
+                            None,
+                            None,
+                            "No page was mapped for this required document.",
+                            person_id=person_id,
+                        )
+                    )
                 continue
 
             document_observations: dict[str, list[dict[str, Any]]] = {}
@@ -313,9 +350,18 @@ def run_mapped_verification(
             mapping_page_start = len(pages)
             for page_number in mapped_pages:
                 if page_number < 1 or page_number > total_pages:
-                    anomalies.append(_anomaly("PAGE_OUT_OF_RANGE", "HIGH", page_number, document_type, None,
-                                              total_pages, "Mapped page does not exist in the PDF.",
-                                              person_id=person_id))
+                    anomalies.append(
+                        _anomaly(
+                            "PAGE_OUT_OF_RANGE",
+                            "HIGH",
+                            page_number,
+                            document_type,
+                            None,
+                            total_pages,
+                            "Mapped page does not exist in the PDF.",
+                            person_id=person_id,
+                        )
+                    )
                     continue
                 pdf_page = document[page_number - 1]
                 text = _safe_digital_text(pdf_page)
@@ -412,21 +458,25 @@ def run_mapped_verification(
                 if is_readable:
                     readable_pages.append(page_number)
                 if page_type == "scanned":
-                    page_record.update({
-                        "ocr_structure": ocr,
-                        "structured_content": routed_ocr.structured_content,
-                        "ocr_route": routed_ocr.route_used,
-                        "ocr_escalated": routed_ocr.escalated,
-                        "ocr_processing_time_ms": routed_ocr.processing_time_ms,
-                    })
+                    page_record.update(
+                        {
+                            "ocr_structure": ocr,
+                            "structured_content": routed_ocr.structured_content,
+                            "ocr_route": routed_ocr.route_used,
+                            "ocr_escalated": routed_ocr.escalated,
+                            "ocr_processing_time_ms": routed_ocr.processing_time_ms,
+                        }
+                    )
                 else:
-                    page_record.update({
-                        "ocr_structure": {},
-                        "structured_content": None,
-                        "ocr_route": None,
-                        "ocr_escalated": False,
-                        "ocr_processing_time_ms": 0,
-                    })
+                    page_record.update(
+                        {
+                            "ocr_structure": {},
+                            "structured_content": None,
+                            "ocr_route": None,
+                            "ocr_escalated": False,
+                            "ocr_processing_time_ms": 0,
+                        }
+                    )
                 attach_field_provenance(page_record)
                 pages.append(page_record)
                 processed_page_numbers.add(page_number)
@@ -477,18 +527,37 @@ def run_mapped_verification(
                 for field_observations in document_observations.values():
                     for observation in field_observations:
                         observation["person_id"] = person_id
-                if cersai_scope == CERSAI_DEBTOR_BASED and person_id == "unassigned" and mapped_pages:
-                    anomalies.append(_anomaly(
-                        "AUTO_OWNER_UNRESOLVED", "LOW", mapped_pages[0], document_type,
-                        "Debtor PAN matching a trusted applicant/co-applicant", None,
-                        "CERSAI debtor identity did not match any trusted person.",
-                        person_id=None,
-                    ))
+                if (
+                    cersai_scope == CERSAI_DEBTOR_BASED
+                    and person_id == "unassigned"
+                    and mapped_pages
+                ):
+                    anomalies.append(
+                        _anomaly(
+                            "AUTO_OWNER_UNRESOLVED",
+                            "LOW",
+                            mapped_pages[0],
+                            document_type,
+                            "Debtor PAN matching a trusted applicant/co-applicant",
+                            None,
+                            "CERSAI debtor identity did not match any trusted person.",
+                            person_id=None,
+                        )
+                    )
 
             if not readable_pages:
-                anomalies.append(_anomaly("DOCUMENT_NOT_READABLE", "HIGH", mapped_pages[0], document_type,
-                                          None, None, "Text extraction could not read the mapped document pages.",
-                                          person_id=person_id))
+                anomalies.append(
+                    _anomaly(
+                        "DOCUMENT_NOT_READABLE",
+                        "HIGH",
+                        mapped_pages[0],
+                        document_type,
+                        None,
+                        None,
+                        "Text extraction could not read the mapped document pages.",
+                        person_id=person_id,
+                    )
+                )
                 continue
 
             account_identity_match = _passbook_has_unique_account_identity(
@@ -508,25 +577,39 @@ def run_mapped_verification(
                         continue
                     if field == "applicant_name" and unreliable_fields.get(field):
                         continue
-                    if _name_optional_for_multipage_document(
-                        field, document_type, readable_pages
-                    ):
+                    if _name_optional_for_multipage_document(field, document_type, readable_pages):
                         continue
                     if unreliable_fields.get(field):
-                        anomalies.append(_anomaly(
-                            f"{field.upper()}_EXTRACTION_UNRELIABLE", "LOW",
-                            unreliable_fields[field][0].get("page_number") or page_number,
-                            document_type, expected_value, None,
-                            "Extracted evidence for this field was not reliable enough for trusted JSON comparison.",
-                            field, "MANUAL_REVIEW_REQUIRED", person_id,
-                        ))
+                        anomalies.append(
+                            _anomaly(
+                                f"{field.upper()}_EXTRACTION_UNRELIABLE",
+                                "LOW",
+                                unreliable_fields[field][0].get("page_number") or page_number,
+                                document_type,
+                                expected_value,
+                                None,
+                                "Extracted evidence for this field was not reliable enough for trusted JSON comparison.",
+                                field,
+                                "MANUAL_REVIEW_REQUIRED",
+                                person_id,
+                            )
+                        )
                         continue
                     checked_fields += 1
-                    anomalies.append(_anomaly(
-                        f"{field.upper()}_NOT_FOUND", "MEDIUM", page_number, document_type,
-                        expected_value, None, "Expected field was not found with sufficient confidence.", field,
-                        "FIELD_NOT_FOUND", person_id,
-                    ))
+                    anomalies.append(
+                        _anomaly(
+                            f"{field.upper()}_NOT_FOUND",
+                            "MEDIUM",
+                            page_number,
+                            document_type,
+                            expected_value,
+                            None,
+                            "Expected field was not found with sufficient confidence.",
+                            field,
+                            "FIELD_NOT_FOUND",
+                            person_id,
+                        )
+                    )
                     continue
                 seen_values: set[str] = set()
                 for observation in field_observations:
@@ -545,19 +628,41 @@ def run_mapped_verification(
                         reference_data, person_id, field, observation["value"]
                     )
                     if wrong_owner:
-                        anomalies.append(_anomaly(
-                            "INDEX_MAPPING_SUSPECTED", "HIGH", observation["page_number"], document_type,
-                            expected_value, observation["value"],
-                            f"Value matches {wrong_owner}, not {person_id}; verify the page/person index.",
-                            field, "MISMATCH", person_id, wrong_owner,
-                        ))
+                        anomalies.append(
+                            _anomaly(
+                                "INDEX_MAPPING_SUSPECTED",
+                                "HIGH",
+                                observation["page_number"],
+                                document_type,
+                                expected_value,
+                                observation["value"],
+                                f"Value matches {wrong_owner}, not {person_id}; verify the page/person index.",
+                                field,
+                                "MISMATCH",
+                                person_id,
+                                wrong_owner,
+                            )
+                        )
                         continue
-                    severity = "HIGH" if field in {"aadhaar_number", "pan_number", "date_of_birth"} else "MEDIUM"
-                    anomalies.append(_anomaly(
-                        f"{field.upper()}_MISMATCH", severity, observation["page_number"], document_type,
-                        expected_value, observation["value"], result.mismatch_reason or "Values do not match.", field,
-                        "MISMATCH", person_id,
-                    ))
+                    severity = (
+                        "HIGH"
+                        if field in {"aadhaar_number", "pan_number", "date_of_birth"}
+                        else "MEDIUM"
+                    )
+                    anomalies.append(
+                        _anomaly(
+                            f"{field.upper()}_MISMATCH",
+                            severity,
+                            observation["page_number"],
+                            document_type,
+                            expected_value,
+                            observation["value"],
+                            result.mismatch_reason or "Values do not match.",
+                            field,
+                            "MISMATCH",
+                            person_id,
+                        )
+                    )
     finally:
         document.close()
 
@@ -624,9 +729,7 @@ def compare_processed_pages(
         source_document_id = mapping.get("source_document_id")
         mapped_numbers = [int(number) for number in mapping.get("pages") or []]
         mapped_page_records = [
-            pages_by_number[number]
-            for number in mapped_numbers
-            if number in pages_by_number
+            pages_by_number[number] for number in mapped_numbers if number in pages_by_number
         ]
         person_id, cersai_scope, owner = _resolved_mapping_person(
             provided_type,
@@ -654,28 +757,48 @@ def compare_processed_pages(
 
         if not mapped_numbers:
             if mapping.get("required", True):
-                anomalies.append(_anomaly(
-                    "DOCUMENT_MISSING", "HIGH", None, provided_type, None, None,
-                    "No page was mapped for this required document.", person_id=person_id,
-                ))
+                anomalies.append(
+                    _anomaly(
+                        "DOCUMENT_MISSING",
+                        "HIGH",
+                        None,
+                        provided_type,
+                        None,
+                        None,
+                        "No page was mapped for this required document.",
+                        person_id=person_id,
+                    )
+                )
             continue
         if cersai_scope == CERSAI_DEBTOR_BASED and person_id == "unassigned":
-            anomalies.append(_anomaly(
-                "AUTO_OWNER_UNRESOLVED", "LOW", mapped_numbers[0], provided_type,
-                "Debtor PAN matching a trusted applicant/co-applicant", None,
-                "CERSAI debtor identity did not match any trusted person.",
-                person_id=None,
-            ))
+            anomalies.append(
+                _anomaly(
+                    "AUTO_OWNER_UNRESOLVED",
+                    "LOW",
+                    mapped_numbers[0],
+                    provided_type,
+                    "Debtor PAN matching a trusted applicant/co-applicant",
+                    None,
+                    "CERSAI debtor identity did not match any trusted person.",
+                    person_id=None,
+                )
+            )
 
         for page_number in mapped_numbers:
             page = pages_by_number.get(page_number)
             if page is None:
-                anomalies.append(_anomaly(
-                    "PAGE_OUT_OF_RANGE", "HIGH", page_number, provided_type,
-                    "Mapped page available in processed PDF", None,
-                    "Mapped page was not produced by the shared PDF pipeline.",
-                    person_id=person_id,
-                ))
+                anomalies.append(
+                    _anomaly(
+                        "PAGE_OUT_OF_RANGE",
+                        "HIGH",
+                        page_number,
+                        provided_type,
+                        "Mapped page available in processed PDF",
+                        None,
+                        "Mapped page was not produced by the shared PDF pipeline.",
+                        person_id=person_id,
+                    )
+                )
                 continue
 
             fields = page.get("extracted_fields")
@@ -721,7 +844,8 @@ def compare_processed_pages(
             comparison_fields = {
                 **{key: value for key, value in fields.items() if not str(key).startswith("_")},
                 **{
-                    key: value for key, value in mapped_fields.items()
+                    key: value
+                    for key, value in mapped_fields.items()
                     if not str(key).startswith("_") and value not in (None, "", [], {})
                 },
             }
@@ -757,12 +881,18 @@ def compare_processed_pages(
                     "document_type": provided_type,
                     "classified_document_type": page.get("document_type"),
                     "source_document_id": source_document_id,
-                    "source_filename": source_lookup.get(str(source_document_id), {}).get("original_filename"),
-                    "source_segment": _source_segment(source_lookup.get(str(source_document_id), {})),
+                    "source_filename": source_lookup.get(str(source_document_id), {}).get(
+                        "original_filename"
+                    ),
+                    "source_segment": _source_segment(
+                        source_lookup.get(str(source_document_id), {})
+                    ),
                     "page_number": page_number,
                     "field_name": field,
                     "value": comparison_value,
-                    "document_confidence": mapping.get("auto_mapping", {}).get("document_confidence"),
+                    "document_confidence": mapping.get("auto_mapping", {}).get(
+                        "document_confidence"
+                    ),
                     "ocr_confidence": page.get("ocr_confidence"),
                     "text_source": (
                         "embedded_text"
@@ -775,12 +905,18 @@ def compare_processed_pages(
                 document_observations.setdefault(field, []).append(observation)
 
         if not readable_pages:
-            anomalies.append(_anomaly(
-                "DOCUMENT_NOT_READABLE", "HIGH", mapped_numbers[0], provided_type,
-                None, None,
-                "The shared PDF pipeline could not extract text from the mapped document pages.",
-                person_id=person_id,
-            ))
+            anomalies.append(
+                _anomaly(
+                    "DOCUMENT_NOT_READABLE",
+                    "HIGH",
+                    mapped_numbers[0],
+                    provided_type,
+                    None,
+                    None,
+                    "The shared PDF pipeline could not extract text from the mapped document pages.",
+                    person_id=person_id,
+                )
+            )
             continue
 
         if should_aggregate:
@@ -812,11 +948,17 @@ def compare_processed_pages(
             reference_data=reference_data,
             anomalies=anomalies,
             unreliable_fields=document_unreliable_fields,
+            mapped_pages=mapped_page_records,
         )
         checked_fields += field_stats["checked"]
         matched_fields += field_stats["matched"]
 
     for bucket in aggregated.values():
+        bucket_pages = [
+            pages_by_number[number]
+            for number in sorted(set(bucket["readable_pages"]))
+            if number in pages_by_number
+        ]
         field_stats = _verify_document_fields(
             expected=bucket["expected"],
             document_observations=bucket["observations"],
@@ -827,6 +969,7 @@ def compare_processed_pages(
             anomalies=anomalies,
             prefer_any_match=True,
             unreliable_fields=bucket.get("unreliable_fields") or {},
+            mapped_pages=bucket_pages,
         )
         checked_fields += field_stats["checked"]
         matched_fields += field_stats["matched"]
@@ -838,6 +981,12 @@ def compare_processed_pages(
         source_documents or [],
     )
     _attach_source_provenance(anomalies, source_documents or [])
+    try:
+        from services.evidence_boxes import attach_evidence_to_anomalies
+
+        attach_evidence_to_anomalies(anomalies, pages)
+    except (ImportError, TypeError, ValueError, KeyError, AttributeError):
+        pass
     people_verification = _build_people_verification(
         reference_data, resolved_documents, observations, anomalies
     )
@@ -851,6 +1000,36 @@ def compare_processed_pages(
     }
 
 
+def _eligible_field_pages(
+    field: str,
+    mapped_pages: list[dict[str, Any]] | None,
+    provided_type: str,
+) -> list[int]:
+    """Page numbers of the mapped document that may legitimately carry `field`.
+
+    Uses the page's own classified type when present, else the mapped
+    (provided) document type, with the shared `page_eligible_for` gate.
+    """
+    from services.consistency_checks import page_eligible_for
+
+    if not mapped_pages:
+        return []
+    eligible: list[int] = []
+    for page in mapped_pages:
+        page_number = page.get("page_number")
+        if page_number is None:
+            continue
+        effective = dict(page)
+        if str(page.get("document_type") or "").strip().casefold() in {"", "unknown", "none"}:
+            effective["document_type"] = provided_type
+        try:
+            if page_eligible_for(field, effective):
+                eligible.append(int(page_number))
+        except (TypeError, ValueError):
+            continue
+    return sorted(eligible)
+
+
 def _verify_document_fields(
     *,
     expected: dict[str, Any],
@@ -862,6 +1041,7 @@ def _verify_document_fields(
     anomalies: list[dict[str, Any]],
     prefer_any_match: bool = False,
     unreliable_fields: dict[str, list[dict[str, Any]]] | None = None,
+    mapped_pages: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """Compare extracted observations against expected values for one document unit."""
     checked = 0
@@ -889,45 +1069,90 @@ def _verify_document_fields(
                 continue
             if field == "applicant_name" and (unreliable_fields or {}).get(field):
                 continue
-            if _name_optional_for_multipage_document(
-                field, provided_type, readable_pages
-            ):
+            if _name_optional_for_multipage_document(field, provided_type, readable_pages):
                 continue
             if (unreliable_fields or {}).get(field):
                 page_number = ((unreliable_fields or {}).get(field) or [{}])[0].get("page_number")
-                anomalies.append(_anomaly(
-                    f"{field.upper()}_EXTRACTION_UNRELIABLE", "LOW", page_number,
-                    provided_type, expected_value, None,
-                    "Extracted evidence for this field was not reliable enough for trusted JSON comparison.",
-                    field, "MANUAL_REVIEW_REQUIRED", person_id,
-                ))
+                anomalies.append(
+                    _anomaly(
+                        f"{field.upper()}_EXTRACTION_UNRELIABLE",
+                        "LOW",
+                        page_number,
+                        provided_type,
+                        expected_value,
+                        None,
+                        "Extracted evidence for this field was not reliable enough for trusted JSON comparison.",
+                        field,
+                        "MANUAL_REVIEW_REQUIRED",
+                        person_id,
+                    )
+                )
                 continue
-            page_number = readable_pages[0] if readable_pages else None
+            eligible_numbers = _eligible_field_pages(field, mapped_pages, provided_type)
+            if mapped_pages is not None and not eligible_numbers:
+                checked += 1
+                anomalies.append(
+                    _anomaly(
+                        f"{field.upper()}_EXTRACTION_UNRELIABLE",
+                        "LOW",
+                        readable_pages[0] if readable_pages else None,
+                        provided_type,
+                        expected_value,
+                        None,
+                        "No page of this document can legitimately carry the field "
+                        "(photo/blank/unreadable page, low OCR confidence, or "
+                        "wrong document type).",
+                        field,
+                        "MANUAL_REVIEW_REQUIRED",
+                        person_id,
+                    )
+                )
+                continue
+            page_number = eligible_numbers[0] if eligible_numbers else (
+                readable_pages[0] if readable_pages else None
+            )
             # If the first readable page has low OCR confidence, suppress the
             # NOT_FOUND anomaly and emit a LOW_CONFIDENCE_PAGE once per page.
             first_page_conf = _page_ocr_confidence(document_observations, readable_pages)
             if first_page_conf is not None and first_page_conf < _LOW_OCR_CONFIDENCE_THRESHOLD:
                 if page_number is not None and page_number not in low_confidence_pages_emitted:
                     low_confidence_pages_emitted.add(page_number)
-                    anomalies.append(_anomaly(
-                        "LOW_CONFIDENCE_PAGE", "LOW", page_number, provided_type,
-                        "Readable OCR text", f"OCR confidence {first_page_conf:.0%} — field extraction unreliable",
-                        "ocr_confidence", "MANUAL_REVIEW_REQUIRED", person_id,
-                    ))
+                    anomalies.append(
+                        _anomaly(
+                            "LOW_CONFIDENCE_PAGE",
+                            "LOW",
+                            page_number,
+                            provided_type,
+                            "Readable OCR text",
+                            f"OCR confidence {first_page_conf:.0%} — field extraction unreliable",
+                            "ocr_confidence",
+                            "MANUAL_REVIEW_REQUIRED",
+                            person_id,
+                        )
+                    )
                 continue  # Skip individual field anomalies for low-confidence pages
             checked += 1
-            anomalies.append(_anomaly(
-                f"{field.upper()}_NOT_FOUND", "MEDIUM", page_number if readable_pages else None,
-                provided_type, expected_value, None,
-                "Expected field was not found with sufficient confidence.",
-                field, "FIELD_NOT_FOUND", person_id,
-            ))
+            anomalies.append(
+                _anomaly(
+                    f"{field.upper()}_NOT_FOUND",
+                    "MEDIUM",
+                    page_number if readable_pages else None,
+                    provided_type,
+                    expected_value,
+                    None,
+                    "Expected field was not found with sufficient confidence.",
+                    field,
+                    "FIELD_NOT_FOUND",
+                    person_id,
+                )
+            )
             continue
 
         if prefer_any_match:
             # One success across any fragment is enough for loan-level packets.
             matching = [
-                observation for observation in field_observations
+                observation
+                for observation in field_observations
                 if _mapped_field_matches(
                     field,
                     observation["value"],
@@ -976,30 +1201,56 @@ def _verify_document_fields(
                 page_number = observation.get("page_number")
                 if page_number is not None and page_number not in low_confidence_pages_emitted:
                     low_confidence_pages_emitted.add(page_number)
-                    anomalies.append(_anomaly(
-                        "LOW_CONFIDENCE_PAGE", "LOW", page_number, provided_type,
-                        "Reliable OCR text", f"OCR confidence {page_conf:.0%} — field comparison unreliable",
-                        "ocr_confidence", "MANUAL_REVIEW_REQUIRED", person_id,
-                    ))
+                    anomalies.append(
+                        _anomaly(
+                            "LOW_CONFIDENCE_PAGE",
+                            "LOW",
+                            page_number,
+                            provided_type,
+                            "Reliable OCR text",
+                            f"OCR confidence {page_conf:.0%} — field comparison unreliable",
+                            "ocr_confidence",
+                            "MANUAL_REVIEW_REQUIRED",
+                            person_id,
+                        )
+                    )
                 emitted_mismatch = True
                 continue
 
             wrong_owner = _find_other_owner(reference_data, person_id, field, observation["value"])
             if wrong_owner:
-                anomalies.append(_anomaly(
-                    "INDEX_MAPPING_SUSPECTED", "HIGH", observation["page_number"], provided_type,
-                    expected_value, observation["value"],
-                    f"Value matches {wrong_owner}, not {person_id}; verify the page/person index.",
-                    field, "MISMATCH", person_id, wrong_owner,
-                ))
+                anomalies.append(
+                    _anomaly(
+                        "INDEX_MAPPING_SUSPECTED",
+                        "HIGH",
+                        observation["page_number"],
+                        provided_type,
+                        expected_value,
+                        observation["value"],
+                        f"Value matches {wrong_owner}, not {person_id}; verify the page/person index.",
+                        field,
+                        "MISMATCH",
+                        person_id,
+                        wrong_owner,
+                    )
+                )
                 emitted_mismatch = True
                 continue
             severity = "HIGH" if field in {"aadhaar_number", "pan_number"} else "MEDIUM"
-            anomalies.append(_anomaly(
-                f"{field.upper()}_MISMATCH", severity, observation["page_number"], provided_type,
-                expected_value, observation["value"], result.mismatch_reason or "Values do not match.",
-                field, "MISMATCH", person_id,
-            ))
+            anomalies.append(
+                _anomaly(
+                    f"{field.upper()}_MISMATCH",
+                    severity,
+                    observation["page_number"],
+                    provided_type,
+                    expected_value,
+                    observation["value"],
+                    result.mismatch_reason or "Values do not match.",
+                    field,
+                    "MISMATCH",
+                    person_id,
+                )
+            )
             emitted_mismatch = True
     return {"checked": checked, "matched": matched}
 
@@ -1055,7 +1306,9 @@ def _classify_source_documents(
 
     results: list[dict[str, Any]] = []
     for source_id, group in grouped.items():
-        source_pages = [page_lookup[number] for number in sorted(group["pages"]) if number in page_lookup]
+        source_pages = [
+            page_lookup[number] for number in sorted(group["pages"]) if number in page_lookup
+        ]
         type_votes: Counter[str] = Counter()
         owner_votes: Counter[str] = Counter()
         for page in source_pages:
@@ -1089,13 +1342,17 @@ def _classify_source_documents(
                         if candidate_key == _comparison_key("applicant_name", trusted_name):
                             owner_votes[str(person_id)] += 1
 
-        provided_owners = sorted({
-            str(owner)
-            for item in group["mappings"]
-            if (owner := item.get("applicant_role") or item.get("person_id"))
-        })
-        predicted_owner = owner_votes.most_common(1)[0][0] if owner_votes else (
-            provided_owners[0] if len(provided_owners) == 1 else None
+        provided_owners = sorted(
+            {
+                str(owner)
+                for item in group["mappings"]
+                if (owner := item.get("applicant_role") or item.get("person_id"))
+            }
+        )
+        predicted_owner = (
+            owner_votes.most_common(1)[0][0]
+            if owner_votes
+            else (provided_owners[0] if len(provided_owners) == 1 else None)
         )
         predicted_type = type_votes.most_common(1)[0][0] if type_votes else "Unknown"
         item = inventory.get(source_id, {})
@@ -1112,7 +1369,9 @@ def _classify_source_documents(
                 if provided_owners
                 else "not_person_scoped"
             ),
-            "provided_document_types": sorted({str(entry.get("document_type") or "Unknown") for entry in group["mappings"]}),
+            "provided_document_types": sorted(
+                {str(entry.get("document_type") or "Unknown") for entry in group["mappings"]}
+            ),
             "predicted_document_type": predicted_type,
             "document_type_votes": dict(type_votes),
         }
@@ -1158,9 +1417,7 @@ def _recover_trusted_fields_from_ocr(
             continue
 
         entries = _public_field_entries(fields, field) + _public_field_entries(mapped_fields, field)
-        current_values = [
-            value for _, value in entries if value not in (None, "", [], {})
-        ]
+        current_values = [value for _, value in entries if value not in (None, "", [], {})]
         if any(
             _mapped_field_matches(field, value, expected_value, trusted_person)
             for value in current_values
@@ -1209,12 +1466,10 @@ def _recover_trusted_fields_from_ocr(
         provenance = {
             "source_pages": [page.get("page_number")],
             "source_file": (
-                (source_document or {}).get("original_filename")
-                or page.get("source_filename")
+                (source_document or {}).get("original_filename") or page.get("source_filename")
             ),
             "source_document_id": (
-                (source_document or {}).get("source_document_id")
-                or page.get("source_document_id")
+                (source_document or {}).get("source_document_id") or page.get("source_document_id")
             ),
             "source_segment": _source_segment(source_document or {}) or page.get("source_segment"),
             "extractor": str(page.get("document_type") or document_type),
@@ -1292,7 +1547,11 @@ def _recovery_storage_keys(
     if existing:
         return list(dict.fromkeys(existing))
     if field == "date_of_birth" and document_type.strip().casefold() in {
-        "aadhaar", "pan", "pan card", "voter id", "driving license"
+        "aadhaar",
+        "pan",
+        "pan card",
+        "voter id",
+        "driving license",
     }:
         return ["dob"]
     return [field]
@@ -1386,6 +1645,7 @@ def _get_allowed_fields_for_type(document_type: str) -> set[str] | None:
         norm_key = "crif"
 
     from services.config import get_setting
+
     db_fields = get_setting(f"required_fields.{norm_key}")
     if isinstance(db_fields, list):
         # Admin configuration can add case-specific fields, while the core
@@ -1407,25 +1667,37 @@ def _resolved_mapping_person(
     )
 
     if str(document_type or "").strip().casefold() != "cersai report":
-        return provided_person_id, None, {
-            "person_id": provided_person_id,
-            "confidence": 0.7,
-            "evidence": ["provided_mapping"],
-        }
+        return (
+            provided_person_id,
+            None,
+            {
+                "person_id": provided_person_id,
+                "confidence": 0.7,
+                "evidence": ["provided_mapping"],
+            },
+        )
     cersai_scope = cersai_report_search_type(pages)
     if cersai_scope == CERSAI_ASSET_BASED:
-        return None, cersai_scope, {
-            "person_id": None,
-            "confidence": 1.0,
-            "evidence": ["cersai_asset_based"],
-            "document_scope": "loan_level",
-        }
+        return (
+            None,
+            cersai_scope,
+            {
+                "person_id": None,
+                "confidence": 1.0,
+                "evidence": ["cersai_asset_based"],
+                "document_scope": "loan_level",
+            },
+        )
     if cersai_scope != CERSAI_DEBTOR_BASED:
-        return provided_person_id, CERSAI_UNKNOWN, {
-            "person_id": provided_person_id,
-            "confidence": 0.7,
-            "evidence": ["provided_mapping"],
-        }
+        return (
+            provided_person_id,
+            CERSAI_UNKNOWN,
+            {
+                "person_id": provided_person_id,
+                "confidence": 0.7,
+                "evidence": ["provided_mapping"],
+            },
+        )
     owner = resolve_person_owner(pages, reference_data, document_type)
     resolved = str(owner.get("person_id") or "unassigned")
     return resolved, cersai_scope, owner
@@ -1452,8 +1724,7 @@ def _resolved_mapping_expected_fields(
         effective_mapping["expected_fields"] = {
             key: value
             for key, value in (trusted.items() if isinstance(trusted, dict) else [])
-            if _canonical(key) in {"applicant_name", "pan_number"}
-            and value not in (None, "")
+            if _canonical(key) in {"applicant_name", "pan_number"} and value not in (None, "")
         }
     return _expected_fields(reference_data, effective_mapping, document_type)
 
@@ -1480,11 +1751,15 @@ def _expected_fields(
 def _verification_reference_data(manifest: dict[str, Any]) -> dict[str, Any]:
     """Include trusted root loan terms in the primary verification record."""
     raw = manifest.get("reference_data") or {}
-    reference_data = {
-        str(person_id): dict(person)
-        for person_id, person in raw.items()
-        if isinstance(person, dict)
-    } if isinstance(raw, dict) and any(isinstance(value, dict) for value in raw.values()) else {}
+    reference_data = (
+        {
+            str(person_id): dict(person)
+            for person_id, person in raw.items()
+            if isinstance(person, dict)
+        }
+        if isinstance(raw, dict) and any(isinstance(value, dict) for value in raw.values())
+        else {}
+    )
     if not reference_data:
         reference_data = {"primary": dict(raw)} if isinstance(raw, dict) else {"primary": {}}
     primary_id = "primary" if "primary" in reference_data else next(iter(reference_data))
@@ -1508,7 +1783,11 @@ def _verification_reference_data(manifest: dict[str, Any]) -> dict[str, Any]:
     }
     for raw_field, value in manifest.items():
         field = _canonical(raw_field)
-        if field in loan_fields and value not in (None, "", [], {}) and primary.get(field) in (None, ""):
+        if (
+            field in loan_fields
+            and value not in (None, "", [], {})
+            and primary.get(field) in (None, "")
+        ):
             primary[field] = value
     return reference_data
 
@@ -1564,7 +1843,6 @@ def _page_ocr_confidence(
                 if conf is not None:
                     return float(conf)
     return None
-
 
 
 def _anomaly(
@@ -1674,23 +1952,28 @@ def _build_people_verification(
         trusted = reference_data.get(person_id)
         person_name = trusted.get("applicant_name") if isinstance(trusted, dict) else None
         person_documents: dict[str, Any] = {}
-        document_types = sorted({
-            str(mapping.get("document_type") or "Unknown")
-            for mapping in documents
-            if str(mapping.get("applicant_role") or mapping.get("person_id") or "") == person_id
-        })
+        document_types = sorted(
+            {
+                str(mapping.get("document_type") or "Unknown")
+                for mapping in documents
+                if str(mapping.get("applicant_role") or mapping.get("person_id") or "") == person_id
+            }
+        )
         for document_type in document_types:
             mappings = [
-                mapping for mapping in documents
+                mapping
+                for mapping in documents
                 if str(mapping.get("applicant_role") or mapping.get("person_id") or "") == person_id
                 and str(mapping.get("document_type") or "Unknown") == document_type
             ]
             relevant_observations = [
-                item for item in observations
+                item
+                for item in observations
                 if item["person_id"] == person_id and item["document_type"] == document_type
             ]
             relevant_anomalies = [
-                item for item in anomalies
+                item
+                for item in anomalies
                 if item.get("person_id") == person_id and item.get("document_type") == document_type
             ]
             status = "NEEDS_REVIEW" if relevant_anomalies else "MATCH"
@@ -1699,7 +1982,9 @@ def _build_people_verification(
                 status = "NOT_CHECKED"
             person_documents[document_type] = {
                 "status": status,
-                "pages": sorted({page for mapping in mappings for page in mapping.get("pages") or []}),
+                "pages": sorted(
+                    {page for mapping in mappings for page in mapping.get("pages") or []}
+                ),
                 "fields": sorted({item["field_name"] for item in relevant_observations}),
                 "observation_count": len(relevant_observations),
                 "anomaly_count": len(relevant_anomalies),
@@ -1712,9 +1997,8 @@ def _build_people_verification(
                 if any(item["status"] == "NEEDS_REVIEW" for item in person_documents.values())
                 else (
                     "MATCH"
-                    if person_documents and all(
-                        item["status"] == "MATCH" for item in person_documents.values()
-                    )
+                    if person_documents
+                    and all(item["status"] == "MATCH" for item in person_documents.values())
                     else "NOT_CHECKED"
                 )
             ),

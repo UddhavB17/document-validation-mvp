@@ -58,11 +58,13 @@ Date: 2026-06-20
 
 
 def test_unknown_pan_page_is_promoted_and_owner_resolved_without_value_replacement() -> None:
-    pages = [_page(
-        1,
-        "Income Tax Department\nPermanent Account Number\nTSTAA0001T\nName\nOCR CAPTURE",
-        fields={"applicant_name": "OCR CAPTURE"},
-    )]
+    pages = [
+        _page(
+            1,
+            "Income Tax Department\nPermanent Account Number\nTSTAA0001T\nName\nOCR CAPTURE",
+            fields={"applicant_name": "OCR CAPTURE"},
+        )
+    ]
     trusted = {
         "primary": {
             "applicant_name": "Trusted Display Name",
@@ -81,12 +83,14 @@ def test_unknown_pan_page_is_promoted_and_owner_resolved_without_value_replaceme
 
 
 def test_pan_inside_application_form_does_not_turn_form_into_pan_card() -> None:
-    pages = [_page(
-        1,
-        "Loan Application Form\nApplicant Details\nPAN Number: TSTAA0001T",
-        document_type="Application Form",
-        confidence=0.91,
-    )]
+    pages = [
+        _page(
+            1,
+            "Loan Application Form\nApplicant Details\nPAN Number: TSTAA0001T",
+            document_type="Application Form",
+            confidence=0.91,
+        )
+    ]
 
     resolve_trusted_evidence(
         pages,
@@ -122,17 +126,22 @@ def test_merged_aadhaar_front_and_back_use_front_identifier_not_relation_name() 
 
     assert pages[0]["person_id"] == "coapplicant_1"
     assert pages[1]["person_id"] == "coapplicant_1"
-    assert pages[0]["extracted_fields"]["_evidence_resolution"]["document_id"] == pages[1]["extracted_fields"]["_evidence_resolution"]["document_id"]
+    assert (
+        pages[0]["extracted_fields"]["_evidence_resolution"]["document_id"]
+        == pages[1]["extracted_fields"]["_evidence_resolution"]["document_id"]
+    )
 
 
 def test_aadhaar_back_relation_name_alone_does_not_resolve_cardholder() -> None:
-    pages = [_page(
-        1,
-        "Address: W/O Relation Person, Test District 400001",
-        document_type="Aadhaar",
-        confidence=0.90,
-        fields={"address": "W/O Relation Person, Test District 400001"},
-    )]
+    pages = [
+        _page(
+            1,
+            "Address: W/O Relation Person, Test District 400001",
+            document_type="Aadhaar",
+            confidence=0.90,
+            fields={"address": "W/O Relation Person, Test District 400001"},
+        )
+    ]
     trusted = {
         "primary": {"applicant_name": "Relation Person"},
         "coapplicant_1": {"applicant_name": "Different Card Holder"},
@@ -145,13 +154,15 @@ def test_aadhaar_back_relation_name_alone_does_not_resolve_cardholder() -> None:
 
 
 def test_aadhaar_back_inverse_wife_relationship_resolves_unique_holder() -> None:
-    pages = [_page(
-        1,
-        "Address: W/O Relation Person, Test District 400001",
-        document_type="Aadhaar",
-        confidence=0.90,
-        fields={"address": "W/O Relation Person, Test District 400001"},
-    )]
+    pages = [
+        _page(
+            1,
+            "Address: W/O Relation Person, Test District 400001",
+            document_type="Aadhaar",
+            confidence=0.90,
+            fields={"address": "W/O Relation Person, Test District 400001"},
+        )
+    ]
     trusted = {
         "primary": {"applicant_name": "Relation Person"},
         "coapplicant_1": {
@@ -188,12 +199,14 @@ def test_zip_application_form_builds_individual_records_across_all_pages() -> No
         "primary": {"applicant_name": "Test Applicant", "pan_number": "TSTAA0001T"},
         "coapplicant_1": {"applicant_name": "Test Coapplicant", "pan_number": "TSTBB0002T"},
     }
-    sources = [{
-        "source_document_id": "file-0001",
-        "original_filename": "application-form.pdf",
-        "internal_page_start": 1,
-        "internal_page_end": 2,
-    }]
+    sources = [
+        {
+            "source_document_id": "file-0001",
+            "original_filename": "application-form.pdf",
+            "internal_page_start": 1,
+            "internal_page_end": 2,
+        }
+    ]
 
     result = resolve_trusted_evidence(pages, trusted, source_documents=sources)
     records = pages[0]["extracted_fields"]["person_records"]
@@ -242,12 +255,14 @@ Search Output Details
             "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
             "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
         },
-        source_documents=[{
-            "source_document_id": "file-0023",
-            "original_filename": "CERSAI_For_Debtor_Based_Search.pdf",
-            "internal_page_start": 147,
-            "internal_page_end": 150,
-        }],
+        source_documents=[
+            {
+                "source_document_id": "file-0023",
+                "original_filename": "CERSAI_For_Debtor_Based_Search.pdf",
+                "internal_page_start": 147,
+                "internal_page_end": 150,
+            }
+        ],
     )
 
     assert len(result["groups"]) == 1
@@ -329,24 +344,34 @@ def test_confident_group_type_still_fills_unknown_pages() -> None:
 
 
 def test_zip_role_absent_from_trusted_stays_unassigned_through_index() -> None:
-    pages = [_page(
-        1,
-        "Income Tax Department\nPermanent Account Number\nSXPPS4453F\nSUTHAR AARATIBEN ANUPKUMAR",
-        document_type="PAN",
-        confidence=0.95,
-        fields={
-            "applicant_name": "SUTHAR AARATIBEN ANUPKUMAR",
-            "pan_number": "SXPPS4453F",
-        },
-    )]
-    source = [{
-        "source_document_id": "file-1",
-        "original_filename": "Co-Applicant/KYC/PAN.pdf",
-        "file_type": "pdf",
-        "internal_page_start": 1,
-        "internal_page_end": 1,
-    }]
-    trusted = {"primary": {"role": "primary", "applicant_name": "Suthar Anupkumar", "pan_number": "TSTAA0001T"}}
+    pages = [
+        _page(
+            1,
+            "Income Tax Department\nPermanent Account Number\nSXPPS4453F\nSUTHAR AARATIBEN ANUPKUMAR",
+            document_type="PAN",
+            confidence=0.95,
+            fields={
+                "applicant_name": "SUTHAR AARATIBEN ANUPKUMAR",
+                "pan_number": "SXPPS4453F",
+            },
+        )
+    ]
+    source = [
+        {
+            "source_document_id": "file-1",
+            "original_filename": "Co-Applicant/KYC/PAN.pdf",
+            "file_type": "pdf",
+            "internal_page_start": 1,
+            "internal_page_end": 1,
+        }
+    ]
+    trusted = {
+        "primary": {
+            "role": "primary",
+            "applicant_name": "Suthar Anupkumar",
+            "pan_number": "TSTAA0001T",
+        }
+    }
 
     resolve_trusted_evidence(pages, trusted, source_documents=source)
     assert pages[0].get("person_id") in {None, "unassigned"}
@@ -361,17 +386,19 @@ def test_zip_role_absent_from_trusted_stays_unassigned_through_index() -> None:
 
 
 def test_cached_generic_application_is_overridden_by_insurance_semantics() -> None:
-    pages = [_page(
-        1,
-        """Application Form - Group Care 360 Scheme
+    pages = [
+        _page(
+            1,
+            """Application Form - Group Care 360 Scheme
 Underwritten by Care Health Insurance Limited IRDAI
 Proposer Details Nominee Details Details of Person to be Insured
 Policy Tenure Sum Insured Total Premium
 """,
-        document_type="Application Form",
-        confidence=1.0,
-        fields={"application_number": "0030705"},
-    )]
+            document_type="Application Form",
+            confidence=1.0,
+            fields={"application_number": "0030705"},
+        )
+    ]
     resolve_trusted_evidence(
         pages,
         {"primary": {"application_number": "GJ000030765"}},

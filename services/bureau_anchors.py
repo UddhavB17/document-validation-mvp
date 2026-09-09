@@ -6,7 +6,9 @@ import re
 from typing import Any
 
 
-def classify_credit_bureau_by_anchors(text: str, layout_metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+def classify_credit_bureau_by_anchors(
+    text: str, layout_metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Return a deterministic CIBIL/CRIF classification when anchors are clear."""
     normalized = _normalize(text)
     header = _normalize(_header_region(text, layout_metadata))
@@ -14,14 +16,20 @@ def classify_credit_bureau_by_anchors(text: str, layout_metadata: dict[str, Any]
     cibil_score = 0.0
     crif_score = 0.0
 
-    cibil_score += _add_if(matches, "cibil", "exact:TransUnion CIBIL", "transunion cibil" in normalized, 0.65)
+    cibil_score += _add_if(
+        matches, "cibil", "exact:TransUnion CIBIL", "transunion cibil" in normalized, 0.65
+    )
     cibil_score += _add_if(matches, "cibil", "header:CIBIL", "cibil" in header, 0.30)
     cibil_score += _add_if(matches, "cibil", "term:CIBIL", _word_present(normalized, "cibil"), 0.30)
-    cibil_score += _add_if(matches, "cibil", "field:control number", "control number" in normalized, 0.20)
+    cibil_score += _add_if(
+        matches, "cibil", "field:control number", "control number" in normalized, 0.20
+    )
     cibil_score += _add_if(matches, "cibil", "field:member id", "member id" in normalized, 0.15)
     cibil_score += _add_if(matches, "cibil", "score:cibil score", "cibil score" in normalized, 0.20)
 
-    crif_score += _add_if(matches, "crif", "exact:CRIF High Mark", "crif high mark" in normalized, 0.65)
+    crif_score += _add_if(
+        matches, "crif", "exact:CRIF High Mark", "crif high mark" in normalized, 0.65
+    )
     crif_score += _add_if(matches, "crif", "header:CRIF", "crif" in header, 0.30)
     crif_score += _add_if(matches, "crif", "header:High Mark", "high mark" in header, 0.30)
     crif_score += _add_if(matches, "crif", "term:CRIF", _word_present(normalized, "crif"), 0.30)
@@ -53,7 +61,9 @@ def _header_region(text: str, layout_metadata: dict[str, Any] | None) -> str:
     return "\n".join((text or "").splitlines()[:8])
 
 
-def _add_if(matches: dict[str, list[str]], key: str, label: str, condition: bool, weight: float) -> float:
+def _add_if(
+    matches: dict[str, list[str]], key: str, label: str, condition: bool, weight: float
+) -> float:
     if condition:
         matches[key].append(label)
         return weight

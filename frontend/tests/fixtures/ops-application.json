@@ -1,0 +1,56 @@
+{
+  "application_id": 12,
+  "loan_id": "LN-001",
+  "applicant_name": "Ramesh Kumar",
+  "status": "needs_review",
+  "processing": {"stage": null, "percentage": 100, "attempt": 1, "failure_reason": null},
+  "summary": {
+    "en": "2 issues need your attention: name mismatch (page 2), PAN mismatch (page 2).",
+    "hi": "2 समस्याओं पर ध्यान दें: नाम मेल नहीं खाता (पृष्ठ 2), पैन मेल नहीं खाता (पृष्ठ 2)।"
+  },
+  "top_findings": [
+    {
+      "code": "NAME_MISMATCH",
+      "severity": "HIGH",
+      "title": {"en": "Applicant name does not match", "hi": "आवेदक का नाम मेल नहीं खाता"},
+      "detail": {"en": "Name on page 2 differs from the application form.", "hi": "पृष्ठ 2 पर नाम आवेदन पत्र से अलग है।"},
+      "pages": [2],
+      "evidence": {"page": 2, "bbox": [0.12, 0.4, 0.55, 0.44], "text": "Ramesh Kumar"}
+    },
+    {
+      "code": "ID_MISMATCH",
+      "severity": "HIGH",
+      "title": {"en": "PAN / Aadhaar does not match", "hi": "पैन / आधार मेल नहीं खाता"},
+      "detail": {"en": "PAN on page 2 differs from the application form.", "hi": "पृष्ठ 2 पर पैन आवेदन पत्र से अलग है।"},
+      "pages": [2],
+      "evidence": {"page": 2, "bbox": [0.1, 0.5, 0.5, 0.54], "text": "ABCDE1234F"}
+    },
+    {
+      "code": "ADDRESS_MISMATCH",
+      "severity": "MEDIUM",
+      "title": {"en": "Address does not match", "hi": "पता मेल नहीं खाता"},
+      "detail": {"en": "Address on page 1 differs across documents.", "hi": "पृष्ठ 1 पर पता दस्तावेज़ों में अलग है।"},
+      "pages": [1],
+      "evidence": {"page": 1, "bbox": null, "text": ""}
+    }
+  ],
+  "pages_to_verify": [
+    {
+      "page": 7,
+      "document": {"en": "Bank statement", "hi": "बैंक स्टेटमेंट"},
+      "problem": {"en": "bank statement older than 3 months", "hi": "बैंक स्टेटमेंट 3 महीने से पुराना"}
+    }
+  ],
+  "checklist": {
+    "total": 4,
+    "found": 2,
+    "missing": 1,
+    "not_checked": 1,
+    "rows": [
+      {"s_no": 1, "description": "PAN card", "status": "FOUND", "pages": [2]},
+      {"s_no": 2, "description": "Aadhaar card", "status": "FOUND", "pages": [1]},
+      {"s_no": 12, "description": "Salary slip", "status": "MISSING", "pages": []},
+      {"s_no": 17, "description": "Bank statement", "status": "NOT_CHECKED", "pages": [7]}
+    ]
+  }
+}

@@ -3,24 +3,23 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from database.db import get_connection
+from services.config import get_int
 from services.job_control import (
     JobInputUnavailableError,
     PipelineCancelled,
     load_job_input,
-    persist_job_input_or_fail,
     request_control,
 )
-from services.job_runner import submit_job
-from services.config import get_int
+from services.job_runner import enqueue, submit_job
 from services.pipeline import run_pipeline
+from services.pipeline.tasks import _load_package_source_documents
 from services.progress_tracker import (
     RETRYABLE_PROGRESS_STATES,
-    create_pipeline_job,
     get_progress,
     mark_failed,
     mark_job_completed,
@@ -54,7 +53,9 @@ def resume_application(application_id: int) -> dict[str, Any]:
     status = str((progress or {}).get("operational_status") or "not_started")
     if status in {"stale", "failed", "cancelled", "completed_with_warnings"}:
         return queue_application_reprocess(application_id, resume=True)
-    raise ReprocessConflictError(f"Application cannot be resumed while pipeline status is {status}.")
+    raise ReprocessConflictError(
+        f"Application cannot be resumed while pipeline status is {status}."
+    )
 
 
 def restart_application(
@@ -128,16 +129,13 @@ def queue_application_reprocess(
 
     if application is None:
         raise LookupError("Application not found")
-    if uploaded is None or not uploaded["file_path"]:
-        raise FileNotFoundError("The original uploaded PDF is not available for reprocessing.")
-
-    file_path = Path(str(uploaded["file_path"]))
-    if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
+    if uploaded is None:
         raise FileNotFoundError("The original uploaded PDF is not available for reprocessing.")
 
     try:
         recovery = load_job_input(application_id)
     except JobInputUnavailableError:
+        recovery = None
         ground_truth = _decode_object(ground_truth_row["raw_json"] if ground_truth_row else None)
         system_data = {
             **ground_truth,
@@ -159,11 +157,21 @@ def queue_application_reprocess(
         package_id = None
         generate_llm_summary = None
     else:
-        file_path = Path(str(recovery["source_path"]))
         system_data = dict(recovery.get("system_data") or {})
         mapped_manifest = recovery.get("mapped_manifest")
         package_id = str(recovery.get("package_id") or "") or None
         generate_llm_summary = recovery.get("generate_llm_summary")
+
+    # Resolve a real file for enqueue: store-backed uploads have NULL
+    # file_path, so stage the durable bytes from object_refs via the store.
+    # Legacy archive rows with a live file_path keep working.
+    recovery_hint = str((recovery or {}).get("source_path") or "") or None
+    file_path = _resolve_reprocess_source(
+        application_id,
+        uploaded["file_path"] if uploaded else None,
+        recovery_hint,
+        package_id,
+    )
 
     start_tracking(
         application_id,
@@ -171,28 +179,36 @@ def queue_application_reprocess(
         digital_pages=int(uploaded["digital_pages"] or 0),
         scanned_pages=int(uploaded["scanned_pages"] or 0),
         stage="queued",
-        message="Checkpoint recovery accepted and queued" if resume else "Restart accepted and queued",
+        message="Checkpoint recovery accepted and queued"
+        if resume
+        else "Restart accepted and queued",
         resume=resume,
     )
     if not resume:
         with get_connection() as connection:
             connection.execute("DELETE FROM pages WHERE application_id = ?", (application_id,))
     parent_job_id = int(previous_job["id"]) if previous_job else None
-    job_id = create_pipeline_job(
+    kind = "mapped_reprocess" if mapped_manifest is not None else "pdf_reprocess"
+    job_id = enqueue(
+        kind,
         application_id,
-        job_type="pdf_reprocess",
-        parent_job_id=parent_job_id,
+        {
+            "source_path": str(file_path),
+            "system_data": system_data,
+            "product_type": str(application["product_type"] or "LAP"),
+            "mapped_manifest": mapped_manifest,
+            "package_id": package_id,
+            "generate_llm_summary": generate_llm_summary,
+            "resume": resume,
+            "refresh_cached_ocr": refresh_cached_ocr,
+        },
     )
-    persist_job_input_or_fail(
-        job_id,
-        application_id,
-        source_path=file_path,
-        system_data=system_data,
-        product_type=str(application["product_type"] or "LAP"),
-        mapped_manifest=mapped_manifest,
-        package_id=package_id,
-        generate_llm_summary=generate_llm_summary,
-    )
+    # Preserve parent linkage for audit trails.
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE pipeline_jobs SET parent_job_id = ? WHERE id = ?",
+            (parent_job_id, job_id),
+        )
     with get_connection() as connection:
         connection.execute(
             "UPDATE applications SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -228,6 +244,16 @@ def queue_application_reprocess(
         resume,
         refresh_cached_ocr,
     )
+    # The staged reprocess copy is job-scoped; the worker reloads via the
+    # store, so remove it (legacy paths are never touched).
+    try:
+        if "reprocess-" in str(file_path):
+            from services.pipeline.input_preparation import cleanup_job_source
+
+            cleanup_job_source(Path(file_path).parent)
+    except Exception:
+        pass
+
     return {
         "application_id": application_id,
         "job_id": job_id,
@@ -267,6 +293,16 @@ def _run_reprocess_task(
         )
         if result.get("pipeline_status") == "failed":
             mark_job_failed(job_id, "Recovery pipeline completed with failed outcome")
+            if package_id:
+                with get_connection() as connection:
+                    connection.execute(
+                        """
+                        UPDATE intake_packages
+                        SET status = 'failed'
+                        WHERE package_id = ? AND application_id = ?
+                        """,
+                        (package_id, application_id),
+                    )
         else:
             mark_job_completed(job_id)
             if package_id:
@@ -300,21 +336,49 @@ def _run_reprocess_task(
                 )
 
 
-def _load_package_source_documents(package_id: str | None) -> list[dict[str, Any]]:
-    if not package_id:
-        return []
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT source_document_id, original_filename, file_type, page_count,
-                   internal_page_start, internal_page_end
-            FROM intake_documents
-            WHERE package_id = ?
-            ORDER BY internal_page_start
-            """,
-            (package_id,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+def _resolve_reprocess_source(
+    application_id: int,
+    legacy_file_path: Any | None,
+    recovery_hint: str | None,
+    package_id: str | None,
+) -> Path:
+    """Return a live PDF path for reprocess enqueue, preferring the store.
+
+    Store-backed uploads record ``file_path`` as NULL; their bytes live in
+    the object store under ``object_refs``. Stage those bytes into
+    ``DMEF_JOB_WORK_DIR`` so ``enqueue`` can hash a real file and the worker
+    can reload it after this process is gone.
+    """
+    if recovery_hint:
+        candidate = Path(recovery_hint)
+        if candidate.is_file() and candidate.suffix.lower() == ".pdf":
+            return candidate
+    from uuid import uuid4
+
+    from services.paths import job_work_dir
+    from services.storage import get_store
+    from services.storage.refs import get_ref
+
+    ref = get_ref("applications", application_id, "source") or get_ref(
+        "applications", application_id, "normalized_pdf"
+    )
+    if ref is None and package_id:
+        ref = get_ref("intake_packages", package_id, "normalized_pdf")
+    if ref is not None:
+        try:
+            pdf_bytes = get_store().get(str(ref["storage_key"]))
+        except Exception:
+            pdf_bytes = None
+        if pdf_bytes:
+            staging = job_work_dir() / f"reprocess-{application_id}-{uuid4().hex}" / "source.pdf"
+            staging.parent.mkdir(parents=True, exist_ok=False)
+            staging.write_bytes(pdf_bytes)
+            return staging
+    if legacy_file_path:
+        candidate = Path(str(legacy_file_path))
+        if candidate.is_file() and candidate.suffix.lower() == ".pdf":
+            return candidate
+    raise FileNotFoundError("The original uploaded PDF is not available for reprocessing.")
 
 
 def _decode_object(value: Any) -> dict[str, Any]:
@@ -335,15 +399,13 @@ def _heartbeat_is_recent(value: Any, *, seconds: int | None = None) -> bool:
     except ValueError:
         return False
     if heartbeat.tzinfo is None:
-        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
-    grace_seconds = seconds or get_int(
-        "DMEF_JOB_HEARTBEAT_GRACE_SECONDS", 180, minimum=30
-    )
-    return (datetime.now(timezone.utc) - heartbeat).total_seconds() <= grace_seconds
+        heartbeat = heartbeat.replace(tzinfo=UTC)
+    grace_seconds = seconds or get_int("DMEF_JOB_HEARTBEAT_GRACE_SECONDS", 180, minimum=30)
+    return (datetime.now(UTC) - heartbeat).total_seconds() <= grace_seconds
 
 
 def _mark_worker_stale(application_id: int) -> None:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with get_connection() as connection:
         job = connection.execute(
             "SELECT id, status FROM pipeline_jobs WHERE application_id = ? ORDER BY id DESC LIMIT 1",

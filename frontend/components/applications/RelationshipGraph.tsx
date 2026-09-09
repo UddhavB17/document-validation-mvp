@@ -2,13 +2,7 @@
 
 import React, { useState } from "react";
 
-interface RelationshipNode {
-  id: string;
-  name: string;
-  role: "primary" | "co_applicant" | "guarantor" | "family_member";
-  relation_to_primary: string | null;
-  status: "match" | "mismatch" | "attention" | "n/a";
-}
+import { RelationshipNode } from "@/lib/api";
 
 interface RelationshipGraphProps {
   relationships?: RelationshipNode[] | null;
@@ -275,7 +269,7 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
         }
       `}} />
 
-      <svg id="relGraph" width="100%" height="260" viewBox="0 0 960 260" className="mx-auto block">
+      <svg id="relGraph" width="100%" height="260" viewBox="0 0 960 260" className="mx-auto block min-w-[680px]">
         {edges}
         {nodeCards}
       </svg>

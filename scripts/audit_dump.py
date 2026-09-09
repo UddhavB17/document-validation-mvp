@@ -3,6 +3,7 @@
 Usage: .venv/bin/python scripts/audit_dump.py <application_id> [--full]
 Writes tmp/audit_app_<id>.txt with one block per page.
 """
+
 import json
 import re
 import sqlite3
@@ -10,9 +11,16 @@ import sys
 from pathlib import Path
 
 FIELD_KEYS = (
-    "applicant_name", "pan_number", "aadhaar_number", "address",
-    "date_of_birth", "account_number", "ifsc_code", "phone_number",
-    "person_id", "loan_id",
+    "applicant_name",
+    "pan_number",
+    "aadhaar_number",
+    "address",
+    "date_of_birth",
+    "account_number",
+    "ifsc_code",
+    "phone_number",
+    "person_id",
+    "loan_id",
 )
 
 
@@ -42,7 +50,11 @@ def main() -> None:
                     raw = json.loads(r["extracted_fields"])
                     if isinstance(raw, dict):
                         fields = {k: raw.get(k) for k in FIELD_KEYS if raw.get(k)}
-                        extra = {k: v for k, v in raw.items() if k not in FIELD_KEYS and v and not isinstance(v, (list, dict))}
+                        extra = {
+                            k: v
+                            for k, v in raw.items()
+                            if k not in FIELD_KEYS and v and not isinstance(v, (list, dict))
+                        }
                         fields.update(extra)
                 except Exception:
                     fields = {"_raw": r["extracted_fields"][:150]}

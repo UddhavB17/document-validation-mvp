@@ -1,0 +1,39 @@
+{
+  "_how_to_add_a_case": "Add an object to 'cases' with file/applicant_name/pan_number/address/pages/expected_codes. 'pages' is a list of text pages rendered into a digital PDF by the eval script (no binaries in the repo). 'expected_codes' uses the contracts section 11 vocabulary. 'expected_values' lists ground-truth fields the pipeline must extract. Then run: python scripts/eval_gemini_models.py --models gemini-2.5-flash --fixtures tests/fixtures/eval --out outputs/eval.csv",
+  "cases": [
+    {
+      "file": "lap_clean.pdf",
+      "loan_id": "LAP-EVAL-001",
+      "applicant_name": "Ramesh Kumar",
+      "pan_number": "ABCDE1234F",
+      "address": "12 MG Road, Jaipur 302001",
+      "pages": [
+        "LOAN APPLICATION FORM LAP-EVAL-001 Applicant Name: Ramesh Kumar PAN: ABCDE1234F Address: 12 MG Road, Jaipur 302001 Loan Amount: 2500000",
+        "INCOME TAX DEPARTMENT Permanent Account Number ABCDE1234F Name: Ramesh Kumar PAN Card"
+      ],
+      "expected_codes": [],
+      "expected_values": {
+        "applicant_name": "Ramesh Kumar",
+        "pan_number": "ABCDE1234F",
+        "address": "12 MG Road, Jaipur 302001"
+      }
+    },
+    {
+      "file": "lap_name_mismatch.pdf",
+      "loan_id": "LAP-EVAL-002",
+      "applicant_name": "Ramesh Kumar",
+      "pan_number": "ABCDE1234F",
+      "address": "12 MG Road, Jaipur 302001",
+      "pages": [
+        "LOAN APPLICATION FORM LAP-EVAL-002 Applicant Name: Ramesh Kumar PAN: ABCDE1234F Address: 12 MG Road, Jaipur 302001 Loan Amount: 2500000",
+        "INCOME TAX DEPARTMENT Permanent Account Number ABCDE1234F Name: Ramesh Kumar PAN Card",
+        "BANK STATEMENT State Bank of India Account Holder: Ramesh Kumaar April to June 2026 Closing Balance 150000"
+      ],
+      "expected_codes": ["NAME_MISMATCH"],
+      "expected_values": {
+        "applicant_name": "Ramesh Kumar",
+        "pan_number": "ABCDE1234F"
+      }
+    }
+  ]
+}

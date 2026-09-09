@@ -11,11 +11,18 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 
 from services.llm_client import has_api_key_configured, llm_endpoint_label, llm_model, llm_provider
+from services.paths import (
+    checklist_json_path,
+    database_path,
+    processed_output_dir,
+    report_output_dir,
+    upload_dir,
+)
 from services.python_runtime import REQUIRED_MAJOR, REQUIRED_MINOR
 
 load_dotenv()
@@ -43,10 +50,15 @@ def collect_local_health(*, check_ollama: bool = True) -> dict[str, Any]:
         _python_item(),
         _module_item("PyMuPDF", "fitz"),
         _module_item("Google Cloud Vision", "google.cloud.vision"),
-        _path_item("Database path", _database_path(), must_exist=False, parent_required=True),
-        _path_item("Upload folder", _env_path("UPLOAD_DIR", "data/uploads"), must_exist=False, parent_required=False),
-        _path_item("Page output folder", _env_path("PAGE_OUTPUT_DIR", "data/pages"), must_exist=False, parent_required=False),
-        _path_item("Report output folder", _env_path("REPORT_OUTPUT_DIR", "data/reports"), must_exist=False, parent_required=False),
+        _path_item("Database path", database_path(), must_exist=False, parent_required=True),
+        _path_item("Upload folder", upload_dir(), must_exist=False, parent_required=False),
+        _path_item(
+            "Page output folder", processed_output_dir(), must_exist=False, parent_required=False
+        ),
+        _path_item(
+            "Report output folder", report_output_dir(), must_exist=False, parent_required=False
+        ),
+        _path_item("Checklist JSON", checklist_json_path(), must_exist=True, parent_required=True),
         _llm_config_item(),
     ]
     if check_ollama and llm_provider() == "ollama":
@@ -64,10 +76,11 @@ def collect_local_health(*, check_ollama: bool = True) -> dict[str, Any]:
         "status": status,
         "items": [item.as_dict() for item in items],
         "paths": {
-            "database": str(_database_path()),
-            "upload_dir": str(_env_path("UPLOAD_DIR", "data/uploads")),
-            "page_output_dir": str(_env_path("PAGE_OUTPUT_DIR", "data/pages")),
-            "report_output_dir": str(_env_path("REPORT_OUTPUT_DIR", "data/reports")),
+            "database": str(database_path()),
+            "upload_dir": str(upload_dir()),
+            "page_output_dir": str(processed_output_dir()),
+            "report_output_dir": str(report_output_dir()),
+            "checklist_json": str(checklist_json_path()),
         },
         "llm": {
             "provider": llm_provider(),
@@ -113,18 +126,14 @@ def _path_item(
     if must_exist and not resolved.exists():
         return HealthItem(label, "error", f"Missing: {resolved}")
     if parent_required and not resolved.parent.exists():
-        return HealthItem(label, "warning", f"Parent folder will be created: {resolved.parent}", required=False)
+        return HealthItem(
+            label, "warning", f"Parent folder will be created: {resolved.parent}", required=False
+        )
     if not resolved.exists():
-        return HealthItem(label, "warning", f"Will be created when needed: {resolved}", required=False)
+        return HealthItem(
+            label, "warning", f"Will be created when needed: {resolved}", required=False
+        )
     return HealthItem(label, "ok", str(resolved), required=False)
-
-
-def _env_path(name: str, default: str) -> Path:
-    return Path(os.getenv(name, default))
-
-
-def _database_path() -> Path:
-    return Path(os.getenv("DATABASE_PATH", "data/dmef.db"))
 
 
 def _llm_config_item() -> HealthItem:
@@ -139,7 +148,9 @@ def _llm_config_item() -> HealthItem:
 def _api_key_item() -> HealthItem:
     if has_api_key_configured():
         return HealthItem("LLM API key", "ok", "API key is configured.", required=False)
-    return HealthItem("LLM API key", "warning", "LLM_API_KEY or OPENAI_API_KEY is empty.", required=False)
+    return HealthItem(
+        "LLM API key", "warning", "LLM_API_KEY or OPENAI_API_KEY is empty.", required=False
+    )
 
 
 def _ollama_connection_item() -> HealthItem:
@@ -149,9 +160,11 @@ def _ollama_connection_item() -> HealthItem:
         with urllib.request.urlopen(f"{base_url}/api/tags", timeout=1.5) as response:
             payload = json.loads(response.read().decode("utf-8") or "{}")
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        return HealthItem("Ollama connection", "warning", f"Unavailable at {base_url}: {exc}", required=False)
+        return HealthItem(
+            "Ollama connection", "warning", f"Unavailable at {base_url}: {exc}", required=False
+        )
 
-    models = payload.get("models") if isinstance(payload, dict) else []
+    models = cast(list[Any], payload.get("models") if isinstance(payload, dict) else [])
     names = {
         str(item.get("name") or item.get("model") or "")
         for item in models
@@ -195,14 +208,20 @@ def _normalize_ollama_base_url(url: str) -> str:
 def _print_health(health: dict[str, Any]) -> None:
     print(f"DMEF local health: {health['status'].upper()}")
     for item in health["items"]:
-        marker = {"ok": "OK", "warning": "WARN", "error": "ERROR"}.get(item["status"], item["status"].upper())
+        marker = {"ok": "OK", "warning": "WARN", "error": "ERROR"}.get(
+            item["status"], item["status"].upper()
+        )
         print(f"[{marker}] {item['name']}: {item['detail']}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check local DMEF development setup.")
     parser.add_argument("--no-ollama", action="store_true", help="Skip Ollama connection check.")
-    parser.add_argument("--fail-on-error", action="store_true", help="Return a non-zero exit code for required errors.")
+    parser.add_argument(
+        "--fail-on-error",
+        action="store_true",
+        help="Return a non-zero exit code for required errors.",
+    )
     args = parser.parse_args()
 
     health = collect_local_health(check_ollama=not args.no_ollama)

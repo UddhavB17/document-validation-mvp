@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+
 from database.models import ChecklistItem
 from services.llm_client import call_llm_messages
-
 
 CHECKLIST_NARRATION_SYSTEM_PROMPT = (
     "You are a document verification narration assistant for an Indian NBFC. "
@@ -42,7 +42,9 @@ def build_narration_messages(item: ChecklistItem) -> list[dict[str, str]]:
                 status=item.status,
                 confidence_detail=item.confidence_detail,
                 flagged_reason=item.flagged_reason or "none",
-                extracted_fields_json=json.dumps(item.extracted_fields, indent=2, ensure_ascii=False),
+                extracted_fields_json=json.dumps(
+                    item.extracted_fields, indent=2, ensure_ascii=False
+                ),
             ),
         },
     ]
@@ -74,5 +76,3 @@ def _guard_narration(text: str | None, status: str) -> str | None:
     if any(forbidden in lowered for forbidden in forbidden_statuses):
         return None
     return cleaned
-
-

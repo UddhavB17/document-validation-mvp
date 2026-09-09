@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 
 import pytest
 
@@ -80,7 +79,9 @@ def test_low_memory_force_fast_skips_structured_even_for_bank_statement(monkeypa
     structured_calls: list[str] = []
     router = OCRRouter(
         fast_processor=lambda _path: _fast_result(0.55),
-        structured_processor=lambda path: structured_calls.append(str(path)) or _structured_result(),
+        structured_processor=lambda path: (
+            structured_calls.append(str(path)) or _structured_result()
+        ),
         confidence_threshold=0.85,
         event_recorder=lambda **_event: None,
     )
@@ -96,7 +97,9 @@ def test_pan_uses_fast_path_from_registry() -> None:
     structured_calls: list[str] = []
     router = OCRRouter(
         fast_processor=lambda _path: _fast_result(),
-        structured_processor=lambda path: structured_calls.append(str(path)) or _structured_result(),
+        structured_processor=lambda path: (
+            structured_calls.append(str(path)) or _structured_result()
+        ),
         event_recorder=lambda **_event: None,
     )
 
@@ -197,7 +200,10 @@ def test_llm_classification_cannot_select_fast_route() -> None:
     )
 
     assert routing_type == "Unknown"
-    assert OCRRouter(event_recorder=lambda **_event: None).decide_route(routing_type).route == "structured"
+    assert (
+        OCRRouter(event_recorder=lambda **_event: None).decide_route(routing_type).route
+        == "structured"
+    )
 
 
 def test_google_vision_provider_offloads_all_ocr(monkeypatch) -> None:
@@ -207,13 +213,18 @@ def test_google_vision_provider_offloads_all_ocr(monkeypatch) -> None:
     google_calls: list[str] = []
     router = OCRRouter(
         fast_processor=lambda path: fast_calls.append(str(path)) or _fast_result(),
-        structured_processor=lambda path: structured_calls.append(str(path)) or _structured_result(),
-        google_vision_processor=lambda path: google_calls.append(str(path)) or {
-            "ocr_text": "Google Vision text",
-            "confidence": 0.93,
-            "bounding_boxes": [{"text": "Google", "bbox": []}],
-            "layout_blocks": [{"type": "TEXT", "text": "Google Vision text"}],
-        },
+        structured_processor=lambda path: (
+            structured_calls.append(str(path)) or _structured_result()
+        ),
+        google_vision_processor=lambda path: (
+            google_calls.append(str(path))
+            or {
+                "ocr_text": "Google Vision text",
+                "confidence": 0.93,
+                "bounding_boxes": [{"text": "Google", "bbox": []}],
+                "layout_blocks": [{"type": "TEXT", "text": "Google Vision text"}],
+            }
+        ),
         event_recorder=lambda **_event: None,
     )
 
@@ -236,10 +247,13 @@ def test_google_vision_reuses_classification_result_for_final_routing(monkeypatc
     router = OCRRouter(
         fast_processor=lambda _path: pytest.fail("local fast OCR must not run"),
         structured_processor=lambda _path: pytest.fail("local structured OCR must not run"),
-        google_vision_processor=lambda path: google_calls.append(str(path)) or {
-            "ocr_text": "Loan Application Form Applicant Name Ramesh Kumar",
-            "confidence": 0.94,
-        },
+        google_vision_processor=lambda path: (
+            google_calls.append(str(path))
+            or {
+                "ocr_text": "Loan Application Form Applicant Name Ramesh Kumar",
+                "confidence": 0.94,
+            }
+        ),
         event_recorder=lambda **event: events.append(event),
     )
 
@@ -258,61 +272,10 @@ def test_google_vision_reuses_classification_result_for_final_routing(monkeypatc
 
 
 def test_init_db_migrates_legacy_ocr_route_constraint(tmp_path, monkeypatch) -> None:
+    # ws-b storage+db removed archive migration: databases are created fresh,
+    # so this now asserts fresh init_db() accepts google_vision routes.
     database_path = tmp_path / "legacy.db"
     monkeypatch.setattr(db, "DATABASE_PATH", database_path)
-    connection = sqlite3.connect(database_path)
-    connection.execute(
-        """
-        CREATE TABLE ocr_route_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            document_id TEXT NOT NULL,
-            document_type TEXT,
-            page_number INTEGER NOT NULL,
-            event_type TEXT NOT NULL CHECK(event_type IN ('processing', 'escalation')),
-            requested_route TEXT NOT NULL CHECK(requested_route IN ('fast', 'structured')),
-            route_used TEXT NOT NULL CHECK(route_used IN ('fast', 'structured')),
-            reason TEXT,
-            original_confidence REAL,
-            duration_ms INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
-    connection.execute(
-        """INSERT INTO ocr_route_events
-           (document_id, page_number, event_type, requested_route, route_used)
-           VALUES ('old', 1, 'processing', 'fast', 'fast')"""
-    )
-    connection.execute(
-        """
-        CREATE TABLE pages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            application_id INTEGER,
-            page_number INTEGER,
-            page_type TEXT CHECK(page_type IN ('digital', 'scanned')),
-            image_path TEXT,
-            is_readable BOOLEAN,
-            ocr_text TEXT,
-            ocr_confidence REAL,
-            ocr_route TEXT CHECK(ocr_route IN ('fast', 'structured')),
-            ocr_escalated BOOLEAN NOT NULL DEFAULT 0,
-            ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0,
-            structured_content TEXT,
-            document_type TEXT,
-            classification_confidence REAL,
-            detection_method TEXT DEFAULT 'detected',
-            detected_page_number INTEGER,
-            extracted_fields TEXT
-        )
-        """
-    )
-    connection.execute(
-        """INSERT INTO pages
-           (application_id, page_number, page_type, ocr_route)
-           VALUES (1, 1, 'scanned', 'fast')"""
-    )
-    connection.commit()
-    connection.close()
 
     init_db()
     with db.get_connection() as migrated:
@@ -321,7 +284,7 @@ def test_init_db_migrates_legacy_ocr_route_constraint(tmp_path, monkeypatch) -> 
                (document_id, page_number, event_type, requested_route, route_used)
                VALUES ('new', 2, 'processing', 'google_vision', 'google_vision')"""
         )
-        assert migrated.execute("SELECT COUNT(*) FROM ocr_route_events").fetchone()[0] == 2
+        assert migrated.execute("SELECT COUNT(*) FROM ocr_route_events").fetchone()[0] == 1
         migrated.execute(
             """INSERT INTO applications (loan_id, status)
                VALUES ('LEGACY-TEST', 'processing')"""
@@ -333,11 +296,7 @@ def test_init_db_migrates_legacy_ocr_route_constraint(tmp_path, monkeypatch) -> 
                VALUES (?, 2, 'scanned', 'google_vision')""",
             (application_id,),
         )
-        assert migrated.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 2
-        pages_sql = migrated.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pages'"
-        ).fetchone()[0]
-        assert "google_vision" in pages_sql
+        assert migrated.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 1
 
 
 def test_auto_ocr_provider_keeps_local_without_google_credentials(monkeypatch) -> None:

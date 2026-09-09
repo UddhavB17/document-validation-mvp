@@ -37,7 +37,10 @@ NON_LOAN_TERMS = {
 def classify_input_text(text_by_page: dict[int, str]) -> dict[str, object]:
     text = " ".join(text_by_page.values()).lower()
     if len(text.strip()) < 120:
-        return {"input_type": "unknown", "reason": "Not enough digital text for early classification"}
+        return {
+            "input_type": "unknown",
+            "reason": "Not enough digital text for early classification",
+        }
 
     loan_hits = sorted(term for term in LOAN_TERMS if term in text)
     non_loan_hits = sorted(term for term in NON_LOAN_TERMS if term in text)
@@ -50,6 +53,9 @@ def classify_input_text(text_by_page: dict[int, str]) -> dict[str, object]:
         }
 
     if loan_hits:
-        return {"input_type": "loan_packet", "reason": f"Loan terms detected: {', '.join(loan_hits[:5])}"}
+        return {
+            "input_type": "loan_packet",
+            "reason": f"Loan terms detected: {', '.join(loan_hits[:5])}",
+        }
 
     return {"input_type": "unknown", "reason": "No strong loan or non-loan signal detected"}

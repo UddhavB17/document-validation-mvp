@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +17,20 @@ from cryptography.fernet import Fernet, InvalidToken
 from database import db
 from database.db import get_connection
 
+logger = logging.getLogger(__name__)
+
+# Secret settings in ``system_settings`` are stored with this prefix followed
+# by the Fernet token, so reads can tell ciphertext apart from legacy
+# plaintext rows left behind before encryption at rest landed.
+SECRET_VALUE_PREFIX = "enc:fernet:"
+
+# Primary env var for the Fernet key that encrypts both pipeline recovery
+# payloads and secret settings. ``DMEF_JOB_INPUT_KEY`` is the deprecated
+# alias and is only honoured with a warning.
+SECRETS_KEY_ENV = "DMEF_SECRETS_KEY"
+DEPRECATED_SECRETS_KEY_ENV = "DMEF_JOB_INPUT_KEY"
+
+_in_memory_fernet_key: bytes | None = None
 
 ControlAction = Literal["pause", "resume", "cancel"]
 _ACTIVE_JOB_STATUSES = frozenset({"queued", "running", "pause_requested", "paused"})
@@ -41,38 +56,142 @@ class PipelineCancelled(RuntimeError):
     """Cooperative signal used to stop a pipeline at a safe boundary."""
 
 
+class PipelineFailedError(RuntimeError):
+    """Terminal pipeline outcome (``pipeline_status == 'failed'``).
+
+    Unlike transient crashes, a clean pipeline failure must not be retried by
+    the worker. Handlers treat this as immediately terminal.
+    """
+
+
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _fernet() -> Fernet:
-    configured = os.getenv("DMEF_JOB_INPUT_KEY", "").strip()
+def _configured_key_material() -> tuple[bytes | None, str]:
+    """Return ``(key_bytes, source)`` from env or an existing key file.
+
+    ``source`` names where the key came from for error messages. Returns
+    ``(None, "")`` when nothing is configured.
+    """
+    configured = os.getenv(SECRETS_KEY_ENV, "").strip()
     if configured:
         try:
-            return Fernet(configured.encode("ascii"))
+            Fernet(configured.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
             raise JobInputUnavailableError(
-                "DMEF_JOB_INPUT_KEY must be a valid Fernet key"
+                f"{SECRETS_KEY_ENV} must be a valid Fernet key"
             ) from exc
-
-    key_path = Path(
-        os.getenv("DMEF_JOB_INPUT_KEY_FILE", str(db.DATABASE_PATH.parent / ".job_input.key"))
-    )
-    key_path.parent.mkdir(parents=True, exist_ok=True)
-    if not key_path.exists():
-        key = Fernet.generate_key()
+        return configured.encode("ascii"), SECRETS_KEY_ENV
+    legacy = os.getenv(DEPRECATED_SECRETS_KEY_ENV, "").strip()
+    if legacy:
+        logger.warning(
+            "%s is deprecated; set %s instead",
+            DEPRECATED_SECRETS_KEY_ENV,
+            SECRETS_KEY_ENV,
+        )
         try:
-            descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            pass
-        else:
-            with os.fdopen(descriptor, "wb") as key_file:
-                key_file.write(key)
+            Fernet(legacy.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise JobInputUnavailableError(
+                f"{DEPRECATED_SECRETS_KEY_ENV} must be a valid Fernet key"
+            ) from exc
+        return legacy.encode("ascii"), DEPRECATED_SECRETS_KEY_ENV
+
+    explicit_file = os.getenv("DMEF_JOB_INPUT_KEY_FILE", "").strip()
+    if explicit_file:
+        key_path = Path(explicit_file)
+        if key_path.exists():
+            try:
+                os.chmod(key_path, 0o600)
+                return key_path.read_bytes().strip(), "DMEF_JOB_INPUT_KEY_FILE"
+            except (OSError, ValueError) as exc:
+                raise JobInputUnavailableError(
+                    "Secure pipeline recovery key is unavailable"
+                ) from exc
+        if not _is_production():
+            key = Fernet.generate_key()
+            key_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(descriptor, "wb") as key_file:
+                    key_file.write(key)
+            return key, "DMEF_JOB_INPUT_KEY_FILE"
+        return None, ""
+
+    # Never auto-generate under the default data/ location. An existing legacy
+    # key file is still honoured so older checkouts keep decrypting.
+    default_path = Path(db.DATABASE_PATH.parent / ".job_input.key")
+    if default_path.exists():
+        try:
+            os.chmod(default_path, 0o600)
+            return default_path.read_bytes().strip(), "default key file"
+        except (OSError, ValueError) as exc:
+            raise JobInputUnavailableError(
+                "Secure pipeline recovery key is unavailable"
+            ) from exc
+    return None, ""
+
+
+def _is_production() -> bool:
+    return os.getenv("DMEF_ENV", "").strip().lower() == "production"
+
+
+def ensure_secrets_key() -> bytes:
+    """Validate secrets-key configuration; fail fast in production.
+
+    Returns the raw Fernet key bytes. When no key is configured and
+    ``DMEF_ENV=production``, raises ``RuntimeError`` with a clear message so
+    startup fails instead of silently running unencrypted. Outside production
+    an ephemeral in-memory key is generated once per process and a warning is
+    logged (in-memory means recovery payloads and secrets do not survive a
+    restart — set ``DMEF_SECRETS_KEY`` for anything durable).
+    """
+    configured, _source = _configured_key_material()
+    if configured:
+        return configured
+    if _is_production():
+        raise RuntimeError(
+            "DMEF_ENV=production requires DMEF_SECRETS_KEY to be set to a valid "
+            "Fernet key (generate one with "
+            "`python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`). "
+            "Refusing to start without encrypted secrets at rest."
+        )
+    global _in_memory_fernet_key
+    if _in_memory_fernet_key is None:
+        _in_memory_fernet_key = Fernet.generate_key()
+        logger.warning(
+            "No DMEF_SECRETS_KEY configured; using an ephemeral in-memory key. "
+            "Set DMEF_SECRETS_KEY for durable encryption."
+        )
+    return _in_memory_fernet_key
+
+
+def secrets_fernet() -> Fernet:
+    """Return a Fernet instance backed by :func:`ensure_secrets_key`."""
     try:
-        os.chmod(key_path, 0o600)
-        return Fernet(key_path.read_bytes().strip())
-    except (OSError, ValueError) as exc:
-        raise JobInputUnavailableError("Secure pipeline recovery key is unavailable") from exc
+        return Fernet(ensure_secrets_key())
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise JobInputUnavailableError("Configured secrets key is not a valid Fernet key") from exc
+
+
+def encrypt_secret(plaintext: str) -> str:
+    """Encrypt a secret setting value for storage."""
+    return SECRET_VALUE_PREFIX + secrets_fernet().encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+
+def decrypt_secret(stored: str) -> str:
+    """Decrypt a stored secret setting value (raises ``InvalidToken`` if bad)."""
+    token = stored[len(SECRET_VALUE_PREFIX):] if stored.startswith(SECRET_VALUE_PREFIX) else stored
+    return secrets_fernet().decrypt(token.encode("ascii")).decode("utf-8")
+
+
+def is_encrypted_secret(stored: str) -> bool:
+    """Return True when a stored value carries the Fernet envelope prefix."""
+    return stored.startswith(SECRET_VALUE_PREFIX)
 
 
 def _source_checksum(source_path: Path) -> str:
@@ -97,9 +216,7 @@ def safe_settings_snapshot() -> dict[str, Any]:
     return {
         "system_settings": {str(row["config_key"]): row["config_value"] for row in rows},
         "environment": {
-            key: os.environ[key]
-            for key in _SAFE_ENVIRONMENT_KEYS
-            if key in os.environ
+            key: os.environ[key] for key in _SAFE_ENVIRONMENT_KEYS if key in os.environ
         },
     }
 
@@ -114,6 +231,8 @@ def persist_job_input(
     mapped_manifest: dict[str, Any] | None = None,
     package_id: str | None = None,
     generate_llm_summary: bool | None = None,
+    resume: bool = False,
+    refresh_cached_ocr: bool = False,
 ) -> None:
     """Encrypt the minimum complete payload required for an exact recovery run."""
     source = Path(source_path).resolve()
@@ -126,10 +245,12 @@ def persist_job_input(
         "mapped_manifest": mapped_manifest,
         "package_id": package_id,
         "generate_llm_summary": generate_llm_summary,
+        "resume": resume,
+        "refresh_cached_ocr": refresh_cached_ocr,
         "settings_snapshot": safe_settings_snapshot(),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    encrypted = _fernet().encrypt(encoded).decode("ascii")
+    encrypted = secrets_fernet().encrypt(encoded).decode("ascii")
     checksum = _source_checksum(source)
     with get_connection() as connection:
         connection.execute(
@@ -156,6 +277,8 @@ def persist_job_input_or_fail(
     mapped_manifest: dict[str, Any] | None = None,
     package_id: str | None = None,
     generate_llm_summary: bool | None = None,
+    resume: bool = False,
+    refresh_cached_ocr: bool = False,
 ) -> None:
     """Persist recovery input, or mark the queued job/application failed and re-raise."""
     try:
@@ -168,6 +291,8 @@ def persist_job_input_or_fail(
             mapped_manifest=mapped_manifest,
             package_id=package_id,
             generate_llm_summary=generate_llm_summary,
+            resume=resume,
+            refresh_cached_ocr=refresh_cached_ocr,
         )
     except Exception as exc:
         from services.progress_tracker import mark_failed, mark_job_failed
@@ -183,8 +308,25 @@ def persist_job_input_or_fail(
         raise
 
 
+def _checksum_matches(source: Path, expected: str) -> bool:
+    """Return True when ``source`` exists and matches ``expected`` sha256."""
+    try:
+        if not source.is_file():
+            return False
+        return secrets.compare_digest(_source_checksum(source), expected)
+    except OSError:
+        return False
+
+
 def load_job_input(application_id: int, job_id: int | None = None) -> dict[str, Any]:
-    """Decrypt and integrity-check the latest persisted recovery payload."""
+    """Decrypt and integrity-check the persisted recovery payload.
+
+    The durable source of truth is the object store. When the original upload
+    work dir has been deleted (the API deletes it in ``finally`` after
+    enqueue), the source is re-staged from the store into
+    ``DMEF_JOB_WORK_DIR`` before the checksum is verified. The returned
+    payload's ``source_path`` points at a real file on disk.
+    """
     with get_connection() as connection:
         if job_id is None:
             row = connection.execute(
@@ -206,16 +348,44 @@ def load_job_input(application_id: int, job_id: int | None = None) -> dict[str, 
     if row is None:
         raise JobInputUnavailableError("No secure recovery payload is available")
     try:
-        plaintext = _fernet().decrypt(str(row["encrypted_payload"]).encode("ascii"))
+        plaintext = secrets_fernet().decrypt(str(row["encrypted_payload"]).encode("ascii"))
         payload = json.loads(plaintext)
     except (InvalidToken, UnicodeEncodeError, json.JSONDecodeError) as exc:
         raise JobInputUnavailableError("Recovery payload failed decryption") from exc
-    source = Path(str(payload.get("source_path") or ""))
-    if not source.is_file() or not secrets.compare_digest(
-        _source_checksum(source), str(row["source_sha256"])
-    ):
-        raise JobInputUnavailableError("Recovery source file failed its integrity check")
-    return payload
+    expected = str(row["source_sha256"])
+    hint = Path(str(payload.get("source_path") or ""))
+    if hint.name and _checksum_matches(hint, expected):
+        return payload
+    # Original upload work dir is gone (API deletes it after enqueue).
+    # Re-stage the durable bytes from the object store before verifying.
+    effective_job_id = job_id if job_id is not None else int(row["job_id"])
+    restore_error: Exception | None = None
+    try:
+        from services.pipeline.input_preparation import prepare_job_source
+
+        staged = prepare_job_source(application_id, effective_job_id)
+        if _checksum_matches(staged, expected):
+            payload["source_path"] = str(staged)
+            return payload
+    except Exception as exc:  # noqa: BLE001
+        restore_error = exc
+    # ZIP/package jobs also record an intake normalized PDF; use it when the
+    # application-level source ref is missing.
+    package_id = payload.get("package_id")
+    if package_id:
+        try:
+            from services.pipeline.input_preparation import prepare_intake_source
+
+            staged_intake = prepare_intake_source(str(package_id), effective_job_id)
+            if _checksum_matches(staged_intake, expected):
+                payload["source_path"] = str(staged_intake)
+                return payload
+        except Exception as exc:  # noqa: BLE001
+            if restore_error is None:
+                restore_error = exc
+    raise JobInputUnavailableError(
+        "Recovery source file failed its integrity check"
+    ) from restore_error
 
 
 def request_control(application_id: int, action: ControlAction) -> dict[str, Any]:
@@ -275,6 +445,29 @@ def request_control(application_id: int, action: ControlAction) -> dict[str, Any
             ),
         )
     return {"application_id": application_id, "job_id": int(job["id"]), "status": next_status}
+
+
+def restart_job(application_id: int) -> dict[str, Any]:
+    """Reset the latest job for a fresh run: attempt=0, queued, no failure reason."""
+    now = _utc_now_iso()
+    with get_connection() as connection:
+        job = connection.execute(
+            "SELECT * FROM pipeline_jobs WHERE application_id = ? ORDER BY id DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+        if job is None:
+            raise JobControlError("No pipeline job exists for this application")
+        connection.execute(
+            """
+            UPDATE pipeline_jobs
+            SET status = 'queued', control_state = 'running', attempt = 0,
+                failure_reason = NULL, error = NULL, next_run_at = NULL,
+                control_requested_at = ?, heartbeat_at = ?
+            WHERE id = ?
+            """,
+            (now, now, job["id"]),
+        )
+    return {"application_id": application_id, "job_id": int(job["id"]), "status": "queued"}
 
 
 def cooperate(job_id: int | None, application_id: int) -> None:
@@ -362,8 +555,12 @@ def mark_checkpoint(job_id: int | None, page_number: int) -> None:
         connection.execute(
             """
             UPDATE pipeline_jobs
-            SET last_completed_page = MAX(last_completed_page, ?), heartbeat_at = ?
+            SET last_completed_page = CASE
+                    WHEN last_completed_page > ? THEN last_completed_page
+                    ELSE ?
+                END,
+                heartbeat_at = ?
             WHERE id = ?
             """,
-            (page_number, _utc_now_iso(), job_id),
+            (page_number, page_number, _utc_now_iso(), job_id),
         )
