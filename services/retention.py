@@ -13,6 +13,7 @@ from typing import Any
 
 from database.db import get_connection
 from services.config import get_int
+from services.db_archive import applications_missing_archive, export_application_archive
 from services.storage import get_store
 
 #: Audit actions that are never pruned: reviewer (user) actions kept for
@@ -158,6 +159,8 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
 
     result: dict[str, Any] = {
         "dry_run": bool(dry_run),
+        "applications_db_archived": 0,
+        "db_archive_bytes": 0,
         "pipeline_job_inputs_deleted": 0,
         "pipeline_jobs_deleted": 0,
         "telemetry_deleted": {"ocr_route_events": 0, "classification_review_log": 0},
@@ -166,6 +169,29 @@ def run_retention(now: Any = None, dry_run: bool = True) -> dict:
         "source_keys_deleted": 0,
         "ocr_exports_deleted": 0,
     }
+
+    # 0. Database archive first: snapshot each archivable application without
+    # a db_archive export into the object store BEFORE any pruning below
+    # deletes job inputs, telemetry, or source blobs. Failures are skipped
+    # (the next run backfills them); reports and db_archive exports are
+    # never deletion candidates in the steps that follow.
+    try:
+        archive_candidates = applications_missing_archive()
+    except Exception:  # noqa: BLE001 - archiving is best-effort; pruning proceeds
+        archive_candidates = []
+    if dry_run:
+        result["applications_db_archived"] = len(archive_candidates)
+    else:
+        archived_bytes = 0
+        for application_id in archive_candidates:
+            try:
+                exported = export_application_archive(application_id)
+            except Exception:  # noqa: BLE001 - row kept missing so next run retries
+                continue
+            if not exported.get("reused"):
+                result["applications_db_archived"] += 1
+                archived_bytes += int(exported.get("size_bytes") or 0)
+        result["db_archive_bytes"] = archived_bytes
 
     with get_connection() as connection:
         # 1. Inputs of completed jobs are never read again.

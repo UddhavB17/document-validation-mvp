@@ -8,6 +8,7 @@ import type { AdminUser } from "@/lib/api";
 import {
   useAdminUsers,
   useCreateAdminUser,
+  useDeleteAdminUser,
   useResetAdminPassword,
   useUpdateAdminUser,
 } from "@/lib/queries";
@@ -17,6 +18,7 @@ export default function AdminUsersPage() {
   const createUser = useCreateAdminUser();
   const updateUser = useUpdateAdminUser();
   const resetPassword = useResetAdminPassword();
+  const deleteUser = useDeleteAdminUser();
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -28,7 +30,7 @@ export default function AdminUsersPage() {
     const payload = {
       email: String(form.get("email") ?? "").trim(),
       display_name: String(form.get("display_name") ?? "").trim(),
-      role: String(form.get("role") ?? "operations"),
+      role: String(form.get("role") ?? "user"),
       password: String(form.get("password") ?? ""),
     };
     if (!payload.email || !payload.display_name || !payload.password) {
@@ -70,11 +72,28 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function handleRemove(user: AdminUser) {
+    setFormError(null);
+    setNotice(null);
+    const confirmed = window.confirm(
+      `Permanently remove ${user.email}? They will lose access immediately. This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await deleteUser.mutateAsync(user.id);
+      setNotice(`Removed ${user.email}.`);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Could not remove the user.");
+    }
+  }
+
   const rows = users.data?.users ?? [];
 
   return (
     <div className="mx-auto max-w-[1100px] space-y-6">
-      <PageHeader title="Users" description="Create operations and admin accounts, deactivate access, and reset passwords." />
+      <PageHeader title="Users" description="Create user and admin accounts, deactivate access, and reset passwords." />
 
       {users.isLoading ? <LoadingMessage message="Loading users…" /> : null}
       {users.isError ? <ErrorMessage message="Could not load users. Refresh to try again." /> : null}
@@ -94,8 +113,8 @@ export default function AdminUsersPage() {
           </label>
           <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
             Role
-            <select name="role" defaultValue="operations" className="rounded-lg border border-[#E1E5EB] px-3 py-2 font-normal text-slate-900 focus:border-[#2B4C7E] focus:outline-none">
-              <option value="operations">Operations</option>
+            <select name="role" defaultValue="user" className="rounded-lg border border-[#E1E5EB] px-3 py-2 font-normal text-slate-900 focus:border-[#2B4C7E] focus:outline-none">
+              <option value="user">User</option>
               <option value="admin">Admin</option>
             </select>
           </label>
@@ -152,6 +171,14 @@ export default function AdminUsersPage() {
                         className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                       >
                         Reset password
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleRemove(user)}
+                        disabled={deleteUser.isPending}
+                        className="rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        Remove
                       </button>
                     </div>
                   </td>

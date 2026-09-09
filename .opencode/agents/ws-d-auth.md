@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
   display_name TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin','operations')),
+  role TEXT NOT NULL CHECK (role IN ('admin','user')),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TEXT NOT NULL,
   created_by INTEGER

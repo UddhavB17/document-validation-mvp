@@ -530,6 +530,14 @@ async function patchJsonResponse<T>(path: string, body: unknown, schema: z.ZodTy
   return parseApiResponse(response, schema);
 }
 
+async function deleteJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response, schema);
+}
+
 // Public request methods. Endpoint paths and payload field names stay aligned
 // with the backend contract; callers should not build these requests directly.
 export const api = {
@@ -713,8 +721,34 @@ const llmProvidersSchema = z.object({
 
 export type LlmProviders = z.infer<typeof llmProvidersSchema>;
 
+const spendMonthSchema = z.object({
+  month: z.string(),
+  units: z.number(),
+  free_units: z.number(),
+  billable_units: z.number(),
+  usd: z.number(),
+});
+
+const spendSchema = z.object({
+  currency: z.string(),
+  llm: z.object({ calls: z.number(), usd: z.number() }),
+  vision: z.object({
+    units_total: z.number(),
+    free_units: z.number(),
+    billable_units: z.number(),
+    price_per_1k_usd: z.number(),
+    free_units_monthly: z.number(),
+    usd: z.number(),
+    by_month: z.array(spendMonthSchema),
+  }),
+  total_usd: z.number(),
+});
+
+export type SpendSummary = z.infer<typeof spendSchema>;
+
 export const llmApi = {
   providers: () => getJsonResponse("/settings/llm/providers", llmProvidersSchema),
+  spend: () => getJsonResponse("/admin/spend", spendSchema),
 };
 
 export async function fetchCurrentUser(): Promise<AuthUser> {
@@ -901,6 +935,10 @@ export async function adminUpdateUserRequest(
 
 export async function adminResetPasswordRequest(userId: number, newPassword: string): Promise<void> {
   await postJsonResponse(`/admin/users/${userId}/password`, { new_password: newPassword }, z.object({}));
+}
+
+export async function adminDeleteUserRequest(userId: number): Promise<void> {
+  await deleteJsonResponse(`/admin/users/${userId}`, z.object({}));
 }
 
 export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {

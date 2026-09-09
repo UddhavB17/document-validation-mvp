@@ -59,7 +59,7 @@ def _create_ops_user(client, headers):
         json={
             "email": OPS_EMAIL,
             "display_name": "Ops Reviewer",
-            "role": "operations",
+            "role": "user",
             "password": OPS_PASSWORD,
         },
     )
@@ -175,7 +175,7 @@ def test_decode_requires_sub_and_exp_claims(client) -> None:
     secret = os.environ["DMEF_AUTH_SECRET"]
 
     # Round-trip of a well-formed token still works.
-    user = {"id": 7, "email": "u@example.com", "role": "operations"}
+    user = {"id": 7, "email": "u@example.com", "role": "user"}
     assert decode(issue(user))["sub"] == "7"
 
     def sign(payload: dict) -> str:
@@ -220,7 +220,7 @@ def test_auth_me_uses_current_db_role_not_stale_claim(client) -> None:
         {
             "sub": str(ops["id"]),
             "email": OPS_EMAIL,
-            "role": "admin",  # stale/forged claim; DB role is operations
+            "role": "admin",  # stale/forged claim; DB role is user
             "exp": int(time.time()) + 3600,
         },
         secret,
@@ -228,7 +228,7 @@ def test_auth_me_uses_current_db_role_not_stale_claim(client) -> None:
     )
     response = client.get("/auth/me", headers={"Authorization": f"Bearer {forged}"})
     assert response.status_code == 200, response.text
-    assert response.json()["role"] == "operations"
+    assert response.json()["role"] == "user"
     # And the forged admin claim grants nothing admin-only.
     assert client.get("/settings", headers={"Authorization": f"Bearer {forged}"}).status_code == 403
 
@@ -251,7 +251,7 @@ def test_inactive_user_cannot_login_and_token_stops_working(client) -> None:
     )
 
 
-def test_operations_user_forbidden_on_settings_but_ok_on_worklist(client) -> None:
+def test_user_forbidden_on_settings_but_ok_on_worklist(client) -> None:
     headers = _admin_headers(client)
     _create_ops_user(client, headers)
     ops_headers = {"Authorization": f"Bearer {_login(client, OPS_EMAIL, OPS_PASSWORD)['token']}"}
@@ -276,7 +276,7 @@ def test_operations_user_forbidden_on_settings_but_ok_on_worklist(client) -> Non
         response = client.request(method, path, headers=ops_headers)
         assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
 
-    # Operations users retain the deliberately small, non-technical routes.
+    # Regular users retain the deliberately small, non-technical routes.
     assert client.get("/ops/worklist", headers=ops_headers).status_code == 200
     assert client.get("/review/applications/1/status", headers=ops_headers).status_code == 404
     assert (
@@ -284,15 +284,15 @@ def test_operations_user_forbidden_on_settings_but_ok_on_worklist(client) -> Non
     )
 
 
-def test_admin_can_create_operations_user(client) -> None:
+def test_admin_can_create_user(client) -> None:
     headers = _admin_headers(client)
     created = _create_ops_user(client, headers)
 
     assert created["email"] == OPS_EMAIL
-    assert created["role"] == "operations"
+    assert created["role"] == "user"
     assert "password_hash" not in str(created)
     body = _login(client, OPS_EMAIL, OPS_PASSWORD)
-    assert body["user"]["role"] == "operations"
+    assert body["user"]["role"] == "user"
 
     with get_connection() as connection:
         actions = [
@@ -325,7 +325,7 @@ def test_admin_user_endpoints_validate_input(client) -> None:
         json={
             "email": "weak@example.com",
             "display_name": "Weak",
-            "role": "operations",
+            "role": "user",
             "password": "short",
         },
     )
@@ -335,14 +335,14 @@ def test_admin_user_endpoints_validate_input(client) -> None:
         create_user(
             email="short@example.com",
             display_name="Short",
-            role="operations",
+            role="user",
             password="short",
         )
     with pytest.raises(ValueError, match="too common"):
         create_user(
             email="common@example.com",
             display_name="Common",
-            role="operations",
+            role="user",
             password="password123",
         )
 
@@ -371,7 +371,7 @@ def test_non_admin_cannot_manage_users(client) -> None:
             json={
                 "email": "x@example.com",
                 "display_name": "X",
-                "role": "operations",
+                "role": "user",
                 "password": "AVeryStr0ngPass!",
             },
         ).status_code
@@ -519,3 +519,59 @@ def test_retention_run_accepts_scheduler_header(client, monkeypatch) -> None:
         ).status_code
         == 403
     )
+
+
+def test_admin_can_delete_user_and_login_stops_working(client) -> None:
+    headers = _admin_headers(client)
+    ops = _create_ops_user(client, headers)
+
+    removed = client.delete(f"/admin/users/{ops['id']}", headers=headers)
+    assert removed.status_code == 200, removed.text
+    login = client.post("/auth/login", json={"email": OPS_EMAIL, "password": OPS_PASSWORD})
+    assert login.status_code == 401
+    remaining = client.get("/admin/users", headers=headers).json()["users"]
+    assert all(user["id"] != ops["id"] for user in remaining)
+
+    with get_connection() as connection:
+        actions = [
+            row["action"]
+            for row in connection.execute(
+                "SELECT action FROM audit_log WHERE application_id IS NULL"
+            ).fetchall()
+        ]
+    assert "user_deleted" in actions
+
+
+def test_admin_cannot_delete_self_or_last_admin(client) -> None:
+    headers = _admin_headers(client)
+    admin_id = client.get("/auth/me", headers=headers).json()["id"]
+
+    assert client.delete(f"/admin/users/{admin_id}", headers=headers).status_code == 400
+    # Unknown ids are 404, not 500.
+    assert client.delete("/admin/users/999999", headers=headers).status_code == 404
+
+
+def test_admin_can_delete_admin_when_another_remains(client) -> None:
+    headers = _admin_headers(client)
+    second = client.post(
+        "/admin/users",
+        headers=headers,
+        json={
+            "email": "admin2@example.com",
+            "display_name": "Second Admin",
+            "role": "admin",
+            "password": "SecondStr0ngPass!",
+        },
+    )
+    assert second.status_code == 201, second.text
+
+    removed = client.delete(f"/admin/users/{second.json()['id']}", headers=headers)
+    assert removed.status_code == 200, removed.text
+
+
+def test_non_admin_cannot_delete_users(client) -> None:
+    headers = _admin_headers(client)
+    ops = _create_ops_user(client, headers)
+    ops_headers = {"Authorization": f"Bearer {_login(client, OPS_EMAIL, OPS_PASSWORD)['token']}"}
+
+    assert client.delete(f"/admin/users/{ops['id']}", headers=ops_headers).status_code == 403

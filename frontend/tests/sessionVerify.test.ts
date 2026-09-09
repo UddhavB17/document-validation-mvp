@@ -21,9 +21,9 @@ function stubFetch(outcome: { status: number; body: unknown } | Error, calls: Ca
 
 const BACKEND_USER = {
   id: 3,
-  email: "ops@example.com",
-  display_name: "Ops Reviewer",
-  role: "operations",
+  email: "user@example.com",
+  display_name: "Reviewer",
+  role: "user",
 };
 
 test("valid token returns the backend DB role and forwards the bearer", async () => {
@@ -35,7 +35,7 @@ test("valid token returns the backend DB role and forwards the bearer", async ()
   assert.equal(outcome.status, "valid");
   // The role comes from verified /auth/me, never from a JWT claim: even a
   // token carrying role=admin resolves to the current DB role.
-  assert.equal(outcome.user?.role, "operations");
+  assert.equal(outcome.user?.role, "user");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.example.test/auth/me");
   assert.equal(calls[0].init.headers?.Authorization, "Bearer good-token");

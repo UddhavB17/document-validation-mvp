@@ -30,6 +30,7 @@ from routes import (
     review,
     review_pages,
     settings,
+    spend,
     storage,
     upload,
     verification,
@@ -103,6 +104,7 @@ app.include_router(ops.router)
 app.include_router(review_pages.router)
 app.include_router(storage.router)
 app.include_router(admin_ops.router)
+app.include_router(spend.router)
 
 
 # ── Health ────────────────────────────────────

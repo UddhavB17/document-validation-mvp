@@ -17,6 +17,7 @@ export default function AdminLlmPage() {
   const queryClient = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const providers = useQuery({ queryKey: ["llmProviders"], queryFn: llmApi.providers, retry: false });
+  const spend = useQuery({ queryKey: ["spend"], queryFn: llmApi.spend, retry: false });
   const updateProvider = useMutation({
     mutationFn: (value: string) => api.updateSetting("llm_provider", value),
     onSuccess: async () => {
@@ -35,10 +36,29 @@ export default function AdminLlmPage() {
       ? [currentProvider, ...providerList]
       : providerList;
   const costs = providers.data?.costs ?? [];
+  const spendData = spend.data;
 
   return (
     <div className="mx-auto max-w-[1100px] space-y-6">
       <PageHeader title="LLM" description="Language-model provider settings and usage cost." />
+
+      <section aria-labelledby="admin-spend-total" className="rounded-xl border border-[#E1E5EB] bg-white p-5 shadow-sm">
+        <h2 id="admin-spend-total" className="text-base font-bold text-slate-900">Total spend so far</h2>
+        {spend.isLoading ? <LoadingMessage message="Loading spend…" /> : null}
+        {spend.isError ? <InfoMessage message="Spend totals are currently unavailable." /> : null}
+        {spendData ? (
+          <div className="mt-3">
+            <div className="text-3xl font-bold text-slate-900">
+              ${spendData.total_usd.toFixed(4)} <span className="text-sm font-semibold text-slate-500">USD</span>
+            </div>
+            <p className="mt-1 text-xs font-medium text-slate-500">
+              LLM ${spendData.llm.usd.toFixed(4)} ({spendData.llm.calls} calls) · Vision OCR $
+              {spendData.vision.usd.toFixed(4)} ({spendData.vision.billable_units} billable of{" "}
+              {spendData.vision.units_total} pages, {spendData.vision.free_units} free-tier pages excluded)
+            </p>
+          </div>
+        ) : null}
+      </section>
 
       {settings.isLoading ? <LoadingMessage message="Loading model settings…" /> : null}
       {settings.isError ? <ErrorMessage message="Could not load model settings. Refresh to try again." /> : null}
@@ -140,6 +160,46 @@ export default function AdminLlmPage() {
         ) : null}
         {!providers.data && !providers.isError && !providers.isLoading ? (
           <InfoMessage message="Cost totals will appear here once provider data loads." />
+        ) : null}
+      </section>
+
+      <section aria-labelledby="admin-vision-cost" className="rounded-xl border border-[#E1E5EB] bg-white p-5 shadow-sm">
+        <h2 id="admin-vision-cost" className="text-base font-bold text-slate-900">Vision OCR usage</h2>
+        {spendData ? (
+          spendData.vision.by_month.length === 0 ? (
+            <div className="mt-3">
+              <InfoMessage message="No billable OCR pages yet. First 1,000 pages per month are free." />
+            </div>
+          ) : (
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-full border-collapse text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th scope="col" className="px-3 py-2.5">Month</th>
+                    <th scope="col" className="px-3 py-2.5">Pages</th>
+                    <th scope="col" className="px-3 py-2.5">Free</th>
+                    <th scope="col" className="px-3 py-2.5">Billable</th>
+                    <th scope="col" className="px-3 py-2.5">USD</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 text-slate-800">
+                  {spendData.vision.by_month.map((row) => (
+                    <tr key={row.month}>
+                      <td className="px-3 py-2.5 font-mono text-xs font-bold">{row.month}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{row.units}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{row.free_units}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{row.billable_units}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs">{row.usd.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-xs font-medium text-slate-500">
+                ${spendData.vision.price_per_1k_usd.toFixed(2)} per 1,000 pages after the first{" "}
+                {spendData.vision.free_units_monthly} free pages each month.
+              </p>
+            </div>
+          )
         ) : null}
       </section>
     </div>

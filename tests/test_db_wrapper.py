@@ -190,3 +190,17 @@ def test_sqlite_database_url_initializes_schema(tmp_path, monkeypatch) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'applications'"
         ).fetchone()
     assert row is not None
+
+
+def test_remote_test_db_guard_blocks_neon_but_allows_local(monkeypatch) -> None:
+    from tests.conftest import remote_test_db_url
+
+    assert remote_test_db_url("") == ""
+    assert remote_test_db_url("sqlite:///data/dmef.db") == ""
+    assert remote_test_db_url("postgresql://dmef:dmef@localhost:5432/dmef") == ""
+    assert remote_test_db_url("postgresql://dmef:dmef@127.0.0.1:5432/dmef") == ""
+    neon = "postgresql://u:p@ep-xxx-pooler.us-east-2.aws.neon.tech/db?sslmode=require"
+    assert remote_test_db_url(neon) == neon
+    # Explicit opt-in lifts the block (throwaway databases only).
+    monkeypatch.setenv("DMEF_ALLOW_REMOTE_TEST_DB", "1")
+    assert remote_test_db_url(neon) == ""

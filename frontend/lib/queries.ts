@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   adminCreateUserRequest,
+  adminDeleteUserRequest,
   adminListUsersRequest,
   adminResetPasswordRequest,
   adminUpdateUserRequest,
@@ -220,5 +221,15 @@ export function useResetAdminPassword() {
   return useMutation({
     mutationFn: (payload: { userId: number; newPassword: string }) =>
       adminResetPasswordRequest(payload.userId, payload.newPassword),
+  });
+}
+
+export function useDeleteAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: number) => adminDeleteUserRequest(userId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+    },
   });
 }
