@@ -166,6 +166,73 @@ def test_expired_token_is_rejected(client) -> None:
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
+def test_decode_requires_sub_and_exp_claims(client) -> None:
+    """Tokens missing ``sub``/``exp`` raise PyJWTError (mapped to 401)."""
+    import jwt as pyjwt
+
+    from services.auth.tokens import issue
+
+    secret = os.environ["DMEF_AUTH_SECRET"]
+
+    # Round-trip of a well-formed token still works.
+    user = {"id": 7, "email": "u@example.com", "role": "operations"}
+    assert decode(issue(user))["sub"] == "7"
+
+    def sign(payload: dict) -> str:
+        return pyjwt.encode(payload, secret, algorithm="HS256")
+
+    now = int(time.time())
+    for bad in (
+        {"email": "u@example.com", "role": "admin", "exp": now + 3600},  # no sub
+        {"sub": "7", "email": "u@example.com", "role": "admin"},  # no exp
+        {"email": "u@example.com"},  # neither
+    ):
+        with pytest.raises(pyjwt.PyJWTError):
+            decode(sign(bad))
+
+    with pytest.raises(pyjwt.PyJWTError):
+        decode("not-a-token")
+    with pytest.raises(pyjwt.PyJWTError):
+        decode(
+            pyjwt.encode(
+                {"sub": "7", "exp": now + 3600}, "wrong-secret", algorithm="HS256"
+            )
+        )
+    with pytest.raises(pyjwt.ExpiredSignatureError):
+        decode(sign({"sub": "7", "exp": now - 10}))
+
+
+def test_auth_me_with_claimless_token_returns_401_not_500(client) -> None:
+    """A correctly signed token without claims must fail closed (401)."""
+    secret = os.environ["DMEF_AUTH_SECRET"]
+    token = jwt.encode({"email": ADMIN_EMAIL, "role": "admin"}, secret, algorithm="HS256")
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
+
+
+def test_auth_me_uses_current_db_role_not_stale_claim(client) -> None:
+    """A forged role claim does not escalate: /auth/me returns the DB role."""
+    headers = _admin_headers(client)
+    ops = _create_ops_user(client, headers)
+
+    secret = os.environ["DMEF_AUTH_SECRET"]
+    forged = jwt.encode(
+        {
+            "sub": str(ops["id"]),
+            "email": OPS_EMAIL,
+            "role": "admin",  # stale/forged claim; DB role is operations
+            "exp": int(time.time()) + 3600,
+        },
+        secret,
+        algorithm="HS256",
+    )
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {forged}"})
+    assert response.status_code == 200, response.text
+    assert response.json()["role"] == "operations"
+    # And the forged admin claim grants nothing admin-only.
+    assert client.get("/settings", headers={"Authorization": f"Bearer {forged}"}).status_code == 403
+
+
 def test_inactive_user_cannot_login_and_token_stops_working(client) -> None:
     headers = _admin_headers(client)
     ops = _create_ops_user(client, headers)

@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import logging
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from services.audit_service import log_action
 from services.checklist_engine import build_anomaly
 from services.checklist_output import build_checklist_verification_response
-from services.config import get_setting
 from services.exception_aggregator import aggregate
 from services.input_classifier import classify_input_text
 from services.job_control import cooperate
 from services.llm_service import generate_explanation, generate_summaries, summarize_exceptions
+from services.paths import job_work_dir as job_work_root
 from services.paths import processed_output_dir
 from services.pdf_processor import process_pdf_structure
 from services.pipeline.anomalies import (
@@ -65,13 +66,18 @@ def run_pipeline(
 ) -> dict[str, Any]:
     """Process one uploaded loan-file PDF and persist validation results."""
     # Transient page renders live under the job work dir (contracts §2) so no
-    # durable page image is ever written next to processed outputs. Without a
-    # job id (tests, offline re-runs) fall back to the caller's output dir.
-    # The work dir is always removed in a ``finally``.
-    job_work_root = Path(
-        str(get_setting("dmef.job_work_dir", "/tmp/dmef-jobs") or "/tmp/dmef-jobs")
-    )
-    job_work_dir = job_work_root / str(job_id) if job_id is not None else None
+    # durable page image is ever written next to processed outputs. Worker
+    # runs keep the stable ``DMEF_JOB_WORK_DIR/{job_id}`` dir; direct/offline
+    # runs without a job id get a unique temp dir under the same root.
+    # The work dir is always removed in a ``finally``; the source PDF and the
+    # caller's output dir are never touched by cleanup.
+    work_root = job_work_root()
+    work_root.mkdir(parents=True, exist_ok=True)
+    if job_id is not None:
+        work_dir = work_root / str(job_id)
+        work_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        work_dir = Path(tempfile.mkdtemp(prefix="offline-", dir=str(work_root)))
     try:
         return _run_pipeline_impl(
             pdf_path,
@@ -85,11 +91,10 @@ def run_pipeline(
             job_id=job_id,
             resume=resume,
             refresh_cached_ocr=refresh_cached_ocr,
-            _job_work_dir=job_work_dir,
+            _job_work_dir=work_dir,
         )
     finally:
-        if job_work_dir is not None:
-            shutil.rmtree(job_work_dir, ignore_errors=True)
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def _run_pipeline_impl(
@@ -332,10 +337,8 @@ def _run_pipeline_impl(
     anomalies.extend(processing_error_anomalies)
     touch_progress(application_id, f"Aggregating {len(anomalies)} checklist findings")
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
-    # fx-integrate-df (NEEDS-COORDINATION: orchestrator is shared pipeline
-    # code): persist the ops payload on the live path so
-    # ``applications.ops_findings_json`` is non-null after a successful run.
-    # Best-effort; the endpoint recomputes when needed.
+    # Persist the operations payload on the live path. This is best-effort;
+    # the endpoint recomputes it when needed.
     try:
         from services.ops_presentation import store_ops_payload
 

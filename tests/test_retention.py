@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,6 +15,43 @@ from services.storage import get_store
 NOW = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
 OLD = "2026-01-01 10:00:00"
 NEW = "2026-09-01 10:00:00"
+# Ten days before NOW: older than the default 7-day export window but younger
+# than a 30-day window, so it distinguishes the two settings.
+MID = "2026-08-25 12:00:00"
+
+
+def _fresh_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / name)
+    monkeypatch.setenv("DMEF_STORAGE_BACKEND", "local")
+    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    init_db()
+
+
+def _insert_ref(
+    owner_table: str,
+    owner_id: int | str,
+    purpose: str,
+    storage_key: str,
+    created_at: str,
+) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO object_refs
+                (owner_table, owner_id, purpose, storage_key, content_type, size_bytes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (owner_table, str(owner_id), purpose, storage_key, "application/pdf", 4, created_at),
+        )
+
+
+def _ref_count(storage_key: str) -> int:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS c FROM object_refs WHERE storage_key = ?",
+            (storage_key,),
+        ).fetchone()
+        return int(row["c"])
 
 
 def _insert_application(loan_id: str, created_at: str) -> int:
@@ -365,3 +402,178 @@ def test_retention_never_deletes_active_jobs(
         }
     assert queued_oldest in remaining
     assert len(remaining) == 4
+
+
+def test_retention_expires_ocr_exports_after_seven_days(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Expired ocr_export refs are deleted even for young applications."""
+    _fresh_db(tmp_path, monkeypatch, "exports.db")
+    app_id = _insert_application("EXP-1", NEW)
+    old_key = f"applications/{app_id}/ocr-export.json"
+    fresh_key = f"applications/{app_id}/ocr-export-fresh.json"
+    _insert_ref("applications", app_id, "ocr_export", old_key, OLD)
+    _insert_ref("applications", app_id, "ocr_export", fresh_key, NEW)
+    store = get_store()
+    store.put(old_key, b"{}", "application/json")
+    store.put(fresh_key, b"{}", "application/json")
+
+    dry = run_retention(now=NOW, dry_run=True)
+    assert dry["ocr_exports_deleted"] == 1
+    assert dry["applications_archived"] == 0  # young app is not archived
+    assert store.exists(old_key)  # dry-run writes nothing
+    assert _ref_count(old_key) == 1
+
+    real = run_retention(now=NOW, dry_run=False)
+    assert real["ocr_exports_deleted"] == 1
+    assert not store.exists(old_key)
+    assert _ref_count(old_key) == 0
+    # The fresh export survives with its row intact.
+    assert store.exists(fresh_key)
+    assert _ref_count(fresh_key) == 1
+
+
+def test_retention_export_window_env_is_honored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DMEF_RETENTION_EXPORT_DAYS controls the ocr_export expiry age."""
+    _fresh_db(tmp_path, monkeypatch, "export-days.db")
+    app_id = _insert_application("EXPDAYS-1", NEW)
+    key = f"applications/{app_id}/ocr-export.json"
+    _insert_ref("applications", app_id, "ocr_export", key, MID)
+    store = get_store()
+    store.put(key, b"{}", "application/json")
+
+    assert run_retention(now=NOW, dry_run=True)["ocr_exports_deleted"] == 1
+    monkeypatch.setenv("DMEF_RETENTION_EXPORT_DAYS", "30")
+    assert run_retention(now=NOW, dry_run=True)["ocr_exports_deleted"] == 0
+    assert store.exists(key)
+
+
+def test_retention_regenerated_export_refreshes_age(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-recording an export restarts its expiry window (clock independent)."""
+    _fresh_db(tmp_path, monkeypatch, "refresh.db")
+    app_id = _insert_application("REFRESH-1", NEW)
+    key = f"applications/{app_id}/ocr-export.json"
+    _insert_ref("applications", app_id, "ocr_export", key, OLD)
+
+    from services.retention import _parse_ts
+    from services.storage.refs import record_ref
+
+    record_ref("applications", app_id, "ocr_export", key,
+               content_type="application/json", size_bytes=2)
+    store = get_store()
+    store.put(key, b"{}", "application/json")
+    with get_connection() as connection:
+        created_raw = connection.execute(
+            "SELECT created_at FROM object_refs WHERE storage_key = ?",
+            (key,),
+        ).fetchone()["created_at"]
+    refreshed = _parse_ts(created_raw)
+    assert refreshed is not None and refreshed > _parse_ts(OLD)
+
+    # Three days after regeneration the export is kept...
+    assert (
+        run_retention(now=refreshed + timedelta(days=3), dry_run=False)[
+            "ocr_exports_deleted"
+        ]
+        == 0
+    )
+    assert store.exists(key)
+    # ...and eight days after regeneration it expires.
+    assert (
+        run_retention(now=refreshed + timedelta(days=8), dry_run=False)[
+            "ocr_exports_deleted"
+        ]
+        == 1
+    )
+    assert not store.exists(key)
+
+
+def test_retention_failed_source_delete_is_retried_then_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed store deletion keeps its row (retry) and success removes it."""
+    _fresh_db(tmp_path, monkeypatch, "retry.db")
+    app_id = _insert_application("RETRY-1", OLD)
+    key = f"applications/{app_id}/source/doc.pdf"
+    _insert_ref("applications", app_id, "source", key, OLD)
+
+    import services.retention as retention_mod
+
+    real_store = get_store()
+    real_store.put(key, b"pdf-bytes", "application/pdf")
+    state = {"fail": True}
+    original_delete = real_store.delete
+
+    def flaky_delete(storage_key: str) -> None:
+        if state["fail"]:
+            state["fail"] = False
+            raise OSError("simulated store outage")
+        return original_delete(storage_key)
+
+    monkeypatch.setattr(real_store, "delete", flaky_delete)
+    monkeypatch.setattr(retention_mod, "get_store", lambda: real_store)
+
+    first = run_retention(now=NOW, dry_run=False)
+    assert first["source_keys_deleted"] == 0
+    assert real_store.exists(key)
+    assert _ref_count(key) == 1  # row retained for a future retry
+
+    # Dry-run reports the retry candidate without writing anything.
+    dry = run_retention(now=NOW, dry_run=True)
+    assert dry["source_keys_deleted"] == 1
+    assert dry["applications_archived"] == 0  # already archived above
+    assert real_store.exists(key)
+    assert _ref_count(key) == 1
+
+    second = run_retention(now=NOW, dry_run=False)
+    assert second["source_keys_deleted"] == 1
+    assert not real_store.exists(key)
+    assert _ref_count(key) == 0  # row removed: later runs are idempotent
+
+    third = run_retention(now=NOW, dry_run=False)
+    assert third["source_keys_deleted"] == 0
+    assert third["ocr_exports_deleted"] == 0
+
+
+@pytest.mark.parametrize(
+    "status", ["queued", "running", "retrying", "paused", "stale", "cancelled"]
+)
+def test_retention_active_job_blocks_source_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    """Old applications with resumable jobs keep source/normalized/manifest."""
+    _fresh_db(tmp_path, monkeypatch, f"active-src-{status}.db")
+    app_id = _insert_application("ACTSRC-1", OLD)
+    _insert_job(app_id, status, OLD)
+    source_key = f"applications/{app_id}/source/doc.pdf"
+    normalized_key = f"applications/{app_id}/normalized/doc.pdf"
+    export_key = f"applications/{app_id}/ocr-export.json"
+    _insert_ref("applications", app_id, "source", source_key, OLD)
+    _insert_ref("applications", app_id, "normalized_pdf", normalized_key, OLD)
+    _insert_ref("applications", app_id, "ocr_export", export_key, OLD)
+    store = get_store()
+    for candidate in (source_key, normalized_key, export_key):
+        store.put(candidate, b"x", "application/pdf")
+
+    dry = run_retention(now=NOW, dry_run=True)
+    assert dry["applications_archived"] == 1
+    assert dry["source_keys_deleted"] == 0
+    assert dry["ocr_exports_deleted"] == 1  # exports expire on their own age
+
+    real = run_retention(now=NOW, dry_run=False)
+    assert real["source_keys_deleted"] == 0
+    assert real["ocr_exports_deleted"] == 1
+    with get_connection() as connection:
+        archived = connection.execute(
+            "SELECT archived_at FROM applications WHERE id = ?", (app_id,)
+        ).fetchone()
+        assert archived["archived_at"]  # archiving itself still happens
+    assert store.exists(source_key)
+    assert store.exists(normalized_key)
+    assert _ref_count(source_key) == 1
+    assert _ref_count(normalized_key) == 1
+    assert not store.exists(export_key)

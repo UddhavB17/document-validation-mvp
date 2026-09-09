@@ -26,7 +26,11 @@ def record_ref(
     content_type: str | None = None,
     size_bytes: int | None = None,
 ) -> None:
-    """Insert or refresh one object reference (dialect neutral)."""
+    """Insert or refresh one object reference (dialect neutral).
+
+    Re-recording an existing key refreshes ``created_at`` so regenerating an
+    export (e.g. the on-demand OCR JSON) restarts its retention window.
+    """
     with get_connection() as connection:
         connection.execute(
             """
@@ -39,7 +43,8 @@ def record_ref(
                 owner_id = excluded.owner_id,
                 purpose = excluded.purpose,
                 content_type = excluded.content_type,
-                size_bytes = excluded.size_bytes
+                size_bytes = excluded.size_bytes,
+                created_at = excluded.created_at
             """,
             (
                 owner_table,

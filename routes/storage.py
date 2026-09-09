@@ -10,8 +10,7 @@ from fastapi.responses import StreamingResponse
 from services.auth.dependencies import require_role
 from services.storage import LocalObjectStore
 
-# fx-integrate-df: loan PDFs are served here; admin-only (contracts §6).
-# One-line cross-stream edit (file owned by ws-b-storage-db).
+# Loan PDFs contain customer data, so stored objects are admin-only.
 router = APIRouter(
     prefix="/storage", tags=["storage"], dependencies=[Depends(require_role("admin"))]
 )

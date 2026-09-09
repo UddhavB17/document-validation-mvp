@@ -210,6 +210,12 @@ def test_key_validation_rejects_escape_and_absolute_keys(tmp_path, monkeypatch) 
     with pytest.raises(ValueError):
         store.list("../escape")
 
+    gcs_store = GcsObjectStore()
+    with pytest.raises(ValueError):
+        gcs_store.get("../escape")
+    with pytest.raises(ValueError):
+        gcs_store.list("../escape")
+
 
 def test_object_ref_helpers_record_and_list(tmp_path, monkeypatch) -> None:
     _use_tmp_env(tmp_path, monkeypatch)

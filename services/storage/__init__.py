@@ -1,10 +1,7 @@
-"""Object storage abstraction (contracts §2).
+"""Object storage abstraction.
 
-Scaffold owned by ``ws-0``; full implementation (GCS backend, path helpers)
-owned by ``ws-b-storage-db``.
-
-Key rules: keys are always relative (never absolute paths). Keys containing
-``..`` or starting with ``/`` are rejected.
+Keys are always relative. Keys containing ``..`` or starting with ``/`` are
+rejected.
 """
 
 from __future__ import annotations
@@ -13,6 +10,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 
 from services.paths import local_store_dir, storage_backend
+from services.storage._keys import check_key, check_prefix
 from services.storage.gcs import GcsObjectStore
 
 __all__ = [
@@ -40,20 +38,6 @@ def _store_dir() -> Path:
     return local_store_dir()
 
 
-def _check_key(key: str) -> str:
-    """Validate an object key; raise ``ValueError`` for absolute/escape keys."""
-    if not key or key.startswith("/") or ".." in key:
-        raise ValueError(f"Invalid object-store key: {key!r}")
-    return key
-
-
-def _check_prefix(prefix: str) -> str:
-    """Validate a list prefix (empty prefix lists everything)."""
-    if prefix.startswith("/") or ".." in prefix:
-        raise ValueError(f"Invalid object-store prefix: {prefix!r}")
-    return prefix
-
-
 class LocalObjectStore:
     """Filesystem-backed store under ``DMEF_LOCAL_STORE_DIR``."""
 
@@ -61,7 +45,7 @@ class LocalObjectStore:
         self.base_dir = Path(base_dir) if base_dir is not None else _store_dir()
 
     def _path(self, key: str) -> Path:
-        _check_key(key)
+        check_key(key)
         return self.base_dir / key
 
     def put(
@@ -91,11 +75,11 @@ class LocalObjectStore:
 
     def signed_url(self, key: str, expires_seconds: int = 600) -> str:
         _ = expires_seconds  # local URLs are served by the app; no expiry signing
-        _check_key(key)
+        check_key(key)
         return f"/storage/{key}"
 
     def list(self, prefix: str) -> list[str]:
-        _check_prefix(prefix)
+        check_prefix(prefix)
         if not self.base_dir.is_dir():
             return []
         keys = [

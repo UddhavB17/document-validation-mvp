@@ -43,11 +43,23 @@ def issue(user: dict[str, Any]) -> str:
 
 
 def decode(token: str) -> dict[str, Any]:
-    """Decode and verify ``token``; raises ``jwt.PyJWTError`` when invalid."""
-    payload = jwt.decode(token, auth_secret(), algorithms=[ALGORITHM])
+    """Decode and verify ``token``; raises ``jwt.PyJWTError`` when invalid.
+
+    ``sub`` and ``exp`` are required claims: tokens missing either (or that
+    are expired, malformed, or wrongly signed) raise a ``PyJWTError``
+    subclass so callers map them to 401 instead of 500.
+    """
+    payload = jwt.decode(
+        token, auth_secret(), algorithms=[ALGORITHM], options={"require": ["exp", "sub"]}
+    )
+    try:
+        sub = payload["sub"]
+        exp = payload["exp"]
+    except KeyError as exc:
+        raise jwt.InvalidTokenError(f"Missing required claim: {exc}") from exc
     return {
-        "sub": payload["sub"],
+        "sub": sub,
         "email": payload.get("email", ""),
         "role": payload.get("role", ""),
-        "exp": payload.get("exp", 0),
+        "exp": exp,
     }

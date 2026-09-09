@@ -47,11 +47,15 @@ final SQLite schema plus the `llm_calls` / `object_refs` registry modules.
 `init_db()` on Postgres is a connectivity check only; the schema always
 comes from `alembic upgrade head` (run as a release step, see ws-j).
 
-Verify the baseline:
+Verify the baseline (`alembic check` is unsupported here — it needs
+autogenerate metadata and `alembic/env.py` sets `target_metadata = None`):
+compare the applied revision against the known head instead.
 
 ```bash
-DATABASE_URL=...?sslmode=require alembic history
-DATABASE_URL=...?sslmode=require alembic check  # no-op when at head
+DATABASE_URL=...?sslmode=require alembic heads     # latest known head(s)
+DATABASE_URL=...?sslmode=require alembic history   # changelog for review
+DATABASE_URL=...?sslmode=require alembic current   # applied revision(s)
+# `current` must list the same revision as `heads` after `upgrade head`.
 ```
 
 ## 4. Verify with /health

@@ -1,9 +1,8 @@
 """LLM explanation service: TOON prompt input, JSON model output.
 
-Implemented by ``ws-g-gemini-llm``. Prompt payloads are encoded with TOON
-(``toon.encode``); every model response is parsed with ``json.loads`` plus a
-schema check. ``generate_summaries`` returns the bilingual operator summary
-persisted to ``applications.ops_summary_en/hi``.
+Prompts are encoded with ``toon.encode``; model responses are parsed with
+``json.loads`` plus a schema check. ``generate_summaries`` returns the
+bilingual operator summary persisted to ``applications.ops_summary_en/hi``.
 """
 
 import json
@@ -17,27 +16,12 @@ from services.llm_client import call_llm_api, call_llm_messages, llm_provider
 from services.llm_client import (
     extract_response_text as _extract_response_text,  # noqa: F401 - compatibility export
 )
+from services.ops_templates_en_hi import TEMPLATES
 
 logger = logging.getLogger(__name__)
 
 MAX_SUMMARY_CHARS = 600
 _DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
-
-# Nine operations finding codes (contracts §11). Titles are passed to the
-# model so summaries stay in plain language. Imported lazily from ws-f's
-# module when available; otherwise this local copy is used.
-# keep in sync with ops_presentation
-FALLBACK_FINDING_TITLES: dict[str, str] = {
-    "NAME_MISMATCH": "Applicant name does not match",
-    "ID_MISMATCH": "PAN / Aadhaar does not match",
-    "ADDRESS_MISMATCH": "Address does not match",
-    "MISSING_DOCUMENT": "Required document not found",
-    "BANK_STATEMENT_OLD": "Bank statement older than three months",
-    "PAGE_UNREADABLE": "Page too blurry to read",
-    "OCR_FAILED": "Could not read this page reliably",
-    "DATA_MISSING": "Expected information missing",
-    "PROCESSING_ERROR": "File could not be processed",
-}
 
 
 def generate_explanation(
@@ -254,10 +238,7 @@ def parse_bilingual_summary(text: str) -> dict[str, str] | None:
 
 
 def build_bilingual_fallback(findings: list[dict]) -> dict[str, str]:
-    """Deterministic count-based summary in English and Hindi.
-
-    # keep in sync with ops_presentation
-    """
+    """Deterministic count-based summary in English and Hindi."""
     items = findings or []
     total = len(items)
     high = sum(1 for item in items if str(item.get("severity", "")).upper() == "HIGH")
@@ -295,21 +276,6 @@ def build_bilingual_fallback(findings: list[dict]) -> dict[str, str]:
     return {"en": en[:MAX_SUMMARY_CHARS], "hi": hi[:MAX_SUMMARY_CHARS]}
 
 
-def _finding_titles() -> dict[str, str]:
-    try:
-        from services import ops_templates_en_hi as templates  # type: ignore[import]
-
-        for attr in ("FINDING_TITLES", "TITLES", "EN_TITLES"):
-            candidate = getattr(templates, attr, None)
-            if isinstance(candidate, dict) and candidate:
-                merged = dict(FALLBACK_FINDING_TITLES)
-                merged.update({str(k): str(v) for k, v in candidate.items()})
-                return merged
-    except Exception:  # noqa: BLE001 - ws-f module not merged yet; use local copy
-        pass
-    return dict(FALLBACK_FINDING_TITLES)
-
-
 def _extract_findings(context: dict | list | None) -> list[dict]:
     if isinstance(context, list):
         return [item for item in context if isinstance(item, dict)]
@@ -323,7 +289,7 @@ def _extract_findings(context: dict | list | None) -> list[dict]:
 
 
 def _build_bilingual_prompt(findings: list[dict], ground_truth: dict) -> str:
-    titles = _finding_titles()
+    titles = {code: template["title"]["en"] for code, template in TEMPLATES.items()}
     known_codes = ", ".join(f"{code}: {title}" for code, title in titles.items())
     compact = [
         {

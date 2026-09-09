@@ -3,6 +3,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { loginRequest, setAuthTokenProvider } from "./api";
+import { createTokenStore } from "./tokenStore";
 
 export type SessionStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -14,20 +15,12 @@ export interface SessionValue {
   logout: () => Promise<void>;
 }
 
-/** Decode the role claim from a JWT payload without verifying the signature. */
-export function getRoleFromToken(token: string): string | null {
-  try {
-    const segment = token.split(".")[1];
-    if (!segment) return null;
-    const payload = JSON.parse(atob(segment.replace(/-/g, "+").replace(/_/g, "/")));
-    const role = payload?.role;
-    return typeof role === "string" ? role : null;
-  } catch {
-    return null;
-  }
-}
-
 const SessionContext = createContext<SessionValue | null>(null);
+
+// Module-level bearer holder. Writers assign it synchronously *before* the
+// matching status state lands, so the api.ts getter is provider-ready ahead
+// of (not one effect after) the `authenticated` render.
+const tokenStore = createTokenStore();
 
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
@@ -35,17 +28,21 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<SessionStatus>("loading");
 
   useEffect(() => {
-    // Re-register the getter whenever the token changes so api.ts always
-    // sends the latest bearer value.
-    setAuthTokenProvider(() => token);
+    // Registered once: the getter reads the synchronously-updated store, so
+    // it is correct from the first paint even though child query effects
+    // run before parent effects.
+    setAuthTokenProvider(() => tokenStore.getToken());
     return () => {
       setAuthTokenProvider(null);
     };
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     async function loadSession() {
+      // GET /api/session verifies the cookie against backend GET /auth/me,
+      // so token/role here are verified (current DB role), never stale
+      // JWT claims. Any failure lands unauthenticated (fail closed).
       try {
         const response = await fetch("/api/session");
         if (!response.ok) {
@@ -55,11 +52,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (cancelled) {
           return;
         }
+        // Store-first ordering: the bearer getter serves this token before
+        // (and regardless of) the `authenticated` render, so protected
+        // queries mounted by that render always carry Authorization.
+        tokenStore.setToken(session.token);
         setToken(session.token);
         setRole(session.role);
         setStatus("authenticated");
       } catch {
         if (!cancelled) {
+          tokenStore.clearToken();
           setToken(null);
           setRole(null);
           setStatus("unauthenticated");
@@ -82,6 +84,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (!cookieResponse.ok) {
       throw new Error("Could not establish a session");
     }
+    // Same store-first ordering as hydration: provider ready before status.
+    tokenStore.setToken(result.token);
     setToken(result.token);
     setRole(result.user.role);
     setStatus("authenticated");
@@ -91,6 +95,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     try {
       await fetch("/api/session", { method: "DELETE" });
     } finally {
+      tokenStore.clearToken();
       setToken(null);
       setRole(null);
       setStatus("unauthenticated");

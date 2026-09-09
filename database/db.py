@@ -6,9 +6,9 @@ placeholders, a cursor-like object with ``.fetchone()`` / ``.fetchall()`` /
 ``row.keys()``, commit on success and rollback on exception.
 
 The dialect is selected by ``DATABASE_URL``: empty means SQLite at
-``DATABASE_PATH`` (default ``data/dmef.db``); otherwise the URL is a
-PostgreSQL connection string served through SQLAlchemy. ``?`` placeholders
-are translated to named bound parameters (``:p1``, ``:p2``, …) so the same
+``DATABASE_PATH`` (default ``data/dmef.db``), while explicit SQLite and
+PostgreSQL URLs are served through SQLAlchemy. ``?`` placeholders are
+translated to named bound parameters (``:p1``, ``:p2``, …) so the same
 statement runs on both dialects. A literal ``?`` inside a quoted string
 literal is left untouched. No ``%%`` escaping is needed: statements go
 through ``sqlalchemy.text``, where ``%`` is always literal.
@@ -36,21 +36,18 @@ _Engines: dict[str, Engine] = {}
 
 
 def _database_url() -> str:
-    """Return the configured Postgres URL, or ``""`` for SQLite."""
+    """Return the configured database URL, or ``""`` for default SQLite."""
     raw = os.getenv("DATABASE_URL", "")
     return raw.strip() if isinstance(raw, str) else ""
 
 
 def dialect() -> str:
     """Return the active dialect: ``"sqlite"`` or ``"postgresql"``."""
-    return "postgresql" if _database_url() else "sqlite"
+    return "postgresql" if _database_url().startswith("postgresql") else "sqlite"
 
 
 def _engine_key() -> str:
-    url = _database_url()
-    if url:
-        return f"pg::{url}"
-    return f"sqlite:///{DATABASE_PATH}"
+    return _database_url() or f"sqlite:///{DATABASE_PATH}"
 
 
 def _sqlite_on_connect(dbapi_connection: Any, _record: Any) -> None:
@@ -74,16 +71,18 @@ def _get_engine() -> Engine:
     if engine is not None:
         return engine
     url = _database_url()
-    if url:
+    if dialect() == "postgresql":
         # requirements.txt ships psycopg v3; a bare ``postgresql://`` URL
         # would make SQLAlchemy look for psycopg2 instead.
         if url.startswith("postgresql://"):
             url = "postgresql+psycopg://" + url.removeprefix("postgresql://")
         engine = create_engine(url, pool_pre_ping=True)
     else:
-        DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if not url:
+            DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            url = f"sqlite:///{DATABASE_PATH}"
         engine = create_engine(
-            f"sqlite:///{DATABASE_PATH}",
+            url,
             connect_args={"check_same_thread": False, "timeout": 30.0},
         )
         event.listen(engine, "connect", _sqlite_on_connect)

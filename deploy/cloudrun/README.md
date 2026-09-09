@@ -36,6 +36,14 @@ Map each Secret Manager secret to the env name used in the YAMLs:
 - `dmef-secrets-key` -> `DMEF_SECRETS_KEY` (Fernet; `DMEF_ENV=production` refuses to boot without it)
 - `dmef-bootstrap-admin-email` / `dmef-bootstrap-admin-password` -> first admin on empty `users`
 - `dmef-gemini-api-key` -> `GEMINI_API_KEY` (optional when ADC is available)
+- `dmef-gemini-model` -> `GEMINI_MODEL` (**required**, operator-selected, shared
+  by API and worker). Provision this secret with a currently supported Gemini
+  model id before deploying: the retired `gemini-2.0-flash` default was removed
+  (model shut down June 1 2026 — see
+  https://ai.google.dev/gemini-api/docs/deprecations). Do not treat an
+  unevaluated model as production-ready; evaluate first, then record the
+  chosen model id in this secret. API and worker read the same secret so the
+  two services can never drift to different models.
 
 Service accounts:
 
