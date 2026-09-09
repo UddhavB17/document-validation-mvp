@@ -211,7 +211,13 @@ export const settingUpdateResponseSchema = z.object({
 
 export const checklistRowSchema = z.object({
   s_no: z.number().nullable().optional(),
-  status: z.string(),
+  status: z.enum([
+    "required_and_present",
+    "required_and_missing",
+    "not_applicable",
+    "not_evaluated_by_engine",
+    "manual_review",
+  ]),
   description: z.string(),
   document_types: z.string(),
   pages: z.string(),

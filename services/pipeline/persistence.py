@@ -94,11 +94,11 @@ def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> 
         """
         INSERT INTO pages (
             application_id, page_number, page_type, is_readable,
-            ocr_text, ocr_confidence, ocr_route, ocr_escalated,
+            ocr_text, ocr_confidence, ocr_status, ocr_route, ocr_escalated,
             ocr_processing_time_ms, document_type,
             classification_confidence, detection_method, detected_page_number,
             extracted_fields
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             application_id,
@@ -107,6 +107,7 @@ def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> 
             page.get("is_readable") if page.get("is_readable") is not None else None,
             page.get("ocr_text"),
             page.get("ocr_confidence"),
+            page.get("ocr_status"),
             page.get("ocr_route"),
             bool(page.get("ocr_escalated", False)),
             int(page.get("ocr_processing_time_ms") or 0),
@@ -137,7 +138,7 @@ def _load_page_checkpoints(application_id: int) -> list[dict[str, Any]]:
         rows = connection.execute(
             """
             SELECT application_id, page_number, page_type, is_readable,
-                   ocr_text, ocr_confidence, ocr_route, ocr_escalated,
+                   ocr_text, ocr_confidence, ocr_status, ocr_route, ocr_escalated,
                    ocr_processing_time_ms, document_type,
                    classification_confidence, detection_method,
                    detected_page_number, extracted_fields

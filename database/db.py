@@ -323,7 +323,7 @@ def init_db() -> None:
             pass
         return
     from database import schema_registry
-    from database.models import INDEX_STATEMENTS, SCHEMA_STATEMENTS
+    from database.models import INDEX_STATEMENTS, MIGRATION_STATEMENTS, SCHEMA_STATEMENTS
 
     with get_connection() as connection:
         for statement in SCHEMA_STATEMENTS:
@@ -332,6 +332,14 @@ def init_db() -> None:
             connection.execute(statement)
         for statement in INDEX_STATEMENTS:
             connection.execute(statement)
+        for statement in MIGRATION_STATEMENTS:
+            try:
+                connection.execute(statement)
+            except Exception as exc:  # noqa: BLE001
+                # Re-running init_db against an already-migrated database:
+                # only "duplicate column" is tolerated, anything else raises.
+                if "duplicate column" not in str(exc).lower():
+                    raise
         seed_defaults(connection)
 
 
