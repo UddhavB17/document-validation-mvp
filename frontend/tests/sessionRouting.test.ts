@@ -40,8 +40,8 @@ function installBackendStub() {
     if (token === "tok-admin") {
       return backendOk({ id: 1, email: "a@example.com", display_name: "A", role: "admin" });
     }
-    if (token === "tok-ops") {
-      return backendOk({ id: 2, email: "o@example.com", display_name: "O", role: "operations" });
+    if (token === "tok-user") {
+      return backendOk({ id: 2, email: "o@example.com", display_name: "O", role: "user" });
     }
     return backendUnauthorized();
   }) as unknown as typeof fetch;
@@ -123,13 +123,13 @@ test("middleware wipes fabricated cookies and redirects to login", async () => {
 });
 
 test("middleware admits verified roles and gates admin by DB role", async () => {
-  const opsOnOps = await middleware(request("/ops", "tok-ops"));
-  assert.equal(opsOnOps.headers.get("x-middleware-next"), "1");
-  assert.equal(opsOnOps.headers.get("Cache-Control"), NO_STORE);
+  const userOnOps = await middleware(request("/ops", "tok-user"));
+  assert.equal(userOnOps.headers.get("x-middleware-next"), "1");
+  assert.equal(userOnOps.headers.get("Cache-Control"), NO_STORE);
 
-  const opsOnAdmin = await middleware(request("/admin/users", "tok-ops"));
-  assert.equal(opsOnAdmin.status, 307);
-  assert.ok(opsOnAdmin.headers.get("location")?.endsWith("/ops"));
+  const userOnAdmin = await middleware(request("/admin/users", "tok-user"));
+  assert.equal(userOnAdmin.status, 307);
+  assert.ok(userOnAdmin.headers.get("location")?.endsWith("/ops"));
 
   const adminOnAdmin = await middleware(request("/admin/users", "tok-admin"));
   assert.equal(adminOnAdmin.headers.get("x-middleware-next"), "1");
@@ -137,15 +137,15 @@ test("middleware admits verified roles and gates admin by DB role", async () => 
   // The backend saw the forwarded bearer on the verification call.
   assert.ok(backend.calls.every((call) => call.url === "http://backend.test/auth/me"));
   assert.ok(
-    backend.calls.some((call) => call.authorization === "Bearer tok-ops"),
-    "expected tok-ops verification call",
+    backend.calls.some((call) => call.authorization === "Bearer tok-user"),
+    "expected tok-user verification call",
   );
 });
 
 test("middleware answers 503 without wiping the cookie when backend is down", async () => {
   backend.setOutage(true);
   for (const path of ["/ops", "/admin"]) {
-    const response = await middleware(request(path, "tok-ops"));
+    const response = await middleware(request(path, "tok-user"));
     assert.equal(response.status, 503, path);
     assert.equal(response.headers.get("set-cookie"), null, path);
     assert.equal(response.headers.get("Cache-Control"), NO_STORE, path);
@@ -180,9 +180,9 @@ test("session GET rejects invented tokens and clears the cookie", async () => {
 });
 
 test("session GET returns the verified DB role for valid tokens", async () => {
-  const response = await sessionGet(request("/api/session", "tok-ops"));
+  const response = await sessionGet(request("/api/session", "tok-user"));
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { token: "tok-ops", role: "operations" });
+  assert.deepEqual(await response.json(), { token: "tok-user", role: "user" });
   assert.equal(response.headers.get("set-cookie"), null);
   assert.equal(response.headers.get("Cache-Control"), NO_STORE);
 });
@@ -196,7 +196,7 @@ test("session GET without cookie is 401 and sets nothing", async () => {
 
 test("session GET is 503 with cookie intact when backend is down", async () => {
   backend.setOutage(true);
-  const response = await sessionGet(request("/api/session", "tok-ops"));
+  const response = await sessionGet(request("/api/session", "tok-user"));
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("set-cookie"), null);
   assert.equal(response.headers.get("Cache-Control"), NO_STORE);
@@ -223,13 +223,13 @@ test("session POST mints a cookie only for verified tokens", async () => {
 
 test("session POST is 503 without a cookie when backend is down", async () => {
   backend.setOutage(true);
-  const response = await sessionPost(postSessionRequest({ token: "tok-ops" }));
+  const response = await sessionPost(postSessionRequest({ token: "tok-user" }));
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("set-cookie"), null);
 });
 
 test("session DELETE clears the cookie", async () => {
-  const response = await sessionDelete(request("/api/session", "tok-ops"));
+  const response = await sessionDelete(request("/api/session", "tok-user"));
   assert.equal(response.status, 200);
   assert.ok(isCookieWipe(response.headers.get("set-cookie")));
   assert.equal(response.headers.get("Cache-Control"), NO_STORE);

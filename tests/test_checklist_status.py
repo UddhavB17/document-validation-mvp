@@ -30,8 +30,8 @@ def test_build_checklist_status_marks_missing_items() -> None:
     )
     app_row = next(row for row in rows if row["s_no"] == 1)
     pan_row = next(row for row in rows if row["s_no"] == 7)
-    assert app_row["status"] == "FOUND"
-    assert pan_row["status"] == "MISSING"
+    assert app_row["status"] == "required_and_present"
+    assert pan_row["status"] == "required_and_missing"
 
 
 def test_build_checklist_status_does_not_mark_unmatched_items_found() -> None:
@@ -42,8 +42,11 @@ def test_build_checklist_status_does_not_mark_unmatched_items_found() -> None:
         anomalies=[{"rule_id": "UNSUPPORTED_DOCUMENT_TYPE", "s_no": None}],
     )
 
-    assert all(row["status"] != "FOUND" for row in rows)
-    assert all(row["status"] == "NOT_CHECKED" for row in rows)
+    assert all(row["status"] != "required_and_present" for row in rows)
+    assert all(
+        row["status"] in {"not_evaluated_by_engine", "manual_review", "not_applicable"}
+        for row in rows
+    )
 
 
 def test_build_checklist_status_requires_confident_match() -> None:
@@ -63,5 +66,5 @@ def test_build_checklist_status_requires_confident_match() -> None:
     )
 
     pan_row = next(row for row in rows if row["s_no"] == 7)
-    assert pan_row["status"] == "MISSING"
+    assert pan_row["status"] == "required_and_missing"
     assert pan_row["pages"] == "-"

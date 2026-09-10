@@ -236,7 +236,8 @@ def load_pipeline_progress_by_application_ids(
     with get_connection() as connection:
         progress_rows = connection.execute(
             f"""
-            SELECT application_id, status, updated_at
+            SELECT application_id, status, processed_pages, total_pages,
+                   percentage, updated_at
             FROM pipeline_progress
             WHERE application_id IN ({placeholders})
             """,
@@ -251,6 +252,9 @@ def load_pipeline_progress_by_application_ids(
         progress_by_application[application_id] = {
             "operational_status": operational_status,
             "retryable": operational_status in RETRYABLE_PROGRESS_STATES,
+            "processed_pages": payload.get("processed_pages"),
+            "total_pages": payload.get("total_pages"),
+            "percentage": payload.get("percentage"),
         }
     return progress_by_application
 

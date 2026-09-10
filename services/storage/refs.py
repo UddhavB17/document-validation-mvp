@@ -3,7 +3,10 @@
 New code records every durable object here instead of writing legacy
 ``file_path`` columns. ``owner_table`` is ``'applications'`` or
 ``'intake_packages'``; ``purpose`` is one of ``source`` | ``manifest`` |
-``normalized_pdf`` | ``ocr_export`` | ``report``.
+``normalized_pdf`` | ``ocr_export`` | ``report`` | ``db_archive``.
+``report`` and ``db_archive`` are never deleted by retention: reports are
+reviewer data, and ``db_archive`` is the long-term database snapshot that
+future uses (re-training, audits, re-analysis) read back.
 """
 
 from __future__ import annotations

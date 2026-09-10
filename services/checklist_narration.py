@@ -52,7 +52,7 @@ def build_narration_messages(item: ChecklistItem) -> list[dict[str, str]]:
 
 def narrate_checklist_item(item: ChecklistItem, *, timeout: int = 60) -> str | None:
     """Generate narration through the configured LLM without changing status."""
-    if item.status == "verified":
+    if item.status == "required_and_present":
         return None
 
     try:
@@ -71,7 +71,13 @@ def _guard_narration(text: str | None, status: str) -> str | None:
     if not text:
         return None
     cleaned = " ".join(str(text).split())
-    forbidden_statuses = {"verified", "needs_review", "missing", "unknown"} - {status}
+    forbidden_statuses = {
+        "required_and_present",
+        "required_and_missing",
+        "not_applicable",
+        "not_evaluated_by_engine",
+        "manual_review",
+    } - {status}
     lowered = cleaned.lower()
     if any(forbidden in lowered for forbidden in forbidden_statuses):
         return None

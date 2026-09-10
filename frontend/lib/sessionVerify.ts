@@ -18,7 +18,7 @@ export interface VerifiedSessionUser {
 }
 
 /** Roles the frontend treats as authenticated. Anything else fails closed. */
-export const ALLOWED_SESSION_ROLES = ["admin", "operations"] as const;
+export const ALLOWED_SESSION_ROLES = ["admin", "user"] as const;
 
 export type VerifyStatus = "valid" | "invalid" | "unavailable";
 
@@ -63,7 +63,7 @@ function parseVerifiedUser(payload: unknown): VerifiedSessionUser | null {
   }
   if (!(ALLOWED_SESSION_ROLES as readonly string[]).includes(record.role)) {
     // Unknown role: fail closed rather than admitting a session the
-    // frontend cannot authorize (admin vs operations navigation).
+    // frontend cannot authorize (admin vs user navigation).
     return null;
   }
   return {
@@ -79,7 +79,7 @@ function parseVerifiedUser(payload: unknown): VerifiedSessionUser | null {
  * the active user and current DB role). Never decodes the JWT locally.
  *
  * - "valid": backend accepted the token; `user.role` is the current DB role
- *   (restricted to admin/operations).
+ *   (restricted to admin/user).
  * - "invalid": missing/blank token, expired, wrongly signed, unknown role,
  *   or the user is unknown/deactivated (backend 401/403 or an unparsable
  *   success payload).
@@ -96,7 +96,10 @@ export async function verifySessionToken(
   }
   const fetchFn = options.fetchFn ?? fetch;
   const url = `${resolveApiBaseUrl(options.apiBaseUrl)}/auth/me`;
-  const timeoutMs = options.timeoutMs ?? 5000;
+  // Free-tier Postgres (Neon) suspends when idle: the first verification
+  // after a cold start can take well over 5 s, so allow 25 s before
+  // calling the backend unreachable (callers may still pass timeoutMs).
+  const timeoutMs = options.timeoutMs ?? 25000;
   const hasTimeout =
     typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function";
   try {

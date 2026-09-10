@@ -5,6 +5,11 @@ export function StatusBadge({ status, uppercase = true }: { status: string; uppe
     clean: "Clean",
     verified: "Verified",
     verified_with_override: "Verified with override",
+    required_and_present: "Present",
+    required_and_missing: "Missing",
+    not_applicable: "N/A",
+    not_evaluated_by_engine: "Not evaluated",
+    manual_review: "Manual review",
     found: "Found",
     prepared: "Prepared",
     match: "Match",
@@ -19,6 +24,8 @@ export function StatusBadge({ status, uppercase = true }: { status: string; uppe
     stale: "Stale",
     flagged: "Flagged",
     needs_review: "Needs review",
+    unknown: "Manual review",
+    no_text_extracted: "No text extracted",
     processing: "Processing",
     ocr_completed: "OCR completed",
     queued: "Queued",
@@ -44,13 +51,13 @@ export function StatusBadge({ status, uppercase = true }: { status: string; uppe
 }
 
 function getTone(status: string): "success" | "warning" | "danger" | "info" | "neutral" {
-  if (["clean", "verified", "verified_with_override", "found", "prepared", "match", "success", "accepted", "ok"].includes(status)) {
+  if (["clean", "verified", "verified_with_override", "found", "prepared", "match", "success", "accepted", "ok", "required_and_present"].includes(status)) {
     return "success";
   }
-  if (["critical", "pipeline_failed", "incomplete", "missing", "failed", "mismatch", "stale", "flagged", "request_docs", "sent_back"].includes(status)) {
+  if (["critical", "pipeline_failed", "incomplete", "missing", "failed", "mismatch", "stale", "flagged", "request_docs", "sent_back", "required_and_missing"].includes(status)) {
     return "danger";
   }
-  if (["needs_review", "processing", "ocr_completed", "queued", "preparing", "attention", "review", "overridden", "override"].includes(status)) {
+  if (["needs_review", "processing", "ocr_completed", "queued", "preparing", "attention", "review", "overridden", "override", "manual_review", "unknown", "not_evaluated_by_engine", "no_text_extracted"].includes(status)) {
     return "warning";
   }
   if (["info", "pending", "running"].includes(status)) {

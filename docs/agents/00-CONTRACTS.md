@@ -173,7 +173,7 @@ Backoff between attempts: 30 s, 120 s (two retries after the first failure).
 
 - Tables `users(id, email UNIQUE, display_name, role, is_active, created_at, created_by)`
   and `user_passwords(user_id PK, password_hash, updated_at)`. Roles:
-  `admin`, `operations`. Hash with bcrypt.
+  `admin`, `user`. Hash with bcrypt.
 - `services/auth/dependencies.py` exports `get_current_user` and
   `require_role(*roles)` FastAPI dependencies. Bearer JWT (`DMEF_AUTH_SECRET`,
   HS256, 12 h expiry) in `Authorization: Bearer …`.

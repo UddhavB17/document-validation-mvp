@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from services.auth.dependencies import CurrentUser, get_current_user, require_role
-from services.auth.service import create_user, list_users, set_password, update_user
+from services.auth.service import create_user, delete_user, list_users, set_password, update_user
 
 router = APIRouter(
     prefix="/admin/users",
@@ -42,7 +42,7 @@ def get_users() -> dict:
 def post_user(
     payload: CreateUserPayload, user: CurrentUser = Depends(get_current_user)
 ) -> dict:
-    """Create an admin or operations user."""
+    """Create an admin or user account."""
     try:
         created = create_user(
             email=payload.email,
@@ -82,6 +82,17 @@ def reset_user_password(user_id: int, payload: ResetPasswordPayload) -> dict:
     """Admin reset of any user's password (policy enforced)."""
     try:
         set_password(user_id, payload.new_password)
+    except ValueError as exc:
+        status = 404 if str(exc) == "User not found" else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return {"status": "ok"}
+
+
+@router.delete("/{user_id}")
+def remove_user(user_id: int, user: CurrentUser = Depends(get_current_user)) -> dict:
+    """Permanently remove a user. Admins cannot delete themselves or the last active admin."""
+    try:
+        delete_user(user_id, actor_id=user.id)
     except ValueError as exc:
         status = 404 if str(exc) == "User not found" else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc

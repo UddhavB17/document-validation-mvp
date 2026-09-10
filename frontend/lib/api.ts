@@ -156,6 +156,9 @@ export const worklistItemSchema = z.object({
   processing_warnings: z.number(),
   pipeline_status: z.string(),
   pipeline_retryable: z.boolean(),
+  pipeline_processed_pages: z.number().nullable().optional(),
+  pipeline_total_pages: z.number().nullable().optional(),
+  pipeline_percentage: z.number().nullable().optional(),
 });
 
 export const worklistSchema = z.object({
@@ -211,7 +214,13 @@ export const settingUpdateResponseSchema = z.object({
 
 export const checklistRowSchema = z.object({
   s_no: z.number().nullable().optional(),
-  status: z.string(),
+  status: z.enum([
+    "required_and_present",
+    "required_and_missing",
+    "not_applicable",
+    "not_evaluated_by_engine",
+    "manual_review",
+  ]),
   description: z.string(),
   document_types: z.string(),
   pages: z.string(),
@@ -461,6 +470,10 @@ export const reprocessResponseSchema = z.object({
   previous_pipeline_status: z.string(),
 });
 
+// Resume/restart endpoints return varying shapes (job-control acknowledgement
+// vs queued-recovery payload); accept anything with an optional status.
+export const recoveryResponseSchema = z.object({}).passthrough();
+
 export type Health = z.infer<typeof healthSchema>;
 export type UploadResponse = z.infer<typeof uploadResponseSchema>;
 export type Progress = z.infer<typeof progressSchema>;
@@ -526,6 +539,14 @@ async function patchJsonResponse<T>(path: string, body: unknown, schema: z.ZodTy
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
+  });
+  return parseApiResponse(response, schema);
+}
+
+async function deleteJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
   });
   return parseApiResponse(response, schema);
 }
@@ -606,6 +627,14 @@ export const api = {
   undoDecision: (decisionId: number) => postJsonResponse(`/decision/${decisionId}/undo`, {}, decisionSchema),
   reprocessApplication: (applicationId: number) =>
     postJsonResponse(`/review/applications/${applicationId}/reprocess`, {}, reprocessResponseSchema),
+  resumeApplication: (applicationId: number) =>
+    postJsonResponse(`/review/applications/${applicationId}/resume`, {}, recoveryResponseSchema),
+  restartApplication: (applicationId: number, fromCheckpoint: boolean) =>
+    postJsonResponse(
+      `/review/applications/${applicationId}/restart?from_checkpoint=${fromCheckpoint ? "true" : "false"}`,
+      {},
+      recoveryResponseSchema,
+    ),
   // Evidence URLs go through the same-origin proxy
   // (frontend/app/api/evidence/[...path]/route.ts), which forwards the
   // dmef_session cookie as the backend bearer token. Direct backend URLs
@@ -713,8 +742,34 @@ const llmProvidersSchema = z.object({
 
 export type LlmProviders = z.infer<typeof llmProvidersSchema>;
 
+const spendMonthSchema = z.object({
+  month: z.string(),
+  units: z.number(),
+  free_units: z.number(),
+  billable_units: z.number(),
+  usd: z.number(),
+});
+
+const spendSchema = z.object({
+  currency: z.string(),
+  llm: z.object({ calls: z.number(), usd: z.number() }),
+  vision: z.object({
+    units_total: z.number(),
+    free_units: z.number(),
+    billable_units: z.number(),
+    price_per_1k_usd: z.number(),
+    free_units_monthly: z.number(),
+    usd: z.number(),
+    by_month: z.array(spendMonthSchema),
+  }),
+  total_usd: z.number(),
+});
+
+export type SpendSummary = z.infer<typeof spendSchema>;
+
 export const llmApi = {
   providers: () => getJsonResponse("/settings/llm/providers", llmProvidersSchema),
+  spend: () => getJsonResponse("/admin/spend", spendSchema),
 };
 
 export async function fetchCurrentUser(): Promise<AuthUser> {
@@ -901,6 +956,10 @@ export async function adminUpdateUserRequest(
 
 export async function adminResetPasswordRequest(userId: number, newPassword: string): Promise<void> {
   await postJsonResponse(`/admin/users/${userId}/password`, { new_password: newPassword }, z.object({}));
+}
+
+export async function adminDeleteUserRequest(userId: number): Promise<void> {
+  await deleteJsonResponse(`/admin/users/${userId}`, z.object({}));
 }
 
 export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {

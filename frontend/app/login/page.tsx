@@ -33,7 +33,7 @@ export default function LoginPage() {
       <div className="rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">DMEF</p>
         <h1 className="mt-1 text-2xl font-semibold text-slate-900">Sign in</h1>
-        <p className="mt-1 text-sm text-slate-600">Use your operations or admin account.</p>
+        <p className="mt-1 text-sm text-slate-600">Use your user or admin account.</p>
         <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
           <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
             Email

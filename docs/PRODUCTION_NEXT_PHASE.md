@@ -16,7 +16,7 @@ Execution package: `docs/agents/README.md` (run book),
 | Object store | Google Cloud Storage (Vision already uses Google ADC). |
 | Database | Neon PostgreSQL via `DATABASE_URL`; SQLite remains the test/dev default. |
 | Queue | Database table (`pipeline_jobs`) with `FOR UPDATE SKIP LOCKED`; one worker process. No Redis/Celery. |
-| Auth | Email + password, admin-provisioned users, roles `admin` / `operations`, JWT bearer, httpOnly cookie in the frontend. |
+| Auth | Email + password, admin-provisioned users, roles `admin` / `user`, JWT bearer, httpOnly cookie in the frontend. |
 | Hindi | Deterministic EN/HI templates for the nine finding types; Gemini writes only the 2–3 sentence overall summary with a deterministic fallback. |
 | Retention | 60 days source files and rows, 7 days generated OCR exports, 30 days telemetry, no durable page images. |
 | Page images | Not stored. Rendered on demand from the source PDF (already how `routes/review.py:141-213` works). |

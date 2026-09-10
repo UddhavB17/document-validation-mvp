@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   adminCreateUserRequest,
+  adminDeleteUserRequest,
   adminListUsersRequest,
   adminResetPasswordRequest,
   adminUpdateUserRequest,
@@ -142,6 +143,35 @@ export function useReprocessApplication(applicationId: number) {
   });
 }
 
+function useRecoveryMutation<TVariables>(
+  applicationId: number,
+  mutationFn: (variables: TVariables) => Promise<unknown>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["progress", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["applicationStatus", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["applicationReview", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["worklist"] }),
+      ]);
+    },
+  });
+}
+
+export function useResumeApplication(applicationId: number) {
+  return useRecoveryMutation<void>(applicationId, () => api.resumeApplication(applicationId));
+}
+
+export function useRestartApplication(applicationId: number) {
+  return useRecoveryMutation<boolean>(applicationId, (fromCheckpoint: boolean) =>
+    api.restartApplication(applicationId, fromCheckpoint),
+  );
+}
+
 export function useCreateDecision(applicationId: number) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -220,5 +250,15 @@ export function useResetAdminPassword() {
   return useMutation({
     mutationFn: (payload: { userId: number; newPassword: string }) =>
       adminResetPasswordRequest(payload.userId, payload.newPassword),
+  });
+}
+
+export function useDeleteAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: number) => adminDeleteUserRequest(userId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+    },
   });
 }

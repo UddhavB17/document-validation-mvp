@@ -122,6 +122,13 @@ def generate(
             response_mime_type="application/json" if response_format == "json" else "text/plain",
         )
         try:
+            # DMEF only makes short classification/extraction/summary calls:
+            # disable thinking so the output budget is spent on visible text,
+            # not hidden reasoning (which is also billed as output tokens).
+            config.thinking_config = types.ThinkingConfig(thinking_budget=0)
+        except Exception:  # noqa: BLE001 - older SDKs or models without the field
+            logger.debug("Gemini thinking_budget unsupported; continuing", exc_info=True)
+        try:
             http_options = types.HttpOptions(timeout=timeout * 1000)
             config.http_options = http_options
         except Exception:  # noqa: BLE001 - older SDKs ignore per-call timeouts

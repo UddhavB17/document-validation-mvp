@@ -27,7 +27,7 @@ def test_checklist_output_uses_document_nach_status_and_pdc_evidence() -> None:
         system_data={},
     )
     by_number = {item.item_number: item for item in response.items}
-    assert by_number[41].status == "verified"
+    assert by_number[41].status == "required_and_present"
     assert "matched 5 of 5 expected cheque(s)" in by_number[41].confidence_detail
     assert by_number[42].status == "not_applicable"
 
@@ -52,16 +52,16 @@ def test_build_checklist_verification_response_counts_statuses() -> None:
     )
 
     assert result.summary.total == 36
-    assert result.summary.verified >= 1
-    assert result.summary.missing >= 1
+    assert result.summary.required_and_present >= 1
+    assert result.summary.required_and_missing >= 1
 
     pan_item = next(item for item in result.items if item.item_number == 7)
-    assert pan_item.status == "verified"
+    assert pan_item.status == "required_and_present"
     assert pan_item.confidence == "high"
     assert pan_item.extracted_fields["pan_number"] == "TSTAA0001T"
 
     bank_item = next(item for item in result.items if item.item_number == 19)
-    assert bank_item.status == "missing"
+    assert bank_item.status == "required_and_missing"
     assert bank_item.flagged_reason == "missing_doc_s19"
 
 
@@ -120,7 +120,7 @@ def test_bank_statement_row_lists_dynamic_months_and_collective_page_count() -> 
     )
 
     bank_item = next(item for item in result.items if item.item_number == 17)
-    assert bank_item.status == "verified"
+    assert bank_item.status == "required_and_present"
     assert bank_item.extracted_fields["required_statement_months"] == (
         "July 2026, August 2026, September 2026"
     )
@@ -152,7 +152,7 @@ def test_system_flag_can_verify_kyc_checklist_row() -> None:
     )
 
     kyc_item = next(item for item in result.items if item.item_number == 11)
-    assert kyc_item.status == "verified"
+    assert kyc_item.status == "required_and_present"
     assert kyc_item.extracted_fields["kyc_details_checked"] == "True"
 
 
@@ -184,6 +184,6 @@ def test_complete_applicability_data_keeps_external_controls_manual() -> None:
     )
 
     assert len(result.items) == 36
-    unknown_items = {item.item_number: item for item in result.items if item.status == "unknown"}
-    assert set(unknown_items) == {13, 14, 19}
-    assert all(item.flagged_reason == "manual_review_required" for item in unknown_items.values())
+    manual_items = {item.item_number: item for item in result.items if item.status == "manual_review"}
+    assert set(manual_items) == {13, 14, 19}
+    assert all(item.flagged_reason == "manual_review_required" for item in manual_items.values())

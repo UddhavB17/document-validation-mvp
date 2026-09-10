@@ -17,7 +17,7 @@ from services.auth.passwords import (
 
 logger = logging.getLogger(__name__)
 
-VALID_ROLES = ("admin", "operations")
+VALID_ROLES = ("admin", "user")
 
 _PUBLIC_USER_COLUMNS = "id, email, display_name, role, is_active, created_at, created_by"
 
@@ -249,3 +249,34 @@ def update_user(
 def deactivate(user_id: int) -> dict[str, Any]:
     """Deactivate ``user_id`` (sets ``is_active`` to False)."""
     return update_user(user_id, is_active=False)
+
+
+def delete_user(user_id: int, *, actor_id: int) -> None:
+    """Permanently remove ``user_id`` and their stored password hash.
+
+    Raises ``ValueError`` when the user is unknown, when an admin tries to
+    delete their own account, or when the target is the last active admin
+    (removing them would leave no admin path back, since bootstrap only
+    runs on an empty ``users`` table).
+    """
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT id, email, role, is_active FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("User not found")
+        email = str(row["email"])
+        if int(row["id"]) == int(actor_id):
+            raise ValueError("You cannot delete your own account")
+        if str(row["role"]) == "admin" and bool(row["is_active"]):
+            remaining = connection.execute(
+                "SELECT COUNT(*) AS total FROM users "
+                "WHERE role = 'admin' AND is_active = ? AND id != ?",
+                (True, user_id),
+            ).fetchone()
+            if int(remaining["total"]) == 0:
+                raise ValueError("Cannot delete the last active admin")
+        connection.execute("DELETE FROM user_passwords WHERE user_id = ?", (user_id,))
+        connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    _audit("user_deleted", {"user_id": user_id, "email": email, "deleted_by": actor_id})
+    logger.info("Deleted user %s", email)

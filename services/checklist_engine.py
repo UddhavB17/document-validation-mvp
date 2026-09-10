@@ -1610,6 +1610,11 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
         if is_ocr_skipped_page(page):
             continue
 
+        if page.get("ocr_status") in {"failed", "no_text_extracted"}:
+            # Routed to manual_review downstream via ocr_status; do not
+            # emit a duplicate quality anomaly for the same page.
+            continue
+
         page_number = page.get("page_number")
         document_type = page.get("document_type")
         doc_type_key = str(document_type or "").strip().lower()

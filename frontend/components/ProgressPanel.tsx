@@ -1,6 +1,6 @@
 "use client";
 
-import { useProgress, useReprocessApplication } from "@/lib/queries";
+import { useProgress, useReprocessApplication, useRestartApplication, useResumeApplication } from "@/lib/queries";
 import { formatSeconds } from "@/lib/format";
 import { summarizePublicFields } from "@/components/applications/reviewUtils";
 import { ErrorMessage, InfoMessage, LoadingMessage } from "./Message";
@@ -12,6 +12,17 @@ import { SortableTable } from "./SortableTable";
 export function ProgressPanel({ applicationId }: { applicationId: number }) {
   const progress = useProgress(applicationId);
   const reprocess = useReprocessApplication(applicationId);
+  const resume = useResumeApplication(applicationId);
+  const restart = useRestartApplication(applicationId);
+
+  function handleRestartFromBeginning() {
+    const confirmed = window.confirm(
+      "Restart processing from page 1? Completed pages will be processed again. This cannot be undone.",
+    );
+    if (confirmed) {
+      restart.mutate(false);
+    }
+  }
 
   if (progress.isLoading) {
     return (
@@ -65,15 +76,33 @@ export function ProgressPanel({ applicationId }: { applicationId: number }) {
           <button
             type="button"
             disabled={reprocess.isPending}
-            onClick={() => reprocess.mutate()}
+            onClick={() => void reprocess.mutate()}
             className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-600 disabled:bg-slate-300"
           >
             {reprocess.isPending ? "Queuing recovery..." : "Retry processing"}
           </button>
-          <span className="text-xs font-medium text-slate-500">Reprocesses the stored source PDF and records a new audit event.</span>
+          <button
+            type="button"
+            disabled={resume.isPending}
+            onClick={() => void resume.mutate()}
+            className="rounded-lg border border-blue-700 bg-white px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50 disabled:opacity-50"
+          >
+            {resume.isPending ? "Resuming..." : "Resume from checkpoint"}
+          </button>
+          <button
+            type="button"
+            disabled={restart.isPending}
+            onClick={handleRestartFromBeginning}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+          >
+            {restart.isPending ? "Restarting..." : "Restart from beginning"}
+          </button>
+          <span className="text-xs font-medium text-slate-500">Resume continues from the last completed page; restart reprocesses every page. A new audit event is recorded.</span>
         </div>
       ) : null}
       {reprocess.isError ? <ErrorMessage message={reprocess.error.message} /> : null}
+      {resume.isError ? <ErrorMessage message={resume.error.message} /> : null}
+      {restart.isError ? <ErrorMessage message={restart.error.message} /> : null}
       <div className="h-2 rounded bg-slate-200">
         <div className="h-2 rounded bg-blue-600" style={{ width: `${Math.min(progressData.percentage ?? 0, 100)}%` }} />
       </div>

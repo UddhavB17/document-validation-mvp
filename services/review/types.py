@@ -73,6 +73,9 @@ class WorklistItem(TypedDict):
     processing_warnings: int
     pipeline_status: str
     pipeline_retryable: bool
+    pipeline_processed_pages: int | None
+    pipeline_total_pages: int | None
+    pipeline_percentage: float | None
 
 
 class WorklistResponse(TypedDict):
