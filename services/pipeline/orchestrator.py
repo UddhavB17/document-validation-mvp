@@ -375,7 +375,7 @@ def _run_pipeline_impl(
     if summary:
         _save_llm_summary(application_id, summary)
     # --- fx-schema: persist bilingual ops summaries ---
-    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth})
+    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth, "pages": pages})
 
     if mapped_result is not None:
         reviewer_summary = build_reviewer_summary(

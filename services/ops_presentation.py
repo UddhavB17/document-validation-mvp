@@ -77,6 +77,7 @@ CODE_PATTERNS: list[tuple[str, list[str]]] = [
         ["*_NOT_FOUND", "*_EXTRACTION_UNRELIABLE", "FIELD_VALUE_MISSING_S*"],
     ),
     ("PROCESSING_ERROR", ["PAGE_PROCESSING_ERROR"]),
+    ("REVIEW_REQUIRED", ["*"]),
 ]
 
 SUMMARY_PHRASES: dict[str, dict[str, str]] = {
@@ -92,6 +93,7 @@ SUMMARY_PHRASES: dict[str, dict[str, str]] = {
     "OCR_FAILED": {"en": "page could not be read", "hi": "पृष्ठ पढ़ा नहीं जा सका"},
     "DATA_MISSING": {"en": "information missing", "hi": "जानकारी नहीं मिली"},
     "PROCESSING_ERROR": {"en": "processing error", "hi": "प्रसंस्करण त्रुटि"},
+    "REVIEW_REQUIRED": {"en": "additional evidence needs review", "hi": "अतिरिक्त प्रमाण की जाँच आवश्यक है"},
 }
 
 
@@ -151,7 +153,11 @@ def _evidence_shape(evidence: Any) -> dict | None:
         page_num = int(page) if page is not None else None
     except (TypeError, ValueError):
         page_num = None
-    if page_num is None or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+    if page_num is None:
+        return None
+    if bbox is None:
+        return {"page": page_num, "bbox": None, "text": str(evidence.get("text") or "")}
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
     try:
         bbox_floats = [float(value) for value in bbox]
@@ -178,7 +184,7 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         if evidence is not None:
             break
     if evidence is None and pages:
-        evidence = {"page": pages[0], "bbox": None, "text": ""}
+        evidence = {"page": pages[0], "bbox": None, "text": str(found or "")}
     # Evidence bbox may be null; contract allows null.
     if evidence is not None and evidence.get("bbox") is None:
         evidence = {"page": evidence["page"], "bbox": None, "text": evidence.get("text", "")}
@@ -248,7 +254,7 @@ def _load_anomalies(application_id: int) -> list[dict]:
     with get_connection() as connection:
         try:
             rows = connection.execute(
-                "SELECT * FROM validation_results WHERE application_id = ? ORDER BY id",
+                "SELECT * FROM validation_results WHERE application_id = ? AND status != 'dismissed_by_llm' ORDER BY id",
                 (application_id,),
             ).fetchall()
         except Exception:
@@ -328,6 +334,10 @@ def _stored_findings(application: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 _CHECKLIST_STATUS_MAP = {
+    "required_and_present": "FOUND",
+    "required_and_missing": "MISSING",
+    "manual_review": "NOT_CHECKED",
+    "not_evaluated_by_engine": "NOT_CHECKED",
     "verified": "FOUND",
     "missing": "MISSING",
     "needs_review": "NOT_CHECKED",
@@ -360,9 +370,18 @@ def _checklist_section(application: dict, pages: list[dict], anomalies: list[dic
         for page_num in _anomaly_pages(anomaly):
             pages_by_sno.setdefault(sno, set()).add(page_num)
     rows = []
+    from services.checklist_output import _document_types
+    from services.checklist_service import get_all_checklist_items
+    from services.page_quality import confident_pages_for_types
+
+    definitions = {int(i["s_no"]): i for i in get_all_checklist_items(str(application.get("product_type") or "LAP"))}
     counts = {"FOUND": 0, "MISSING": 0, "NOT_CHECKED": 0}
     for item in response.items:
+        if item.status == "not_applicable":
+            continue
         status = _CHECKLIST_STATUS_MAP.get(str(item.status), "NOT_CHECKED")
+        for page in confident_pages_for_types(pages, _document_types(definitions.get(item.item_number, {}))):
+            pages_by_sno.setdefault(item.item_number, set()).add(int(page["page_number"]))
         counts[status] += 1
         rows.append(
             {
@@ -392,6 +411,8 @@ def compute_findings(anomalies: list[dict]) -> list[dict]:
     for anomaly in anomalies:
         if not isinstance(anomaly, dict):
             continue
+        if anomaly.get("status") == "dismissed_by_llm":
+            continue
         code = rule_to_code(anomaly.get("rule_id"))
         if code is None:
             continue
@@ -417,18 +438,16 @@ def build_ops_payload(application_id: int) -> dict:
     job = _load_job(application_id) or {}
     progress = _load_progress(application_id) or {}
 
-    stored = _stored_findings(application)
-    if stored and isinstance(stored.get("top_findings"), list):
-        findings = stored["top_findings"]
-        overflow = stored.get("pages_to_verify", [])
-        summary = stored.get("summary")
-    else:
-        all_findings = compute_findings(anomalies)
-        findings = all_findings[:5]
-        overflow = _overflow_pages(all_findings[5:], anomalies)
-        summary = None
+    # Recompute inexpensive groups so newly supported categories are included
+    # for existing applications without reprocessing their documents.
+    all_findings = compute_findings(anomalies)
+    findings = all_findings[:5]
+    overflow = _overflow_pages(all_findings[5:], anomalies)
+    summary = None
 
-    if not summary or not summary.get("en") or not summary.get("hi"):
+    if application.get("ops_summary_en") and application.get("ops_summary_hi"):
+        summary = {"en": str(application["ops_summary_en"]), "hi": str(application["ops_summary_hi"])}
+    elif not summary or not summary.get("en") or not summary.get("hi"):
         stored_summary = None
         if application.get("ops_summary_en") and application.get("ops_summary_hi"):
             stored_summary = {

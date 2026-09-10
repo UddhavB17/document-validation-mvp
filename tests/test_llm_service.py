@@ -107,6 +107,6 @@ def test_parse_bilingual_summary_rejects_bad_payloads() -> None:
     assert parse_bilingual_summary("") is None
     assert parse_bilingual_summary('{"en": "only english"}') is None
     assert parse_bilingual_summary('{"en": "ok", "hi": "no devanagari here"}') is None
-    assert parse_bilingual_summary(json.dumps({"en": "x" * 601, "hi": "जाँच"})) is None
+    assert parse_bilingual_summary(json.dumps({"en": "x" * 6001, "hi": "जाँच"})) is None
     good = parse_bilingual_summary('```json\n{"en": "All good.", "hi": "सब ठीक है।"}\n```')
     assert good == {"en": "All good.", "hi": "सब ठीक है।"}

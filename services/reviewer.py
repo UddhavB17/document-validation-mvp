@@ -90,7 +90,7 @@ def collapse_for_reviewer(anomalies: list[dict]) -> list[dict]:
     """Return a deduplicated list suitable for the reviewer UI."""
     actionable: list[dict] = []
     buckets: dict[str, list[dict]] = {}
-    unique_anomalies = _dedupe_exact(anomalies)
+    unique_anomalies = _dedupe_exact([a for a in anomalies if a.get("status") != "dismissed_by_llm"])
 
     # A trusted-data mismatch already identifies the offending document value.
     # Do not create a second operations task for the corresponding

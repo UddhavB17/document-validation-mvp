@@ -19,7 +19,6 @@ def get_ops_application(application_id: int) -> dict[str, Any]:
     """Return the operator-facing payload for one application (§5)."""
     from services.ops_presentation import build_ops_payload
 
-    init_db()
     try:
         return build_ops_payload(application_id)
     except KeyError:

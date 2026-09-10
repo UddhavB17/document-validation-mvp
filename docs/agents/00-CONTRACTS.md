@@ -308,3 +308,22 @@ rule IDs and the EN/HI templates; `ws-e-ops-ui` renders them.
 Anything not in these families (unclassified pages, ownership heuristics,
 low-confidence classification) is admin-only and never appears in the
 operations payload.
+
+
+## 12. User-authorized operations review update (2026-09-10)
+
+NEEDS-COORDINATION: the user explicitly requested these cross-stream changes,
+superseding sections 5, 6 and 11 where they conflict. Operations summaries now
+cover every saved page and finding, including unknown pages. English is generated
+first and Hindi is translated from it; summary strings may be up to 6,000 characters.
+The additional REVIEW_REQUIRED vocabulary includes previously admin-only checks.
+The small payload keeps five top groups; full coverage and evidence recommendations
+are audited in the configured object store at applications/{id}/reports/ops-review.json.
+Authenticated operations users may access source-pdf as well as source-page.
+Checklist rows use current engine statuses, omit not-applicable items, and collapse
+verified items in the UI. LLM dismissals preserve original validation rows with status
+dismissed_by_llm. They require confidence >= 0.98 plus independently verified source
+text and exact normalized equivalence for a name/PAN/Aadhaar mismatch; other suspected
+false positives remain recommendations. This never accepts a loan or bypasses manual decisions.
+Files span operations UI/API, LLM service, pipeline finalization, review aggregation,
+and their behavioral tests. No credentials or environment files are changed.

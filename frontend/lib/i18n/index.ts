@@ -10,6 +10,7 @@ export type I18nKey = keyof typeof en;
 
 export const LOCALE_STORAGE_KEY = "dmef_locale";
 export const LOCALE_COOKIE = "dmef_locale";
+const LOCALE_EVENT = "dmef:locale";
 
 const STRINGS = { en, hi } as const;
 
@@ -47,6 +48,16 @@ export function useLocale(): { locale: Locale; setLocale: (next: Locale) => void
 
   useEffect(() => {
     setLocaleState(readStoredLocale());
+    const sync = (event: Event) => {
+      const next = (event as CustomEvent<Locale>).detail;
+      setLocaleState(next === "en" || next === "hi" ? next : readStoredLocale());
+    };
+    window.addEventListener(LOCALE_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(LOCALE_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
   }, []);
 
   useEffect(() => {
@@ -61,6 +72,7 @@ export function useLocale(): { locale: Locale; setLocale: (next: Locale) => void
     } catch {
       // Locale persistence is best-effort; the in-memory choice still applies.
     }
+    window.dispatchEvent(new CustomEvent(LOCALE_EVENT, { detail: next }));
   }, []);
 
   return { locale, setLocale };

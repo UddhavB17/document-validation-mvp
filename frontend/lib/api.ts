@@ -810,6 +810,7 @@ const OPS_FINDING_CODES = [
   "OCR_FAILED",
   "DATA_MISSING",
   "PROCESSING_ERROR",
+  "REVIEW_REQUIRED",
 ] as const;
 
 // Display strings stay lenient: null/missing becomes "" so one empty field cannot fail the whole parse.

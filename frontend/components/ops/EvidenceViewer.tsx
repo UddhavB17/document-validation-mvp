@@ -15,6 +15,7 @@ export interface EvidenceSelection {
   bbox: Bbox | null;
   severity: string | null | undefined;
   title: string;
+  highlight?: string;
 }
 
 export function EvidenceViewer({
@@ -47,7 +48,7 @@ export function EvidenceViewer({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const boxStyle = selection.bbox ? bboxToStyle(selection.bbox) : null;
+  const boxStyle = selection.bbox && selection.page === selection.evidencePage ? bboxToStyle(selection.bbox) : null;
 
   return (
     <div
@@ -77,6 +78,8 @@ export function EvidenceViewer({
           </button>
         </header>
 
+        <a className="border-b px-4 py-2 text-sm font-semibold" href={api.sourcePdfUrl(applicationId, selection.page)} target="_blank" rel="noreferrer">{t(locale, "ops.evidence.fullPdf")}</a>
+
         {boxStyle === null ? (
           <p role="note" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-900">
             {t(locale, "ops.evidence.noBox")}
@@ -93,7 +96,7 @@ export function EvidenceViewer({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 key={`${applicationId}-${selection.page}`}
-                src={api.sourcePageImageUrl(applicationId, selection.page)}
+                src={api.sourcePageImageUrl(applicationId, selection.page, selection.page === selection.evidencePage ? selection.highlight : undefined)}
                 alt={`${t(locale, "ops.evidence.pageOf")} ${selection.page}`}
                 onError={() => setImageError(true)}
                 className="h-auto max-w-full rounded-sm border border-slate-200 bg-white shadow"

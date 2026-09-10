@@ -50,7 +50,7 @@ def _finalize_pipeline_result(
     if summary:
         _save_llm_summary(application_id, summary)
     # --- fx-schema: persist bilingual ops summaries ---
-    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth})
+    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth, "pages": pages})
 
     report_path = save_report_json(
         build_report(

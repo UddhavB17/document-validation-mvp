@@ -11,7 +11,7 @@ import { FindingsList, PagesToVerifyTable } from "@/components/ops/FindingsList"
 import { OpsChecklist } from "@/components/ops/OpsChecklist";
 import { pickText, clampPercentage, statusProgressPercentage, takeTopFindings } from "@/components/ops/opsUtils";
 import { StatusPill, normalizeOpsStatus } from "@/components/ops/StatusPill";
-import { OpsFinding } from "@/lib/api";
+import { api, OpsFinding } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
 import { isApplicationReviewPollingStatus, useApplicationStatus, useOpsApplication } from "@/lib/queries";
 
@@ -99,10 +99,11 @@ export default function OpsApplicationPage() {
     setEvidence({
       page,
       pages: finding.pages.length > 0 ? finding.pages : [page],
-      evidencePage: finding.evidence?.bbox ? (evidencePage ?? null) : null,
+      evidencePage: evidencePage ?? null,
       bbox: matches && finding.evidence?.bbox ? [...finding.evidence.bbox] : null,
       severity: finding.severity,
       title: pickText(finding.title, locale),
+      highlight: finding.evidence?.text || undefined,
     });
   };
 
@@ -153,7 +154,8 @@ export default function OpsApplicationPage() {
 
       <section aria-labelledby="ops-summary-heading" className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 id="ops-summary-heading" className="text-base font-bold text-slate-900">{t(locale, "ops.review.summary")}</h2>
-        <p className="mt-2 text-sm leading-relaxed text-slate-700">{pickText(data.summary, locale)}</p>
+        <p lang={locale} className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate-700">{pickText(data.summary, locale)}</p>
+        <a className="mt-4 inline-block rounded border px-3 py-2 text-sm font-semibold" href={api.sourcePdfUrl(applicationId)} target="_blank" rel="noreferrer">{t(locale, "ops.evidence.fullPdf")}</a>
       </section>
 
       <section aria-labelledby="ops-findings-heading" className="space-y-3">
@@ -168,9 +170,10 @@ export default function OpsApplicationPage() {
 
       <section aria-labelledby="ops-checklist-heading" className="space-y-3">
         <h2 id="ops-checklist-heading" className="text-base font-bold text-slate-900">
-          {t(locale, "ops.review.checklist")} ({data.checklist.found} · {data.checklist.missing} · {data.checklist.not_checked})
+          {t(locale, "ops.review.checklist")}
         </h2>
-        <OpsChecklist rows={data.checklist.rows} />
+        <p className="text-sm text-slate-600">{data.checklist.found} {t(locale, "ops.review.statusFound")} · {data.checklist.missing} {t(locale, "ops.review.statusMissing")} · {data.checklist.not_checked} {t(locale, "ops.review.statusNotChecked")}</p>
+        <OpsChecklist rows={data.checklist.rows} onOpenPage={openVerifyPage} />
       </section>
 
       {evidence ? (
@@ -182,8 +185,7 @@ export default function OpsApplicationPage() {
             const pages = current.pages.includes(page) ? current.pages : [...current.pages, page].sort((a, b) => a - b);
             // Keep the box while the new page is still the evidence page;
             // clear it only when the page has no box.
-            const keepBox = current.bbox !== null && current.evidencePage !== null && current.evidencePage === page;
-            return { ...current, page, pages, bbox: keepBox ? current.bbox : null };
+            return { ...current, page, pages };
           })}
           onClose={() => setEvidence(null)}
         />

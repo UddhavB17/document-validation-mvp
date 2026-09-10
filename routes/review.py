@@ -192,10 +192,8 @@ def get_application_review(application_id: int) -> dict[str, Any]:
 @router.get(
     "/applications/{application_id}/source-pdf",
     summary="View the original PDF evidence",
-    dependencies=[Depends(require_role("admin"))],
 )
 def get_application_source_pdf(application_id: int) -> StreamingResponse:
-    init_db()
     pdf_bytes, filename = _application_source_bytes(application_id)
 
     def _stream() -> Any:
@@ -222,7 +220,6 @@ def get_application_source_page(
 
     if page_number < 1:
         raise HTTPException(status_code=422, detail="Page number must be one or greater")
-    init_db()
     pdf_bytes, _ = _application_source_bytes(application_id)
     digest = hashlib.sha256(pdf_bytes).hexdigest()
     cache_key = (application_id, page_number, dpi, highlight or "", digest)

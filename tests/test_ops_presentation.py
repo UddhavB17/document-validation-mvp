@@ -187,10 +187,38 @@ def test_rule_to_code_families() -> None:
     assert rule_to_code("PAN_NUMBER_NOT_FOUND") == "DATA_MISSING"
     assert rule_to_code("AADHAAR_NUMBER_EXTRACTION_UNRELIABLE") == "DATA_MISSING"
     assert rule_to_code("PAGE_PROCESSING_ERROR") == "PROCESSING_ERROR"
-    assert rule_to_code("UNCLASSIFIED_PAGE") is None
+    assert rule_to_code("UNCLASSIFIED_PAGE") == "REVIEW_REQUIRED"
     assert rule_to_code("BORDERLINE_NAME_MATCH") == "NAME_MISMATCH"
 
 
 def test_bank_statement_recency_acceptance() -> None:
     assert is_bank_statement_old("2026-05-30", date(2026, 9, 4)) is True
     assert is_bank_statement_old("2026-06-15", date(2026, 9, 4)) is False
+
+
+def test_generated_summary_takes_priority_over_cached_templates(ops_db):
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE applications SET ops_summary_en = ?, ops_summary_hi = ?, ops_findings_json = ? WHERE id = ?",
+            ("Evidence review", "प्रमाण की समीक्षा", json.dumps({"top_findings": [], "summary": {"en": "old", "hi": "पुराना"}}), ops_db),
+        )
+    payload = build_ops_payload(ops_db)
+    assert payload["summary"] == {"en": "Evidence review", "hi": "प्रमाण की समीक्षा"}
+    assert payload["top_findings"]
+
+
+def test_current_checklist_statuses_and_evidence_pages(monkeypatch):
+    from types import SimpleNamespace
+
+    from services.ops_presentation import _checklist_section
+    monkeypatch.setattr("services.checklist_output.build_checklist_verification_response", lambda **kw: SimpleNamespace(items=[
+        SimpleNamespace(item_number=1, document_name="PAN", status="required_and_present"),
+        SimpleNamespace(item_number=2, document_name="Manual", status="manual_review"),
+        SimpleNamespace(item_number=3, document_name="Missing", status="required_and_missing"),
+        SimpleNamespace(item_number=4, document_name="Not applicable", status="not_applicable"),
+    ]))
+    monkeypatch.setattr("services.checklist_service.get_all_checklist_items", lambda *_: [{"s_no": 1, "document_type": "PAN Card"}])
+    monkeypatch.setattr("services.page_quality.confident_pages_for_types", lambda pages, types: pages if types else [])
+    checklist = _checklist_section({"id": 1}, [{"page_number": 12}], [])
+    assert (checklist["total"], checklist["found"], checklist["missing"], checklist["not_checked"]) == (3, 1, 1, 1)
+    assert checklist["rows"][0]["pages"] == [12]

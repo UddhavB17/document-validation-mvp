@@ -266,7 +266,6 @@ def test_user_forbidden_on_settings_but_ok_on_worklist(client) -> None:
     admin_only = [
         ("GET", "/review/activity/today"),
         ("GET", "/review/applications/1"),
-        ("GET", "/review/applications/1/source-pdf"),
         ("POST", "/review/applications/1/reprocess"),
         ("GET", "/verification/summary/1"),
         ("GET", "/verification/checklist/1"),
@@ -275,6 +274,8 @@ def test_user_forbidden_on_settings_but_ok_on_worklist(client) -> None:
     for method, path in admin_only:
         response = client.request(method, path, headers=ops_headers)
         assert response.status_code == 403, f"{method} {path} -> {response.status_code}"
+
+    assert client.get("/review/applications/1/source-pdf", headers=ops_headers).status_code == 404
 
     # Regular users retain the deliberately small, non-technical routes.
     assert client.get("/ops/worklist", headers=ops_headers).status_code == 200
