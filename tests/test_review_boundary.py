@@ -186,12 +186,44 @@ def test_worklist_item_payload_shape(tmp_path, monkeypatch, auth_headers) -> Non
         "processing_warnings",
         "pipeline_status",
         "pipeline_retryable",
+        "pipeline_processed_pages",
+        "pipeline_total_pages",
+        "pipeline_percentage",
     }
     assert item["loan_id"] == "SHAPE-1"
     assert item["pipeline_status"] == "not_started"
     assert item["pipeline_retryable"] is False
+    assert item["pipeline_processed_pages"] is None
+    assert item["pipeline_total_pages"] is None
+    assert item["pipeline_percentage"] is None
     assert item["issues"] >= 1
     assert item["reviewer_issues"] >= 1
+
+
+def test_worklist_item_carries_processing_progress_counts(
+    tmp_path, monkeypatch, auth_headers
+) -> None:
+    _use_temp_db(tmp_path, monkeypatch)
+    init_db()
+    application_id = _insert_application(loan_id="PROG-1")
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO pipeline_progress
+                (application_id, status, processed_pages, total_pages, percentage)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (application_id, "processing", 264, 891, 29.6),
+        )
+    client = TestClient(app)
+
+    response = client.get("/review/worklist", headers=auth_headers)
+
+    assert response.status_code == 200
+    item = next(row for row in response.json()["items"] if row["loan_id"] == "PROG-1")
+    assert item["pipeline_processed_pages"] == 264
+    assert item["pipeline_total_pages"] == 891
+    assert item["pipeline_percentage"] == 29.6
 
 
 def test_comparison_matrix_empty_ground_truth(tmp_path, monkeypatch) -> None:

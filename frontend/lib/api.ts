@@ -156,6 +156,9 @@ export const worklistItemSchema = z.object({
   processing_warnings: z.number(),
   pipeline_status: z.string(),
   pipeline_retryable: z.boolean(),
+  pipeline_processed_pages: z.number().nullable().optional(),
+  pipeline_total_pages: z.number().nullable().optional(),
+  pipeline_percentage: z.number().nullable().optional(),
 });
 
 export const worklistSchema = z.object({
@@ -467,6 +470,10 @@ export const reprocessResponseSchema = z.object({
   previous_pipeline_status: z.string(),
 });
 
+// Resume/restart endpoints return varying shapes (job-control acknowledgement
+// vs queued-recovery payload); accept anything with an optional status.
+export const recoveryResponseSchema = z.object({}).passthrough();
+
 export type Health = z.infer<typeof healthSchema>;
 export type UploadResponse = z.infer<typeof uploadResponseSchema>;
 export type Progress = z.infer<typeof progressSchema>;
@@ -620,6 +627,14 @@ export const api = {
   undoDecision: (decisionId: number) => postJsonResponse(`/decision/${decisionId}/undo`, {}, decisionSchema),
   reprocessApplication: (applicationId: number) =>
     postJsonResponse(`/review/applications/${applicationId}/reprocess`, {}, reprocessResponseSchema),
+  resumeApplication: (applicationId: number) =>
+    postJsonResponse(`/review/applications/${applicationId}/resume`, {}, recoveryResponseSchema),
+  restartApplication: (applicationId: number, fromCheckpoint: boolean) =>
+    postJsonResponse(
+      `/review/applications/${applicationId}/restart?from_checkpoint=${fromCheckpoint ? "true" : "false"}`,
+      {},
+      recoveryResponseSchema,
+    ),
   // Evidence URLs go through the same-origin proxy
   // (frontend/app/api/evidence/[...path]/route.ts), which forwards the
   // dmef_session cookie as the backend bearer token. Direct backend URLs

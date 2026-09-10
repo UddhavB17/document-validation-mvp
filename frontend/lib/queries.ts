@@ -143,6 +143,35 @@ export function useReprocessApplication(applicationId: number) {
   });
 }
 
+function useRecoveryMutation<TVariables>(
+  applicationId: number,
+  mutationFn: (variables: TVariables) => Promise<unknown>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["progress", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["applicationStatus", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["applicationReview", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["worklist"] }),
+      ]);
+    },
+  });
+}
+
+export function useResumeApplication(applicationId: number) {
+  return useRecoveryMutation<void>(applicationId, () => api.resumeApplication(applicationId));
+}
+
+export function useRestartApplication(applicationId: number) {
+  return useRecoveryMutation<boolean>(applicationId, (fromCheckpoint: boolean) =>
+    api.restartApplication(applicationId, fromCheckpoint),
+  );
+}
+
 export function useCreateDecision(applicationId: number) {
   const queryClient = useQueryClient();
   return useMutation({

@@ -14,7 +14,7 @@ import {
   humanizeReviewState,
 } from "@/components/worklist/reviewDisplay";
 import type { WorklistItem } from "@/lib/api";
-import { useWorklist } from "@/lib/queries";
+import { useResumeApplication, useWorklist } from "@/lib/queries";
 import { startReviewQueue } from "@/lib/reviewQueue";
 import { getActionableReviewItems, matchesWorklistFilter, sortWorklistItems } from "@/lib/worklistPolicy";
 
@@ -267,6 +267,8 @@ function WorklistRows({ items, queueIds }: { items: WorklistItem[]; queueIds: nu
                 <div>
                   <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.08em] text-[#5C6B7A] md:hidden">Processing</span>
                   <ReviewStateBadge status={item.pipeline_status} kind="processing" />
+                  <ProcessingProgress item={item} />
+                  <WorklistResumeButton item={item} />
                 </div>
                 <time dateTime={item.created_at} className="block text-[11px] font-medium leading-5 text-[#5C6B7A]">
                   <span className="mb-1 block text-[10px] font-bold uppercase tracking-[0.08em] md:hidden">Received</span>
@@ -280,6 +282,53 @@ function WorklistRows({ items, queueIds }: { items: WorklistItem[]; queueIds: nu
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function ProcessingProgress({ item }: { item: WorklistItem }) {
+  const processed = item.pipeline_processed_pages ?? null;
+  const total = item.pipeline_total_pages ?? null;
+  if (processed === null || total === null || total <= 0) {
+    return null;
+  }
+  const percentage = item.pipeline_percentage ?? Math.round((processed / total) * 100);
+  return (
+    <div className="mt-1.5 min-w-0">
+      <p className="font-mono text-[11px] font-bold text-[#16202E]">
+        {processed}/{total} pages
+      </p>
+      <div className="mt-1 h-1.5 overflow-hidden rounded bg-slate-200" role="progressbar" aria-valuenow={percentage} aria-valuemin={0} aria-valuemax={100} aria-label={`Processing progress for ${item.loan_id}`}>
+        <div className="h-1.5 rounded bg-[#2B4C7E]" style={{ width: `${Math.min(Math.max(percentage, 0), 100)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function WorklistResumeButton({ item }: { item: WorklistItem }) {
+  const resume = useResumeApplication(item.id);
+  if (!item.pipeline_retryable) {
+    return null;
+  }
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        disabled={resume.isPending}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          resume.mutate();
+        }}
+        className="rounded-md border border-blue-700 bg-white px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+      >
+        {resume.isPending ? "Resuming…" : "Resume"}
+      </button>
+      {resume.isError ? (
+        <p className="mt-1 text-[11px] font-semibold text-red-700" role="alert">
+          {resume.error.message}
+        </p>
+      ) : null}
     </div>
   );
 }

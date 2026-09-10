@@ -26,6 +26,30 @@ def _summary_count(summary: object, key: str) -> int:
     return int(value) if isinstance(value, (int, float, str)) else 0
 
 
+def _optional_int(value: object) -> int | None:
+    """Return an int for real counts, else None (missing progress row)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, str)):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _optional_float(value: object) -> float | None:
+    """Return a float for real percentages, else None (missing progress row)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, str)):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def build_worklist() -> WorklistResponse:
     """Assemble the reviewer worklist with issue counts and pipeline status."""
     application_rows = list_application_rows_ordered_by_created_at()
@@ -60,6 +84,15 @@ def build_worklist() -> WorklistResponse:
                 ),
                 "pipeline_retryable": bool(
                     pipeline_progress and pipeline_progress.get("retryable")
+                ),
+                "pipeline_processed_pages": _optional_int(
+                    pipeline_progress.get("processed_pages") if pipeline_progress else None
+                ),
+                "pipeline_total_pages": _optional_int(
+                    pipeline_progress.get("total_pages") if pipeline_progress else None
+                ),
+                "pipeline_percentage": _optional_float(
+                    pipeline_progress.get("percentage") if pipeline_progress else None
                 ),
             }
         )

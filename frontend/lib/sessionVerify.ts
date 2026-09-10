@@ -96,7 +96,10 @@ export async function verifySessionToken(
   }
   const fetchFn = options.fetchFn ?? fetch;
   const url = `${resolveApiBaseUrl(options.apiBaseUrl)}/auth/me`;
-  const timeoutMs = options.timeoutMs ?? 5000;
+  // Free-tier Postgres (Neon) suspends when idle: the first verification
+  // after a cold start can take well over 5 s, so allow 25 s before
+  // calling the backend unreachable (callers may still pass timeoutMs).
+  const timeoutMs = options.timeoutMs ?? 25000;
   const hasTimeout =
     typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function";
   try {

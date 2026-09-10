@@ -417,7 +417,13 @@ def get_zip_preparation_progress(package_id: str) -> dict[str, object]:
     # the persisted intake rows + stored manifest.
     row = _get_package_row(package_id)
     if row["status"] != "prepared":
-        raise HTTPException(status_code=404, detail="ZIP preparation progress not found")
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "This upload session expired (the server may have restarted "
+                "during preparation). Please upload the ZIP again."
+            ),
+        )
     documents = _load_intake_manifest_documents(package_id)
     return {
         "package_id": package_id,
