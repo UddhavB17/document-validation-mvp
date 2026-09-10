@@ -57,7 +57,7 @@ export function PageProcessing({ data, onSelectPage }: { data: Pick<ApplicationR
         <span className="rounded-lg border border-[#E1E5EB] bg-[#F6F7FA] px-3 py-1.5 text-xs font-bold text-[#5C6B7A]">50 rows per page</span>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Metric label="Pages Processed" value={events.length} />
+        <Metric label="Page events recorded" value={events.length} />
         <Metric label="Avg. processing speed" value={`${avgSeconds.toFixed(1)}s / page`} />
         <Metric label="Warnings / errors" value={issueCount} />
       </div>
@@ -75,7 +75,7 @@ export function PageProcessing({ data, onSelectPage }: { data: Pick<ApplicationR
         </label>
         <div className="flex gap-2" role="group" aria-label="Processing event filter">
           <button type="button" onClick={() => { setView("issues"); setPage(1); }} className={`rounded-lg border px-3 py-2 text-xs font-bold ${view === "issues" ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E]" : "border-[#E1E5EB] bg-white text-[#5C6B7A]"}`}>Warnings &amp; errors ({issueCount})</button>
-          <button type="button" onClick={() => { setView("all"); setPage(1); }} className={`rounded-lg border px-3 py-2 text-xs font-bold ${view === "all" ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E]" : "border-[#E1E5EB] bg-white text-[#5C6B7A]"}`}>All pages ({events.length})</button>
+          <button type="button" onClick={() => { setView("all"); setPage(1); }} className={`rounded-lg border px-3 py-2 text-xs font-bold ${view === "all" ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E]" : "border-[#E1E5EB] bg-white text-[#5C6B7A]"}`}>All events ({events.length})</button>
         </div>
       </div>
 

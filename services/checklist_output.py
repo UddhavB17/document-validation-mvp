@@ -20,6 +20,7 @@ from services.checklist_engine import (
 )
 from services.checklist_service import get_all_checklist_items
 from services.checklist_status_map import CHECKLIST_STATUSES
+from services.config import cached_settings
 from services.page_quality import confident_pages_for_types
 
 
@@ -31,6 +32,7 @@ def _matched_pages_with_ocr_failure(pages: list[dict[str, Any]], document_types:
     )
 
 
+@cached_settings()
 def build_checklist_verification_response(
     *,
     loan_file_id: str,

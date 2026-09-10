@@ -138,3 +138,20 @@ def test_final_checklist_bounds_settings_reads_for_large_packet(settings_store, 
     } for number in range(1, 892)]
     assert checklist_engine.run_checks(pages, {}, {}, "LAP") == []
     assert len(calls) == 1
+
+
+def test_final_report_bounds_settings_reads_for_large_packet(settings_store, monkeypatch):
+    from services.checklist_output import build_checklist_verification_response
+    from services.checklist_service import get_all_checklist_items
+
+    _, calls = settings_store
+    monkeypatch.setattr(config.time, "monotonic", lambda: 10.0)
+    pages = [{
+        "page_number": number, "page_type": "digital", "document_type": "Loan Agreement",
+        "classification_confidence": 0.99, "extracted_fields": {},
+    } for number in range(1, 892)]
+    report = build_checklist_verification_response(
+        loan_file_id="synthetic", pages=pages, anomalies=[],
+    )
+    assert len(report.items) == len(get_all_checklist_items("LAP"))
+    assert len(calls) == 1

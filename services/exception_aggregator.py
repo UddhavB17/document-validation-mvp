@@ -119,7 +119,7 @@ def save_aggregation(application_id: int, anomalies: list[dict], final_status: s
         connection.execute(
             "DELETE FROM validation_results WHERE application_id = ?", (application_id,)
         )
-        for anomaly in anomalies:
+        if anomalies:
             connection.execute(
                 """
                 INSERT INTO validation_results (
@@ -136,18 +136,21 @@ def save_aggregation(application_id: int, anomalies: list[dict], final_status: s
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    application_id,
-                    anomaly.get("rule_id"),
-                    anomaly.get("s_no"),
-                    anomaly.get("severity"),
-                    anomaly.get("document_type"),
-                    _stringify(anomaly.get("expected_value")),
-                    _stringify(anomaly.get("found_value")),
-                    anomaly.get("page_number"),
-                    anomaly.get("reason"),
-                    _stringify(anomaly.get("evidence_json")),
-                ),
+                [
+                    (
+                        application_id,
+                        anomaly.get("rule_id"),
+                        anomaly.get("s_no"),
+                        anomaly.get("severity"),
+                        anomaly.get("document_type"),
+                        _stringify(anomaly.get("expected_value")),
+                        _stringify(anomaly.get("found_value")),
+                        anomaly.get("page_number"),
+                        anomaly.get("reason"),
+                        _stringify(anomaly.get("evidence_json")),
+                    )
+                    for anomaly in anomalies
+                ],
             )
         connection.execute(
             "UPDATE applications SET status = ? WHERE id = ?",

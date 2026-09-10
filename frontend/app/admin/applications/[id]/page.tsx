@@ -98,6 +98,7 @@ export default function ApplicationReviewPage() {
             title="Review details could not be loaded"
             message="Live processing is loaded separately above. Retry review details to enable page evidence previews."
             onRetry={() => void applicationReview.refetch()}
+            isRetrying={applicationReview.isFetching}
           />
         ) : null}
       </div>
@@ -114,6 +115,7 @@ export default function ApplicationReviewPage() {
         title={errorPresentation.title}
         message={errorPresentation.message}
         onRetry={() => void applicationReview.refetch()}
+        isRetrying={applicationReview.isFetching}
       />
     );
   }
@@ -123,6 +125,7 @@ export default function ApplicationReviewPage() {
         title="Application review is unavailable"
         message="The review API returned no application data. Retry the request and check the local API health if it continues."
         onRetry={() => void applicationReview.refetch()}
+        isRetrying={applicationReview.isFetching}
       />
     );
   }

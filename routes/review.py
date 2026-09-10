@@ -35,8 +35,8 @@ from services.reprocessing import (
 from services.review.comparison_matrix import build_comparison_matrix_and_relationships
 from services.review.document_summaries import build_document_summaries
 from services.review.repository import (
+    load_application_review_bundle,
     load_application_review_data,
-    load_comparison_evidence,
     load_latest_decision,
     load_latest_uploaded_file,
     load_today_activity,
@@ -128,8 +128,7 @@ def get_today_activity() -> dict[str, Any]:
 )
 def get_application_review(application_id: int) -> dict[str, Any]:
     """Return the full reviewer detail payload for one application."""
-    init_db()
-    data = load_application_review_data(application_id)
+    data, evidence_pages = load_application_review_bundle(application_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
@@ -152,8 +151,7 @@ def get_application_review(application_id: int) -> dict[str, Any]:
     matrix_and_rels = build_comparison_matrix_and_relationships(
         application_id,
         data,
-        evidence_pages=load_comparison_evidence(application_id, data["pages"])
-        if data.get("ground_truth") else [],
+        evidence_pages=evidence_pages if data.get("ground_truth") else [],
     )
     documents = build_document_summaries(data.get("document_pages") or {}, anomalies)
 

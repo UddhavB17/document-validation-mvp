@@ -38,6 +38,7 @@ def coerce_json_row(row: Any) -> JsonRow:
     # summary rows. Single-page text uses load_page_text explicitly.
     row_payload.pop("ocr_text", None)
     row_payload.pop("structured_content", None)
+    row_payload.pop("meta_json", None)
     return {str(key): value for key, value in row_payload.items()}
 
 
@@ -88,14 +89,41 @@ def load_page_text(application_id: int, page_number: int) -> JsonRow | None:
 
 
 def load_application_review_data(application_id: int) -> ApplicationReviewData | None:
-    """Load the persisted rows needed by the application review detail view."""
+    """Load public review data without private evidence."""
+    data, _ = _load_application_review(application_id, include_evidence=False)
+    return data
+
+
+def load_application_review_bundle(
+    application_id: int,
+) -> tuple[ApplicationReviewData | None, list[dict]]:
+    """Read review summaries and private comparison evidence together.
+
+    Keep the evidence separate so OCR/private metadata cannot enter the public
+    response, and avoid fetching all 891 page rows a second time.
+    """
+    return _load_application_review(application_id, include_evidence=True)
+
+
+def _load_application_review(
+    application_id: int, *, include_evidence: bool
+) -> tuple[ApplicationReviewData | None, list[dict]]:
+    columns = ", ".join(f"p.{column.strip()}" for column in PAGE_SUMMARY_COLUMNS.split(","))
+    if include_evidence:
+        columns += ", p.ocr_text, m.meta_json"
+    join = (
+        "LEFT JOIN pages_meta m ON m.application_id = p.application_id "
+        "AND m.page_number = p.page_number"
+        if include_evidence
+        else ""
+    )
     with get_connection() as connection:
         application_row = connection.execute(
             "SELECT * FROM applications WHERE id = ?",
             (application_id,),
         ).fetchone()
         if application_row is None:
-            return None
+            return None, []
         uploaded_file_row = connection.execute(
             "SELECT * FROM uploaded_files WHERE application_id = ? ORDER BY uploaded_at DESC LIMIT 1",
             (application_id,),
@@ -110,10 +138,10 @@ def load_application_review_data(application_id: int) -> ApplicationReviewData |
         ).fetchall()
         page_rows = connection.execute(
             f"""
-            SELECT {PAGE_SUMMARY_COLUMNS}
-            FROM pages
-            WHERE application_id = ?
-            ORDER BY page_number
+            SELECT {columns}
+            FROM pages p {join}
+            WHERE p.application_id = ?
+            ORDER BY p.page_number
             """,
             (application_id,),
         ).fetchall()
@@ -138,6 +166,9 @@ def load_application_review_data(application_id: int) -> ApplicationReviewData |
         if document_type and document_type != "Unknown" and page_number is not None:
             document_pages.setdefault(str(document_type), []).append(_required_int(page_number))
 
+    evidence = (
+        _hydrate_comparison_evidence(normalized_page_rows, page_rows) if include_evidence else []
+    )
     return {
         "application": dict(application_row),
         "uploaded_file": dict(uploaded_file_row) if uploaded_file_row else {},
@@ -153,7 +184,7 @@ def load_application_review_data(application_id: int) -> ApplicationReviewData |
             if str(anomaly.get("rule_id", "")).startswith("MISSING_DOC")
             and anomaly.get("document_type")
         ],
-    }
+    }, evidence
 
 
 def load_latest_decision(application_id: int) -> JsonRow | None:
@@ -192,6 +223,10 @@ def load_comparison_evidence(application_id: int, pages: list[dict]) -> list[dic
             """,
             (application_id,),
         ).fetchall()
+    return _hydrate_comparison_evidence(pages, rows)
+
+
+def _hydrate_comparison_evidence(pages: list[dict], rows: list[Any]) -> list[dict]:
     details = {int(row["page_number"]): dict(row) for row in rows}
     evidence = []
     for page in pages:
@@ -203,7 +238,9 @@ def load_comparison_evidence(application_id: int, pages: list[dict]) -> list[dic
         fields = dict(page.get("extracted_fields") or {})
         if isinstance(meta, dict):
             fields.update({key: value for key, value in meta.items() if key.startswith("_")})
-        evidence.append({**page, "ocr_text": detail.get("ocr_text") or "", "extracted_fields": fields})
+        evidence.append(
+            {**page, "ocr_text": detail.get("ocr_text") or "", "extracted_fields": fields}
+        )
     return evidence
 
 

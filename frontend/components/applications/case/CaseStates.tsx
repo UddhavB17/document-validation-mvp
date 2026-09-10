@@ -41,9 +41,10 @@ type CaseErrorStateProps = {
   title: string;
   message: string;
   onRetry?: () => void;
+  isRetrying?: boolean;
 };
 
-export function CaseErrorState({ title, message, onRetry }: CaseErrorStateProps) {
+export function CaseErrorState({ title, message, onRetry, isRetrying = false }: CaseErrorStateProps) {
   return (
     <section className="w-full min-w-0 rounded-xl border border-red-200 bg-red-50 p-5 text-red-900" role="alert">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -59,9 +60,11 @@ export function CaseErrorState({ title, message, onRetry }: CaseErrorStateProps)
             <button
               type="button"
               onClick={onRetry}
+              disabled={isRetrying}
+              aria-busy={isRetrying}
               className="rounded-lg border border-red-300 bg-white px-3.5 py-2 text-sm font-bold text-red-800 shadow-3xs transition-colors hover:bg-red-100"
             >
-              Retry
+              {isRetrying ? "Retrying…" : "Retry"}
             </button>
           ) : null}
         </div>

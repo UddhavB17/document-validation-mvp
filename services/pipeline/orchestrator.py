@@ -348,6 +348,7 @@ def _run_pipeline_impl(
             "Could not store ops payload for application %s", application_id, exc_info=True
         )
     pipeline_status = _pipeline_outcome(result["anomalies"], processing_error_anomalies)
+    update_stage(application_id, "building_reports", "Preparing validation reports")
     checklist_verification = build_checklist_verification_response(
         loan_file_id=str(ground_truth.get("loan_id") or application_id),
         pages=pages,
