@@ -96,3 +96,17 @@ def test_dismissal_requires_confidence_equivalence_and_source_quote():
     assert not _dismissible({**item, "quote": "fabricated"}, finding, pages)
     assert not _dismissible(item, {**finding, "expected_value": "ABCDE1234G"}, pages)
     assert not _dismissible(item, {**finding, "page_number": 3}, pages)
+
+
+@pytest.mark.parametrize(
+    "rule,value",
+    [
+        ("PAN_NUMBER_MISMATCH", "---"),
+        ("PAN_NUMBER_MISMATCH", "123"),
+        ("AADHAAR_NUMBER_MISMATCH", "123456789012"),
+    ],
+)
+def test_malformed_ids_cannot_be_automatically_dismissed(rule, value):
+    finding = {"rule_id": rule, "expected_value": value, "found_value": value, "page_number": 1}
+    item = {"verdict": "possible_false_positive", "confidence": 1.0, "pages": [1], "quote": value}
+    assert not _dismissible(item, finding, [{"page": 1, "text": value}])

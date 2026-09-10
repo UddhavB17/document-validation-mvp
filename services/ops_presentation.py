@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from database.db import get_connection
+from services.config import cached_settings
 from services.ops_templates_en_hi import (
     CODE_ORDER,
     SEVERITY_ORDER,
@@ -429,6 +430,7 @@ def compute_findings(anomalies: list[dict]) -> list[dict]:
     return findings
 
 
+@cached_settings()
 def build_ops_payload(application_id: int) -> dict:
     """Build the operator-facing payload for one application (§5)."""
     application = _load_application(application_id)
@@ -447,14 +449,8 @@ def build_ops_payload(application_id: int) -> dict:
 
     if application.get("ops_summary_en") and application.get("ops_summary_hi"):
         summary = {"en": str(application["ops_summary_en"]), "hi": str(application["ops_summary_hi"])}
-    elif not summary or not summary.get("en") or not summary.get("hi"):
-        stored_summary = None
-        if application.get("ops_summary_en") and application.get("ops_summary_hi"):
-            stored_summary = {
-                "en": str(application["ops_summary_en"]),
-                "hi": str(application["ops_summary_hi"]),
-            }
-        summary = stored_summary or _summaries(findings)
+    else:
+        summary = _summaries(findings)
 
     job_status = str(job.get("status") or "").strip().casefold()
     failure_reason = job.get("failure_reason") or job.get("error")

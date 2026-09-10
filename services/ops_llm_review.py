@@ -1,4 +1,4 @@
-"""Evidence-backed review of every saved page; never changes rule findings.
+"""Evidence-backed review of every saved page with audited, conservative dismissal.
 
 The cloud report preserves coverage and per-finding recommendations. English is
 written first; Hindi is translated from that exact English result. No page text
@@ -152,6 +152,11 @@ def _dismissible(item: dict, finding: dict, pages: list[dict]) -> bool:
             return re.sub(r"[\s-]", "", value).casefold()
 
     if normalize(expected) != normalize(found):
+        return False
+    normalized = normalize(found)
+    if "PAN" in rule and not re.fullmatch(r"[a-z]{5}\d{4}[a-z]", normalized):
+        return False
+    if "AADHAAR" in rule and not re.fullmatch(r"[2-9]\d{11}", normalized):
         return False
     quote = item.get("quote")
     if not isinstance(quote, str) or not quote.strip() or normalize(found) not in normalize(quote):
