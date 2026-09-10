@@ -4,10 +4,10 @@ export const checklistMock: ChecklistVerificationResponse = {
   loan_file_id: "LAP-APPLICATION-31",
   summary: {
     total: 44,
-    verified: 38,
-    needs_review: 4,
-    missing: 1,
-    unknown: 1,
+    required_and_present: 38,
+    manual_review: 5,
+    required_and_missing: 1,
+    not_evaluated_by_engine: 0,
     not_applicable: 0,
   },
   processing_metadata: {
@@ -19,7 +19,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 1,
       document_name: "Application Form",
-      status: "verified",
+      status: "required_and_present",
       confidence: "high",
       confidence_detail: "matched 1 of 1 expected page(s); lowest classification confidence 96%",
       extracted_fields: {
@@ -33,7 +33,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 7,
       document_name: "PAN",
-      status: "needs_review",
+      status: "manual_review",
       confidence: "medium",
       confidence_detail: "PAN number differs from digital application form; expected TSTAA0001T, found TSTAA0009T",
       extracted_fields: {
@@ -47,7 +47,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 19,
       document_name: "Bank Statement",
-      status: "missing",
+      status: "required_and_missing",
       confidence: "low",
       confidence_detail: "matched 0 of 1 expected page(s)",
       extracted_fields: {},
@@ -58,7 +58,7 @@ export const checklistMock: ChecklistVerificationResponse = {
     {
       item_number: 26,
       document_name: "CERSAI",
-      status: "unknown",
+      status: "manual_review",
       confidence: "low",
       confidence_detail: "no deterministic checklist rule could verify this item",
       extracted_fields: {

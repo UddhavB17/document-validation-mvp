@@ -37,7 +37,7 @@ export function CaseQueueNavigation({ applicationId }: { applicationId: number }
       </span>
       {neighbors.previousId ? (
         <Link
-          href={`/applications/${neighbors.previousId}`}
+          href={`/admin/applications/${neighbors.previousId}`}
           aria-label="Previous application in review queue"
           className="rounded-lg border border-[#E1E5EB] bg-white px-2.5 py-1.5 font-bold text-[#2B4C7E] transition-colors hover:bg-[#EAF0F8]"
         >
@@ -50,7 +50,7 @@ export function CaseQueueNavigation({ applicationId }: { applicationId: number }
       )}
       {neighbors.nextId ? (
         <Link
-          href={`/applications/${neighbors.nextId}`}
+          href={`/admin/applications/${neighbors.nextId}`}
           aria-label="Next application in review queue"
           className="rounded-lg border border-[#E1E5EB] bg-white px-2.5 py-1.5 font-bold text-[#2B4C7E] transition-colors hover:bg-[#EAF0F8]"
         >

@@ -37,22 +37,24 @@ def _insert_application(
 ) -> int:
     with get_connection() as connection:
         if created_at is None:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status)
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (loan_id, applicant_name, product_type, "Delhi", status),
-            )
+            ).fetchone()
         else:
-            cursor = connection.execute(
+            row = connection.execute(
                 """
                 INSERT INTO applications (loan_id, applicant_name, product_type, branch, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (loan_id, applicant_name, product_type, "Delhi", status, created_at),
-            )
-        return int(cursor.lastrowid)
+            ).fetchone()
+        return int(row["id"])
 
 
 def _insert_ground_truth(application_id: int, raw_json: dict) -> None:
@@ -157,14 +159,14 @@ def test_worklist_uses_batched_repository_queries(tmp_path, monkeypatch) -> None
     assert len(payload["items"]) == 2
 
 
-def test_worklist_item_payload_shape(tmp_path, monkeypatch) -> None:
+def test_worklist_item_payload_shape(tmp_path, monkeypatch, auth_headers) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
     application_id = _insert_application(loan_id="SHAPE-1")
     _insert_anomaly(application_id, rule_id="PAN_NUMBER_MISMATCH", page_number=1)
     client = TestClient(app)
 
-    response = client.get("/review/worklist")
+    response = client.get("/review/worklist", headers=auth_headers)
 
     assert response.status_code == 200
     payload = response.json()
@@ -184,12 +186,44 @@ def test_worklist_item_payload_shape(tmp_path, monkeypatch) -> None:
         "processing_warnings",
         "pipeline_status",
         "pipeline_retryable",
+        "pipeline_processed_pages",
+        "pipeline_total_pages",
+        "pipeline_percentage",
     }
     assert item["loan_id"] == "SHAPE-1"
     assert item["pipeline_status"] == "not_started"
     assert item["pipeline_retryable"] is False
+    assert item["pipeline_processed_pages"] is None
+    assert item["pipeline_total_pages"] is None
+    assert item["pipeline_percentage"] is None
     assert item["issues"] >= 1
     assert item["reviewer_issues"] >= 1
+
+
+def test_worklist_item_carries_processing_progress_counts(
+    tmp_path, monkeypatch, auth_headers
+) -> None:
+    _use_temp_db(tmp_path, monkeypatch)
+    init_db()
+    application_id = _insert_application(loan_id="PROG-1")
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO pipeline_progress
+                (application_id, status, processed_pages, total_pages, percentage)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (application_id, "processing", 264, 891, 29.6),
+        )
+    client = TestClient(app)
+
+    response = client.get("/review/worklist", headers=auth_headers)
+
+    assert response.status_code == 200
+    item = next(row for row in response.json()["items"] if row["loan_id"] == "PROG-1")
+    assert item["pipeline_processed_pages"] == 264
+    assert item["pipeline_total_pages"] == 891
+    assert item["pipeline_percentage"] == 29.6
 
 
 def test_comparison_matrix_empty_ground_truth(tmp_path, monkeypatch) -> None:
@@ -402,7 +436,7 @@ def test_find_source_pages_skips_short_values() -> None:
     assert find_source_pages_for_value(pages, "AB", "loan_id") == []
 
 
-def test_application_review_payload_shape(tmp_path, monkeypatch) -> None:
+def test_application_review_payload_shape(tmp_path, monkeypatch, auth_headers) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
     application_id = _insert_application(loan_id="REVIEW-1")
@@ -421,7 +455,7 @@ def test_application_review_payload_shape(tmp_path, monkeypatch) -> None:
     )
     client = TestClient(app)
 
-    response = client.get(f"/review/applications/{application_id}")
+    response = client.get(f"/review/applications/{application_id}", headers=auth_headers)
 
     assert response.status_code == 200
     payload = response.json()
@@ -454,11 +488,11 @@ def test_application_review_payload_shape(tmp_path, monkeypatch) -> None:
     assert payload["latest_decision"] is None
 
 
-def test_application_review_not_found(tmp_path, monkeypatch) -> None:
+def test_application_review_not_found(tmp_path, monkeypatch, auth_headers) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
     client = TestClient(app)
 
-    response = client.get("/review/applications/99999")
+    response = client.get("/review/applications/99999", headers=auth_headers)
 
     assert response.status_code == 404

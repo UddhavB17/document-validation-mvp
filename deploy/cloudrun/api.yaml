@@ -1,0 +1,124 @@
+# Cloud Run API service (ws-j-deploy-smoke).
+# Apply with: scripts/release.sh (operator only; this agent never creates resources).
+# Image is built by .github/workflows/deploy.yml on tag and pushed to Artifact Registry.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: dmef-api
+  labels:
+    app: dmef
+    component: api
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/cpu-throttling: "true"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      # Operator replaces this with the deploy service account, which needs:
+      # - roles/storage.objectAdmin on the GCS bucket (DMEF_GCS_BUCKET)
+      # - roles/aiplatform.user (Gemini) + roles/cloudvision.user (Vision)
+      # - roles/secretmanager.secretAccessor on every secret below
+      serviceAccountName: dmef-api@PROJECT_ID.iam.gserviceaccount.com
+      containerConcurrency: 20
+      timeoutSeconds: 300
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/dmef/api:TAG
+          name: api
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - name: DMEF_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-database-url-pooled
+                  key: latest
+            - name: DMEF_STORAGE_BACKEND
+              value: gcs
+            - name: DMEF_GCS_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-gcs-bucket
+                  key: latest
+            - name: DMEF_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-auth-secret
+                  key: latest
+            - name: DMEF_SCHEDULER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-scheduler-token
+                  key: latest
+            - name: DMEF_SECRETS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-secrets-key
+                  key: latest
+            - name: DMEF_BOOTSTRAP_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-bootstrap-admin-email
+                  key: latest
+            - name: DMEF_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-bootstrap-admin-password
+                  key: latest
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-gemini-api-key
+                  key: latest
+            # Operator-selected model id (REQUIRED, no default): create the
+            # `dmef-gemini-model` secret with a currently supported Gemini
+            # model. The retired gemini-2.0-flash default was removed
+            # (shut down June 1 2026); do not treat an unevaluated model as
+            # production-ready — evaluate before selecting. Shared with the
+            # worker so API and worker always use the same model.
+            - name: GEMINI_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: dmef-gemini-model
+                  key: latest
+            - name: LLM_PROVIDER
+              value: gemini
+            - name: CORS_ORIGINS
+              value: https://FRONTEND_HOST
+            - name: DMEF_JOB_WORK_DIR
+              value: /tmp/dmef-jobs
+            - name: DMEF_LOCAL_STORE_DIR
+              value: data/store
+            - name: DMEF_RETENTION_SOURCE_DAYS
+              value: "60"
+            - name: DMEF_RETENTION_EXPORT_DAYS
+              value: "7"
+            - name: DMEF_RETENTION_TELEMETRY_DAYS
+              value: "30"
+            - name: DMEF_RETENTION_JOB_ATTEMPTS
+              value: "3"
+            - name: DMEF_WORKER_POLL_SECONDS
+              value: "5"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 30
+  traffic:
+    - percent: 100
+      latestRevision: true

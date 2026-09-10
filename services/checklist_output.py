@@ -19,7 +19,16 @@ from services.checklist_engine import (
     system_flag_state,
 )
 from services.checklist_service import get_all_checklist_items
+from services.checklist_status_map import CHECKLIST_STATUSES
 from services.page_quality import confident_pages_for_types
+
+
+def _matched_pages_with_ocr_failure(pages: list[dict[str, Any]], document_types: list[str]) -> bool:
+    """True when a type-matching page failed OCR, even if it missed the confidence gate."""
+    return any(
+        page.get("document_type") in document_types and page.get("ocr_status") == "failed"
+        for page in pages
+    )
 
 
 def build_checklist_verification_response(
@@ -89,19 +98,26 @@ def _build_item(
         status = "not_applicable"
         flagged_reason = None
     elif missing_anomalies:
-        status = "missing"
+        status = "required_and_missing"
         flagged_reason = _flagged_reason(missing_anomalies[0])
+    elif _matched_pages_with_ocr_failure(pages, document_types):
+        status = "manual_review"
+        flagged_reason = "ocr_failed"
     elif review_anomalies:
-        status = "needs_review"
+        status = "manual_review"
         flagged_reason = _flagged_reason(review_anomalies[0])
     elif matched_pages or system_state is True:
-        status = "verified"
+        status = "required_and_present"
         flagged_reason = None
+    elif not checklist_item.get("ai_checkable"):
+        status = "manual_review"
+        flagged_reason = "manual_review_required"
+    elif applicability is None or system_state is None:
+        status = "not_evaluated_by_engine"
+        flagged_reason = "not_evaluated"
     else:
-        status = "unknown"
-        flagged_reason = (
-            "manual_review_required" if not checklist_item.get("ai_checkable") else "not_checked"
-        )
+        status = "not_evaluated_by_engine"
+        flagged_reason = "not_checked"
 
     confidence, confidence_detail = _confidence_for_item(
         checklist_item=checklist_item,
@@ -139,7 +155,7 @@ def _build_item(
         extraction_source=extraction_source,
         flagged_reason=flagged_reason,
     )
-    if include_narration and status not in {"verified", "not_applicable"}:
+    if include_narration and status not in {"required_and_present", "not_applicable"}:
         from services.checklist_narration import narrate_checklist_item
 
         item.narration = narrate_checklist_item(item)
@@ -189,7 +205,7 @@ def _confidence_for_item(
     ]
     if applicable_minimums:
         required_pages = max(applicable_minimums)
-    if status == "missing":
+    if status == "required_and_missing":
         if item_anomalies:
             return "low", _anomaly_detail(item_anomalies[0])
         return "low", f"matched {matched_count} of {required_pages} expected {unit}"
@@ -197,29 +213,36 @@ def _confidence_for_item(
         return "high", str(
             checklist_item.get("condition_description") or "condition is false; item not applicable"
         )
-    if status == "verified" and checklist_item.get("check_type") == "system_flag":
+    if status == "required_and_present" and checklist_item.get("check_type") == "system_flag":
         return "high", "confirmed by system checklist status"
-    if status == "unknown":
-        return "low", "no deterministic checklist rule could verify this item"
-    if item_anomalies:
-        return "medium", _anomaly_detail(item_anomalies[0])
-
-    confidences = [
-        float(page.get("classification_confidence"))
-        for page in matched_pages
-        if page.get("classification_confidence") not in (None, "")
-    ]
-    if not confidences:
-        return "medium", f"matched {matched_count} of {required_pages} expected {unit}"
-
-    minimum_confidence = min(confidences)
-    detail = (
-        f"matched {matched_count} of {required_pages} expected {unit}; "
-        f"lowest classification confidence {minimum_confidence:.0%}"
-    )
-    if minimum_confidence >= 0.85 and matched_count >= required_pages:
-        return "high", detail
-    return "medium", detail
+    if status == "required_and_present":
+        if item_anomalies:
+            return "medium", _anomaly_detail(item_anomalies[0])
+        confidences = [
+            float(page.get("classification_confidence"))
+            for page in matched_pages
+            if page.get("classification_confidence") not in (None, "")
+        ]
+        if not confidences:
+            return "medium", f"matched {matched_count} of {required_pages} expected {unit}"
+        minimum_confidence = min(confidences)
+        detail = (
+            f"matched {matched_count} of {required_pages} expected {unit}; "
+            f"lowest classification confidence {minimum_confidence:.0%}"
+        )
+        if minimum_confidence >= 0.85 and matched_count >= required_pages:
+            return "high", detail
+        return "medium", detail
+    if status == "manual_review":
+        if item_anomalies:
+            return "medium", _anomaly_detail(item_anomalies[0])
+        return (
+            "low",
+            "manual review required: no deterministic checklist rule could verify this item",
+        )
+    if status == "not_evaluated_by_engine":
+        return "low", "not evaluated by the deterministic engine for this loan file"
+    raise ValueError(f"unhandled checklist status: {status!r}")
 
 
 def _anomaly_detail(anomaly: dict[str, Any]) -> str:
@@ -261,13 +284,18 @@ def _flagged_reason(anomaly: dict[str, Any]) -> str:
 
 
 def _summary(items: list[ChecklistItem]) -> ChecklistSummary:
+    counts = {status: 0 for status in CHECKLIST_STATUSES}
+    for item in items:
+        if item.status not in counts:
+            raise ValueError(f"unhandled checklist status: {item.status!r}")
+        counts[item.status] += 1
     return ChecklistSummary(
         total=len(items),
-        verified=sum(1 for item in items if item.status == "verified"),
-        needs_review=sum(1 for item in items if item.status == "needs_review"),
-        missing=sum(1 for item in items if item.status == "missing"),
-        unknown=sum(1 for item in items if item.status == "unknown"),
-        not_applicable=sum(1 for item in items if item.status == "not_applicable"),
+        required_and_present=counts["required_and_present"],
+        required_and_missing=counts["required_and_missing"],
+        not_applicable=counts["not_applicable"],
+        not_evaluated_by_engine=counts["not_evaluated_by_engine"],
+        manual_review=counts["manual_review"],
     )
 
 

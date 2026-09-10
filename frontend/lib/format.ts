@@ -1,8 +1,8 @@
 // Small display-only formatters shared by tables, metrics, and review panels.
 
-const POSITIVE_STATUSES = new Set(["CLEAN", "verified", "verified_with_override"]);
-const NEGATIVE_STATUSES = new Set(["CRITICAL", "pipeline_failed", "incomplete"]);
-const IN_PROGRESS_STATUSES = new Set(["NEEDS_REVIEW", "processing", "ocr_completed"]);
+const POSITIVE_STATUSES = new Set(["CLEAN", "verified", "verified_with_override", "required_and_present"]);
+const NEGATIVE_STATUSES = new Set(["CRITICAL", "pipeline_failed", "incomplete", "required_and_missing"]);
+const IN_PROGRESS_STATUSES = new Set(["NEEDS_REVIEW", "processing", "ocr_completed", "manual_review", "not_evaluated_by_engine"]);
 
 export function asText(value: unknown): string {
   if (value === null || value === undefined || value === "") {

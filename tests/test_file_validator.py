@@ -157,7 +157,7 @@ def test_page_count_detection(tmp_path: Path) -> None:
     assert result["scanned_pages"] == 2
 
 
-def test_database_application_created(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_database_application_created(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth_headers) -> None:
     db_path = tmp_path / "dmef.db"
     uploads_path = tmp_path / "uploads"
     pdf_path = tmp_path / "upload.pdf"
@@ -169,6 +169,7 @@ def test_database_application_created(tmp_path: Path, monkeypatch: pytest.Monkey
     client = TestClient(app)
     response = client.post(
         "/upload",
+        headers=auth_headers,
         data={
             "loan_id": "LAP-001",
             "applicant_name": "Ramesh Kumar",

@@ -1,0 +1,202 @@
+"""Tests for scripts/release.sh placeholder substitution (owned by fx-deploy).
+
+``release.sh`` once used ``sed -e ":TAG"":${TAG}g"`` — a sed *label*, not a
+substitution — so rendered images kept the literal ``:TAG``. These tests run
+``bash scripts/release.sh --dry-run`` (no alembic, gcloud, docker, network,
+or credentials) and assert the tag renders as ``:v1.2.3``, not ``:TAG``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "release.sh"
+
+needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="bash not found")
+
+
+def _run(extra_env: dict[str, str] | None = None, *args: str) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        ["bash", str(SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env=env,
+        timeout=60,
+    )
+
+
+@needs_bash
+def test_release_dry_run_renders_tag() -> None:
+    completed = _run(
+        {"PROJECT_ID": "my-proj", "REGION": "asia-south1", "TAG": "v1.2.3"},
+        "--dry-run",
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "asia-south1-docker.pkg.dev/my-proj/dmef/api:v1.2.3" in completed.stdout
+    assert "asia-south1-docker.pkg.dev/my-proj/dmef/frontend:v1.2.3" in completed.stdout
+    assert ":TAG" not in completed.stdout
+    assert "PROJECT_ID" not in completed.stdout
+
+
+@needs_bash
+def test_release_dry_run_needs_no_credentials() -> None:
+    env = dict(os.environ)
+    for key in ("PROJECT_ID", "REGION", "TAG", "DATABASE_URL", "FRONTEND_HOST", "API_HOST"):
+        env.pop(key, None)
+    completed = subprocess.run(
+        ["bash", str(SCRIPT), "--dry-run"],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env=env,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "dry-run OK" in completed.stdout
+
+
+@needs_bash
+def test_release_rejects_unknown_arg() -> None:
+    completed = _run(None, "--bogus-flag")
+    assert completed.returncode != 0
+
+
+def _fake_release_tools(
+    tmp_path: Path, health: dict
+) -> tuple[Path, subprocess.CompletedProcess[str]]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    log = tmp_path / "gcloud.log"
+    gcloud = fake_bin / "gcloud"
+    gcloud.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$*" >> "$GCLOUD_LOG"\n'
+        'if [[ "$*" == *"services describe dmef-api"* ]]; then\n'
+        "  printf 'https://api.example.test\\n'\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    curl = fake_bin / "curl"
+    curl.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$HEALTH_RESPONSE\"\n",
+        encoding="utf-8",
+    )
+    alembic = fake_bin / "alembic"
+    alembic.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    python = fake_bin / "python"
+    python.symlink_to(sys.executable)
+    for executable in (gcloud, curl, alembic):
+        executable.chmod(0o755)
+
+    env = {
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "GCLOUD_LOG": str(log),
+        "HEALTH_RESPONSE": json.dumps(health),
+        "DATABASE_URL": "postgresql://operator:placeholder@localhost/dmef?sslmode=require",
+        "PROJECT_ID": "test-project",
+        "REGION": "asia-south1",
+        "TAG": "v1.2.3",
+        "FRONTEND_HOST": "frontend.example.test",
+        "SKIP_MIGRATE": "1",
+        "DMEF_HEALTH_ATTEMPTS": "1",
+        "DMEF_HEALTH_RETRY_SECONDS": "0",
+    }
+    completed = _run(env)
+    return log, completed
+
+
+@needs_bash
+def test_release_makes_api_and_frontend_public_but_not_worker(tmp_path) -> None:
+    log, completed = _fake_release_tools(
+        tmp_path,
+        {
+            "status": "ok",
+            "database": "ok",
+            "storage": "ok",
+            "worker": {"status": "ok"},
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    commands = log.read_text(encoding="utf-8").splitlines()
+    assert any(
+        "services update dmef-api" in command and "--no-invoker-iam-check" in command
+        for command in commands
+    )
+    assert any(
+        "deploy dmef-frontend" in command and "--allow-unauthenticated" in command
+        for command in commands
+    )
+    worker = next(command for command in commands if "worker.yaml" in command)
+    assert "allow-unauthenticated" not in worker
+    assert "no-invoker-iam-check" not in worker
+
+
+@needs_bash
+def test_release_rejects_degraded_health(tmp_path) -> None:
+    _, completed = _fake_release_tools(
+        tmp_path,
+        {
+            "status": "degraded",
+            "database": "ok",
+            "storage": "ok",
+            "worker": {"status": "stale"},
+        },
+    )
+
+    assert completed.returncode != 0
+    assert "worker did not become healthy" in completed.stderr
+
+
+def test_scheduler_uses_dedicated_header_without_oidc() -> None:
+    manifest = (ROOT / "deploy" / "scheduler" / "retention.yaml").read_text(encoding="utf-8")
+    api_manifest = (ROOT / "deploy" / "cloudrun" / "api.yaml").read_text(encoding="utf-8")
+
+    assert "X-DMEF-Scheduler-Token: DMEF_SCHEDULER_TOKEN_VALUE" in manifest
+    assert "oidcToken:" not in manifest
+    assert "\n      Authorization:" not in manifest
+    assert "name: DMEF_SCHEDULER_TOKEN" in api_manifest
+    assert "name: dmef-scheduler-token" in api_manifest
+
+
+def test_deploy_gemini_model_is_shared_operator_secret_without_retired_default() -> None:
+    """GEMINI_MODEL must be an operator-selected secret shared by API+worker.
+
+    The retired ``gemini-2.0-flash`` default (shut down June 1 2026) must not
+    appear as a deployment value, and both services must reference the same
+    secret so they can never drift to different models.
+    """
+    api_manifest = (ROOT / "deploy" / "cloudrun" / "api.yaml").read_text(encoding="utf-8")
+    worker_manifest = (ROOT / "deploy" / "cloudrun" / "worker.yaml").read_text(encoding="utf-8")
+
+    for manifest in (api_manifest, worker_manifest):
+        assert "name: GEMINI_MODEL" in manifest
+        assert "value: gemini-" not in manifest  # no hardcoded model value
+        block = manifest.split("name: GEMINI_MODEL", 1)[1].split("- name:", 1)[0]
+        assert "secretKeyRef" in block
+        assert "name: dmef-gemini-model" in block
+
+    readme = (ROOT / "deploy" / "cloudrun" / "README.md").read_text(encoding="utf-8")
+    assert "dmef-gemini-model" in readme
+
+
+def test_deploy_neon_uses_current_head_verification() -> None:
+    """DEPLOY_NEON.md must not recommend ``alembic check`` (unsupported with
+    ``target_metadata = None``); it documents current-vs-heads instead."""
+    docs = (ROOT / "docs" / "DEPLOY_NEON.md").read_text(encoding="utf-8")
+    assert "alembic check  # no-op when at head" not in docs
+    assert "target_metadata = None" in docs
+    assert "alembic current" in docs
+    assert "alembic heads" in docs

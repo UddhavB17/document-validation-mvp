@@ -36,7 +36,7 @@ export function ApplicationMetricsHeader({
     <header className="sticky top-0 z-30 min-w-0 rounded-xl border border-[#E1E5EB] bg-white/95 p-4 shadow-2xs backdrop-blur sm:p-5">
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <Link href="/worklist" className="inline-flex items-center text-xs font-bold text-[#2B4C7E] transition-colors hover:text-[#1E3559]">
+          <Link href="/admin/worklist" className="inline-flex items-center text-xs font-bold text-[#2B4C7E] transition-colors hover:text-[#1E3559]">
             ← Back to Worklist
           </Link>
           <div className="mt-2 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">

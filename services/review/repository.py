@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 from collections import defaultdict
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from database.db import get_connection
 from services.paths import processed_output_dir
@@ -24,7 +25,7 @@ def _required_int(value: object) -> int:
     raise ValueError(f"Expected an integer-compatible database value, got {value!r}")
 
 
-def coerce_json_row(row: sqlite3.Row) -> JsonRow:
+def coerce_json_row(row: Any) -> JsonRow:
     """Convert a SQLite row into a mapping with decoded extracted fields."""
     row_payload = dict(row)
     raw_extracted_fields = row_payload.get("extracted_fields")
@@ -33,7 +34,57 @@ def coerce_json_row(row: sqlite3.Row) -> JsonRow:
     except (TypeError, json.JSONDecodeError):
         decoded_fields = {}
     row_payload["extracted_fields"] = decoded_fields if isinstance(decoded_fields, dict) else {}
+    # Payload diet: OCR text and layout blobs never leave the repository inside
+    # summary rows. Single-page text uses load_page_text explicitly.
+    row_payload.pop("ocr_text", None)
+    row_payload.pop("structured_content", None)
     return {str(key): value for key, value in row_payload.items()}
+
+
+#: Explicit page-summary columns: no ``ocr_text``, no layout blobs, no meta.
+PAGE_SUMMARY_COLUMNS = (
+    "application_id, page_number, page_type, is_readable, ocr_confidence, "
+    "ocr_route, ocr_escalated, ocr_processing_time_ms, document_type, "
+    "classification_confidence, detection_method, detected_page_number, "
+    "extracted_fields"
+)
+
+
+def load_pages_summary(application_id: int) -> list[JsonRow]:
+    """Load compact page summaries (no ``ocr_text``, no meta)."""
+    with get_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT {PAGE_SUMMARY_COLUMNS}
+            FROM pages
+            WHERE application_id = ?
+            ORDER BY page_number
+            """,
+            (application_id,),
+        ).fetchall()
+    return [coerce_json_row(row) for row in rows]
+
+
+def load_page_text(application_id: int, page_number: int) -> JsonRow | None:
+    """Load one page's OCR text with its confidence and document type."""
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT page_number, ocr_text, ocr_confidence, document_type
+            FROM pages
+            WHERE application_id = ? AND page_number = ?
+            """,
+            (application_id, page_number),
+        ).fetchone()
+    if row is None:
+        return None
+    payload = dict(row)
+    return {
+        "page_number": payload.get("page_number"),
+        "ocr_text": payload.get("ocr_text") or "",
+        "ocr_confidence": payload.get("ocr_confidence"),
+        "document_type": payload.get("document_type"),
+    }
 
 
 def load_application_review_data(application_id: int) -> ApplicationReviewData | None:
@@ -58,13 +109,18 @@ def load_application_review_data(application_id: int) -> ApplicationReviewData |
             (application_id,),
         ).fetchall()
         page_rows = connection.execute(
-            "SELECT * FROM pages WHERE application_id = ? ORDER BY page_number",
+            f"""
+            SELECT {PAGE_SUMMARY_COLUMNS}
+            FROM pages
+            WHERE application_id = ?
+            ORDER BY page_number
+            """,
             (application_id,),
         ).fetchall()
         page_event_rows = connection.execute(
             """
             SELECT page_number, total_pages, page_type, document_type, status,
-                   elapsed_seconds, error, extracted_fields, completed_at
+                    elapsed_seconds, error, completed_at
             FROM pipeline_page_events
             WHERE application_id = ?
             ORDER BY page_number
@@ -180,7 +236,8 @@ def load_pipeline_progress_by_application_ids(
     with get_connection() as connection:
         progress_rows = connection.execute(
             f"""
-            SELECT application_id, status, updated_at
+            SELECT application_id, status, processed_pages, total_pages,
+                   percentage, updated_at
             FROM pipeline_progress
             WHERE application_id IN ({placeholders})
             """,
@@ -195,12 +252,20 @@ def load_pipeline_progress_by_application_ids(
         progress_by_application[application_id] = {
             "operational_status": operational_status,
             "retryable": operational_status in RETRYABLE_PROGRESS_STATES,
+            "processed_pages": payload.get("processed_pages"),
+            "total_pages": payload.get("total_pages"),
+            "percentage": payload.get("percentage"),
         }
     return progress_by_application
 
 
 def load_today_activity() -> list[JsonRow]:
     """Load today's reviewer decisions in the API's existing order."""
+    now = datetime.now(UTC)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    day_end = (
+        now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    ).isoformat()
     with get_connection() as connection:
         activity_rows = connection.execute(
             """
@@ -212,9 +277,11 @@ def load_today_activity() -> list[JsonRow]:
                 reviewer_decisions.decided_at
             FROM reviewer_decisions
             JOIN applications ON applications.id = reviewer_decisions.application_id
-            WHERE date(reviewer_decisions.decided_at) = date('now', 'localtime')
+            WHERE reviewer_decisions.decided_at >= ?
+              AND reviewer_decisions.decided_at < ?
             ORDER BY reviewer_decisions.decided_at DESC
-            """
+            """,
+            (day_start, day_end),
         ).fetchall()
     return [dict(row) for row in activity_rows]
 

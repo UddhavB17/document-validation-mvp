@@ -963,13 +963,14 @@ def test_aadhaar_front_and_back_are_verified_as_one_document_set() -> None:
 def _application() -> int:
     init_db()
     with get_connection() as connection:
-        cursor = connection.execute(
+        row = connection.execute(
             """
             INSERT INTO applications (loan_id, applicant_name, product_type, branch)
             VALUES ('MAP-001', 'Ramesh Kumar', 'LAP', 'Delhi')
+            RETURNING id
             """
-        )
-        return int(cursor.lastrowid)
+        ).fetchone()
+        return int(row["id"])
 
 
 def test_mapped_verification_uses_mapping_and_flags_pan_mismatch(tmp_path, monkeypatch) -> None:
@@ -1067,14 +1068,14 @@ def test_mapped_verification_uses_embedded_text_without_running_ocr(tmp_path, mo
     with get_connection() as connection:
         page = connection.execute(
             """
-            SELECT page_type, image_path, detection_method, ocr_confidence
+            SELECT page_type, detection_method, ocr_confidence
             FROM pages WHERE application_id = ?
             """,
             (application_id,),
         ).fetchone()
+    # Diet: pages no longer carries image_path (ws-a data diet).
     assert dict(page) == {
         "page_type": "digital",
-        "image_path": None,
         "detection_method": "provided_mapping_embedded_text",
         "ocr_confidence": 1.0,
     }

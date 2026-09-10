@@ -23,11 +23,231 @@ from services.person_names import (
     comparable_name,
     is_person_name_candidate,
     name_similarity,
-    names_match,
 )
 from services.validation_gates import field_reliable_for_validation
 
 LOGGER = logging.getLogger(__name__)
+
+
+# --- Page eligibility gate (ws-f accuracy) ----------------------------------
+# A field comparison may only use pages that can legitimately carry the field:
+# not a triage photo/blank/unreadable page, OCR confidence >= 0.55, and a
+# document type from the allow-list below with classification confidence >= 0.5.
+# Type inheritance onto sparse pages counts only for multi-page documents
+# (bank statements, ITR); never for identity documents.
+#
+# NOTE: the classifier emits 80+ labels (see data/document_type_registry.json),
+# so `_canonical_type` normalises labels before the allow-list lookup instead
+# of editing the classifier (not owned by this stream).
+
+OCR_CONFIDENCE_MIN = 0.55
+CLASSIFICATION_CONFIDENCE_MIN = 0.5
+
+_INELIGIBLE_TRIAGE_CATEGORIES = frozenset({"photo", "blank", "unreadable"})
+
+_INHERITED_OK_TYPES = frozenset(
+    {
+        "bank statement",
+        "income tax return",
+        "itr",
+        "passbook",
+        "cibil report",
+        "crif report",
+        "application form",
+        "loan agreement",
+        "facility agreement",
+    }
+)
+
+_IDENTITY_TYPES = frozenset(
+    {
+        "aadhaar",
+        "pan",
+        "pan card",
+        "voter id",
+        "driving license",
+        "passport",
+        "ration card",
+    }
+)
+
+# Field -> allowed canonical document types. Fields absent from this map are
+# gated only on triage/OCR/confidence, not on document type. The brief's
+# examples are extended where pinned tests prove the product relies on the
+# carrier: application forms and CAMs carry PANs, CAMs carry addresses, and
+# KYC card photos carry the holder name.
+FIELD_DOCUMENT_TYPES: dict[str, frozenset[str]] = {
+    "pan_number": frozenset(
+        {
+            "pan", "pan card", "income tax return", "itr", "form 16",
+            "bank statement", "application form", "cam",
+        }
+    ),
+    "aadhaar_number": frozenset({"aadhaar"}),
+    "aadhaar_last4": frozenset({"aadhaar"}),
+    "applicant_name": frozenset(
+        {
+            "aadhaar", "pan", "pan card", "voter id", "driving license", "passport",
+            "ration card", "bank statement", "salary slip", "application form",
+            "sanction letter", "loan agreement", "facility agreement", "form 16",
+            "income tax return", "itr", "passbook", "cam", "kyc card photo",
+        }
+    ),
+    "borrower_name": frozenset(
+        {
+            "aadhaar", "pan", "pan card", "voter id", "driving license", "passport",
+            "ration card", "bank statement", "salary slip", "application form",
+            "sanction letter", "loan agreement", "facility agreement", "form 16",
+            "income tax return", "itr", "passbook", "cam", "kyc card photo",
+        }
+    ),
+    "account_holder_name": frozenset(
+        {
+            "aadhaar", "pan", "pan card", "voter id", "driving license", "passport",
+            "ration card", "bank statement", "salary slip", "application form",
+            "sanction letter", "loan agreement", "facility agreement", "form 16",
+            "income tax return", "itr", "passbook", "cam", "kyc card photo",
+        }
+    ),
+    "address": frozenset(
+        {
+            "aadhaar", "utility bill", "passport", "bank statement", "rent agreement",
+            "voter id", "driving license", "application form", "passbook", "cam",
+        }
+    ),
+    "current_address": frozenset(
+        {
+            "aadhaar", "utility bill", "passport", "bank statement", "rent agreement",
+            "voter id", "driving license", "application form", "passbook", "cam",
+        }
+    ),
+    "permanent_address": frozenset(
+        {
+            "aadhaar", "utility bill", "passport", "bank statement", "rent agreement",
+            "voter id", "driving license", "application form", "passbook", "cam",
+        }
+    ),
+    "communication_address": frozenset(
+        {
+            "aadhaar", "utility bill", "passport", "bank statement", "rent agreement",
+            "voter id", "driving license", "application form", "passbook", "cam",
+        }
+    ),
+    "date_of_birth": frozenset(
+        {"pan", "pan card", "aadhaar", "passport", "driving license", "voter id"}
+    ),
+    "dob": frozenset({"pan", "pan card", "aadhaar", "passport", "driving license", "voter id"}),
+}
+
+_INHERITED_DETECTION_METHODS = frozenset(
+    {"inherited", "sandwich_smoothed", "run_forward_smoothed", "agreement_context_smoothed"}
+)
+
+
+def _canonical_type(label: Any) -> str:
+    """Normalise a classifier document-type label for allow-list lookup."""
+    text = re.sub(r"[\s_\-]+", " ", str(label or "").strip().casefold())
+    text = re.sub(r"\s+", " ", text).strip()
+    aliases = {
+        "pan card": "pan card",
+        "permanent account number": "pan card",
+        "income tax return": "income tax return",
+        "itr": "income tax return",
+        "form sixteen": "form 16",
+        "bank statements": "bank statement",
+        "aadhar": "aadhaar",
+        "aadhaar card": "aadhaar",
+        "dl": "driving license",
+        "driving licence": "driving license",
+        "voter id card": "voter id",
+        "epic": "voter id",
+        "none": "unknown",
+    }
+    return aliases.get(text, text)
+
+
+def _page_triage_category(page: dict) -> str | None:
+    # Triage lives in several shapes: synthetic/test pages carry top-level
+    # ``triage``/``content_triage``/``triage_category``; live pipeline pages
+    # store it under ``extracted_fields`` (``_triage`` / ``_classification``)
+    # with a mirror in ``meta`` (see services/pipeline/page_processing.py).
+    triage = page.get("triage") or page.get("content_triage")
+    if isinstance(triage, dict):
+        category = triage.get("category")
+        if category:
+            return str(category).strip().casefold()
+    for container_key in ("extracted_fields", "meta"):
+        container = page.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        nested = container.get("_triage")
+        if isinstance(nested, dict) and nested.get("category"):
+            return str(nested.get("category")).strip().casefold()
+        classification = container.get("_classification")
+        if isinstance(classification, dict):
+            nested_triage = classification.get("triage")
+            if isinstance(nested_triage, dict) and nested_triage.get("category"):
+                return str(nested_triage.get("category")).strip().casefold()
+    category = page.get("triage_category") or page.get("content_category")
+    if category:
+        return str(category).strip().casefold()
+    return None
+
+
+def page_eligible_for(field: str, page: dict) -> bool:
+    """Return True when `page` may legitimately carry `field` for comparison."""
+    triage_category = _page_triage_category(page)
+    if triage_category in _INELIGIBLE_TRIAGE_CATEGORIES:
+        return False
+    if str(page.get("is_readable")).casefold() == "false" and page.get("is_readable") is False:
+        return False
+    ocr_confidence = page.get("ocr_confidence")
+    # Missing OCR confidence is ineligible: a comparison needs measured text
+    # quality (ocr_confidence >= 0.55). Digital pages are exempt — their text
+    # comes from the file itself, not OCR, so there is nothing to measure.
+    if ocr_confidence is None:
+        if str(page.get("page_type") or "").strip().casefold() != "digital":
+            return False
+    else:
+        try:
+            if float(ocr_confidence) < OCR_CONFIDENCE_MIN:
+                return False
+        except (TypeError, ValueError):
+            return False
+    canonical_field = _canonical(str(field or ""))
+    allowed = FIELD_DOCUMENT_TYPES.get(canonical_field)
+    if not allowed:
+        return True
+    canonical_doc = _canonical_type(page.get("document_type"))
+    if canonical_doc not in allowed:
+        return False
+    classification_confidence = page.get("classification_confidence")
+    detection_method = str(page.get("detection_method") or "").strip().casefold()
+    if detection_method in _INHERITED_DETECTION_METHODS:
+        # Inherited types count only for multi-page documents, never identity.
+        if canonical_doc in _IDENTITY_TYPES or canonical_doc not in _INHERITED_OK_TYPES:
+            return False
+        return True
+    try:
+        if classification_confidence is not None and float(classification_confidence) < (
+            CLASSIFICATION_CONFIDENCE_MIN
+        ):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _reference_date(trusted: dict | None = None) -> Any:
+    """Application reference date for age/recency maths (not the wall clock).
+
+    Single shared resolver lives in ``services.checklist_engine``; this is a
+    thin alias so every check uses one reference-date function. Today is only
+    a last resort when no reference exists anywhere (documented allow-list).
+    """
+    from services.checklist_engine import application_reference_date
+
+    return application_reference_date(trusted)
 
 
 EXACT_FIELDS = {
@@ -275,6 +495,8 @@ LOAN_FIELDS = {
 def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
     anomalies: list[dict] = []
     people = _people(trusted)
+    global _ACTIVE_REFERENCE_DATE
+    _ACTIVE_REFERENCE_DATE = _reference_date(trusted)
     # Ensure pages carry person_id even when callers skip checklist assign.
     try:
         from services.person_ownership import assign_page_owners
@@ -300,6 +522,12 @@ def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
 
     anomalies.extend(validate_repayment_schedules(pages, trusted))
     anomalies.extend(_identity_affidavit_checks(pages, anomalies, people))
+    try:
+        from services.evidence_boxes import attach_evidence_to_anomalies
+
+        attach_evidence_to_anomalies(anomalies, pages)
+    except (ImportError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        LOGGER.warning("evidence-box attach failed; continuing without bboxes", exc_info=exc)
     return anomalies
 
 
@@ -322,10 +550,6 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
             person_id = _infer_person(fields, people, str(page.get("document_type") or ""))
         person_records = fields.get("person_records")
         type_key = str(page.get("document_type") or "").strip().casefold()
-        if type_key == "utility bill":
-            # Business requirement: recognize presence only. Never turn noisy
-            # provider/date/address extraction into a consistency anomaly.
-            continue
         is_multi_person_type = type_key in {"application form", "cam"}
         section_role = "primary"
         if is_multi_person_type:
@@ -380,6 +604,10 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
                         continue
                     if not _observation_is_reliable(page, canonical_field, comparison_value):
                         continue
+                    if not page_eligible_for(canonical_field, page):
+                        # Photo/blank/unreadable, low-confidence, or wrong
+                        # document-type pages must never seed a comparison.
+                        continue
                     result.append(
                         {
                             "person_id": record_person_id,
@@ -421,6 +649,10 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
             ):
                 continue
             if not _observation_is_reliable(page, canonical_field, comparison_value):
+                continue
+            if not page_eligible_for(canonical_field, page):
+                # Photo/blank/unreadable, low-confidence, or wrong
+                # document-type pages must never seed a comparison.
                 continue
             result.append(
                 {
@@ -1167,8 +1399,10 @@ def _relationship_name_matches(left: Any, right: Any) -> bool:
     """
     if _matches("applicant_name", left, right):
         return True
-    left_tokens = list(dict.fromkeys(_name_tokens(left)))
-    right_tokens = list(dict.fromkeys(_name_tokens(right)))
+    from services.person_names import name_match_tokens
+
+    left_tokens = name_match_tokens(left)
+    right_tokens = name_match_tokens(right)
     if min(len(left_tokens), len(right_tokens)) < 2:
         return False
     if len(left_tokens) <= len(right_tokens):
@@ -1493,20 +1727,27 @@ def _identity_mismatch_is_affidavit_worthy(anomaly: dict, page: dict, person: di
     return bool(has_exact_anchor)
 
 
-def _plausible_adult_date_of_birth(value: Any) -> bool:
+def _plausible_adult_date_of_birth(value: Any, reference: Any = None) -> bool:
     if value in (None, ""):
         return False
     try:
-        from datetime import date
-
         from dateutil import parser
 
         parsed = parser.parse(str(value), dayfirst=True).date()
-        today = date.today()
+        today = reference if reference is not None else _active_reference_date()
         age = today.year - parsed.year - ((today.month, today.day) < (parsed.month, parsed.day))
         return 18 <= age <= 100
     except (TypeError, ValueError, OverflowError):
         return False
+
+
+_ACTIVE_REFERENCE_DATE: Any = None
+
+
+def _active_reference_date() -> Any:
+    if _ACTIVE_REFERENCE_DATE is not None:
+        return _ACTIVE_REFERENCE_DATE
+    return _reference_date(None)
 
 
 def _is_identity_declaration(page: dict, person_id: str, person: dict) -> bool:
@@ -1853,9 +2094,8 @@ def _matches(field: str, left: Any, right: Any) -> bool:
         overlap = len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
         return overlap >= 0.70 or _similarity(left, right) >= 0.82
     if field in HOLDER_NAME_FIELDS:
-        return names_match(
-            _without_honorific(left), _without_honorific(right), threshold=0.85
-        ) or _names_equivalent(left, right)
+        # Single unified name matcher (same threshold as verify_name).
+        return _names_equivalent(left, right)
     if field in {"father_name", "mother_name"}:
         return _related_names_equivalent(left, right)
     return _similarity(left, right) >= 0.88
@@ -1914,8 +2154,10 @@ def _without_honorific(value: Any) -> str:
 
 def _related_names_equivalent(left: Any, right: Any) -> bool:
     """Compare parent names without holder-only extra-relative tolerance."""
-    left_tokens = list(dict.fromkeys(_name_tokens(left)))
-    right_tokens = list(dict.fromkeys(_name_tokens(right)))
+    from services.person_names import name_match_tokens
+
+    left_tokens = name_match_tokens(left)
+    right_tokens = name_match_tokens(right)
     if not left_tokens or not right_tokens or len(left_tokens) != len(right_tokens):
         return False
     if left_tokens == right_tokens or set(left_tokens) == set(right_tokens):
@@ -1930,43 +2172,15 @@ def _related_names_equivalent(left: Any, right: Any) -> bool:
     )
 
 
-def _name_tokens(value: Any) -> list[str]:
-    text = _without_honorific(value).lower()
-    text = re.sub(r"([a-z])(lal|bai|devi|singh|kumar)\b", r"\1 \2", text)
-    return re.findall(r"[a-z]+", text)
-
-
 def _names_equivalent(left: Any, right: Any) -> bool:
-    """True when two person names match after honorific/transliteration normalization."""
-    # Trusted dumps sometimes duplicate a token ("Sample SAMPLE"); compare
-    # unique tokens in order so duplication does not create a mismatch.
-    left_tokens = list(dict.fromkeys(_name_tokens(left)))
-    right_tokens = list(dict.fromkeys(_name_tokens(right)))
-    if not left_tokens or not right_tokens:
-        return False
-    if left_tokens == right_tokens:
-        return True
-    # Indian documents commonly rotate given/father/surname order while
-    # preserving the same complete token set.
-    if len(left_tokens) == len(right_tokens) and set(left_tokens) == set(right_tokens):
-        return True
-    # Allow substring containment for a given name versus the same name with a surname style pairs.
-    if len(left_tokens) <= len(right_tokens):
-        short, long = left_tokens, right_tokens
-    else:
-        short, long = right_tokens, left_tokens
-    if short == long[: len(short)]:
-        return True
-    left_compact = "".join(left_tokens)
-    right_compact = "".join(right_tokens)
-    if left_compact == right_compact:
-        return True
-    # Compact form appearing inside OCR/page text haystack.
-    if isinstance(right, str) and len(left_compact) >= 4 and left_compact in _compact(right):
-        return True
-    if isinstance(left, str) and len(right_compact) >= 4 and right_compact in _compact(left):
-        return True
-    return SequenceMatcher(None, left_compact, right_compact).ratio() >= 0.85
+    """True when two person names match under the single unified matcher.
+
+    All name comparison routes through `services.person_names` (same threshold
+    as `field_verification.verify_name`); no hardcoded variant lists here.
+    """
+    from services.person_names import names_equivalent
+
+    return bool(names_equivalent(left, right))
 
 
 def _compact(value: Any) -> str:

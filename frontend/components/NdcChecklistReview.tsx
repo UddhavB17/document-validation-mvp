@@ -18,30 +18,30 @@ const filters: Array<{ id: ChecklistFilter; label: string }> = [
 ];
 
 const statusStyles = {
-  verified: "border-emerald-700/40 bg-emerald-950/30 text-emerald-200",
-  needs_review: "border-amber-600/50 bg-amber-950/30 text-amber-100",
-  missing: "border-rose-700/50 bg-rose-950/30 text-rose-100",
-  unknown: "border-slate-600/60 bg-slate-900 text-slate-100",
+  required_and_present: "border-emerald-700/40 bg-emerald-950/30 text-emerald-200",
+  manual_review: "border-amber-600/50 bg-amber-950/30 text-amber-100",
+  required_and_missing: "border-rose-700/50 bg-rose-950/30 text-rose-100",
+  not_evaluated_by_engine: "border-slate-600/60 bg-slate-900 text-slate-100",
   not_applicable: "border-sky-700/40 bg-sky-950/30 text-sky-100",
 };
 
 const statusIcons = {
-  verified: "OK",
-  needs_review: "!",
-  missing: "X",
-  unknown: "?",
+  required_and_present: "OK",
+  manual_review: "!",
+  required_and_missing: "X",
+  not_evaluated_by_engine: "?",
   not_applicable: "N/A",
 };
 
 function matchesFilter(item: ChecklistItem, filter: ChecklistFilter): boolean {
-  if (filter === "attention") return item.status === "missing" || item.status === "needs_review";
-  if (filter === "found") return item.status === "verified";
-  if (filter === "not_checked") return item.status === "unknown";
+  if (filter === "attention") return item.status === "required_and_missing" || item.status === "manual_review";
+  if (filter === "found") return item.status === "required_and_present";
+  if (filter === "not_checked") return item.status === "not_evaluated_by_engine" || item.status === "manual_review";
   return true;
 }
 
 function reviewable(item: ChecklistItem): boolean {
-  return item.status !== "verified" && item.status !== "not_applicable";
+  return item.status !== "required_and_present" && item.status !== "not_applicable";
 }
 
 export function NdcChecklistReview({ data }: Props) {
@@ -51,7 +51,7 @@ export function NdcChecklistReview({ data }: Props) {
     () => data.items
       .filter((item) => matchesFilter(item, filter))
       .sort((left, right) => {
-        const rank = (status: ChecklistItem["status"]) => status === "missing" ? 0 : status === "needs_review" ? 1 : status === "unknown" ? 2 : status === "verified" ? 3 : 4;
+        const rank = (status: ChecklistItem["status"]) => status === "required_and_missing" ? 0 : status === "manual_review" ? 1 : status === "not_evaluated_by_engine" ? 2 : status === "required_and_present" ? 3 : 4;
         return rank(left.status) - rank(right.status) || left.item_number - right.item_number;
       }),
     [data.items, filter],
@@ -76,7 +76,7 @@ export function NdcChecklistReview({ data }: Props) {
             <h1 id="ndc-checklist-heading" className="text-2xl font-semibold">NDC checklist review</h1>
             <p className="text-sm text-slate-400">Loan file {data.loan_file_id}</p>
             <p className="mt-2 text-sm font-semibold text-slate-300" role="status" aria-live="polite">
-              {data.summary.verified} found · {data.summary.missing} missing · {data.summary.needs_review + data.summary.unknown} manual/not checked
+              {data.summary.required_and_present} found · {data.summary.required_and_missing} missing · {data.summary.manual_review + data.summary.not_evaluated_by_engine} manual/not checked
             </p>
           </div>
           <SummaryBar data={data} />
@@ -86,11 +86,11 @@ export function NdcChecklistReview({ data }: Props) {
           <div className="flex flex-wrap gap-2" role="group" aria-label="NDC checklist filters">
             {filters.map((item) => {
               const count = item.id === "attention"
-                ? data.summary.missing + data.summary.needs_review
+                ? data.summary.required_and_missing + data.summary.manual_review
                 : item.id === "found"
-                ? data.summary.verified
+                ? data.summary.required_and_present
                 : item.id === "not_checked"
-                ? data.summary.unknown
+                ? data.summary.not_evaluated_by_engine + data.summary.manual_review
                 : data.summary.total;
               return (
                 <button
@@ -120,10 +120,10 @@ export function NdcChecklistReview({ data }: Props) {
 
 function SummaryBar({ data }: Props) {
   const items = [
-    ["Verified", data.summary.verified, "text-emerald-300"],
-    ["Need review", data.summary.needs_review, "text-amber-300"],
-    ["Missing", data.summary.missing, "text-rose-300"],
-    ["Unknown", data.summary.unknown, "text-slate-300"],
+    ["Present", data.summary.required_and_present, "text-emerald-300"],
+    ["Manual review", data.summary.manual_review, "text-amber-300"],
+    ["Missing", data.summary.required_and_missing, "text-rose-300"],
+    ["Not evaluated", data.summary.not_evaluated_by_engine, "text-slate-300"],
     ["N/A", data.summary.not_applicable, "text-sky-300"],
   ] as const;
 
@@ -140,7 +140,7 @@ function SummaryBar({ data }: Props) {
 }
 
 function ChecklistRow({ item, checked, onToggle }: { item: ChecklistItem; checked: boolean; onToggle: () => void }) {
-  const expanded = item.status !== "verified" && item.status !== "not_applicable";
+  const expanded = item.status !== "required_and_present" && item.status !== "not_applicable";
   const canCheck = reviewable(item);
 
   return (

@@ -1,4 +1,9 @@
-"""LLM explanation service using local/open-source HTTP APIs with TOON format."""
+"""LLM explanation service: TOON prompt input, JSON model output.
+
+Prompts are encoded with ``toon.encode``; model responses are parsed with
+``json.loads`` plus a schema check. ``generate_summaries`` returns the
+bilingual operator summary persisted to ``applications.ops_summary_en/hi``.
+"""
 
 import json
 import logging
@@ -7,12 +12,16 @@ import re
 from toon import encode
 
 from database.db import get_connection
-from services.llm_client import call_llm_api
+from services.llm_client import call_llm_api, call_llm_messages, llm_provider
 from services.llm_client import (
     extract_response_text as _extract_response_text,  # noqa: F401 - compatibility export
 )
+from services.ops_templates_en_hi import TEMPLATES
 
 logger = logging.getLogger(__name__)
+
+MAX_SUMMARY_CHARS = 600
+_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 
 
 def generate_explanation(
@@ -149,6 +158,171 @@ def summarize_exceptions(exceptions: list[dict]) -> str | None:
         return None
     default_summary = build_default_summary(exceptions, {})
     return json.dumps(default_summary, ensure_ascii=False)
+
+
+def generate_summaries(application_id: int, context: dict) -> dict[str, str]:
+    """Return ``{"en": ..., "hi": ...}`` operator summaries for one application.
+
+    The model receives TOON prompt input and must answer in JSON. Any
+    validation failure (or provider ``none``) falls back to the deterministic
+    count-based wording. The result is persisted to
+    ``applications.ops_summary_en/hi``; the ``reviewer_summaries`` write in
+    :func:`generate_explanation` is left untouched.
+    """
+    findings = _extract_findings(context)
+    ground_truth = context.get("ground_truth") if isinstance(context, dict) else {}
+    fallback = build_bilingual_fallback(findings)
+
+    result = fallback
+    try:
+        if llm_provider() != "none":
+            prompt = _build_bilingual_prompt(findings, ground_truth or {})
+            raw_text = call_llm_messages(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You write short loan-file summaries for non-technical "
+                            "operations staff in India. Use plain words only."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                purpose="summary_en",
+                application_id=application_id,
+                max_tokens=400,
+                timeout=60,
+                response_format="json",
+            )
+            parsed = parse_bilingual_summary(raw_text or "")
+            if parsed is not None:
+                result = parsed
+            else:
+                logger.warning("Bilingual LLM summary invalid; using fallback")
+    except Exception as exc:  # noqa: BLE001 - fallback covers every failure
+        logger.warning("Bilingual LLM summary unavailable; using fallback: %s", exc)
+
+    _persist_ops_summaries(application_id, result)
+    return result
+
+
+def parse_bilingual_summary(text: str) -> dict[str, str] | None:
+    """Parse and validate the ``{"en": ..., "hi": ...}`` model response."""
+    if not text or not text.strip():
+        return None
+    cleaned = text.strip()
+    fence_match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
+    if fence_match:
+        cleaned = fence_match.group(1).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        logger.debug("Bilingual summary is not valid JSON: %s", exc)
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    en = parsed.get("en")
+    hi = parsed.get("hi")
+    if not isinstance(en, str) or not isinstance(hi, str):
+        return None
+    en, hi = en.strip(), hi.strip()
+    if not en or not hi:
+        return None
+    if len(en) > MAX_SUMMARY_CHARS or len(hi) > MAX_SUMMARY_CHARS:
+        logger.debug("Bilingual summary exceeds %d characters", MAX_SUMMARY_CHARS)
+        return None
+    if not _DEVANAGARI_RE.search(hi):
+        logger.debug("Hindi summary contains no Devanagari script")
+        return None
+    return {"en": en, "hi": hi}
+
+
+def build_bilingual_fallback(findings: list[dict]) -> dict[str, str]:
+    """Deterministic count-based summary in English and Hindi."""
+    items = findings or []
+    total = len(items)
+    high = sum(1 for item in items if str(item.get("severity", "")).upper() == "HIGH")
+    medium = sum(1 for item in items if str(item.get("severity", "")).upper() == "MEDIUM")
+    low = sum(1 for item in items if str(item.get("severity", "")).upper() == "LOW")
+
+    if total == 0:
+        en = (
+            "This loan file looks complete with no issues found. "
+            "You may proceed with the next step of approval."
+        )
+        hi = (
+            "यह ऋण फ़ाइल पूरी लग रही है और इसमें कोई समस्या नहीं मिली। "
+            "आप अनुमोदन के अगले चरण के साथ आगे बढ़ सकते हैं।"
+        )
+        return {"en": en, "hi": hi}
+
+    parts = []
+    if high:
+        parts.append(f"{high} high priority")
+    if medium:
+        parts.append(f"{medium} medium priority")
+    if low:
+        parts.append(f"{low} low priority")
+    breakdown = ", ".join(parts)
+
+    en = (
+        f"Review of this loan file found {total} issue(s) needing attention: {breakdown}. "
+        "Please check the highlighted pages with your branch team before approval."
+    )
+    hi = (
+        f"इस ऋण फ़ाइल की समीक्षा में {total} समस्या(एँ) पाई गईं जिन पर ध्यान देना आवश्यक है: {breakdown}। "
+        "कृपया अनुमोदन से पहले अपनी शाखा टीम के साथ चिह्नित पृष्ठों की जाँच करें।"
+    )
+    return {"en": en[:MAX_SUMMARY_CHARS], "hi": hi[:MAX_SUMMARY_CHARS]}
+
+
+def _extract_findings(context: dict | list | None) -> list[dict]:
+    if isinstance(context, list):
+        return [item for item in context if isinstance(item, dict)]
+    if not isinstance(context, dict):
+        return []
+    for key in ("findings", "anomalies", "exceptions", "top_findings"):
+        value = context.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _build_bilingual_prompt(findings: list[dict], ground_truth: dict) -> str:
+    titles = {code: template["title"]["en"] for code, template in TEMPLATES.items()}
+    known_codes = ", ".join(f"{code}: {title}" for code, title in titles.items())
+    compact = [
+        {
+            "code": item.get("code") or item.get("rule_id"),
+            "severity": item.get("severity"),
+            "pages": item.get("pages") or item.get("page_number"),
+        }
+        for item in findings
+    ]
+    return (
+        "Summarize this loan-file review for non-technical operations staff.\n"
+        "Write 2-3 sentences in English and 2-3 sentences in Hindi. "
+        "Use plain words only: no rule IDs, no codes, no technical terms.\n"
+        'Answer in JSON only, exactly: {"en": "...", "hi": "..."}\n'
+        "Keep each summary under 600 characters. "
+        "The Hindi text must be written in Devanagari script.\n\n"
+        f"Known issue titles (for your understanding only, do not repeat codes):\n{known_codes}\n\n"
+        "Review findings (TOON):\n"
+        f"{encode(compact)}\n"
+        "Application details (TOON):\n"
+        f"{encode(ground_truth or {})}\n"
+    )
+
+
+def _persist_ops_summaries(application_id: int, result: dict[str, str]) -> None:
+    try:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE applications SET ops_summary_en = ?, ops_summary_hi = ? WHERE id = ?",
+                (result["en"], result["hi"], application_id),
+            )
+    except Exception as exc:  # noqa: BLE001 - summary persistence is best effort
+        logger.warning("Could not persist ops summaries for %s: %s", application_id, exc)
 
 
 def _build_prompt(anomalies: list[dict], ground_truth: dict) -> str:

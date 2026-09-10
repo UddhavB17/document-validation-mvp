@@ -12,6 +12,11 @@ tsconfig.tsbuildinfo
 .env.*
 !.env.example
 
+# Google Cloud service-account key files must never be committed.
+# Keep them outside the repo (e.g. %APPDATA%/dmef or ~/.config/dmef).
+**/*-key.json
+**/service-account*.json
+
 # Never commit real/sensitive documents or generated processing outputs.
 uploads/*
 outputs/*
@@ -19,6 +24,7 @@ data/uploads/*
 data/pages/*
 data/reports/*
 data/audits/
+data/store/*
 data/dmef.db
 data/*.db
 data/*.db.bak

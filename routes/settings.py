@@ -1,11 +1,21 @@
-from fastapi import APIRouter, HTTPException
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from database.db import get_connection
+from services.auth.dependencies import require_role
+from services.config import is_secret_setting
+from services.job_control import encrypt_secret
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+router = APIRouter(
+    prefix="/settings", tags=["settings"], dependencies=[Depends(require_role("admin"))]
+)
 
-SECRET_PLACEHOLDER = "********"
+# Secret values are never returned by this API; a set secret reads back as
+# the placeholder below plus ``is_set: true``. (``has_value`` is the legacy
+# alias kept for the current Settings UI.)
+SECRET_PLACEHOLDER = "***"
 
 
 class SettingUpdatePayload(BaseModel):
@@ -14,19 +24,20 @@ class SettingUpdatePayload(BaseModel):
 
 
 def _is_secret(row: dict) -> bool:
-    value_type = str(row.get("value_type") or "").lower()
-    key = str(row.get("config_key") or "").lower()
-    return value_type == "secret" or key.endswith("api_key") or key.endswith("token")
+    return is_secret_setting(str(row.get("config_key") or ""), row.get("value_type"))
 
 
 def _serialize_setting(row) -> dict:
     data = dict(row)
     is_secret = _is_secret(data)
     raw_value = str(data.get("config_value") or "")
+    has_value = bool(raw_value.strip())
     data["is_secret"] = is_secret
-    data["has_value"] = bool(raw_value.strip()) if is_secret else True
+    # ``is_set`` is the contracted flag; ``has_value`` stays for the UI.
+    data["is_set"] = has_value if is_secret else True
+    data["has_value"] = has_value if is_secret else True
     if is_secret:
-        data["config_value"] = SECRET_PLACEHOLDER if raw_value.strip() else ""
+        data["config_value"] = SECRET_PLACEHOLDER if has_value else ""
     return data
 
 
@@ -59,14 +70,18 @@ def update_setting(config_key: str, payload: SettingUpdatePayload):
 
         if is_secret and payload.clear_secret:
             new_value = ""
-        elif is_secret and incoming.strip() in {"", SECRET_PLACEHOLDER}:
+        elif is_secret and incoming.strip() in {"", SECRET_PLACEHOLDER, "********"}:
+            # "********" is the pre-hygiene placeholder; keep stored value.
             new_value = row_data.get("config_value") or ""
+        elif is_secret and incoming.strip():
+            # Secrets are encrypted at rest; the API never sees plaintext back.
+            new_value = encrypt_secret(incoming)
         else:
             new_value = incoming
 
         conn.execute(
-            "UPDATE system_settings SET config_value = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE config_key = ?",
-            (new_value, config_key),
+            "UPDATE system_settings SET config_value = ?, updated_at = ? WHERE config_key = ?",
+            (new_value, datetime.now(UTC).isoformat(), config_key),
         )
         conn.commit()
 

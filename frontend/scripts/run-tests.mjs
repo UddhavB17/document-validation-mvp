@@ -13,6 +13,15 @@ const testFiles = [
   "tests/worklistPolicy.test.ts",
   "tests/reviewSession.test.ts",
   "tests/reviewItemSchema.test.ts",
+  "tests/opsPayload.test.ts",
+  "tests/opsHelpers.test.ts",
+  "tests/opsPolling.test.ts",
+  "tests/opsStatusBar.test.ts",
+  "tests/opsSourceHygiene.test.ts",
+  "tests/sessionVerify.test.ts",
+  "tests/sessionHydration.test.ts",
+  "tests/evidenceProxy.test.ts",
+  "tests/sessionRouting.test.ts",
 ];
 const outputDirectory = mkdtempSync(path.join(os.tmpdir(), "dmef-frontend-tests-"));
 

@@ -18,7 +18,7 @@ from toon import decode, encode
 
 from services.config import get_bool, get_float
 from services.document_classifier import registry_document_types
-from services.llm_client import call_llm_api, llm_endpoint_label, llm_model, llm_provider
+from services.llm_client import call_llm_messages, llm_endpoint_label, llm_model, llm_provider
 from services.llm_page_classifier import llm_classification_trigger
 
 logger = logging.getLogger(__name__)
@@ -129,8 +129,8 @@ def build_structured_classifier_prompt(
         "Keep bank document types separate: Passbook is for passbook/pass book pages, "
         "Cheque is for cheque or cancelled cheque pages, PDC is only for post-dated/security cheques, "
         "and Bank Statement is only for statement/account-statement pages.\n\n"
-        "Return only TOON:\n"
-        "document_type: ...\nconfidence: 0.0\nreason: short reason\n\n"
+        "Return only JSON:\n"
+        '{"document_type": "...", "confidence": 0.0, "reason": "short reason"}\n\n'
         f"Known document types:\n{types_list}\n\n"
         f"Deterministic classifier result:\n{deterministic_document_type}\n\n"
         "Structured extracted fields (TOON):\n"
@@ -189,37 +189,61 @@ def _is_ollama_available(base_url: str, timeout: float) -> bool:
 
 def _call_ollama_generate(*, base_url: str, model: str, prompt: str, timeout: float) -> str | None:
     if llm_provider() != "ollama":
-        return call_llm_api(prompt, max_tokens=180, timeout=int(timeout))
+        return call_llm_messages(
+            [{"role": "user", "content": prompt}],
+            purpose="page_classification",
+            max_tokens=180,
+            timeout=int(timeout),
+            response_format="json",
+        )
+
+    import time
 
     import requests
 
-    response = requests.post(
-        f"{base_url}/api/generate",
-        json={"model": model, "prompt": prompt, "stream": False},
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    return payload.get("response") or payload.get("text") or payload.get("output")
+    from services import llm_accounting
+
+    started = time.monotonic()
+    try:
+        response = requests.post(
+            f"{base_url}/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        text = payload.get("response") or payload.get("text") or payload.get("output")
+        llm_accounting.record_call(
+            "ollama", model, "page_classification", 0, 0,
+            int((time.monotonic() - started) * 1000), None, True,
+        )
+        return text
+    except Exception as exc:  # noqa: BLE001 - caller logs and continues
+        llm_accounting.record_call(
+            "ollama", model, "page_classification", 0, 0,
+            int((time.monotonic() - started) * 1000), None, False, str(exc),
+        )
+        raise
 
 
 def _parse_classifier_response(response_text: str) -> dict[str, Any] | None:
+    """Parse the classifier answer: JSON with a schema check, TOON as fallback."""
     stripped = response_text.strip()
     if not stripped:
         return None
 
-    fence_match = re.search(r"```(?:toon|json)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
+    fence_match = re.search(r"```(?:json|toon)?\s*(.*?)\s*```", stripped, re.DOTALL | re.IGNORECASE)
     candidate = fence_match.group(1).strip() if fence_match else stripped
     try:
-        parsed = decode(candidate)
-    except Exception:  # noqa: BLE001
+        parsed = json.loads(candidate)
+    except (TypeError, ValueError, json.JSONDecodeError):
         parsed = None
     if isinstance(parsed, dict) and parsed.get("document_type"):
         return parsed
 
     try:
-        parsed = json.loads(candidate)
-    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = decode(candidate)
+    except Exception:  # noqa: BLE001 - legacy TOON output from older local models
         return None
     return parsed if isinstance(parsed, dict) and parsed.get("document_type") else None
 

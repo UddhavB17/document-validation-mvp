@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 import time
 import unicodedata
 from typing import Any
@@ -46,6 +47,7 @@ from services.pipeline.page_details import (
     _extract_fields_with_layout,
     _is_starting_json_db_page,
     _record_completed_page_event,
+    _triage_from_fields,
 )
 from services.processing_policy import (
     OCR_SKIPPED_DOCUMENT_TYPE,
@@ -61,6 +63,31 @@ run_ocr_on_page = run_fast_ocr_on_page
 
 _DEFAULT_FAST_OCR_PROCESSOR = run_fast_ocr_on_page
 
+_OCR_NO_TEXT_MIN_CHARS = 40
+
+
+def compute_ocr_status(
+    *,
+    page_type: str | None,
+    document_type: str | None,
+    text: str | None,
+    error: str | None,
+) -> str:
+    """Return the page-level OCR status.
+
+    ``not_applicable`` is reserved for pages where OCR genuinely does not
+    apply (digital pages and DB Data pages). Budget-skipped ``OCR Skipped``
+    pages map to ``no_text_extracted`` so they route to manual review.
+    """
+    if page_type == "digital" or (document_type or "") == "DB Data":
+        return "not_applicable"
+    if error:
+        return "failed"
+    stripped = re.sub(r"\s+", "", str(text or ""))
+    if not stripped or len(stripped) < _OCR_NO_TEXT_MIN_CHARS:
+        return "no_text_extracted"
+    return "success"
+
 
 def _pipeline_ocr_router() -> OCRRouter:
     if run_ocr_on_page is _DEFAULT_FAST_OCR_PROCESSOR:
@@ -69,6 +96,29 @@ def _pipeline_ocr_router() -> OCRRouter:
         fast_processor=run_ocr_on_page,
         structured_processor=run_ocr_on_page,
     )
+
+
+def _sync_page_meta(page: dict[str, Any]) -> dict[str, Any]:
+    """Mirror ``_``-prefixed ``extracted_fields`` into ``page["meta"]``.
+
+    Private per-page JSON (``_classification``, ``_triage``, ``_language``,
+    ``_structured_llm_classification``, …) stays readable in memory for
+    downstream stages during the run; persistence writes business keys only
+    to ``pages.extracted_fields`` and the full private dict to ``pages_meta``
+    (see ``services/pipeline/persistence.py``).
+    """
+    fields = page.get("extracted_fields")
+    if not isinstance(fields, dict):
+        fields = {}
+        page["extracted_fields"] = fields
+    meta = page.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        page["meta"] = meta
+    for key, value in fields.items():
+        if str(key).startswith("_"):
+            meta[key] = value
+    return page
 
 
 def _build_page_records(
@@ -208,12 +258,21 @@ def _build_page_records(
                         "is_readable": is_readable,
                         "ocr_text": text,
                         "ocr_confidence": ocr_confidence,
+                        "ocr_status": compute_ocr_status(
+                            page_type=page_type,
+                            document_type=document_type,
+                            text=text,
+                            error=None,
+                        ),
+                        "words": [],
                         "document_type": document_type,
                         "classification_confidence": classification.get("confidence", 0.0),
                         "detection_method": "db_data",
                         "detected_page_number": page_number,
                         "extracted_fields": extracted_fields,
+                        "meta": {},
                     }
+                    _sync_page_meta(db_data_page)
                     pages.append(db_data_page)
                     page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
                     _record_completed_page_event(
@@ -249,12 +308,21 @@ def _build_page_records(
                     "is_readable": is_readable,
                     "ocr_text": text,
                     "ocr_confidence": ocr_confidence,
+                    "ocr_status": compute_ocr_status(
+                        page_type=page_type,
+                        document_type=document_type,
+                        text=text,
+                        error=None,
+                    ),
+                    "words": [],
                     "document_type": document_type,
                     "classification_confidence": classification.get("confidence", 0.0),
                     "detection_method": "skipped",
                     "detected_page_number": None,
                     "extracted_fields": extracted_fields,
+                    "meta": {},
                 }
+                _sync_page_meta(skipped_page)
                 pages.append(skipped_page)
                 page_elapsed = _log_total_page_time(page_number, total_pages, page_started_at)
                 _record_completed_page_event(
@@ -315,6 +383,9 @@ def _build_page_records(
                         "raw_document_type": document_type,
                         "raw_confidence": triage["confidence"],
                         "detected_page_number": page_number,
+                        # Nested copy so eligibility helpers that read
+                        # ``_classification.triage`` see photo pages too.
+                        "triage": triage,
                     },
                 }
             elif triage["category"] == "handwritten" and (
@@ -463,7 +534,7 @@ def _build_page_records(
                     text = routed_ocr.text
                     ocr_confidence = routed_ocr.confidence
                     is_readable = bool(text.strip())
-                    ocr_metadata = routed_ocr.to_legacy_dict()
+                    ocr_metadata = _ocr_result_dict(routed_ocr.to_legacy_dict())
                     if routed_ocr.error:
                         extracted_fields["_processing_error"] = routed_ocr.error
                     if page_number % 5 == 0:
@@ -572,6 +643,11 @@ def _build_page_records(
             document_type=document_type,
             text=text,
             extracted_fields=extracted_fields,
+            triage_category=(
+                triage.get("category") if isinstance(triage, dict) else None
+            ),
+            ocr_confidence=ocr_confidence,
+            page_type=page_type,
         )
         # Run the structured classifier only after deterministic and generic
         # extraction has completed, and only for the two allowed fallback
@@ -650,7 +726,23 @@ def _build_page_records(
             "is_readable": is_readable,
             "ocr_text": text,
             "ocr_confidence": ocr_confidence,
-            "ocr_structure": _public_ocr_structure(ocr_metadata),
+            "ocr_status": compute_ocr_status(
+                page_type=page_type,
+                document_type=document_type,
+                text=text,
+                error=extracted_fields.get("_processing_error")
+                if isinstance(extracted_fields, dict)
+                else None,
+            ),
+            # Compact in-memory word layout for evidence bboxes (ws-f);
+            # never persisted (ws-a data diet).
+            "words": list(ocr_metadata.get("words") or []),
+            # Provider boxes kept in memory as a fallback so page_words can
+            # coerce words even when derivation produced none; never
+            # persisted (ws-a data diet: _insert_page uses explicit columns).
+            "bounding_boxes": list(ocr_metadata.get("bounding_boxes") or []),
+            # Small in-memory layout for field extraction/smoothing only;
+            # never persisted (no "native" blob).
             "structured_content": ocr_metadata.get("structured_content"),
             "ocr_route": ocr_metadata.get("ocr_route"),
             "ocr_escalated": bool(ocr_metadata.get("ocr_escalated", False)),
@@ -668,7 +760,9 @@ def _build_page_records(
                 else page_number
             ),
             "extracted_fields": extracted_fields,
+            "meta": {},
         }
+        _sync_page_meta(completed_page)
         attach_field_provenance(
             completed_page,
             source_document=_source_document_for_page(source_documents or [], page_number),
@@ -701,6 +795,8 @@ def _build_page_records(
             message=f"Processed {len(pages)}/{total_pages} pages",
         )
     pages = _smooth_page_classifications(pages, application_id, total_pages)
+    for page in pages:
+        _sync_page_meta(page)
     return sorted(pages, key=lambda item: int(item.get("page_number") or 0))
 
 
@@ -777,11 +873,9 @@ def _refresh_page_from_cached_ocr(
         detection_method = "cached_visual_evidence"
         confidence = max(confidence, float(refreshed.get("classification_confidence") or 0.0))
 
-    fields = _extract_fields_with_layout(
-        document_type,
-        text,
-        refreshed.get("structured_content") or refreshed.get("ocr_structure"),
-    )
+    # Cached checkpoints carry no layout blobs (never persisted); extraction
+    # re-runs on text alone.
+    fields = _extract_fields_with_layout(document_type, text, None)
     fields = refine_field_assignments(
         document_type=document_type,
         ocr_text=text,
@@ -816,6 +910,9 @@ def _refresh_page_from_cached_ocr(
         document_type=document_type,
         text=text,
         extracted_fields=fields,
+        triage_category=_triage_from_fields(fields),
+        ocr_confidence=ocr_confidence,
+        page_type=refreshed.get("page_type"),
     )
     language_profile = analyze_text_languages(text)
     previous_language = (
@@ -842,7 +939,9 @@ def _refresh_page_from_cached_ocr(
             "extracted_fields": fields,
         }
     )
+    _sync_page_meta(refreshed)
     attach_field_provenance(refreshed, source_document=source_document)
+    _sync_page_meta(refreshed)
     return refreshed
 
 
@@ -945,32 +1044,47 @@ def _clone_reused_page(
     if isinstance(classification, dict):
         classification["detection_method"] = "deduplicated_reuse"
         classification["detected_page_number"] = page_number if starts_logical_document else None
+    if not isinstance(cloned.get("meta"), dict):
+        cloned["meta"] = {}
+    _sync_page_meta(cloned)
     attach_field_provenance(cloned, source_document=source_document)
+    _sync_page_meta(cloned)
     return cloned
 
 
-def _public_ocr_structure(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Select structured OCR fields that should be persisted and exported."""
-    keys = (
-        "ocr_pipeline",
-        "ocr_languages",
-        "ocr_language_hints",
-        "header_text",
-        "layout_blocks",
-        "tables",
-        "seals",
-        "formulas",
-        "structure_json",
-        "ocr_route",
-        "ocr_escalated",
-        "ocr_routing_rationale",
-        "ocr_original_confidence",
-        "ocr_processing_time_ms",
-        "bounding_boxes",
-        "structured_content",
-    )
-    return {key: metadata[key] for key in keys if key in metadata}
-
-
 def _ocr_result_dict(result: OCRResult | dict[str, Any]) -> dict[str, Any]:
-    return result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
+    # Older providers may expose boxes without the compact normalized words
+    # used by evidence highlighting, so derive that representation here.
+    payload = result.to_legacy_dict() if isinstance(result, OCRResult) else dict(result)
+    words = payload.get("words")
+    if not (isinstance(words, list) and words):
+        payload["words"] = _words_from_bounding_boxes(payload)
+    return payload
+
+
+def _words_from_bounding_boxes(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Derive normalized ``[{"t","b","c"}]`` words from provider boxes."""
+    boxes = payload.get("bounding_boxes")
+    if not isinstance(boxes, list) or not boxes:
+        return []
+    try:
+        width = float(payload.get("image_width") or 0)
+        height = float(payload.get("image_height") or 0)
+    except (TypeError, ValueError):
+        width, height = 0.0, 0.0
+    words: list[dict[str, Any]] = []
+    for box in boxes:
+        if not isinstance(box, dict):
+            continue
+        text = box.get("text", box.get("t", ""))
+        bbox = box.get("bbox", box.get("b", []))
+        if text in (None, "") or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            coords = [float(value) for value in bbox]
+        except (TypeError, ValueError):
+            continue
+        if width > 0 and height > 0 and max(coords) > 1.0:
+            coords = [coords[0] / width, coords[1] / height, coords[2] / width, coords[3] / height]
+        words.append({"t": str(text), "b": coords, "c": box.get("confidence", box.get("c"))})
+    return words
