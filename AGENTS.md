@@ -20,6 +20,13 @@ env vars, size budgets, and file ownership. Plan: `docs/PRODUCTION_NEXT_PHASE.md
 - `frontend/` — Next.js 14 app (`frontend/lib/api.ts`, `frontend/lib/queries.ts`)
 - `tests/` — pytest suite (`python -m pytest -q`)
 
+## Git delivery
+
+When the user requests a push, deliver tested changes to `origin/main` unless
+they explicitly choose another branch. Integrate the latest `origin/main`
+and verify the combined changes first. Preserve divergent local work on a
+backup branch; never force-push or publish fixes only to a `cursor/*` branch.
+
 ## Run commands
 
 ```bash
