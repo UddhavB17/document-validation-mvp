@@ -23,6 +23,7 @@ from services.pipeline import run_pipeline
 @pytest.fixture(autouse=True)
 def _default_to_local_ocr(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OCR_PROVIDER", "local")
+    monkeypatch.setenv("LLM_PROVIDER", "none")
     monkeypatch.setenv("DMEF_LOCAL_OCR_TEST_MODE", "true")
     import services.config as config_mod
     import services.ocr_router as ocr_router_mod
@@ -221,6 +222,9 @@ def test_review_payloads_respect_budgets(
 def test_no_png_written_outside_job_work_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Observe only files produced by this run, never a developer's uploads.
+    monkeypatch.setenv("CHECKLIST_JSON_PATH", str(Path("data/checklist.json").resolve()))
+    monkeypatch.chdir(tmp_path)
     _run_fixture_pipeline(tmp_path, monkeypatch)
 
     repo_data = Path("data")

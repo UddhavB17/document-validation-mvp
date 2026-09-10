@@ -14,12 +14,14 @@ def test_multiple_accounts_for_one_person_are_not_cross_document_mismatches() ->
         {
             "page_number": 1,
             "document_type": "Passbook",
+            "page_type": "digital",
             "person_id": "primary",
             "extracted_fields": {"account_number": "12345678901"},
         },
         {
             "page_number": 2,
             "document_type": "Bank Statement",
+            "page_type": "digital",
             "person_id": "primary",
             "extracted_fields": {"account_number": "98765432109"},
         },
@@ -61,6 +63,7 @@ def test_supporting_statement_application_id_is_not_current_loan_id() -> None:
         "document_type": "Bank Statement",
         "person_id": "primary",
         "ocr_text": "Previous lender\nLoan Account Statement\nApplication No: OLD-009",
+        "page_type": "digital",
         "extracted_fields": {"application_number": "OLD-009"},
     }
     assert not any(
