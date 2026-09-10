@@ -380,6 +380,30 @@ a {
   white-space: nowrap;
 }
 
+.app-shell__worker-start {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.app-shell__worker-start .app-shell__nav-link {
+  justify-content: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.app-shell__worker-error {
+  color: #b42318;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.app-shell__worker-note {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .app-shell__stop-area {
   display: grid;
   gap: var(--space-2);

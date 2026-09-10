@@ -219,6 +219,7 @@ def _heartbeat_loop(job_id: int, stop_event: threading.Event) -> None:
                 )
         except Exception:
             continue
+        _touch_idle_heartbeat()
 
 
 def run_job_by_id(job: dict[str, Any]) -> None:

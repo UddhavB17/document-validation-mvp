@@ -74,3 +74,33 @@ def worker_heartbeat_endpoint(
     from database.worker_heartbeat import get_heartbeat
 
     return dict(get_heartbeat())
+
+
+@router.post("/worker/start", summary="Start a worker when none is alive")
+def worker_start_endpoint(
+    _admin=Depends(_admin_dependency()),  # noqa: B008
+) -> dict:
+    """Start a detached local worker (logs to ``data/logs/worker-*.log``).
+
+    No-op when the heartbeat is fresh. Refused in production (Cloud Run
+    manages the worker as its own service) unless
+    ``DMEF_ALLOW_LOCAL_WORKER_SPAWN=1`` is set explicitly.
+    """
+    from services.config import get_setting
+    from services.worker_launcher import ensure_worker_running, is_worker_alive
+
+    try:
+        env = str(get_setting("DMEF_ENV", "local") or "local").strip().lower()
+        spawn_allowed = str(get_setting("DMEF_ALLOW_LOCAL_WORKER_SPAWN", "") or "").strip() == "1"
+    except Exception:  # noqa: BLE001 - config unavailable; fail closed
+        raise HTTPException(status_code=503, detail="Worker supervisor is unavailable")
+    if env == "production" and not spawn_allowed:
+        raise HTTPException(
+            status_code=409,
+            detail="Worker is managed by the deploy platform in production",
+        )
+    if is_worker_alive():
+        from database.worker_heartbeat import get_heartbeat
+
+        return {"started": False, "detail": "worker heartbeat is fresh", **dict(get_heartbeat())}
+    return dict(ensure_worker_running("admin panel"))

@@ -962,6 +962,10 @@ export async function adminDeleteUserRequest(userId: number): Promise<void> {
   await deleteJsonResponse(`/admin/users/${userId}`, z.object({}));
 }
 
+export async function adminStartWorkerRequest(): Promise<Record<string, unknown>> {
+  return postJsonResponse("/admin/worker/start", {}, z.object({}).passthrough());
+}
+
 export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {
   // The ops schemas use z.preprocess for legacy-status mapping and null
   // coercion. That is runtime-correct, but this toolchain infers preprocessed

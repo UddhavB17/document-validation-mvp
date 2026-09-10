@@ -10,6 +10,8 @@ import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
 import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
 import { useApplicationReview, useHealth } from "@/lib/queries";
+import { adminStartWorkerRequest } from "@/lib/api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { FieldComparison } from "@/lib/api";
 
 type IconName = "worklist" | "intake" | "activity" | "settings" | "users" | "menu" | "close" | "collapse" | "expand" | "api" | "ops";
@@ -71,6 +73,41 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return <ShellChrome pathname={pathname} role={session.role} onLogout={() => void session.logout()}>{children}</ShellChrome>;
+}
+
+function WorkerStartButton() {
+  const queryClient = useQueryClient();
+  const startWorker = useMutation({
+    mutationFn: adminStartWorkerRequest,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["health"] });
+    },
+  });
+  return (
+    <div className="app-shell__worker-start">
+      <button
+        type="button"
+        disabled={startWorker.isPending}
+        onClick={() => void startWorker.mutate()}
+        className="app-shell__nav-link"
+        aria-label="Start worker"
+      >
+        <span className="app-shell__nav-text">
+          {startWorker.isPending ? "Starting…" : "Start worker"}
+        </span>
+      </button>
+      {startWorker.isError ? (
+        <p className="app-shell__worker-error" role="alert">
+          {startWorker.error.message}
+        </p>
+      ) : null}
+      {startWorker.isSuccess ? (
+        <p className="app-shell__worker-note" role="status">
+          Worker starting — health refreshes automatically.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function ShellChrome({
@@ -214,6 +251,7 @@ function ShellChrome({
               <StatusBadge status={healthStatus} />
             )}
             <code className="app-shell__endpoint">127.0.0.1:8000</code>
+            {isAdmin && healthStatus === "failed" ? <WorkerStartButton /> : null}
           </div>
         </div>
       </aside>
