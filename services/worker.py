@@ -57,7 +57,7 @@ def failure_reason_for(exc: BaseException) -> str:
     return "Processing failed after 3 attempts. Contact an administrator."
 
 
-def _claim_select_sql() -> str:
+def _claim_select_sql(job_id: int | None = None) -> str:
     """Return the dialect-branched dequeue SELECT (contracts §4).
 
     Postgres uses ``FOR UPDATE SKIP LOCKED`` so concurrent workers never
@@ -72,8 +72,10 @@ def _claim_select_sql() -> str:
             FROM pipeline_jobs
             WHERE status IN ('queued', 'retrying')
               AND (next_run_at IS NULL OR next_run_at <= ?)
-            ORDER BY id LIMIT 1
             """
+    if job_id is not None:
+        base += " AND id = ? AND control_state = 'running'"
+    base += " ORDER BY id LIMIT 1"
     if db_module.dialect() == "postgresql":
         return base + " FOR UPDATE SKIP LOCKED"
     return base
@@ -163,7 +165,7 @@ def recover_stale_jobs(*, stale_minutes: int = 10) -> int:
         return len(rows)
 
 
-def claim_next_job() -> dict[str, Any] | None:
+def claim_next_job(job_id: int | None = None) -> dict[str, Any] | None:
     """Claim one queued/retrying job that is due. Returns the job row or None."""
     import database.db as db_module
 
@@ -175,8 +177,8 @@ def claim_next_job() -> dict[str, Any] | None:
             # instead (see _claim_select_sql); never run BEGIN IMMEDIATE there.
             connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
-            _claim_select_sql(),
-            (now_iso,),
+            _claim_select_sql(job_id),
+            (now_iso,) if job_id is None else (now_iso, job_id),
         ).fetchone()
         if row is None:
             return None
@@ -419,7 +421,7 @@ def start_health_server(port: int):
 
 
 def run_worker(
-    poll_seconds: float | None = None, once: bool = False
+    poll_seconds: float | None = None, once: bool = False, job_id: int | None = None
 ) -> None:
     """Claim → run → finalize loop. ``once`` processes a single job."""
     global _shutdown_requested
@@ -430,6 +432,29 @@ def run_worker(
     effective_poll = (
         float(poll_seconds) if poll_seconds is not None else _default_poll_seconds()
     )
+    if job_id is not None:
+        # An explicitly scoped worker must never recover or dequeue other jobs.
+        # Claims still use the same transaction/row lock as the regular worker.
+        while not _shutdown_requested:
+            job = claim_next_job(job_id)
+            if job is not None:
+                run_job_by_id(job)
+                if once:
+                    return
+            with get_connection() as connection:
+                state = connection.execute(
+                    "SELECT status, control_state FROM pipeline_jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+            if (
+                state is None
+                or state["status"] not in {"queued", "retrying"}
+                or state["control_state"] != "running"
+                or once
+            ):
+                return
+            time.sleep(effective_poll)
+        return
     recover_stale_jobs()
     _touch_idle_heartbeat()
     last_idle_touch = time.monotonic()
@@ -459,6 +484,10 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--poll-seconds", type=float, default=None)
     parser.add_argument(
+        "--job-id", type=int, default=None,
+        help="Process only this queued job and its retries; skip global stale recovery",
+    )
+    parser.add_argument(
         "--serve-health",
         type=int,
         default=None,
@@ -473,6 +502,7 @@ def main() -> None:
         if args.poll_seconds is not None
         else _default_poll_seconds(),
         once=args.once,
+        job_id=args.job_id,
     )
 
 

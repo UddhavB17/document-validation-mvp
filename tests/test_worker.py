@@ -376,7 +376,8 @@ def test_worker_reloads_store_bytes_after_api_workdir_deleted(tmp_path, monkeypa
     assert job["status"] == "completed"
 
 
-def test_concurrent_claimers_single_winner(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("scoped", [False, True])
+def test_concurrent_claimers_single_winner(tmp_path, monkeypatch, scoped) -> None:
     """Two SQLite claimers cannot both claim the same queued row (BEGIN IMMEDIATE)."""
     import threading
 
@@ -398,7 +399,7 @@ def test_concurrent_claimers_single_winner(tmp_path, monkeypatch) -> None:
         except Exception:
             pass
         try:
-            results[slot] = worker_mod.claim_next_job()
+            results[slot] = worker_mod.claim_next_job(job_id if scoped else None)
         except Exception as exc:  # noqa: BLE001
             results[slot] = exc
 
@@ -425,6 +426,71 @@ def test_claim_sql_dialect_branching(monkeypatch) -> None:
     assert "FOR UPDATE SKIP LOCKED" in worker_mod._claim_select_sql()
     monkeypatch.setattr(db_module, "dialect", lambda: "sqlite")
     assert "FOR UPDATE SKIP LOCKED" not in worker_mod._claim_select_sql()
+
+
+def test_scoped_worker_leaves_other_jobs_untouched(isolated_db, tmp_path, monkeypatch):
+    import services.worker as worker
+
+    _, older = _enqueue(tmp_path, "older")
+    _, stale = _enqueue(tmp_path, "stale-other")
+    _, target = _enqueue(tmp_path, "target")
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE pipeline_jobs SET status = 'running', heartbeat_at = NULL WHERE id = ?",
+            (stale,),
+        )
+    seen = []
+
+    def finish(job):
+        seen.append(job["id"])
+        mark_job_completed(job["id"])
+
+    monkeypatch.setattr(worker, "run_job_by_id", finish)
+    worker.run_worker(job_id=target, poll_seconds=0.001)
+    assert seen == [target]
+    with get_connection() as connection:
+        states = {
+            row["id"]: (row["status"], row["attempt"])
+            for row in connection.execute("SELECT id, status, attempt FROM pipeline_jobs").fetchall()
+        }
+    assert states == {older: ("queued", 0), stale: ("running", 0), target: ("completed", 1)}
+
+
+def test_scoped_worker_obeys_retry_schedule(isolated_db, tmp_path, monkeypatch):
+    import services.worker as worker
+
+    _, target = _enqueue(tmp_path, "scoped-retry")
+    seen = []
+
+    def run(job):
+        seen.append(job["attempt"])
+        if len(seen) == 1:
+            worker.handle_job_exception(target, RuntimeError("transient"))
+        else:
+            mark_job_completed(target)
+
+    def advance(_seconds):
+        assert worker.claim_next_job(target) is None
+        with get_connection() as connection:
+            connection.execute("UPDATE pipeline_jobs SET next_run_at = NULL WHERE id = ?", (target,))
+
+    monkeypatch.setattr(worker, "run_job_by_id", run)
+    monkeypatch.setattr(worker.time, "sleep", advance)
+    worker.run_worker(job_id=target)
+    assert seen == [1, 2]
+
+
+@pytest.mark.parametrize("status,control", [("running", "running"), ("queued", "paused"), ("completed", "completed")])
+def test_scoped_worker_does_not_reclaim_ineligible_job(isolated_db, tmp_path, monkeypatch, status, control):
+    import services.worker as worker
+
+    _, target = _enqueue(tmp_path, "ineligible")
+    with get_connection() as connection:
+        connection.execute("UPDATE pipeline_jobs SET status = ?, control_state = ? WHERE id = ?", (status, control, target))
+    seen = []
+    monkeypatch.setattr(worker, "run_job_by_id", lambda job: seen.append(job))
+    worker.run_worker(job_id=target)
+    assert seen == []
 
 
 def test_transient_failure_keeps_application_processing_until_exhausted(
