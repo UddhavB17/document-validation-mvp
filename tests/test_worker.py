@@ -136,6 +136,43 @@ def test_failing_job_retries_then_fails_with_reason(isolated_db, tmp_path, monke
     assert application["status"] == "failed"
 
 
+@pytest.mark.parametrize("mapped", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+def test_failure_runs_pipeline_only_once_per_claim(
+    isolated_db, tmp_path, monkeypatch, mapped, terminal
+) -> None:
+    import services.job_control as control
+    import services.pipeline.tasks as pipeline_tasks
+    import services.worker as worker_mod
+
+    _, job_id = _enqueue(tmp_path, "single-run")
+    monkeypatch.setattr(
+        control, "load_job_input", lambda *_: {"mapped_manifest": {}} if mapped else {}
+    )
+    calls = []
+
+    def run_plain(_job_id):
+        calls.append("plain")
+        raise error_type("processing interrupted")
+
+    def run_mapped(_job_id):
+        calls.append("mapped")
+        raise error_type("processing interrupted")
+
+    error_type = control.PipelineFailedError if terminal else RuntimeError
+    monkeypatch.setattr(pipeline_tasks, "run_pipeline_job", run_plain)
+    monkeypatch.setattr(pipeline_tasks, "run_mapped_job", run_mapped)
+    assert worker_mod.process_once() is True
+    assert calls == ["mapped" if mapped else "plain"]
+    with get_connection() as connection:
+        job = connection.execute(
+            "SELECT status, attempt, next_run_at FROM pipeline_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+    assert job["attempt"] == 1
+    assert job["status"] == ("failed" if terminal else "retrying")
+    assert (job["next_run_at"] is None) is terminal
+
+
 def test_stale_running_job_is_recovered(isolated_db, tmp_path) -> None:
     import services.worker as worker_mod
 

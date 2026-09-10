@@ -93,6 +93,7 @@ export function useApplicationReview(applicationId: number | null) {
     },
     enabled: applicationId !== null,
     refetchInterval: getApplicationReviewPollInterval(),
+    retry: false,
   });
 }
 

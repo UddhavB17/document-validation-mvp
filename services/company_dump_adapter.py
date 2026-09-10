@@ -111,6 +111,9 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
     coapplicants = _collection_objects(text, "coapplicantdetails")
     coapplicant_kyc = _collection_objects(text, "coapplicantkyc")
     entity_addresses = _collection_objects(text, "entityaddressdetails")
+    guarantor_details = _collection_objects(text, "guarantordetails")
+    guarantor_kyc = _collection_objects(text, "guarantorkyc")
+    guarantor_addresses = _collection_objects(text, "guarantoraddressdetails")
     dbmaker = _first_object(text, "dbmaker")
 
     primary_name = (
@@ -205,6 +208,43 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
         _copy_known_person_fields(person, details, kyc, address)
         people[person_id] = person
 
+    guarantor_kyc_by_name = {
+        _name_key(_coapplicant_name(item)): item
+        for item in guarantor_kyc
+        if _coapplicant_name(item)
+    }
+    guarantor_details_by_name = {
+        _name_key(_coapplicant_name(item)): item
+        for item in guarantor_details
+        if _coapplicant_name(item)
+    }
+    ordered_guarantor_names: list[str] = []
+    seen_guarantor_keys: set[str] = set()
+    for item in [*guarantor_details, *guarantor_kyc]:
+        guarantor_name = _coapplicant_name(item)
+        guarantor_key = _name_key(guarantor_name)
+        if guarantor_name and guarantor_key not in seen_guarantor_keys:
+            ordered_guarantor_names.append(guarantor_name)
+            seen_guarantor_keys.add(guarantor_key)
+    for index, name in enumerate(ordered_guarantor_names, start=1):
+        name_key = _name_key(name)
+        details = guarantor_details_by_name.get(name_key, "")
+        kyc = guarantor_kyc_by_name.get(name_key, "")
+        address = _best_address(guarantor_addresses, name, "guarantor") or _best_address(
+            guarantor_addresses, name, ""
+        )
+        person_id = f"guarantor_{index}"
+        person = _person(
+            role="guarantor",
+            details=details,
+            kyc=kyc,
+            address=address,
+            warnings=warnings,
+        )
+        person["applicant_name"] = name
+        _copy_known_person_fields(person, details, kyc, address)
+        people[person_id] = person
+
     loan_id = _loan_id(text, applicant, cam)
     manifest: dict[str, Any] = {
         "schema_version": "1.0",
@@ -216,6 +256,15 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
         "document_index": [],
     }
     _copy_known_loan_fields(manifest, cam, dbmaker, applicant)
+    if not manifest.get("application_date"):
+        _copy_if_present(
+            manifest,
+            "application_date",
+            _clean_text(
+                _value(_first_object(text, "loanclientdetails"), "loanApplicationSubmittedDate")
+                or _value(_first_object(text, "loanlogindetails"), "loginDate")
+            ),
+        )
     if warnings:
         manifest["conversion_warnings"] = sorted(set(warnings))
     return manifest

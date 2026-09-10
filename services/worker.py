@@ -238,34 +238,16 @@ def run_job_by_id(job: dict[str, Any]) -> None:
             pipeline_tasks.run_mapped_job(job_id)
         else:
             # Dispatch on persisted manifest so plain/mapped routing survives
-            # even when job_type was left as the default.
-            try:
-                routed_mapped = False
-                with get_connection() as connection:
-                    app_row = connection.execute(
-                        "SELECT application_id FROM pipeline_jobs WHERE id = ?",
-                        (job_id,),
-                    ).fetchone()
-                if app_row is not None:
-                    from services.job_control import load_job_input
+            # even when job_type was left as the default. Execute exactly one
+            # runner per claim: a pipeline exception belongs to the retry
+            # policy, not a second immediate run through a different runner.
+            from services.job_control import load_job_input
 
-                    stored = load_job_input(int(app_row["application_id"]), job_id)
-                    routed_mapped = isinstance(stored.get("mapped_manifest"), dict)
-                if routed_mapped:
-                    pipeline_tasks.run_mapped_job(job_id)
-                else:
-                    pipeline_tasks.run_pipeline_job(job_id)
-            except PipelineCancelled:
-                raise
-            except Exception as dispatch_exc:
-                # If dispatch itself failed, fall back to plain runner so the
-                # error surfaces through the normal retry path.
-                if "No secure recovery payload" in str(dispatch_exc):
-                    raise
-                try:
-                    pipeline_tasks.run_pipeline_job(job_id)
-                except Exception:
-                    raise dispatch_exc from None
+            stored = load_job_input(int(job["application_id"]), job_id)
+            if isinstance(stored.get("mapped_manifest"), dict):
+                pipeline_tasks.run_mapped_job(job_id)
+            else:
+                pipeline_tasks.run_pipeline_job(job_id)
     except PipelineCancelled:
         return
     except Exception as exc:  # noqa: BLE001

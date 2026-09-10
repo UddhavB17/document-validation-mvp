@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from services.review.repository import (
-    list_application_rows_ordered_by_created_at,
-    load_pipeline_progress_by_application_ids,
-    load_validation_results_by_application_ids,
-)
+from services.config import cached_settings
+from services.review.repository import load_worklist_data
 from services.review.types import WorklistItem, WorklistResponse
 from services.reviewer import summarize_for_display
 
@@ -50,12 +47,10 @@ def _optional_float(value: object) -> float | None:
     return None
 
 
+@cached_settings()
 def build_worklist() -> WorklistResponse:
     """Assemble the reviewer worklist with issue counts and pipeline status."""
-    application_rows = list_application_rows_ordered_by_created_at()
-    application_ids = [_required_int(row["id"]) for row in application_rows]
-    anomaly_rows_by_application = load_validation_results_by_application_ids(application_ids)
-    progress_by_application = load_pipeline_progress_by_application_ids(application_ids)
+    application_rows, anomaly_rows_by_application, progress_by_application = load_worklist_data()
 
     worklist_items: list[WorklistItem] = []
     for application_row in application_rows:

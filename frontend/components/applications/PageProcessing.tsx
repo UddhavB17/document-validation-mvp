@@ -11,7 +11,7 @@ import { formatSeconds } from "@/lib/format";
 
 const PAGE_SIZE = 50;
 
-export function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType?: string) => void }) {
+export function PageProcessing({ data, onSelectPage }: { data: Pick<ApplicationReview, "page_events">; onSelectPage?: (pageNo: number, docType?: string) => void }) {
   const events = data.page_events;
   const [view, setView] = useState<"issues" | "all">("issues");
   const [search, setSearch] = useState("");
@@ -104,7 +104,7 @@ export function PageProcessing({ data, onSelectPage }: { data: ApplicationReview
                   <tr key={`${pageNo ?? "unknown"}-${index}`} className="align-top hover:bg-slate-50/60">
                     <td className="px-3.5 py-3">
                       {typeof pageNo === "number" ? (
-                        <button type="button" onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)} className="rounded-md bg-[#EAF0F8] px-2.5 py-1 font-mono text-xs font-bold text-[#2B4C7E] transition-colors hover:bg-[#2B4C7E] hover:text-white">Page {pageNo}</button>
+                        <button type="button" disabled={!onSelectPage} onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)} className="rounded-md bg-[#EAF0F8] px-2.5 py-1 font-mono text-xs font-bold text-[#2B4C7E] transition-colors hover:bg-[#2B4C7E] hover:text-white disabled:cursor-wait disabled:opacity-60">Page {pageNo}</button>
                       ) : "-"}
                     </td>
                     <td className="px-3.5 py-3"><StatusBadge status={row.status ?? "unknown"} /></td>

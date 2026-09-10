@@ -10,6 +10,7 @@ import unicodedata
 from typing import Any
 
 from services.classification_review_log import log_classification_review_event
+from services.config import cached_settings
 from services.content_triage import triage_page_content
 from services.field_assignment_refiner import refine_field_assignments
 from services.job_control import cooperate
@@ -121,6 +122,7 @@ def _sync_page_meta(page: dict[str, Any]) -> dict[str, Any]:
     return page
 
 
+@cached_settings()
 def _build_page_records(
     page_structure: list[dict[str, Any]],
     digital_text_by_page: dict[int, str],

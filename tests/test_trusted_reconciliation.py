@@ -51,13 +51,13 @@ def test_reconciliation_ignores_cached_page_counter_address() -> None:
     trusted = {
         "people": {
             "primary": {
-                "applicant_name": "Peeru Lal",
-                "address": "S/O: Unkar Lal",
+                "applicant_name": "Veeru Lal",
+                "address": "S/O: Ambar Lal",
             }
         }
     }
     pages = [
-        _page(1, "CAM", "primary", address="S/O: Unkar Lal, Semlibakta 326502"),
+        _page(1, "CAM", "primary", address="S/O: Ambar Lal, Semlibakta 326502"),
         _page(2, "Application Form", "primary", permanent_address="Page 2 of 128"),
     ]
 
@@ -71,7 +71,7 @@ def test_reconciliation_ignores_cached_page_counter_address() -> None:
     assert address["status"] == "MATCH"
     assert address["evidence"] == [
         {
-            "value": "S/O: Unkar Lal, Semlibakta 326502",
+            "value": "S/O: Ambar Lal, Semlibakta 326502",
             "document_type": "CAM",
             "page_number": 1,
             "match": True,

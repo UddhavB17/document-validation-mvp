@@ -856,6 +856,10 @@ def _field_is_semantically_valid(
         # application number.  It is not the loan application identifier.
         return False
     document_key = str(document_type or "").strip().casefold()
+    if document_key == "bank statement" and field == "application_number":
+        # A supporting loan-account statement identifies that account's
+        # application, not necessarily the loan currently being reviewed.
+        return False
     if (
         document_key in {"insurance form", "life insurance form", "property insurance form"}
         and field == "application_number"
@@ -1119,7 +1123,11 @@ def _cross_document_matches(
 ) -> list[dict]:
     anomalies: list[dict] = []
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
-    consistency_fields = PERSON_FIELDS | LOAN_FIELDS | NAME_FIELDS | ADDRESS_FIELDS
+    # A person can hold several bank accounts. Account-number differences alone
+    # are not contradictions; explicit trusted-account checks remain separate.
+    consistency_fields = (PERSON_FIELDS | LOAN_FIELDS | NAME_FIELDS | ADDRESS_FIELDS) - {
+        "account_number"
+    }
     for obs in observations:
         if obs["field"] in consistency_fields and not (
             obs["person_id"] == "unassigned" and obs["field"] in PERSON_FIELDS
@@ -1961,7 +1969,7 @@ def _matches(field: str, left: Any, right: Any) -> bool:
         right_tokens = address_tokens(right)
         shared = left_tokens & right_tokens
         # Trusted dumps sometimes contain only the relationship/address prefix
-        # (for example "S/O: Unkar Lal").  A full document address containing
+        # (for example "S/O: Sample Parent").  A full document address containing
         # that exact prefix is consistent, not a mismatch.
         if min(len(left_tokens), len(right_tokens)) >= 2 and (
             left_tokens <= right_tokens or right_tokens <= left_tokens

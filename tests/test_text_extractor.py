@@ -103,7 +103,7 @@ class TestExtractPanFromDigitalText:
         """When multiple PANs appear, the first match is returned."""
         from services.text_extractor import _extract_pan_number
 
-        text = "PAN1: ABCDE1234F and PAN2: XYZPQ9876K"
+        text = "PAN1: ABCDE1234F and PAN2: TSTPA7024Z"
         result = _extract_pan_number(text)
         assert result == "ABCDE1234F"
 
@@ -156,8 +156,8 @@ class TestExtractApplicantName:
         """CRIF-style 'For NAME' header should be treated as applicant name."""
         from services.text_extractor import _extract_applicant_name
 
-        text = "Credit Information Report\nFor PEERU LAL\nName:\nPEERU LAL"
-        assert _extract_applicant_name(text) == "PEERU LAL"
+        text = "Credit Information Report\nFor VEERU LAL\nName:\nVEERU LAL"
+        assert _extract_applicant_name(text) == "VEERU LAL"
 
     def test_for_active_accounts_is_not_applicant_name(self) -> None:
         """Later explanatory phrases must not override the report subject."""
@@ -165,24 +165,24 @@ class TestExtractApplicantName:
 
         text = (
             "Credit Information Report\n"
-            "For PEERU LAL\n"
+            "For VEERU LAL\n"
             "Account Summary\n"
             "Tip: Current Balance is considered only for ACTIVE accounts."
         )
-        assert _extract_applicant_name(text) == "PEERU LAL"
+        assert _extract_applicant_name(text) == "VEERU LAL"
 
     def test_hindi_label_is_skipped_when_name_is_next_line(self) -> None:
         """A Hindi label must not be stored as the applicant name."""
         from services.text_extractor import _extract_applicant_name
 
-        text = "Applicant Name\nआवेदक का नाम\nPeeru Lal"
-        assert _extract_applicant_name(text) == "Peeru Lal"
+        text = "Applicant Name\nआवेदक का नाम\nVeeru Lal"
+        assert _extract_applicant_name(text) == "Veeru Lal"
 
     def test_no_name_label_returns_none(self) -> None:
         """Text without a name label must return None."""
         from services.text_extractor import _extract_applicant_name
 
-        assert _extract_applicant_name("Loan Amount: 3,00,000\nPAN: XYZPQ9876K") is None
+        assert _extract_applicant_name("Loan Amount: 3,00,000\nPAN: TSTPA7024Z") is None
 
 
 class TestExtractApplicantNameByLayout:
@@ -198,11 +198,11 @@ class TestExtractApplicantNameByLayout:
             self._cell("Name", 23, 258, 50, 268),
             self._cell("Date of Birth", 23, 282, 79, 292),
             self._cell("Gender", 23, 306, 57, 316),
-            self._cell("Radha Bai", 147, 260, 199, 270),
+            self._cell("Sudha Bai", 147, 260, 199, 270),
             self._cell("01-01-1962", 147, 284, 204, 294),
             self._cell("Female", 147, 307, 184, 317),
         ]
-        assert _extract_applicant_name_by_layout(cells) == "Radha Bai"
+        assert _extract_applicant_name_by_layout(cells) == "Sudha Bai"
 
     def test_label_block_without_values_returns_none(self):
         from services.text_extractor import _extract_applicant_name_by_layout
@@ -335,7 +335,7 @@ class TestMissingFieldsReturnNone:
 
         digital_text = (
             "Applicant Name: Sunita Rao\n"
-            "PAN: QWERT5678Y\n"
+            "PAN: TSTPA7012Z\n"
             "Loan Amount: 3,00,000\n"
             "Mobile: 8765432109\n"
             "Address: 45 Park Avenue, Mumbai\n"
@@ -347,7 +347,7 @@ class TestMissingFieldsReturnNone:
         result = extract_ground_truth(pdf_path)
 
         assert result["applicant_name"] == "Sunita Rao"
-        assert result["pan_number"] == "QWERT5678Y"
+        assert result["pan_number"] == "TSTPA7012Z"
         assert result["loan_amount"] == "300000"
 
 

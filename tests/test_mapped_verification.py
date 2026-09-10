@@ -123,7 +123,7 @@ def test_shared_comparison_recovers_labeled_dob_from_raw_ocr(monkeypatch) -> Non
             "ocr_text": (
                 "UNION OF INDIA Driving Licence\n"
                 "Date of Birth\nBlood Group\nUnknown\n28/11/1994\n"
-                "Name\nKULDEEP SINGH"
+                "Name\nSANDEEP SINGH"
             ),
             "ocr_confidence": 0.93,
             "document_type": "Driving License",
@@ -300,7 +300,7 @@ Search Criteria Entered
 Name of the Debtor
 SITA KUMAR
 PAN
-FGHIJ5678K
+TSTPA7009Z
 Search Output Details
 Applicant RAMESH KUMAR PAN ABCDE1234F
 """
@@ -319,7 +319,7 @@ Applicant RAMESH KUMAR PAN ABCDE1234F
     manifest = {
         "reference_data": {
             "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
-            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "TSTPA7009Z"},
         },
         "documents": [
             {
@@ -349,7 +349,7 @@ Immovable
 Survey Number
 42
 Search Output Details
-Co-Applicant SITA KUMAR PAN FGHIJ5678K
+Co-Applicant SITA KUMAR PAN TSTPA7009Z
 """
     pages = [
         {
@@ -376,7 +376,7 @@ Co-Applicant SITA KUMAR PAN FGHIJ5678K
     manifest = {
         "reference_data": {
             "primary": {"applicant_name": "Ramesh Kumar", "pan_number": "ABCDE1234F"},
-            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "FGHIJ5678K"},
+            "coapplicant_1": {"applicant_name": "Sita Kumar", "pan_number": "TSTPA7009Z"},
         },
         "documents": [
             {
@@ -523,25 +523,25 @@ def test_aadhaar_address_comparison_includes_separate_relationship_fields() -> N
             "page_number": 241,
             "page_type": "digital",
             "is_readable": True,
-            "ocr_text": "DigiLocker verified e-Aadhaar\nS/O: Unkar Lal\nAddress\nSemli Bakhta 326502",
+            "ocr_text": "DigiLocker verified e-Aadhaar\nS/O: Ambar Lal\nAddress\nSemli Bakhta 326502",
             "document_type": "Aadhaar",
             "classification_confidence": 0.99,
             "extracted_fields": {
                 "relationship_qualifier": "S/O",
-                "related_person_name": "Unkar Lal",
+                "related_person_name": "Ambar Lal",
                 "address": "mehar basti, semli bakhta, Semlibakta, Jhalawar, Rajasthan, 326502",
             },
         }
     ]
     manifest = {
-        "reference_data": {"primary": {"address": "S/O: Unkar Lal"}},
+        "reference_data": {"primary": {"address": "S/O: Ambar Lal"}},
         "documents": [
             {
                 "source_document_id": "aadhaar-1",
                 "applicant_role": "primary",
                 "document_type": "Aadhaar",
                 "pages": [241],
-                "expected_fields": {"address": "S/O: Unkar Lal"},
+                "expected_fields": {"address": "S/O: Ambar Lal"},
             }
         ],
     }
@@ -566,7 +566,7 @@ def test_mapped_verification_rejects_address_like_applicant_name_candidate() -> 
         }
     ]
     manifest = {
-        "reference_data": {"primary": {"applicant_name": "Peeru Lal"}},
+        "reference_data": {"primary": {"applicant_name": "Veeru Lal"}},
         "documents": [
             {
                 "source_document_id": "file-0001",
@@ -593,20 +593,20 @@ def test_pan_mapped_to_property_deed_suppresses_third_party_name_evidence() -> N
             "is_readable": True,
             "ocr_text": (
                 "Endorsement of Execution\n"
-                "Name: MOHAN LAL Age: 40\n"
+                "Name: SOHAN LAL Age: 40\n"
                 "The lease deed or allotment order issued by the Gram Panchayat"
             ),
             "ocr_confidence": 0.84,
             "document_type": "PAN",
             "classification_confidence": 0.65,
             "detection_method": "inherited",
-            "extracted_fields": {"applicant_name": "MOHAN LAL", "dob": "40"},
+            "extracted_fields": {"applicant_name": "SOHAN LAL", "dob": "40"},
         }
     ]
     manifest = {
         "reference_data": {
             "coapplicant_1": {
-                "applicant_name": "Unkar Lal",
+                "applicant_name": "Ambar Lal",
                 "date_of_birth": "05-June-1961",
             }
         },
@@ -623,7 +623,7 @@ def test_pan_mapped_to_property_deed_suppresses_third_party_name_evidence() -> N
     result = compare_processed_pages(pages, manifest)
 
     text = _anomaly_text(result["anomalies"])
-    assert "MOHAN LAL" not in text
+    assert "SOHAN LAL" not in text
     assert not any("APPLICANT_NAME_MISMATCH" in item["rule_id"] for item in result["anomalies"])
     assert not any("DATE_OF_BIRTH_MISMATCH" in item["rule_id"] for item in result["anomalies"])
 
@@ -660,7 +660,7 @@ def test_zip_source_application_form_is_verified_as_one_merged_document() -> Non
     ]
     reference_data = {
         "primary": {
-            "applicant_name": "Peeru Lal",
+            "applicant_name": "Veeru Lal",
             "phone_number": "9000000001",
             "pan_number": "TSTAA0001T",
         }
@@ -733,7 +733,7 @@ def test_passbook_unique_account_match_makes_missing_name_non_blocking() -> None
             "account_number": "111122223333",
         },
         "coapplicant_1": {
-            "applicant_name": "Seeta Seeta",
+            "applicant_name": "Geeta Geeta",
             "account_number": "222233334444",
             "ifsc": "PUNB0001234",
         },
@@ -784,7 +784,7 @@ def test_passbook_account_match_does_not_hide_conflicting_holder_name() -> None:
         {
             "reference_data": {
                 "coapplicant_1": {
-                    "applicant_name": "Seeta Seeta",
+                    "applicant_name": "Geeta Geeta",
                     "account_number": "222233334444",
                     "ifsc": "PUNB0001234",
                 },
@@ -828,7 +828,7 @@ def test_passbook_shared_account_does_not_replace_holder_identity() -> None:
                     "account_number": "222233334444",
                 },
                 "coapplicant_1": {
-                    "applicant_name": "Seeta Seeta",
+                    "applicant_name": "Geeta Geeta",
                     "account_number": "222233334444",
                     "ifsc": "PUNB0001234",
                 },
@@ -915,9 +915,9 @@ def test_aadhaar_front_and_back_are_verified_as_one_document_set() -> None:
             "page_number": 1,
             "page_type": "digital",
             "is_readable": True,
-            "ocr_text": "Aadhaar Name: RADHA BAI Date of Birth: 01-01-1962",
+            "ocr_text": "Aadhaar Name: SUDHA BAI Date of Birth: 01-01-1962",
             "document_type": "Aadhaar",
-            "extracted_fields": {"applicant_name": "RADHA BAI", "dob": "1962-01-01"},
+            "extracted_fields": {"applicant_name": "SUDHA BAI", "dob": "1962-01-01"},
         },
         {
             "page_number": 2,
@@ -933,7 +933,7 @@ def test_aadhaar_front_and_back_are_verified_as_one_document_set() -> None:
         {
             "reference_data": {
                 "coapplicant_2": {
-                    "applicant_name": "Radha Bai",
+                    "applicant_name": "Sudha Bai",
                     "date_of_birth": "1962-01-01",
                     "address": "W/O Ukar Lal Rajasthan 326502",
                     "pin_code": "326502",
@@ -984,7 +984,7 @@ def test_mapped_verification_uses_mapping_and_flags_pan_mismatch(tmp_path, monke
         "services.mapped_verification.run_ocr_on_page",
         lambda path: {
             "ocr_text": (
-                "Name: Ramesh Kumar\nPermanent Account Number ZZZZZ9999Z"
+                "Name: Ramesh Kumar\nPermanent Account Number TSTPA7025Z"
                 if "page_14" in path
                 else "Name: Ramesh Kumar\n1234 5678 9012"
             ),
@@ -1120,7 +1120,7 @@ def test_manifest_normalizes_multi_person_contract_and_legacy_contract() -> None
             "loan_id": "MAP-MULTI",
             "people": {
                 "primary": {"applicant_name": "Ramesh", "pan_number": "ABCDE1234F"},
-                "coapplicant_1": {"applicant_name": "Sita", "pan_number": "FGHIJ5678K"},
+                "coapplicant_1": {"applicant_name": "Sita", "pan_number": "TSTPA7009Z"},
             },
             "document_index": [
                 {"person_id": "primary", "document_type": "PAN", "pages": [1]},
@@ -1253,7 +1253,7 @@ def test_multi_person_verification_checks_every_distinct_occurrence_and_wrong_ow
                 },
                 "coapplicant_1": {
                     "applicant_name": "Sita Kumar",
-                    "pan_number": "FGHIJ5678K",
+                    "pan_number": "TSTPA7009Z",
                 },
             },
             "document_index": [
@@ -1273,7 +1273,7 @@ def test_multi_person_verification_checks_every_distinct_occurrence_and_wrong_ow
                     "person_id": "coapplicant_1",
                     "document_type": "PAN",
                     "pages": [4],
-                    "expected_fields": {"pan_number": "FGHIJ5678K"},
+                    "expected_fields": {"pan_number": "TSTPA7009Z"},
                 },
             ],
         }
@@ -1358,21 +1358,21 @@ def test_mapped_verification_flags_missing_required_document_and_checks_utility_
 
 
 def test_name_match_ignores_missing_ocr_whitespace() -> None:
-    assert verify_name("PEERULAL", "Peeru Lal").match is True
+    assert verify_name("VEERULAL", "Veeru Lal").match is True
 
 
 def test_mapped_name_and_address_accept_trusted_indian_variants() -> None:
     from services.mapped_verification import _mapped_field_matches
 
     person = {
-        "applicant_name": "Suthar Anupkumar",
-        "father_name": "Chetanbhai Mohanlal Suthar",
+        "applicant_name": "Sutar Ajaykumar",
+        "father_name": "Kiranbhai Sohanlal Sutar",
         "permanent_address": "MODIVAS HARNIYAV AHMEDABAD 382435",
         "communication_address": "B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445",
     }
     assert _mapped_field_matches(
         "applicant_name",
-        "ANUPKUMAR CHETANBHAI SUTHAR",
+        "AJAYKUMAR KIRANBHAI SUTAR",
         person["applicant_name"],
         person,
     )

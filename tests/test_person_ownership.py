@@ -11,24 +11,24 @@ from services.person_ownership import (
     resolve_person_owner,
 )
 
-PEERU_FAMILY = {
+VEERU_FAMILY = {
     "primary": {
         "role": "primary",
-        "applicant_name": "Peeru Lal",
+        "applicant_name": "Veeru Lal",
         "pan_number": "TSTAA0001T",
         "date_of_birth": "18-May-1994",
         "phone_number": "9000000001",
     },
     "coapplicant_1": {
         "role": "coapplicant",
-        "applicant_name": "Unkar Lal",
+        "applicant_name": "Ambar Lal",
         "pan_number": "TSTBB0002T",
         "date_of_birth": "05-June-1961",
         "phone_number": "9000000002",
     },
     "coapplicant_2": {
         "role": "coapplicant",
-        "applicant_name": "Radha Bai",
+        "applicant_name": "Sudha Bai",
         "pan_number": "TSTCC0003T",
         "date_of_birth": "01-January-1962",
         "phone_number": "9000000003",
@@ -41,11 +41,11 @@ def test_bank_statement_owner_resolves_from_ocr_name() -> None:
         {
             "page_number": 1,
             "document_type": "Bank Statement",
-            "ocr_text": "OF Mr. PEERU LAL AT 10521 DAU,RURAL BANKING END BALANCE 1618.80 Cr",
+            "ocr_text": "OF Mr. VEERU LAL AT 10521 DAU,RURAL BANKING END BALANCE 1618.80 Cr",
             "extracted_fields": {},
         }
     ]
-    assign_page_owners(pages, {"people": PEERU_FAMILY})
+    assign_page_owners(pages, {"people": VEERU_FAMILY})
     assert pages[0]["person_id"] == "primary"
 
 
@@ -57,7 +57,7 @@ def test_nameless_bank_statement_does_not_emit_ownership_warning() -> None:
         "extracted_fields": {"account_number": "123456789012"},
     }
 
-    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
 
     assert page["person_id"] == "unassigned"
     assert ownership_anomalies_for_unassigned([page]) == []
@@ -80,8 +80,8 @@ def test_document_index_owner_survives_noisy_bank_continuation_page() -> None:
         },
     }
 
-    assign_page_owners([page], {"people": PEERU_FAMILY})
-    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
 
     assert page["person_id"] == "coapplicant_2"
     assert "document_index" in page["extracted_fields"]["_ownership"]["evidence"]
@@ -96,7 +96,7 @@ def test_unmatched_bank_holder_still_emits_ownership_warning() -> None:
         "extracted_fields": {"account_holder_name": "Outside Person"},
     }
 
-    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
 
     assert page["person_id"] == "unassigned"
     assert [item["rule_id"] for item in ownership_anomalies_for_unassigned([page])] == [
@@ -107,15 +107,15 @@ def test_unmatched_bank_holder_still_emits_ownership_warning() -> None:
 def test_bank_statement_holder_beats_related_primary_and_clears_anomaly() -> None:
     people = {
         "primary": {"role": "primary", "applicant_name": "Kala Singh"},
-        "coapplicant_1": {"role": "coapplicant", "applicant_name": "Seeta Seeta"},
-        "coapplicant_2": {"role": "coapplicant", "applicant_name": "Kuldeep Singh"},
+        "coapplicant_1": {"role": "coapplicant", "applicant_name": "Geeta Geeta"},
+        "coapplicant_2": {"role": "coapplicant", "applicant_name": "Sandeep Singh"},
     }
     page = {
         "page_number": 19,
         "document_type": "Bank Statement",
         "source_filename": "Case/Co-Applicant/BANK/statement.pdf",
         "ocr_text": (
-            "Account Summary\nWelcome:\nMr. Kuldeep Singh\nMr. Kuldeep Singh\n"
+            "Account Summary\nWelcome:\nMr. Sandeep Singh\nMr. Sandeep Singh\n"
             "Not Available\nS/O: Kala Singh, Ward No 11\n"
             "Date of Statement: 31-07-2026\nSTATEMENT OF ACCOUNT\n"
             "Balance\n01/01/2026\nWDL TFR\n"
@@ -167,7 +167,7 @@ def test_relationship_name_alone_never_becomes_bank_statement_holder() -> None:
         },
         {
             "primary": {"role": "primary", "applicant_name": "Kala Singh"},
-            "coapplicant_1": {"role": "coapplicant", "applicant_name": "Seeta Singh"},
+            "coapplicant_1": {"role": "coapplicant", "applicant_name": "Geeta Singh"},
             "coapplicant_2": {"role": "coapplicant", "applicant_name": "Nitin Singh"},
         },
         "Bank Statement",
@@ -182,12 +182,12 @@ def test_equal_holder_evidence_never_defaults_to_primary() -> None:
     owner = resolve_person_owner(
         {
             "document_type": "Bank Statement",
-            "ocr_text": "Account Holder Name: Kala Singh\nCustomer Name: Kuldeep Singh",
+            "ocr_text": "Account Holder Name: Kala Singh\nCustomer Name: Sandeep Singh",
             "extracted_fields": {},
         },
         {
             "primary": {"role": "primary", "applicant_name": "Kala Singh"},
-            "coapplicant_1": {"role": "coapplicant", "applicant_name": "Kuldeep Singh"},
+            "coapplicant_1": {"role": "coapplicant", "applicant_name": "Sandeep Singh"},
         },
         "Bank Statement",
     )
@@ -200,36 +200,36 @@ def test_passbook_owner_resolves_from_ocr_name() -> None:
         {
             "page_number": 1,
             "document_type": "Passbook",
-            "ocr_text": "Punjab National Bank Passbook Account Holder PEERU LAL SEMLI BAKHTA",
+            "ocr_text": "Punjab National Bank Passbook Account Holder VEERU LAL SEMLI BAKHTA",
             "extracted_fields": {},
         }
     ]
-    assign_page_owners(pages, {"people": PEERU_FAMILY})
+    assign_page_owners(pages, {"people": VEERU_FAMILY})
     assert pages[0]["person_id"] == "primary"
 
     owner = resolve_person_owner(
         {
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "UNKAR LAL",
+                "applicant_name": "AMBAR LAL",
                 "pan_number": "TSTBB0002T",
                 "dob": "1961-06-05",
             },
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "PAN",
     )
     assert owner["person_id"] == "coapplicant_1"
     assert owner["confidence"] >= 0.7
 
 
-def test_radha_cibil_resolves_to_coapplicant_2() -> None:
+def test_sudha_cibil_resolves_to_coapplicant_2() -> None:
     owner = resolve_person_owner(
         {
             "document_type": "CIBIL Report",
-            "extracted_fields": {"applicant_name": "RADHA BAI"},
+            "extracted_fields": {"applicant_name": "SUDHA BAI"},
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "CIBIL Report",
     )
     assert owner["person_id"] == "coapplicant_2"
@@ -241,7 +241,7 @@ def test_cibil_does_not_default_to_primary_when_unmatched() -> None:
             "document_type": "CIBIL Report",
             "extracted_fields": {"applicant_name": "Somebody Else Entirely"},
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "CIBIL Report",
     )
     assert owner["person_id"] is None
@@ -251,16 +251,16 @@ def test_cheque_owner_resolves_from_exact_full_account_number() -> None:
     owner = resolve_person_owner(
         {
             "document_type": "Cheque",
-            "ocr_text": "CHEQUE\nA/c No.\n41249946368",
-            "extracted_fields": {"account_number": "41249946368"},
+            "ocr_text": "CHEQUE\nA/c No.\n90000001005",
+            "extracted_fields": {"account_number": "90000001005"},
         },
         {
             "primary": {
                 "applicant_name": "Kala Singh",
-                "account_number": "41249946368",
+                "account_number": "90000001005",
             },
             "coapplicant_1": {
-                "applicant_name": "Seeta Seeta",
+                "applicant_name": "Geeta Geeta",
                 "account_number": "99999999999",
             },
         },
@@ -276,16 +276,16 @@ def test_unique_full_account_number_overrides_wrong_source_role() -> None:
     owner = resolve_person_owner(
         {
             "document_type": "Passbook",
-            "ocr_text": "PASSBOOK\nAccount No. 41249946368\nIFSC SBIN0031538",
-            "extracted_fields": {"account_number": "41249946368"},
+            "ocr_text": "PASSBOOK\nAccount No. 90000001005\nIFSC SBIN0031538",
+            "extracted_fields": {"account_number": "90000001005"},
         },
         {
             "primary": {
                 "applicant_name": "Kala Singh",
-                "account_number": "41249946368",
+                "account_number": "90000001005",
             },
             "coapplicant_1": {
-                "applicant_name": "Seeta Seeta",
+                "applicant_name": "Geeta Geeta",
                 "account_number": "99999999999",
             },
         },
@@ -303,14 +303,14 @@ def test_cheque_owner_resolves_from_printed_signature_holder_name() -> None:
         {
             "document_type": "Cheque",
             "ocr_text": (
-                "State Bank Of India\nA/c No.\n41249946368\nMr. Kala Singh\nPlease sign above"
+                "State Bank Of India\nA/c No.\n90000001005\nMr. Kala Singh\nPlease sign above"
             ),
             # Reproduce the old extractor mistake from application 93.
             "extracted_fields": {"account_holder_name": "State Bank Of India"},
         },
         {
             "primary": {"applicant_name": "Kala Singh"},
-            "coapplicant_1": {"applicant_name": "Seeta Seeta"},
+            "coapplicant_1": {"applicant_name": "Geeta Geeta"},
         },
         "Cheque",
     )
@@ -323,15 +323,15 @@ def test_cersai_debtor_pan_assigns_report_to_coapplicant_only() -> None:
     text = """Debtor Based Search Report
 CERSAI Details
 PAN
-AAECC5770G
+TSTPA7000Z
 Search Criteria Entered
 Name of the Debtor
-RADHA BAI
+SUDHA BAI
 PAN
 TSTCC0003T
 Search Output Details
-Applicant PEERU LAL PAN TSTAA0001T
-Co-Applicant UNKAR LAL PAN TSTBB0002T
+Applicant VEERU LAL PAN TSTAA0001T
+Co-Applicant AMBAR LAL PAN TSTBB0002T
 """
     owner = resolve_person_owner(
         {
@@ -339,7 +339,7 @@ Co-Applicant UNKAR LAL PAN TSTBB0002T
             "ocr_text": text,
             "extracted_fields": extract_fields("CERSAI Report", text),
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "CERSAI Report",
     )
 
@@ -352,7 +352,7 @@ def test_cersai_primary_debtor_assigns_only_to_primary() -> None:
     text = """Debtor Based Search Report
 Search Criteria Entered
 Name of the Debtor
-PEERU LAL
+VEERU LAL
 PAN
 TSTAA0001T
 Search Output Details
@@ -364,7 +364,7 @@ No Match Found
             "ocr_text": text,
             "extracted_fields": extract_fields("CERSAI Report", text),
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "CERSAI Report",
     )
 
@@ -376,7 +376,7 @@ def test_cersai_result_pages_inherit_debtor_owner_not_people_in_output() -> None
     cover_text = """Debtor Based Search Report
 Search Criteria Entered
 Name of the Debtor
-UNKAR LAL
+AMBAR LAL
 PAN
 TSTBB0002T
 Search Output Details
@@ -391,17 +391,17 @@ Search Output Details
         {
             "page_number": 2,
             "document_type": "CERSAI Report",
-            "ocr_text": "Applicant PEERU LAL PAN TSTAA0001T; Co-Applicant RADHA BAI PAN TSTCC0003T",
+            "ocr_text": "Applicant VEERU LAL PAN TSTAA0001T; Co-Applicant SUDHA BAI PAN TSTCC0003T",
             # Simulate stale/generic extraction from a result page. It must not
             # take ownership away from the debtor on the cover/search page.
             "extracted_fields": {
-                "applicant_name": "PEERU LAL",
+                "applicant_name": "VEERU LAL",
                 "pan_number": "TSTAA0001T",
             },
         },
     ]
 
-    assign_page_owners(pages, {"people": PEERU_FAMILY})
+    assign_page_owners(pages, {"people": VEERU_FAMILY})
 
     assert [page["person_id"] for page in pages] == ["coapplicant_1", "coapplicant_1"]
     assert all(
@@ -416,7 +416,7 @@ Search Criteria Entered
 Name of the Debtor
 OUTSIDE PERSON
 PAN
-ZZZZZ9999Z
+TSTPA7025Z
 Search Output Details
 No Match Found
 """
@@ -427,7 +427,7 @@ No Match Found
         "extracted_fields": extract_fields("CERSAI Report", text),
     }
 
-    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
 
     assert page["person_id"] == "unassigned"
     anomalies = ownership_anomalies_for_unassigned([page])
@@ -438,12 +438,12 @@ def test_asset_based_cersai_remains_loan_level_and_ignores_result_pans() -> None
     text = """Asset Based Search Report
 CERSAI Details
 PAN
-AAECC5770G
+TSTPA7000Z
 Search Criteria Entered
 Asset Category
 Immovable
 Search Output Details
-Co-Applicant RADHA BAI PAN TSTCC0003T
+Co-Applicant SUDHA BAI PAN TSTCC0003T
 """
     page = {
         "document_type": "CERSAI Report",
@@ -452,7 +452,7 @@ Co-Applicant RADHA BAI PAN TSTCC0003T
     }
     owner = resolve_person_owner(
         page,
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "CERSAI Report",
     )
 
@@ -460,7 +460,7 @@ Co-Applicant RADHA BAI PAN TSTCC0003T
     assert owner["evidence"] == ["cersai_asset_based"]
     assert owner["document_scope"] == "loan_level"
 
-    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
 
     assert page["person_id"] is None
     assert page["applicant_role"] is None
@@ -481,7 +481,7 @@ def test_assign_page_owners_stamps_coapplicant_pages() -> None:
             "page_number": 7,
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "PEERU LAL",
+                "applicant_name": "VEERU LAL",
                 "pan_number": "TSTAA0001T",
                 "dob": "1994-05-18",
             },
@@ -490,7 +490,7 @@ def test_assign_page_owners_stamps_coapplicant_pages() -> None:
             "page_number": 10,
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "UNKAR LAL",
+                "applicant_name": "AMBAR LAL",
                 "pan_number": "TSTBB0002T",
                 "dob": "1961-06-05",
             },
@@ -498,22 +498,22 @@ def test_assign_page_owners_stamps_coapplicant_pages() -> None:
         {
             "page_number": 15,
             "document_type": "CIBIL Report",
-            "extracted_fields": {"applicant_name": "RADHA BAI"},
+            "extracted_fields": {"applicant_name": "SUDHA BAI"},
         },
     ]
-    assign_page_owners(pages, {"people": PEERU_FAMILY})
+    assign_page_owners(pages, {"people": VEERU_FAMILY})
     assert pages[0]["person_id"] == "primary"
     assert pages[1]["person_id"] == "coapplicant_1"
     assert pages[2]["person_id"] == "coapplicant_2"
 
 
-def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
+def test_no_cross_person_trusted_mismatches_for_veeru_family() -> None:
     pages = [
         {
             "page_number": 7,
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "PEERU LAL",
+                "applicant_name": "VEERU LAL",
                 "pan_number": "TSTAA0001T",
                 "dob": "1994-05-18",
             },
@@ -522,7 +522,7 @@ def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
             "page_number": 10,
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "UNKAR LAL",
+                "applicant_name": "AMBAR LAL",
                 "pan_number": "TSTBB0002T",
                 "dob": "05-June-1961",
             },
@@ -530,17 +530,17 @@ def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
         {
             "page_number": 15,
             "document_type": "CIBIL Report",
-            # Intentionally missing person_id — ownership must infer Radha.
-            "extracted_fields": {"applicant_name": "RADHA BAI"},
+            # Intentionally missing person_id — ownership must infer Sudha.
+            "extracted_fields": {"applicant_name": "SUDHA BAI"},
         },
         {
             "page_number": 18,
             "document_type": "CIBIL Report",
             "person_id": "primary",  # Wrong stamp; identity must override.
-            "extracted_fields": {"applicant_name": "UNKAR LAL"},
+            "extracted_fields": {"applicant_name": "AMBAR LAL"},
         },
     ]
-    anomalies = run_consistency_checks(pages, {"people": PEERU_FAMILY})
+    anomalies = run_consistency_checks(pages, {"people": VEERU_FAMILY})
     trusted = [
         item
         for item in anomalies
@@ -552,9 +552,9 @@ def test_no_cross_person_trusted_mismatches_for_peeru_family() -> None:
 SINGLE_PERSON = {
     "primary": {
         "role": "primary",
-        "applicant_name": "Suthar Anupkumar",
+        "applicant_name": "Sutar Ajaykumar",
         "pan_number": "TSTAA0001T",
-        "father_name": "Chetanbhai Mohanlal Suthar",
+        "father_name": "Kiranbhai Sohanlal Sutar",
     }
 }
 
@@ -567,7 +567,7 @@ def test_single_person_fallback_refused_when_observed_name_contradicts() -> None
             {
                 "document_type": "Aadhaar",
                 "extracted_fields": {
-                    "applicant_name": "Solanki Jayesh Chamanbhai",
+                    "applicant_name": "Parmar Naresh Ramanbhai",
                     "aadhaar_number": "991010972822",
                 },
                 "ocr_text": "",
@@ -585,7 +585,7 @@ def test_single_person_fallback_kept_for_matching_or_absent_names() -> None:
         [
             {
                 "document_type": "Aadhaar",
-                "extracted_fields": {"applicant_name": "Suthar Anupkumar"},
+                "extracted_fields": {"applicant_name": "Sutar Ajaykumar"},
                 "ocr_text": "",
             }
         ],
@@ -605,17 +605,17 @@ def test_single_person_fallback_kept_for_matching_or_absent_names() -> None:
 def test_name_with_trusted_father_token_matches_same_person() -> None:
     from services.person_ownership import name_matches_trusted_person
 
-    # "Anupkumar Chetanbhai Suthar" = given name + father's name + surname:
+    # "Ajaykumar Kiranbhai Sutar" = given name + father's name + surname:
     # the same person under Gujarati naming conventions.
-    assert name_matches_trusted_person("Anupkumar Chetanbhai Suthar", SINGLE_PERSON["primary"])
+    assert name_matches_trusted_person("Ajaykumar Kiranbhai Sutar", SINGLE_PERSON["primary"])
     # A relative sharing the father/surname tokens is still a different person.
-    assert not name_matches_trusted_person("Aaratiben Anupkumar Suthar", SINGLE_PERSON["primary"])
+    assert not name_matches_trusted_person("Bharatiben Ajaykumar Sutar", SINGLE_PERSON["primary"])
 
 
 def test_duplicated_trusted_name_tokens_still_match() -> None:
     from services.person_ownership import name_matches_trusted_person
 
-    assert name_matches_trusted_person("Kuldeep", {"applicant_name": "Kuldeep KULDEEP"})
+    assert name_matches_trusted_person("Sandeep", {"applicant_name": "Sandeep SANDEEP"})
 
 
 def test_passbook_owner_uses_duplicate_aware_name_matching() -> None:
@@ -626,18 +626,18 @@ def test_passbook_owner_uses_duplicate_aware_name_matching() -> None:
         },
         "coapplicant_1": {
             "role": "coapplicant",
-            "applicant_name": "Seeta Seeta",
+            "applicant_name": "Geeta Geeta",
         },
         "coapplicant_2": {
             "role": "coapplicant",
-            "applicant_name": "Kuldeep Singh",
+            "applicant_name": "Sandeep Singh",
         },
     }
 
     owner = resolve_person_owner(
         {
             "document_type": "Passbook",
-            "extracted_fields": {"account_holder_name": "'SEETA'"},
+            "extracted_fields": {"account_holder_name": "'GEETA'"},
         },
         people,
         "Passbook",
@@ -657,12 +657,12 @@ def test_passbook_owner_uses_labeled_masked_aadhaar_last_four() -> None:
         },
         "coapplicant_1": {
             "role": "coapplicant",
-            "applicant_name": "Seeta Seeta",
+            "applicant_name": "Geeta Geeta",
             "aadhaar_last4": "1641",
         },
         "coapplicant_2": {
             "role": "coapplicant",
-            "applicant_name": "Kuldeep Singh",
+            "applicant_name": "Sandeep Singh",
             "aadhaar_last4": "8671",
         },
     }
@@ -687,11 +687,11 @@ def test_strong_pan_overrides_wrong_provided_mapping() -> None:
         {
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "UNKAR LAL",
+                "applicant_name": "AMBAR LAL",
                 "pan_number": "TSTBB0002T",
             },
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "PAN",
         provided_person_id="primary",
     )
@@ -705,7 +705,7 @@ def test_clean_external_name_rejects_unsubstantiated_provided_mapping() -> None:
             "document_type": "CIBIL Report",
             "extracted_fields": {"applicant_name": "EXTERNAL GUARANTOR"},
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "CIBIL Report",
         provided_person_id="primary",
     )
@@ -718,8 +718,8 @@ def test_source_role_missing_from_trusted_never_defaults_to_primary() -> None:
         {
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "SUTHAR AARATIBEN ANUPKUMAR",
-                "pan_number": "SXPPS4453F",
+                "applicant_name": "SUTAR BHARATIBEN AJAYKUMAR",
+                "pan_number": "TSTPA1053Z",
             },
         },
         SINGLE_PERSON,
@@ -736,8 +736,8 @@ def test_present_source_role_resolves_and_exact_identity_can_override_path() -> 
     coapp = resolve_person_owner(
         {"document_type": "PAN", "extracted_fields": {}},
         {
-            "primary": PEERU_FAMILY["primary"],
-            "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+            "primary": VEERU_FAMILY["primary"],
+            "coapplicant_1": VEERU_FAMILY["coapplicant_1"],
         },
         "PAN",
         source_filename="Co_Applicant/KYC/PAN.pdf",
@@ -748,11 +748,11 @@ def test_present_source_role_resolves_and_exact_identity_can_override_path() -> 
         {
             "document_type": "PAN",
             "extracted_fields": {
-                "applicant_name": "PEERU LAL",
+                "applicant_name": "VEERU LAL",
                 "pan_number": "TSTAA0001T",
             },
         },
-        PEERU_FAMILY,
+        VEERU_FAMILY,
         "PAN",
         source_filename="Co-Applicant/KYC/misfiled.pdf",
     )
@@ -763,10 +763,10 @@ def test_present_source_role_resolves_and_exact_identity_can_override_path() -> 
 def test_unlabeled_generic_and_raw_aadhaar_do_not_override_source_role() -> None:
     people = {
         "primary": {
-            **PEERU_FAMILY["primary"],
+            **VEERU_FAMILY["primary"],
             "aadhaar_number": "822113513365",
         },
-        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+        "coapplicant_1": VEERU_FAMILY["coapplicant_1"],
     }
     owner = resolve_person_owner(
         {
@@ -788,16 +788,16 @@ def test_unlabeled_generic_and_raw_aadhaar_do_not_override_source_role() -> None
 def test_phone_name_and_aadhaar_last4_cannot_override_source_role() -> None:
     people = {
         "primary": {
-            **PEERU_FAMILY["primary"],
+            **VEERU_FAMILY["primary"],
             "aadhaar_last4": "3365",
         },
-        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+        "coapplicant_1": VEERU_FAMILY["coapplicant_1"],
     }
     owner = resolve_person_owner(
         {
             "document_type": "Application Form",
             "extracted_fields": {
-                "applicant_name": "PEERU LAL",
+                "applicant_name": "VEERU LAL",
                 "phone_number": "9000000001",
                 "aadhaar_last4": "3365",
             },
@@ -814,10 +814,10 @@ def test_phone_name_and_aadhaar_last4_cannot_override_source_role() -> None:
 def test_full_labeled_aadhaar_can_override_wrong_source_role() -> None:
     people = {
         "primary": {
-            **PEERU_FAMILY["primary"],
+            **VEERU_FAMILY["primary"],
             "aadhaar_number": "822113513365",
         },
-        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+        "coapplicant_1": VEERU_FAMILY["coapplicant_1"],
     }
     owner = resolve_person_owner(
         {
@@ -837,10 +837,10 @@ def test_full_labeled_aadhaar_can_override_wrong_source_role() -> None:
 def test_full_observed_aadhaar_does_not_override_when_trusted_has_last4_only() -> None:
     people = {
         "primary": {
-            **PEERU_FAMILY["primary"],
+            **VEERU_FAMILY["primary"],
             "aadhaar_last4": "3365",
         },
-        "coapplicant_1": PEERU_FAMILY["coapplicant_1"],
+        "coapplicant_1": VEERU_FAMILY["coapplicant_1"],
     }
     owner = resolve_person_owner(
         {
@@ -858,10 +858,10 @@ def test_full_observed_aadhaar_does_not_override_when_trusted_has_last4_only() -
 
 def test_trusted_name_match_ignores_honorific_and_ocr_relative_noise() -> None:
     assert name_matches_trusted_person(
-        "MR- ★ ANUPKUMAR CHSTAHBHAI SUTHAR",
+        "MR- ★ AJAYKUMAR KIRAHBHAI SUTAR",
         {
-            "applicant_name": "SUTHAR ANUPKUMAR",
-            "father_name": "CHETANBHAI MOHANLAL SUTHAR",
+            "applicant_name": "SUTAR AJAYKUMAR",
+            "father_name": "KIRANBHAI SOHANLAL SUTAR",
         },
     )
 
@@ -885,8 +885,8 @@ def test_document_index_owner_survives_nameless_continuation_reassignment() -> N
 
     # Checklist ownership plus consistency ownership: both passes must keep
     # the group-level resolution on a nameless continuation.
-    assign_page_owners([page], {"people": PEERU_FAMILY})
-    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
 
     assert page["person_id"] == "coapplicant_2"
     assert "document_index" in page["extracted_fields"]["_ownership"]["evidence"]
@@ -901,7 +901,7 @@ def test_decisive_identity_still_overrides_document_index_owner() -> None:
         "source_filename": "Co-Applicant/KYC/mixed.pdf",
         "ocr_text": "PAN TSTBB0002T",
         "extracted_fields": {
-            "applicant_name": "UNKAR LAL",
+            "applicant_name": "AMBAR LAL",
             "pan_number": "TSTBB0002T",
             "_ownership": {
                 "person_id": "coapplicant_2",
@@ -911,6 +911,6 @@ def test_decisive_identity_still_overrides_document_index_owner() -> None:
         },
     }
 
-    assign_page_owners([page], {"people": PEERU_FAMILY})
+    assign_page_owners([page], {"people": VEERU_FAMILY})
 
     assert page["person_id"] == "coapplicant_1"

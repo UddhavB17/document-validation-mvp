@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -205,6 +209,57 @@ def log_effective_config() -> None:
 _MISSING = object()
 
 
+@dataclass
+class _SettingsSnapshot:
+    rows: dict[str, tuple[Any, str | None]] | None = None
+    expires_at: float = 0.0
+
+
+_settings_snapshot: ContextVar[_SettingsSnapshot | None] = ContextVar(
+    "pipeline_settings_snapshot", default=None
+)
+
+
+@contextmanager
+def cached_settings() -> Iterator[None]:
+    """Reuse database settings for five seconds within one pipeline invocation.
+
+    Environment overrides are still evaluated on every read. API requests and
+    other jobs retain their own context; settings edited while processing are
+    picked up on the first database-backed read after expiry. Store raw values
+    so default arguments and secret decryption retain their usual semantics.
+    """
+    token = _settings_snapshot.set(_SettingsSnapshot())
+    try:
+        yield
+    finally:
+        _settings_snapshot.reset(token)
+
+
+def _database_setting(key: str) -> tuple[Any, str | None] | None:
+    from database.db import get_connection
+
+    snapshot = _settings_snapshot.get()
+    if snapshot is not None:
+        if snapshot.rows is None or time.monotonic() >= snapshot.expires_at:
+            with get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT config_key, config_value, value_type FROM system_settings"
+                ).fetchall()
+            snapshot.rows = {
+                str(row["config_key"]): (row["config_value"], row["value_type"])
+                for row in rows
+            }
+            snapshot.expires_at = time.monotonic() + 5.0
+        return snapshot.rows.get(key)
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT config_value, value_type FROM system_settings WHERE config_key = ?",
+            (key,),
+        ).fetchone()
+    return (row["config_value"], row["value_type"]) if row is not None else None
+
+
 def is_secret_setting(config_key: str, value_type: str | None) -> bool:
     """Return True when a setting must be encrypted at rest and masked in APIs."""
     return str(value_type or "").lower() == "secret" or str(config_key or "").lower().endswith(
@@ -259,30 +314,29 @@ def get_setting(key: str, default: Any = None) -> Any:
         except ValueError:
             return value
 
+    # Do not pay for a remote database round trip when it cannot affect the
+    # result. This also lets environment settings work during a DB outage.
+    if env_val is not None:
+        return _coerce_env(env_val)
+
     db_value: Any = _MISSING
     db_value_type: str | None = None
-    from database.db import get_connection
 
     try:
-        with get_connection() as conn:
-            row = conn.execute(
-                "SELECT config_value, value_type FROM system_settings WHERE config_key = ?",
-                (key,),
-            ).fetchone()
-            if row:
-                val = row["config_value"]
-                val_type = row["value_type"]
-                db_value_type = str(val_type) if val_type is not None else None
-                if val_type == "bool":
-                    db_value = str(val).strip().lower() in ("1", "true", "yes", "on")
-                elif val_type == "int":
-                    db_value = int(val)
-                elif val_type == "float":
-                    db_value = float(val)
-                elif val_type == "json":
-                    db_value = json.loads(val)
-                else:
-                    db_value = val
+        row = _database_setting(key)
+        if row is not None:
+            val, val_type = row
+            db_value_type = str(val_type) if val_type is not None else None
+            if val_type == "bool":
+                db_value = str(val).strip().lower() in ("1", "true", "yes", "on")
+            elif val_type == "int":
+                db_value = int(val)
+            elif val_type == "float":
+                db_value = float(val)
+            elif val_type == "json":
+                db_value = json.loads(val)
+            else:
+                db_value = val
     except Exception as exc:
         logger.warning(
             "Failed to load setting %r from database: %s; using env/default",
@@ -290,9 +344,6 @@ def get_setting(key: str, default: Any = None) -> Any:
             exc,
         )
 
-    # Environment always wins; a blank env value means "unset".
-    if env_val is not None:
-        return _coerce_env(env_val)
     if db_value is not _MISSING:
         if (
             isinstance(db_value, str)

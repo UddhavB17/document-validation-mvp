@@ -1,6 +1,6 @@
 """Assign each loan-file page to the correct trusted person before comparisons.
 
-Cross-person TRUSTED_* anomalies happen when co-applicant OCR (Unkar / Radha)
+Cross-person TRUSTED_* anomalies happen when co-applicant OCR
 is compared against primary.  Ownership is resolved from identity evidence
 (PAN, Aadhaar, bank account, phone, DOB, name) — not from a family tree.
 """
@@ -31,6 +31,7 @@ from services.cersai import (
 from services.identifiers import plausible_aadhaar_digits
 from services.person_names import is_person_name_candidate, name_similarity
 from services.validation_gates import (
+    bank_statement_header,
     field_reliable_for_validation,
     has_labeled_aadhaar_value,
 )
@@ -1003,6 +1004,9 @@ def _source_override_evidence(
             candidates.append(mapped)
         generic = fields.get("_generic_evidence")
         ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
+        if str(page.get("document_type") or "").casefold() == "bank statement":
+            ocr_text = bank_statement_header(ocr_text)
+            generic = None
         account_identity_document = str(page.get("document_type") or "").strip().casefold() in {
             "bank statement",
             "passbook",
@@ -1260,6 +1264,9 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
             else:
                 continue
         ocr_text = str(page.get("ocr_text") or fields.get("ocr_text") or "")
+        is_bank_statement = str(page.get("document_type") or "").casefold() == "bank statement"
+        if is_bank_statement:
+            ocr_text = bank_statement_header(ocr_text)
         candidates = [fields]
         mapped = fields.get("_mapped_extraction")
         if isinstance(mapped, dict):
@@ -1281,7 +1288,7 @@ def identity_observations(pages: list[dict[str, Any]]) -> dict[str, list[Any]]:
                         continue
                     observations[canonical].append(value)
         generic = fields.get("_generic_evidence")
-        if isinstance(generic, dict):
+        if isinstance(generic, dict) and not is_bank_statement:
             for value in generic.get("pan_numbers") or []:
                 observations["pan_number"].append(value)
             for value in generic.get("aadhaar_numbers") or []:
@@ -1356,13 +1363,7 @@ def _banking_holder_name_observations(text: str) -> list[str]:
     parser is layout-tolerant but deliberately bounded to subject-bearing header
     patterns and short standalone name rows before transaction data begins.
     """
-    raw_header = re.split(
-        r"(?:^|\n)\s*(?:transactions?|transaction\s+details|date\s+particulars|"
-        r"opening\s+balance)\s*(?:\n|$)",
-        str(text or ""),
-        maxsplit=1,
-        flags=re.IGNORECASE,
-    )[0]
+    raw_header = bank_statement_header(text)
     lines = [re.sub(r"\s+", " ", line).strip(" ,.;") for line in raw_header.splitlines()]
     candidates: list[str] = []
 
@@ -1390,7 +1391,7 @@ def _banking_holder_name_observations(text: str) -> list[str]:
     ):
         candidate = match.group(1).strip(" ,.;")
         # Inline passbook headers sometimes append a locality after the holder
-        # ("Account Holder PEERU LAL SEMLI BAKHTA").  Preserve the short tail
+        # ("Account Holder SAMPLE NAME SAMPLE LOCALITY").  Preserve the short tail
         # as a bounded haystack; matching still requires a trusted full name.
         if (
             any(character.isalpha() for character in candidate)

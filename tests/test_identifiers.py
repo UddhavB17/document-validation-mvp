@@ -17,9 +17,9 @@ def test_accepts_spaced_and_hyphenated_aadhaar() -> None:
 @pytest.mark.parametrize(
     "value",
     [
-        "919374200200",  # mobile number with 91 country code
+        "919000000403",  # mobile number with 91 country code
         "917359401463",
-        "9374200200",  # bare 10-digit mobile
+        "9000000403",  # bare 10-digit mobile
         "12345",
         "",
         None,

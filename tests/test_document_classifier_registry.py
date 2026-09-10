@@ -10,6 +10,47 @@ def test_fuzzy_ocr_noisy_heading_classified() -> None:
     assert result["confidence"] >= 0.75
 
 
+def test_co_borrower_personal_details_page_is_an_application_form() -> None:
+    text = (
+        "Co-Borrower\nIndividual/Sole Proprietor\nCo-Applicant\nPersonal Details\n"
+        "Name (Mr/Mrs./Ms./Dr) SAMPLE PERSON\nRelationship with Applicant SELF\n"
+        "Date of Birth\nPAN/GIR Number\nContact Details\nCurrent Res Address\n"
+        "PIN 302027\nPermanent Resi. Address\nBusiness Constitution\n"
+    )
+    assert classify_page(text)["document_type"] == "Application Form"
+
+
+def test_personal_details_heading_requires_application_context() -> None:
+    assert classify_page("Personal Details\nName: Sample Person")["document_type"] != (
+        "Application Form"
+    )
+    assert (
+        classify_page(
+            "Loan Agreement\nBorrower and lender\nPersonal Details\n"
+            "Co-applicant shall comply with repayment covenants."
+        )["document_type"]
+        == "Loan Agreement"
+    )
+
+
+def test_application_kyc_table_on_continuation_page_is_classifiable() -> None:
+    text = "Office address\n" * 30 + (
+        "APPLICANT KYC DETAILS\nAPPLICANT NAME\nआवेदक का नाम\n"
+        "AADHAAR\nआधार\nPAN\nपैन कार्ड\nVOTER ID\nDRIVING LICENCE\n"
+        "Sample Person\nXXXXXXXX1234\nABCDE1234F\nNot Provided\n"
+    )
+    result = classify_page(text)
+    assert result["document_type"] == "Application Form"
+    assert result["confidence"] >= 0.65
+
+
+def test_kyc_policy_reference_is_not_an_application_table() -> None:
+    result = classify_page(
+        "KYC policy\nCheck applicant KYC details including Aadhaar, PAN and voter ID."
+    )
+    assert result["document_type"] != "Application Form"
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -134,6 +175,34 @@ def test_sanction_conditions_are_not_property_document_from_generic_property_wor
         "The property security documents must be self-attested before disbursement"
     )
     assert result["document_type"] != "Property Document"
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "आवासीय भूमि का पट्टा",
+        "आबादी भूमि का पट्टा",
+    ],
+)
+def test_residential_patta_headings_are_property_document(heading: str) -> None:
+    text = f"{heading}\nग्राम पंचायत रामपुरा\nपट्टा संख्या 142\nआवंटी का नाम Sample Person\n"
+    assert classify_page(text)["document_type"] == "Property Document"
+
+
+def test_sanction_condition_requiring_patta_remains_sanction_letter() -> None:
+    text = (
+        "Sanction Letter\n"
+        "Sanctioned Amount Rs 500000\n"
+        "Tenure 60 months\n"
+        "Terms and conditions of loan\n"
+        "Please submit आवासीय भूमि का पट्टा before disbursement"
+    )
+    assert classify_page(text)["document_type"] == "Sanction Letter"
+
+
+def test_genuine_sale_deed_still_property_document() -> None:
+    text = "Sale Deed\nSurvey Number 123\nPlot No 45"
+    assert classify_page(text)["document_type"] == "Property Document"
 
 
 def test_unmatched_page_still_unknown() -> None:

@@ -141,7 +141,10 @@ def test_google_provider_uses_one_api_ocr_and_no_local_ocr(
     assert "_processing_error" not in pages[0]["extracted_fields"]
 
 
-def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("mapped", [False, True], ids=["digital-reference", "mapped-reference"])
+def test_run_pipeline_persists_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mapped: bool
+) -> None:
     db_path = tmp_path / "dmef.db"
     pdf_path = tmp_path / "application.pdf"
     output_dir = tmp_path / "processed"
@@ -170,6 +173,27 @@ def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.Monke
             (application_id, str(pdf_path), "application.pdf", 1.0, 0, 0, 0),
         )
 
+    manifest = None
+    expected_name = "Ramesh Kumar"
+    if mapped:
+        expected_name = "Trusted Applicant"
+        manifest = {
+            "loan_id": "LAP-PIPE-001",
+            "reference_data": {
+                "primary": {"applicant_name": expected_name, "loan_amount": "500000"}
+            },
+            "documents": [
+                {"document_type": "Application Form", "applicant_role": "primary", "pages": [1]}
+            ],
+        }
+
+        def unavailable_pdf_reference(_path):
+            raise RuntimeError("PDF reference extraction is unavailable")
+
+        monkeypatch.setattr(
+            "services.pipeline.orchestrator.extract_ground_truth", unavailable_pdf_reference
+        )
+
     result = run_pipeline(
         pdf_path,
         application_id,
@@ -182,6 +206,7 @@ def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.Monke
         },
         product_type="LAP",
         generate_llm_summary=False,
+        mapped_manifest=manifest,
     )
 
     assert result["pipeline_status"] == "completed"
@@ -213,7 +238,7 @@ def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert application["status"] == result["final_status"]
     assert application["llm_summary"]
-    assert ground_truth["applicant_name"] == "Ramesh Kumar"
+    assert ground_truth["applicant_name"] == expected_name
     assert ground_truth["loan_amount"] == "500000"
     assert page_count == 1
     assert anomaly_count == len(result["anomalies"])
@@ -221,6 +246,44 @@ def test_run_pipeline_persists_results(tmp_path: Path, monkeypatch: pytest.Monke
     assert progress["status"] == "completed"
     assert progress["percentage"] == 100.0
     assert progress["processed_pages"] == progress["total_pages"] == 1
+
+
+@pytest.mark.parametrize("outcome", ["unsupported", "page-crash"])
+def test_reference_survives_early_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    pdf_path = tmp_path / "application.pdf"
+    _create_application_pdf(pdf_path)
+    init_db()
+    with get_connection() as connection:
+        application_id = connection.execute(
+            "INSERT INTO applications (loan_id) VALUES (?)", ("EARLY-EXIT",)
+        ).lastrowid
+
+    def page_crash(*_args, **_kwargs):
+        raise RuntimeError("Page processing interrupted")
+
+    monkeypatch.setattr("services.pipeline.orchestrator._build_page_records", page_crash)
+    if outcome == "unsupported":
+        monkeypatch.setattr(
+            "services.pipeline.orchestrator.classify_input_text",
+            lambda _text: {"input_type": "unsupported", "reason": "Unrelated document"},
+        )
+        result = run_pipeline(
+            pdf_path, application_id, output_dir=tmp_path, generate_llm_summary=False
+        )
+        assert result["pipeline_status"] == "unsupported_input"
+    else:
+        with pytest.raises(RuntimeError, match="Page processing interrupted"):
+            run_pipeline(pdf_path, application_id, output_dir=tmp_path, generate_llm_summary=False)
+
+    with get_connection() as connection:
+        reference = connection.execute(
+            "SELECT applicant_name, loan_amount FROM ground_truth WHERE application_id = ?",
+            (application_id,),
+        ).fetchone()
+    assert dict(reference) == {"applicant_name": "Ramesh Kumar", "loan_amount": "500000"}
 
 
 def test_run_pipeline_saves_rule_summary_when_llm_fails(
@@ -624,7 +687,7 @@ def test_build_page_records_marks_only_starting_json_as_db_data(
 
     pages = _build_page_records(
         [{"page_number": 1, "page_type": "digital", "image_path": None}],
-        {1: '{"application_id": 31, "applicant_name": "Radha Bai"}'},
+        {1: '{"application_id": 31, "applicant_name": "Sudha Bai"}'},
         application_id=None,
     )
 
@@ -804,7 +867,7 @@ def test_filename_insurance_and_pdc_types_are_contradicted_by_outlook_mail() -> 
     from services.pipeline import _filename_type_contradicted_by_text
 
     outlook_text = (
-        "Outlook\nRe: Approval for case 30765\n"
+        "Outlook\nRe: Approval for case 90002\n"
         "From Manoj Sharma\nDate Fri 7/31/2026\nTo Branch Ahmedabad\n"
         "Cc Operations\nSubject: Approval request\n"
         "Please approve the attached documents."

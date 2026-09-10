@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+import type { Progress } from "@/lib/api";
 import { useProgress, useReprocessApplication, useRestartApplication, useResumeApplication } from "@/lib/queries";
 import { formatSeconds } from "@/lib/format";
 import { summarizePublicFields } from "@/components/applications/reviewUtils";
@@ -9,7 +11,10 @@ import { SortableTable } from "./SortableTable";
 
 // Shows live processing state for an uploaded application and exposes the
 // existing recovery action when the backend marks that job retryable.
-export function ProgressPanel({ applicationId }: { applicationId: number }) {
+export function ProgressPanel({ applicationId, children }: {
+  applicationId: number;
+  children?: (progress: Progress) => ReactNode;
+}) {
   const progress = useProgress(applicationId);
   const reprocess = useReprocessApplication(applicationId);
   const resume = useResumeApplication(applicationId);
@@ -130,6 +135,7 @@ export function ProgressPanel({ applicationId }: { applicationId: number }) {
       {completedPages.length > visibleCompletedPages.length ? (
         <p className="text-xs font-medium text-slate-500">Showing the first 50 completed pages. Open the Processing tab to search the full page event history.</p>
       ) : null}
+      {children?.(progressData)}
     </section>
   );
 }

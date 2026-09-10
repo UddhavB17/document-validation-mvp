@@ -83,7 +83,7 @@ def test_legal_otc_pdd_approval_email_satisfies_clearance_and_status() -> None:
             "classification_confidence": 1.0,
             "ocr_text": (
                 "Subject: Re: Request legal OTC/PDD approval for the case\n"
-                "App No: 30765\nFrom: Chief Operating Officer\nok\nThanks & regards"
+                "App No: 90002\nFrom: Chief Operating Officer\nok\nThanks & regards"
             ),
             "extracted_fields": {},
         }
@@ -469,7 +469,7 @@ def test_pan_is_required_for_each_borrower() -> None:
     system_data = {
         "people": {
             "primary": {"applicant_name": "A", "pan_number": "ABCDE1234F"},
-            "coapplicant_1": {"applicant_name": "B", "pan_number": "FGHIJ5678K"},
+            "coapplicant_1": {"applicant_name": "B", "pan_number": "TSTPA7009Z"},
         }
     }
 
@@ -719,16 +719,16 @@ def test_coapplicant_presence_and_match_verifies_against_correct_person() -> Non
 
     system_data = {
         "pan_number": "TSTAA0001T",  # primary PAN
-        "applicant_name": "Peeru Lal",
+        "applicant_name": "Veeru Lal",
         "reference_data": {
             "primary": {
                 "person_id": "primary",
-                "applicant_name": "Peeru Lal",
+                "applicant_name": "Veeru Lal",
                 "pan_number": "TSTAA0001T",
             },
             "coapplicant_1": {
                 "person_id": "coapplicant_1",
-                "applicant_name": "Unkar Lal",
+                "applicant_name": "Ambar Lal",
                 "pan_number": "TSTBB0002T",
             },
         },
