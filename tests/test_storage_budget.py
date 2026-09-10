@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -223,7 +224,9 @@ def test_no_png_written_outside_job_work_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Observe only files produced by this run, never a developer's uploads.
-    monkeypatch.setenv("CHECKLIST_JSON_PATH", str(Path("data/checklist.json").resolve()))
+    checklist_source = Path("data/checklist.json").resolve()
+    (tmp_path / "data").mkdir()
+    shutil.copyfile(checklist_source, tmp_path / "data/checklist.json")
     monkeypatch.chdir(tmp_path)
     _run_fixture_pipeline(tmp_path, monkeypatch)
 
