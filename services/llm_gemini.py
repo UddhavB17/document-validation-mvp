@@ -27,8 +27,9 @@ __all__ = [
     "list_models",
 ]
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 KNOWN_GEMINI_MODELS = (
+    "gemini-3.8-flash",
     "gemini-2.5-flash",
     "gemini-2.5-pro",
     "gemini-2.0-flash",
@@ -63,7 +64,8 @@ def _build_client() -> Any:
     if api_key:
         return genai.Client(api_key=api_key)
     project = str(_get_setting("GOOGLE_CLOUD_PROJECT", "") or "").strip()
-    location = str(_get_setting("GOOGLE_CLOUD_LOCATION", "") or "us-central1").strip()
+    default_location = "global" if gemini_model().startswith("gemini-3") else "us-central1"
+    location = str(_get_setting("GOOGLE_CLOUD_LOCATION", "") or default_location).strip()
     if project:
         return genai.Client(vertexai=True, project=project, location=location)
     # No key and no project: let the SDK try ADC on its own; surface a
@@ -75,9 +77,14 @@ def _messages_to_contents(messages: list[dict[str, str]]) -> list[dict[str, str]
     contents: list[dict[str, str]] = []
     for message in messages or []:
         role = str(message.get("role") or "user").strip().lower()
+        if role == "system":
+            continue  # Sent through Gemini's dedicated system_instruction field.
         text = str(message.get("content") or "")
         contents.append(
-            {"role": "model" if role in {"assistant", "model"} else "user", "parts": [{"text": text}]}
+            {
+                "role": "model" if role in {"assistant", "model"} else "user",
+                "parts": [{"text": text}],
+            }
         )
     return contents
 
@@ -120,14 +127,23 @@ def generate(
         config = types.GenerateContentConfig(
             max_output_tokens=max_tokens,
             response_mime_type="application/json" if response_format == "json" else "text/plain",
+            system_instruction="\n\n".join(
+                str(message.get("content") or "")
+                for message in messages or []
+                if str(message.get("role") or "").strip().lower() == "system"
+                and message.get("content")
+            )
+            or None,
         )
         try:
-            # DMEF only makes short classification/extraction/summary calls:
-            # disable thinking so the output budget is spent on visible text,
-            # not hidden reasoning (which is also billed as output tokens).
-            config.thinking_config = types.ThinkingConfig(thinking_budget=0)
+            if model.split("/")[-1].startswith("gemini-3"):
+                # Gemini 3 uses levels; 3.8 rejects disabled/minimal thinking.
+                # Low keeps the existing short extraction/review calls bounded.
+                config.thinking_config = types.ThinkingConfig(thinking_level="low")
+            elif model.split("/")[-1].startswith("gemini-2.5-flash"):
+                config.thinking_config = types.ThinkingConfig(thinking_budget=0)
         except Exception:  # noqa: BLE001 - older SDKs or models without the field
-            logger.debug("Gemini thinking_budget unsupported; continuing", exc_info=True)
+            logger.debug("Gemini thinking configuration unsupported; continuing", exc_info=True)
         try:
             http_options = types.HttpOptions(timeout=timeout * 1000)
             config.http_options = http_options

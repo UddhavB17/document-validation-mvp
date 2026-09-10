@@ -327,3 +327,17 @@ text and exact normalized equivalence for a name/PAN/Aadhaar mismatch; other sus
 false positives remain recommendations. This never accepts a loan or bypasses manual decisions.
 Files span operations UI/API, LLM service, pipeline finalization, review aggregation,
 and their behavioral tests. No credentials or environment files are changed.
+
+The user additionally requested a codebase-specific shared LLM system prompt.
+NEEDS-COORDINATION: services/review_prompts.py owns the common review policy and
+four stage instructions; the Gemini adapter sends system messages through the SDK's
+system_instruction field. Audit reports include the model, prompt version and prompt
+fingerprint, and checkpoint keys include that fingerprint. This prompt update does
+not regenerate existing reports or implement the separately requested shared human
+confirmation workflow, which follows completion of the earlier interface checks.
+
+The user authorized switching to Gemini 3.8 Flash and committing the changes.
+The non-secret runtime wrapper selects Gemini 3.8 Flash and the working global
+endpoint without modifying environment files. Gemini 3 calls use thinking_level=low;
+Gemini 2.5 Flash retains thinking_budget=0. Existing active workers retain their
+configuration until a normal restart; their document runs are not restarted here.
