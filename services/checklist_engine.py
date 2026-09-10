@@ -11,7 +11,7 @@ from typing import Any
 from dateutil.relativedelta import relativedelta
 
 from services import checklist_service
-from services.config import effective_config
+from services.config import cached_settings, effective_config
 from services.consistency_checks import run_consistency_checks
 from services.page_quality import confident_pages_for_types, is_confident_document_match
 from services.person_names import is_person_name_candidate
@@ -1477,6 +1477,7 @@ def _run_accuracy_checks(
     return anomalies
 
 
+@cached_settings()
 def run_checks(
     pages: list[dict],
     ground_truth: dict,

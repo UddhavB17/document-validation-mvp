@@ -540,7 +540,9 @@ def _people(trusted: dict) -> dict[str, dict]:
     )
 
 
-def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
+def _observations(
+    pages: list[dict], people: dict[str, dict], *, included_fields: set[str] | None = None
+) -> list[dict]:
     result: list[dict] = []
     multi_person_section_roles: dict[str, str] = {}
     for page in sorted(pages, key=lambda item: int(item.get("page_number") or 0)):
@@ -583,6 +585,8 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
                     if str(field).startswith("_") or value in (None, "", [], {}):
                         continue
                     canonical_field = _canonical(str(field))
+                    if included_fields is not None and canonical_field not in included_fields:
+                        continue
                     if canonical_field in ADDRESS_FIELDS and _is_guarantor_person(
                         record_person_id, people
                     ):
@@ -626,6 +630,8 @@ def _observations(pages: list[dict], people: dict[str, dict]) -> list[dict]:
             ):
                 continue
             canonical_field = _canonical(str(field))
+            if included_fields is not None and canonical_field not in included_fields:
+                continue
             if canonical_field in ADDRESS_FIELDS and _is_guarantor_person(person_id, people):
                 # Keep guarantor documents in the packet, but exclude their
                 # address from borrower/co-borrower validation.

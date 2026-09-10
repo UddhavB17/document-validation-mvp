@@ -36,9 +36,9 @@ from services.review.comparison_matrix import build_comparison_matrix_and_relati
 from services.review.document_summaries import build_document_summaries
 from services.review.repository import (
     load_application_review_data,
+    load_comparison_evidence,
     load_latest_decision,
     load_latest_uploaded_file,
-    load_saved_document_ocr_json,
     load_today_activity,
 )
 from services.review.worklist import build_worklist
@@ -149,11 +149,11 @@ def get_application_review(application_id: int) -> dict[str, Any]:
         anomaly.get("s_no") for anomaly in anomalies if anomaly.get("s_no") is not None
     }
 
-    ocr_data = load_saved_document_ocr_json(application_id)
     matrix_and_rels = build_comparison_matrix_and_relationships(
         application_id,
         data,
-        ocr_data=ocr_data,
+        evidence_pages=load_comparison_evidence(application_id, data["pages"])
+        if data.get("ground_truth") else [],
     )
     documents = build_document_summaries(data.get("document_pages") or {}, anomalies)
 

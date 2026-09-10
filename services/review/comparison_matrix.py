@@ -7,7 +7,8 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from services.review.repository import load_saved_document_ocr_json
+from services.consistency_checks import _matches
+from services.review.comparison_evidence import comparison_observations, observed_field
 from services.review.types import (
     ApplicantComparisonSection,
     ApplicantRole,
@@ -99,6 +100,8 @@ def resolve_field_status(
         return "match"
     if not actual_value or actual_value == "None":
         return "attention"
+    if not _matches(field_name, expected_value, actual_value):
+        return "mismatch"
 
     has_mismatch = False
     has_attention = False
@@ -151,6 +154,7 @@ def build_comparison_matrix_and_relationships(
     data: ApplicationReviewData,
     *,
     ocr_data: Mapping[str, object] | None = None,
+    evidence_pages: list[dict[str, Any]] | None = None,
 ) -> ComparisonAndRelationships:
     """Build comparison rows and relationship nodes for an application review."""
     # Initialize the stable empty response used for missing or invalid ground truth.
@@ -207,34 +211,18 @@ def build_comparison_matrix_and_relationships(
     raw_pages = data.get("pages") or []
     anomalies = data.get("anomalies") or []
 
-    # Load OCR once and map each persisted page to its applicant where available.
-    if ocr_data is None:
-        ocr_data = load_saved_document_ocr_json(application_id) or {}
-    combined_extracted_fields = ocr_data.get("combined_extracted_fields") or {}
-    if not isinstance(combined_extracted_fields, dict):
-        combined_extracted_fields = {}
-
+    # The optional export can be absent or stale. Persisted page evidence is
+    # authoritative; expected/application metadata is never extracted evidence.
+    observations = comparison_observations(
+        evidence_pages if evidence_pages is not None else raw_pages, people
+    )
     page_to_person: dict[int, str] = {}
-    document_mappings = ocr_data.get("documents", [])
-    if not isinstance(document_mappings, list):
-        document_mappings = []
-    for document_mapping in document_mappings:
-        if not isinstance(document_mapping, dict):
-            continue
-        person_id = document_mapping.get("applicant_role") or document_mapping.get("person_id")
-        if person_id:
-            page_numbers = document_mapping.get("pages", [])
-            if not isinstance(page_numbers, list):
-                continue
-            for page_number in page_numbers:
-                page_to_person[int(page_number)] = str(person_id)
-
-    pages: list[dict[str, Any]] = []
-    for page in raw_pages:
-        page_row = dict(page)
-        ocr_text = page_row.get("ocr_text")
-        page_row["_ocr_clean"] = str(ocr_text).replace(" ", "").lower() if ocr_text else ""
-        pages.append(page_row)
+    owners_by_page: dict[int, set[str]] = {}
+    for observation in observations:
+        owners_by_page.setdefault(observation["page_number"], set()).add(observation["person_id"])
+    for page_number, owners in owners_by_page.items():
+        if len(owners) == 1:
+            page_to_person[page_number] = next(iter(owners))
 
     # Build application-level comparison rows.
     core_field_definitions = [
@@ -256,20 +244,7 @@ def build_comparison_matrix_and_relationships(
             continue
         expected = str(expected)
 
-        extracted = combined_extracted_fields.get(field_name)
-        if extracted is None:
-            extracted = data.get("application", {}).get(field_name)
-
-        if extracted is not None:
-            extracted = str(extracted)
-        else:
-            extracted = None
-
-        source_pages: list[int] = []
-        if extracted is not None:
-            source_pages = find_source_pages_for_value(pages, extracted, field_name)
-
-        status: FieldStatus = "match"
+        extracted, source_pages, status = observed_field(observations, field_name, expected)
         has_mismatch = False
         has_attention = False
         for anomaly in anomalies:
@@ -284,7 +259,7 @@ def build_comparison_matrix_and_relationships(
 
         if has_mismatch:
             status = "mismatch"
-        elif has_attention:
+        elif has_attention and status == "match":
             status = "attention"
         elif extracted is None:
             status = "attention"
@@ -359,49 +334,14 @@ def build_comparison_matrix_and_relationships(
             if expected is None or expected == "None":
                 continue
 
-            extracted = None
-            for page in pages:
-                page_number = page.get("page_number")
-                if page_number is not None and page_to_person.get(int(page_number)) == person_id:
-                    extracted_fields = page.get("extracted_fields") or {}
-                    value = extracted_fields.get(field_name)
-                    if value is None:
-                        if field_name == "applicant_name":
-                            value = extracted_fields.get("name") or extracted_fields.get(
-                                "borrower_name"
-                            )
-                        elif field_name == "date_of_birth":
-                            value = extracted_fields.get("dob")
-                        elif field_name == "phone_number":
-                            value = extracted_fields.get("phone")
-                        elif field_name == "pin_code":
-                            value = extracted_fields.get("pincode")
-                        elif field_name == "address":
-                            value = extracted_fields.get(
-                                "permanent_address"
-                            ) or extracted_fields.get("communication_address")
-                    if value is not None:
-                        extracted = str(value)
-                        break
-
-            if extracted is None and person_id == "primary":
-                extracted = combined_extracted_fields.get(field_name)
-                if extracted is not None:
-                    extracted = str(extracted)
-
-            source_pages = []
-            if extracted is not None:
-                source_pages = find_source_pages_for_value(
-                    pages, extracted, field_name, person_id, page_to_person
-                )
-            elif expected is not None:
-                source_pages = find_source_pages_for_value(
-                    pages, expected, field_name, person_id, page_to_person
-                )
-
-            field_status = resolve_field_status(
+            extracted, source_pages, field_status = observed_field(
+                observations, field_name, expected, person_id
+            )
+            anomaly_status = resolve_field_status(
                 person_id, field_name, expected, extracted, anomalies, page_to_person
             )
+            if field_status == "match":
+                field_status = anomaly_status
 
             if field_status == "mismatch":
                 has_any_mismatch = True

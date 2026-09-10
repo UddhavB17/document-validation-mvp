@@ -120,3 +120,21 @@ def test_snapshot_retries_failed_refresh_without_caching_default(settings_store,
         assert config.get_setting("test.speed", 42) == 42
         monkeypatch.setattr(db, "get_connection", connect)
         assert config.get_setting("test.speed") == 3
+
+
+def test_final_checklist_bounds_settings_reads_for_large_packet(settings_store, monkeypatch):
+    from services import checklist_engine
+
+    _, calls = settings_store
+    monkeypatch.setattr(config.time, "monotonic", lambda: 10.0)
+    monkeypatch.setattr(checklist_engine.checklist_service, "get_all_checklist_items", lambda _: [{
+        "s_no": 1, "document_type": "Sanction Letter", "check_type": "PRESENCE",
+        "mandatory": True, "severity_if_fail": "HIGH",
+    }])
+    monkeypatch.setattr(checklist_engine, "_accuracy_checks_enabled", lambda: False)
+    pages = [{
+        "page_number": number, "page_type": "digital", "document_type": "Sanction Letter",
+        "classification_confidence": 0.99, "extracted_fields": {},
+    } for number in range(1, 892)]
+    assert checklist_engine.run_checks(pages, {}, {}, "LAP") == []
+    assert len(calls) == 1

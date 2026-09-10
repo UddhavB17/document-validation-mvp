@@ -55,7 +55,7 @@ def test_launcher_spawns_detached_worker_with_logs_when_stale(tmp_path, monkeypa
     assert len(calls) == 1
     args, kwargs = calls[0]
     assert list(args) == [sys.executable, "-m", "services.worker"]
-    assert str(kwargs.get("cwd", "")).endswith("document-validation-mvp")
+    assert str(kwargs.get("cwd", "")) == str(launcher.repo_root())
 
 
 def test_watchdog_disabled_in_production(monkeypatch) -> None:

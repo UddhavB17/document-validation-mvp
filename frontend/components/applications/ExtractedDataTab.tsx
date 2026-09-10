@@ -132,6 +132,9 @@ export function ExtractedDataTab({
           <p className="mt-1 max-w-3xl text-[12.5px] font-medium leading-relaxed text-[#5C6B7A]">
             Review extracted values grouped by person, document, and field. Mismatches and missing values are shown first; internal pipeline keys are excluded.
           </p>
+          <p className="mt-2 max-w-3xl text-xs leading-relaxed text-[#5C6B7A]">
+            Comparisons use saved document evidence, not the expected values. “Not observed” means no usable evidence was found; it does not prove the field is absent from the original document. Conflicting sources require review.
+          </p>
         </div>
         <label className="flex cursor-pointer items-center gap-2 text-xs font-bold text-[#5C6B7A]">
           <input
@@ -210,11 +213,11 @@ export function ExtractedDataTab({
                       <td className="px-3.5 py-3 font-semibold">{field.label}</td>
                       <td className="max-w-[180px] whitespace-pre-wrap break-words px-3.5 py-3 font-mono text-[11px] text-[#5C6B7A]">{expected}</td>
                       <td className={`max-w-[220px] whitespace-pre-wrap break-words px-3.5 py-3 font-mono text-[11px] ${missing ? "italic text-[#AF3B2E]" : "text-[#16202E]"}`}>
-                        {missing ? "— Missing —" : extracted}
+                        {missing ? "— Not observed —" : extracted}
                       </td>
                       <td className="px-3.5 py-3">
                         <span className={`stamp rotate-0 ${missing || field.status === "mismatch" ? "mismatch" : field.status === "attention" ? "attention" : "match"}`}>
-                          {missing ? "Missing" : statusLabels[field.status]}
+                          {missing ? "Not observed" : field.expectedValue === null ? "Extracted" : statusLabels[field.status]}
                         </span>
                       </td>
                       <td className="px-3.5 py-3">

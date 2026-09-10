@@ -172,6 +172,41 @@ def load_latest_decision(application_id: int) -> JsonRow | None:
     return dict(decision_row) if decision_row else None
 
 
+def load_comparison_evidence(application_id: int, pages: list[dict]) -> list[dict]:
+    """Hydrate validation evidence in one read, for internal calculation only.
+
+    Summary payloads deliberately omit OCR and private reliability metadata.
+    Comparisons need both; never attach them to the public ``data['pages']``.
+    """
+    if not pages:
+        return []
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT p.page_number, p.ocr_text, m.meta_json
+            FROM pages p
+            LEFT JOIN pages_meta m
+              ON m.application_id = p.application_id AND m.page_number = p.page_number
+            WHERE p.application_id = ?
+            ORDER BY p.page_number
+            """,
+            (application_id,),
+        ).fetchall()
+    details = {int(row["page_number"]): dict(row) for row in rows}
+    evidence = []
+    for page in pages:
+        detail = details.get(int(page["page_number"]), {})
+        try:
+            meta = json.loads(detail.get("meta_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            meta = {}
+        fields = dict(page.get("extracted_fields") or {})
+        if isinstance(meta, dict):
+            fields.update({key: value for key, value in meta.items() if key.startswith("_")})
+        evidence.append({**page, "ocr_text": detail.get("ocr_text") or "", "extracted_fields": fields})
+    return evidence
+
+
 def load_saved_document_ocr_json(application_id: int) -> JsonRow | None:
     """Load the saved per-document OCR JSON, if it is readable and object-shaped."""
     path = processed_output_dir() / f"application_{application_id}" / "document_ocr_data.json"
