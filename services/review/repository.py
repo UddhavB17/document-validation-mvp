@@ -188,27 +188,31 @@ def load_saved_document_ocr_json(application_id: int) -> JsonRow | None:
     return payload if isinstance(payload, dict) else None
 
 
-def list_application_rows_ordered_by_created_at() -> list[JsonRow]:
-    """Load application rows in the existing newest-first worklist order."""
+def load_worklist_data() -> tuple[
+    list[JsonRow], dict[int, list[JsonRow]], dict[int, dict[str, object]]
+]:
+    """Read the worklist in two queries sharing one connection.
+
+    Join the one-to-one progress row, but fetch anomalies separately so an
+    application with many findings does not repeat its metadata on the wire.
+    Settings/stale detection run after releasing this read transaction.
+    """
     with get_connection() as connection:
         application_rows = connection.execute(
             """
-            SELECT id, loan_id, applicant_name, product_type, status, created_at
-            FROM applications
-            ORDER BY created_at DESC
+            SELECT a.id, a.loan_id, a.applicant_name, a.product_type, a.status, a.created_at,
+                   p.application_id AS progress_application_id,
+                   p.status AS progress_status, p.processed_pages, p.total_pages,
+                   p.percentage, p.updated_at
+            FROM applications a
+            LEFT JOIN pipeline_progress p ON p.application_id = a.id
+            ORDER BY a.created_at DESC
             """
         ).fetchall()
-    return [dict(row) for row in application_rows]
-
-
-def load_validation_results_by_application_ids(
-    application_ids: list[int],
-) -> dict[int, list[JsonRow]]:
-    """Load and group validation results for the supplied application IDs."""
-    if not application_ids:
-        return {}
-    placeholders = ",".join("?" for _ in application_ids)
-    with get_connection() as connection:
+        if not application_rows:
+            return [], {}, {}
+        application_ids = [_required_int(row["id"]) for row in application_rows]
+        placeholders = ",".join("?" for _ in application_ids)
         validation_rows = connection.execute(
             f"""
             SELECT application_id, severity, rule_id, page_number, reason,
@@ -223,40 +227,28 @@ def load_validation_results_by_application_ids(
     for row in validation_rows:
         application_id = _required_int(row["application_id"])
         results_by_application[application_id].append(dict(row))
-    return results_by_application
 
-
-def load_pipeline_progress_by_application_ids(
-    application_ids: list[int],
-) -> dict[int, dict[str, object]]:
-    """Load operational pipeline status and retryability by application ID."""
-    if not application_ids:
-        return {}
-    placeholders = ",".join("?" for _ in application_ids)
-    with get_connection() as connection:
-        progress_rows = connection.execute(
-            f"""
-            SELECT application_id, status, processed_pages, total_pages,
-                   percentage, updated_at
-            FROM pipeline_progress
-            WHERE application_id IN ({placeholders})
-            """,
-            application_ids,
-        ).fetchall()
-
+    applications: list[JsonRow] = []
     progress_by_application: dict[int, dict[str, object]] = {}
-    for row in progress_rows:
+    for row in application_rows:
         payload = dict(row)
-        application_id = _required_int(payload.pop("application_id"))
-        operational_status = operational_progress_status(payload)
+        application_id = _required_int(payload["id"])
+        progress_id = payload.pop("progress_application_id")
+        progress = {"status": payload.pop("progress_status")}
+        for key in ("processed_pages", "total_pages", "percentage", "updated_at"):
+            progress[key] = payload.pop(key)
+        applications.append(payload)
+        if progress_id is None:
+            continue
+        operational_status = operational_progress_status(progress)
         progress_by_application[application_id] = {
             "operational_status": operational_status,
             "retryable": operational_status in RETRYABLE_PROGRESS_STATES,
-            "processed_pages": payload.get("processed_pages"),
-            "total_pages": payload.get("total_pages"),
-            "percentage": payload.get("percentage"),
+            "processed_pages": progress.get("processed_pages"),
+            "total_pages": progress.get("total_pages"),
+            "percentage": progress.get("percentage"),
         }
-    return progress_by_application
+    return applications, results_by_application, progress_by_application
 
 
 def load_today_activity() -> list[JsonRow]:

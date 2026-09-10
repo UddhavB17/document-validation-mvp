@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { withReadTimeout } from "./requestTimeout";
 import { evidenceProxyOcrJsonUrl, evidenceProxyPageImageUrl, evidenceProxyPdfUrl } from "./evidenceProxy";
 export { normalizeDocumentType } from "./documentType";
 
@@ -521,8 +522,10 @@ async function parseApiResponse<T>(response: Response, schema: z.ZodType<T>): Pr
 }
 
 async function getJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() } });
-  return parseApiResponse(response, schema);
+  return withReadTimeout(async (signal) => {
+    const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() }, signal });
+    return parseApiResponse(response, schema);
+  });
 }
 
 async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {

@@ -22,6 +22,7 @@ from services.checklist_service import (
     get_human_review_items,
 )
 from services.checklist_status import build_checklist_status
+from services.config import cached_settings
 from services.job_control import JobControlError, request_control
 from services.ocr_json_export import build_ocr_document_json
 from services.progress_tracker import get_progress
@@ -138,7 +139,10 @@ def get_application_review(application_id: int) -> dict[str, Any]:
     summary = summarize_for_display(anomalies)
     reviewer_summary = load_reviewer_summary(application_id)
     checklist_items = get_all_checklist_items(product_type)
-    checklist_rows = build_checklist_status(checklist_items, data["pages"], anomalies)
+    # Confidence checks revisit the same settings for many pages/items. Keep
+    # one short-lived snapshot for this calculation, never across requests.
+    with cached_settings():
+        checklist_rows = build_checklist_status(checklist_items, data["pages"], anomalies)
     manual_items = get_human_review_items(product_type)
     ai_items = get_ai_checkable_items(product_type)
     failed_ai_snos = {

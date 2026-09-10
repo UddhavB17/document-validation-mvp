@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -15,10 +15,6 @@ from services.review.comparison_matrix import (
     build_comparison_matrix_and_relationships,
     find_source_pages_for_value,
     resolve_field_status,
-)
-from services.review.repository import (
-    load_pipeline_progress_by_application_ids,
-    load_validation_results_by_application_ids,
 )
 from services.review.worklist import build_worklist
 
@@ -122,6 +118,33 @@ def test_worklist_empty_applications(tmp_path, monkeypatch) -> None:
     assert payload == {"items": []}
 
 
+def test_full_review_reuses_settings_across_page_confidence_checks(tmp_path, monkeypatch) -> None:
+    from routes.review import get_application_review
+
+    _use_temp_db(tmp_path, monkeypatch)
+    init_db()
+    application_id = _insert_application(loan_id="REVIEW-SPEED")
+    for page_number in range(1, 31):
+        _insert_page(
+            application_id, page_number=page_number, document_type="PAN",
+            extracted_fields={"pan_number": "ABCDE1234F"},
+        )
+    settings_queries = []
+    execute = db._Connection.execute
+
+    def counted(self, sql, params=()):
+        if "SELECT" in sql.upper() and "system_settings" in sql:
+            settings_queries.append(sql)
+        return execute(self, sql, params)
+
+    monkeypatch.setattr(db._Connection, "execute", counted)
+    response = get_application_review(application_id)
+    assert len(response["pages"]) == 30
+    assert response["checklist"]["found"] > 0
+    assert len(settings_queries) == 1
+    assert all("ocr_text" not in page for page in response["pages"])
+
+
 def test_worklist_orders_by_created_at_desc(tmp_path, monkeypatch) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
@@ -137,26 +160,71 @@ def test_worklist_orders_by_created_at_desc(tmp_path, monkeypatch) -> None:
 def test_worklist_uses_batched_repository_queries(tmp_path, monkeypatch) -> None:
     _use_temp_db(tmp_path, monkeypatch)
     init_db()
-    app_one = _insert_application(loan_id="BATCH-1")
-    app_two = _insert_application(loan_id="BATCH-2")
-    _insert_anomaly(app_one, rule_id="PAN_NUMBER_MISMATCH", page_number=1)
-    _insert_anomaly(app_two, rule_id="ADDRESS_NOT_FOUND")
+    monkeypatch.delenv("DMEF_STALE_JOB_MINUTES", raising=False)
+    for index in range(20):
+        application_id = _insert_application(loan_id=f"BATCH-{index}")
+        _insert_anomaly(application_id, rule_id="PAN_NUMBER_MISMATCH", page_number=1)
+        _insert_anomaly(application_id, rule_id="ADDRESS_NOT_FOUND")
+        with get_connection() as connection:
+            connection.execute(
+                "INSERT INTO pipeline_progress (application_id, status, updated_at) VALUES (?, ?, ?)",
+                (application_id, "processing", datetime.now(UTC).isoformat()),
+            )
 
-    with patch(
-        "services.review.worklist.load_validation_results_by_application_ids"
-    ) as load_anomalies:
-        with patch(
-            "services.review.worklist.load_pipeline_progress_by_application_ids"
-        ) as load_progress:
-            load_anomalies.side_effect = load_validation_results_by_application_ids
-            load_progress.side_effect = load_pipeline_progress_by_application_ids
-            payload = build_worklist()
+    queries = []
+    connections = []
+    execute = db._Connection.execute
+    enter = db._Connection.__enter__
 
-    load_anomalies.assert_called_once()
-    load_progress.assert_called_once()
-    called_ids = sorted(load_anomalies.call_args.args[0])
-    assert called_ids == sorted([app_one, app_two])
-    assert len(payload["items"]) == 2
+    def counted_execute(self, sql, params=()):
+        queries.append(sql)
+        return execute(self, sql, params)
+
+    def counted_enter(self):
+        connections.append(self)
+        return enter(self)
+
+    monkeypatch.setattr(db._Connection, "execute", counted_execute)
+    monkeypatch.setattr(db._Connection, "__enter__", counted_enter)
+    payload = build_worklist()
+
+    assert len(payload["items"]) == 20
+    assert all(item["issues"] == 2 for item in payload["items"])
+    assert all(item["pipeline_status"] == "processing" for item in payload["items"])
+    assert len(queries) == 3  # application/progress join, findings, settings snapshot
+    assert len(connections) == 2  # data transaction, settings transaction
+    assert sum("system_settings" in sql for sql in queries) == 1
+
+
+def test_worklist_refreshes_progress_and_settings_on_each_request(tmp_path, monkeypatch) -> None:
+    _use_temp_db(tmp_path, monkeypatch)
+    init_db()
+    monkeypatch.delenv("DMEF_STALE_JOB_MINUTES", raising=False)
+    application_id = _insert_application(loan_id="FRESH-1")
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO pipeline_progress (application_id, status, updated_at) VALUES (?, ?, ?)",
+            (application_id, "processing", (datetime.now(UTC) - timedelta(minutes=10)).isoformat()),
+        )
+        connection.execute(
+            "INSERT INTO system_settings (config_key, config_value, value_type) VALUES (?, ?, ?)",
+            ("dmef.stale.job.minutes", "30", "int"),
+        )
+    assert build_worklist()["items"][0]["pipeline_status"] == "processing"
+
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE system_settings SET config_value = ? WHERE config_key = ?",
+            ("5", "dmef.stale.job.minutes"),
+        )
+    assert build_worklist()["items"][0]["pipeline_status"] == "stale"
+
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE pipeline_progress SET status = ? WHERE application_id = ?",
+            ("completed", application_id),
+        )
+    assert build_worklist()["items"][0]["pipeline_status"] == "completed"
 
 
 def test_worklist_item_payload_shape(tmp_path, monkeypatch, auth_headers) -> None:

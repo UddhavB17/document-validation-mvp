@@ -85,6 +85,25 @@ export default function ApplicationReviewPage() {
     );
   }
 
+  // Live progress must not wait for checklist/comparison data from the full
+  // review. Keep this tab usable even when that independent request fails.
+  if (activeTab === "processing" && !applicationReview.data) {
+    return (
+      <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-4">
+        <h1 className="text-lg font-semibold text-slate-950">Application {applicationId} · Processing</h1>
+        <CaseNavigation applicationId={applicationId} activeTab={activeTab} />
+        <ProcessingTab applicationId={applicationId} />
+        {applicationReview.isError ? (
+          <CaseErrorState
+            title="Review details could not be loaded"
+            message="Live processing is loaded separately above. Retry review details to enable page evidence previews."
+            onRetry={() => void applicationReview.refetch()}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   if (applicationReview.isLoading) {
     return <CaseLoadingSkeleton />;
   }

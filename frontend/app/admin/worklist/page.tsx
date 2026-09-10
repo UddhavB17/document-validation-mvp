@@ -62,7 +62,7 @@ function WorklistContent() {
 
   const updateUrl = useCallback(
     (updates: { search?: string; filter?: WorklistFilter; sort?: WorklistSort }) => {
-      const nextParams = new URLSearchParams(searchParams.toString());
+      const nextParams = new URLSearchParams(window.location.search);
       if (updates.search !== undefined) {
         if (updates.search.trim()) {
           nextParams.set("search", updates.search);
@@ -77,9 +77,16 @@ function WorklistContent() {
         nextParams.set("sort", updates.sort);
       }
       const nextQuery = nextParams.toString();
-      router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+      // These controls only filter data already in memory. Next's native
+      // history integration updates useSearchParams without a server navigation
+      // (and another auth/database round trip) for every click or keystroke.
+      window.history.replaceState(
+        null,
+        "",
+        (nextQuery ? `${pathname}?${nextQuery}` : pathname) + window.location.hash,
+      );
     },
-    [pathname, router, searchParams],
+    [pathname],
   );
 
   const filteredItems = useMemo(() => {

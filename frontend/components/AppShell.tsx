@@ -10,6 +10,7 @@ import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
 import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
 import { useApplicationReview, useHealth } from "@/lib/queries";
+import { navigateCaseTab } from "@/lib/caseTabNavigation";
 import type { FieldComparison } from "@/lib/api";
 
 type IconName = "worklist" | "intake" | "activity" | "settings" | "users" | "menu" | "close" | "collapse" | "expand" | "api" | "ops";
@@ -299,6 +300,7 @@ function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
           <li key={tab.key}>
             <Link
               href={tab.key === "review" ? `/admin/applications/${applicationId}` : `/admin/applications/${applicationId}?tab=${tab.key}`}
+              onClick={(event) => navigateCaseTab(event, tab.key === "review" ? `/admin/applications/${applicationId}` : `/admin/applications/${applicationId}?tab=${tab.key}`)}
               className={`app-shell__submenu-link${active ? " is-active" : ""}`}
               aria-current={active ? "page" : undefined}
             >
