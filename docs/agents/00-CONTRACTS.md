@@ -341,3 +341,20 @@ The non-secret runtime wrapper selects Gemini 3.8 Flash and the working global
 endpoint without modifying environment files. Gemini 3 calls use thinking_level=low;
 Gemini 2.5 Flash retains thinking_budget=0. Existing active workers retain their
 configuration until a normal restart; their document runs are not restarted here.
+
+## 13. User-authorized exception-focused AI review (2026-09-11)
+
+NEEDS-COORDINATION: the user explicitly superseded section 12's all-page AI review.
+During initial processing, LLM page classification remains restricted to unknown
+document types or OCR confidence below the configured threshold. Finalization
+does not run a second AI assessment of every page. It reviews every supplied
+exception in bounded, validated batches using relevant source excerpts, including
+candidate evidence for incorrectly labelled or apparently missing documents.
+Successful exception batches are checkpointed; invalid output retries only its
+batch. A missing or partial excerpt does not establish document absence.
+The report declares exceptions_only scope and evidence limits. File page counts
+must not be presented as AI page-review counts. The existing conservative dismissal
+gate remains in force. English summarizes exception assessments and remaining
+human work, then Hindi translates that English. Existing runs are not regenerated.
+This authorizes focused changes to review service/prompts, their caller and tests;
+the shared operations payload and authentication contracts do not change.

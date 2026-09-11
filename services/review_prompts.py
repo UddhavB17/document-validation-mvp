@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-REVIEW_PROMPT_VERSION = "dmef-review-2026-09-10-v2"
+REVIEW_PROMPT_VERSION = "dmef-review-2026-09-11-v3-exceptions"
 
 REVIEW_SYSTEM_PROMPT = """You are DMEF's evidence-based loan-file review assistant.
 Your purpose is to help a human reviewer understand document checks and exceptions.
@@ -63,38 +63,36 @@ faithful translation of that exact English, preserving uncertainty and review ac
 """
 
 REVIEW_STAGE_PROMPTS = {
-    "ops_page_review": """Review EVERY supplied page, including unknown pages and
-pages without flags. Assess document identity, available text quality, and evidence
-relevant to the findings. Mention additional observed exceptions in the page reason
-as review recommendations; do not invent rule findings. Return
-{"pages":[{"page":1,"assessment":"consistent|needs_review|unknown|unreadable",
-"reason":"brief evidence-based explanation in English","quote_ref":0}]}.
-Select one assessment enum, with one entry per supplied page. consistent means no
-issue identified in available evidence, not complete checklist or visual verification.
-Use unknown when document identity cannot be established and unreadable when usable
-text is absent. quote_ref must select an existing numbered span on that page, or null
-when no supporting span exists. Do not retype the quote. Do not dismiss an issue
-merely because the relevant evidence might be on a different page.""",
-    "ops_findings_review": """Assess EVERY supplied finding using the page reviews,
-their source quotes, and original expected/found values. Return
+    "ops_findings_review": """Assess EVERY finding in finding_contexts using its supplied
+source excerpts and original expected/found values. Do not perform a separate review
+of every page. Document classification of unknown/low-confidence pages happens during
+the initial processing pass. These excerpts are evidence for exception assessment.
+Saved document labels may be wrong: an explicitly identified report can contradict a
+missing-document flag even when the saved label differs. Distinguish presence from
+correctness, and approval evidence from fulfillment of the approved conditions.
+The search is bounded; omitted candidates and partial excerpts are not evidence of
+absence. If a required fact cannot be established, keep the finding unresolved. Return
 {"findings":[{"ref":1,"verdict":"supported|possible_false_positive|unresolved",
 "confidence":0.0,"reason":"short evidence-based explanation and next action",
 "pages":[1],"quote":"exact source quote supporting a suspected false positive, or empty"}]}.
 Select one verdict enum and use a numeric confidence from 0 to 1. Preserve each ref
 exactly once. Cite only supplied pages. For possible_false_positive, quote affirmative
-contradicting source evidence verbatim, not a page assessment's paraphrase. Prefer
+contradicting source evidence verbatim, not an interpretation or paraphrase. Prefer
 the original finding's source page when it supplies that proof. Without sufficient
 source evidence, use unresolved. A possible_false_positive remains a recommendation
 until the backend checks it; do not assert that it is already dismissed.""",
     "ops_summary_en": """Write a moderately detailed English review. Return
-{"en":"..."}. Use short paragraphs in this order: coverage and reading limitations;
+{"en":"..."}. Use short paragraphs in this order: exception-review scope and evidence limitations;
 supported exceptions and affected pages; suspected false positives and their reasons,
 stating which are actually marked dismissed=true; unresolved or unknown-page concerns;
 concrete remaining human checks. Include all issue families from the finding review
-and additional page observations, not only the top five. Distinguish an observation
+not only the top five. Distinguish an observation
 from an established exception. Omit empty sections and avoid repeating the same issue
 for each page; group it with accurate page references. Counts must come from supplied
-review totals. Do not claim that reviewed pages equal verified documents, infer
+review totals. total_pages is the file size, not the number of pages reviewed by AI.
+Explicitly state this is an exceptions review, not a full-page review. When there are
+no findings, say no exceptions were supplied; do not claim the file is verified.
+Do not claim that evidence pages equal verified documents, infer
 checklist completion, expose internal rule codes, or approve the file.
 Maximum 4500 characters.""",
     "ops_summary_hi": """Translate the complete supplied English review into natural
