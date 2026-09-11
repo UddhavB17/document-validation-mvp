@@ -217,6 +217,7 @@ SCHEMA_STATEMENTS = [
         total_files INTEGER NOT NULL,
         total_pages INTEGER NOT NULL,
         status TEXT NOT NULL DEFAULT 'prepared',
+        error TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         verified_at TIMESTAMP
     )
@@ -449,6 +450,7 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE pages ADD COLUMN ocr_escalated BOOLEAN NOT NULL DEFAULT 0",
     "ALTER TABLE pages ADD COLUMN ocr_processing_time_ms INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE pages ADD COLUMN ocr_status TEXT",
+    "ALTER TABLE intake_packages ADD COLUMN error TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 3",
     "ALTER TABLE pipeline_jobs ADD COLUMN next_run_at TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN failure_reason TEXT",

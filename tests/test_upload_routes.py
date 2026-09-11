@@ -420,6 +420,40 @@ def test_background_zip_preparation_exposes_frontend_logs(tmp_path, monkeypatch,
     assert any(event["stage"] == "file_completed" for event in body["events"])
 
 
+def test_failed_zip_preparation_reports_reason_instead_of_404(
+    tmp_path, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(
+        upload_route,
+        "submit_job",
+        lambda function, *args, **kwargs: function(*args, **kwargs),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/upload/package?background=true",
+        headers=auth_headers,
+        files={
+            "file": (
+                "loan.zip",
+                _zip_bytes([("Applicant/Sign.Video.mp4", b"fake-video-bytes")]),
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    queued = response.json()
+    assert queued["status"] == "queued"
+    progress = client.get(queued["progress_url"], headers=auth_headers)
+    assert progress.status_code == 200
+    body = progress.json()
+    assert body["status"] == "failed"
+    assert "mp4" in str(body.get("error") or "").lower()
+
+
 def test_zip_progress_writer_retries_windows_replace_lock(tmp_path, monkeypatch) -> None:
     package_dir = tmp_path / "package"
     package_dir.mkdir()

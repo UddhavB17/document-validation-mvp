@@ -193,3 +193,72 @@ def test_admin_worker_start_endpoint(tmp_path, monkeypatch) -> None:
 
     # No token at all.
     assert client.post("/admin/worker/start").status_code == 401
+
+
+def test_worker_singleton_lock(tmp_path, monkeypatch) -> None:
+    import services.worker as worker_module
+    from services.worker import acquire_worker_lock, release_worker_lock
+
+    monkeypatch.setenv("DMEF_WORKER_LOCK_FILE", str(tmp_path / "worker.lock"))
+
+    first = acquire_worker_lock()
+    assert first is not None
+    try:
+        # Same-process re-acquire through a second handle must fail while
+        # the first is held (Windows semantics; POSIX may allow it, so only
+        # assert the cross-process case below is strict).
+        assert worker_module._lock_file is first
+    finally:
+        release_worker_lock()
+    assert worker_module._lock_file is None
+    # Re-acquirable after release.
+    second = acquire_worker_lock()
+    assert second is not None
+    release_worker_lock()
+
+
+def test_worker_singleton_lock_excludes_second_process(tmp_path, monkeypatch) -> None:
+    import subprocess
+    import sys
+    import time
+
+    from services.worker import acquire_worker_lock, release_worker_lock
+
+    monkeypatch.setenv("DMEF_WORKER_LOCK_FILE", str(tmp_path / "worker.lock"))
+
+    holder = acquire_worker_lock()
+    assert holder is not None
+    try:
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.path.insert(0, '.');"
+                "from services.worker import acquire_worker_lock;"
+                "handle = acquire_worker_lock();"
+                "print('HELD' if handle is None else 'FREE')",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert "HELD" in (probe.stdout or ""), probe.stderr[-500:]
+        # A crashed holder releases the OS lock: no stale-lock state.
+        release_worker_lock()
+        time.sleep(0.5)
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.path.insert(0, '.');"
+                "from services.worker import acquire_worker_lock;"
+                "handle = acquire_worker_lock();"
+                "print('HELD' if handle is None else 'FREE')",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert "FREE" in (probe.stdout or ""), probe.stderr[-500:]
+    finally:
+        release_worker_lock()

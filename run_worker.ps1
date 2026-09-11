@@ -23,6 +23,15 @@ $logs = Join-Path $root "data\logs"
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Python venv not found at $python. Run .\setup.ps1 first."
 }
+
+# Never stack workers: a live worker (fresh heartbeat) already owns the
+# singleton lock, and a second copy would only drain database connections.
+$aliveCheck = & $python -c "import sys; sys.path.insert(0, '$($root.Replace("'", "''"))'); from services.worker_launcher import is_worker_alive; print('yes' if is_worker_alive() else 'no')" 2>$null
+if ($aliveCheck -eq "yes") {
+    Write-Output "A DMEF worker is already alive (heartbeat fresh). Not starting another."
+    exit 0
+}
+
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 
 $outLog = Join-Path $logs "worker-out.log"

@@ -15,6 +15,13 @@ WORKER_ID = uuid.uuid4().hex[:12]
 _shutdown_requested = False
 BACKOFF_SECONDS = (30, 120)
 
+#: Lock file guaranteeing a single live worker. The OS releases the lock
+#: automatically when the holder dies, so — unlike a PID file — a crash can
+#: never leave a stale "worker running" state behind.
+WORKER_LOCK_FILENAME = ".worker.lock"
+
+_lock_file: Any = None
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -27,6 +34,61 @@ def _utc_now_iso() -> str:
 def request_shutdown(*_args: Any) -> None:
     global _shutdown_requested
     _shutdown_requested = True
+
+
+def worker_lock_path() -> Any:
+    """Return the singleton lock file path (created alongside worker logs).
+
+    ``DMEF_WORKER_LOCK_FILE`` overrides the path (tests use a temp file so
+    a live worker on the same machine never interferes with the suite).
+    """
+    import os
+    from pathlib import Path
+
+    override = os.getenv("DMEF_WORKER_LOCK_FILE", "").strip()
+    if override:
+        return Path(override)
+    log_dir = Path(__file__).resolve().parents[1] / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / WORKER_LOCK_FILENAME
+
+
+def acquire_worker_lock() -> Any:
+    """Take the cross-process singleton lock; ``None`` when held elsewhere.
+
+    The open handle is kept in ``_lock_file`` for the process lifetime —
+    closing it releases the lock. The OS frees the lock if this process
+    dies, so crashed workers never block a replacement.
+    """
+    global _lock_file
+    import os
+
+    handle = open(worker_lock_path(), "a+b")  # noqa: PTH123 - lock file
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    _lock_file = handle
+    return handle
+
+
+def release_worker_lock() -> None:
+    """Release the singleton lock (also happens automatically on exit)."""
+    global _lock_file
+    handle, _lock_file = _lock_file, None
+    if handle is not None:
+        try:
+            handle.close()
+        except Exception:  # noqa: BLE001 - best effort on teardown
+            pass
 
 
 def backoff_seconds(attempt: int) -> int:
@@ -498,6 +560,12 @@ def main() -> None:
         help="Start a minimal GET /health server for Cloud Run probes",
     )
     args = parser.parse_args()
+    if acquire_worker_lock() is None:
+        # Another worker is alive and holding the lock; exit quietly so
+        # duplicate launches (double-clicked scripts, watchdog races) can
+        # never stack up and drain the database connection pool.
+        print("Another DMEF worker is already running; exiting without starting.")
+        return
     if args.serve_health is not None:
         start_health_server(args.serve_health)
     run_worker(

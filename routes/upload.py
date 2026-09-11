@@ -411,8 +411,25 @@ def get_zip_preparation_progress(package_id: str) -> dict[str, object]:
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=503, detail="ZIP progress is being updated") from exc
     # Staging is deleted after preparation; rebuild the terminal state from
-    # the persisted intake rows + stored manifest.
+    # the persisted intake rows + stored manifest. Failed preparations
+    # persist a row with the error so polling shows the cause, not a 404.
     row = _get_package_row(package_id)
+    if row["status"] == "failed":
+        return {
+            "package_id": package_id,
+            "source_filename": row["source_filename"],
+            "status": "failed",
+            "stage": "failed",
+            "message": "ZIP preparation failed",
+            "error": row["error"] if "error" in row.keys() else None,
+            "processed_files": 0,
+            "total_files": 0,
+            "current_file": None,
+            "total_pages": 0,
+            "documents": [],
+            "verify_url": None,
+            "events": [],
+        }
     if row["status"] != "prepared":
         raise HTTPException(
             status_code=404,
@@ -1054,6 +1071,7 @@ def _prepare_zip_package_task(
             },
             append_event=True,
         )
+        _persist_intake_package_failure(package_id, source_filename, exc)
     finally:
         # Staging lives only in DMEF_JOB_WORK_DIR; the terminal state is
         # readable via the store/DB fallback in get_zip_preparation_progress.
@@ -1107,6 +1125,42 @@ def _write_package_preparation_progress(
                 time.sleep(0.05 * (attempt + 1))
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+def _persist_intake_package_failure(package_id: str, source_filename: str, exc: Exception) -> None:
+    """Record a failed preparation so polling returns the reason, not a 404.
+
+    Staging is deleted right after this, so without a row the real cause
+    (e.g. unsupported files in the ZIP) would be lost and the frontend
+    would poll a dead progress URL forever. Best-effort: a missing table
+    (pre-migration database) only loses the message, never the upload.
+    """
+    with get_connection() as connection:
+        try:
+            connection.execute(
+                """
+                INSERT INTO intake_packages (
+                    package_id, source_filename, source_zip_path,
+                    normalized_pdf_path, total_files, total_pages, status, error
+                ) VALUES (?, ?, ?, ?, ?, ?, 'failed', ?)
+                ON CONFLICT(package_id) DO NOTHING
+                """,
+                (package_id, source_filename, "", "", 0, 0, str(exc)[:2000]),
+            )
+        except Exception:  # noqa: BLE001 - error column predates 0008 on legacy DBs
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO intake_packages (
+                        package_id, source_filename, source_zip_path,
+                        normalized_pdf_path, total_files, total_pages, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'failed')
+                    ON CONFLICT(package_id) DO NOTHING
+                    """,
+                    (package_id, source_filename, "", "", 0, 0),
+                )
+            except Exception:  # noqa: BLE001 - missing table; message lives in logs
+                LOGGER.warning("Could not persist intake failure row for package %s", package_id)
 
 
 def _get_package_row(package_id: str):
