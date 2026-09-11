@@ -169,15 +169,15 @@ def generate_summaries(application_id: int, context: dict) -> dict[str, str]:
     ``applications.ops_summary_en/hi``.
     """
     if isinstance(context, dict) and context.get("pages"):
-        from services.ops_llm_review import generate_page_review
+        from services.ops_llm_review import generate_exception_review
 
         try:
-            result = generate_page_review(application_id, context)
+            result = generate_exception_review(application_id, context)
         except Exception as exc:
-            logger.warning("Complete operations review unavailable (%s)", type(exc).__name__)
+            logger.warning("AI exception review unavailable (%s)", type(exc).__name__)
             result = {
-                "en": "Complete AI review unavailable. Review the saved findings and pages manually.",
-                "hi": "पूर्ण एआई समीक्षा उपलब्ध नहीं है। सहेजी गई समस्याओं और पृष्ठों की मानव जाँच करें।",
+                "en": "AI exception review unavailable. Review the saved findings and their evidence manually.",
+                "hi": "एआई अपवाद समीक्षा उपलब्ध नहीं है। सहेजी गई समस्याओं और उनके प्रमाण की मानव जाँच करें।",
             }
         _persist_ops_summaries(application_id, result)
         return result
