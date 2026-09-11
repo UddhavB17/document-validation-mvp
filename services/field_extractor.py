@@ -133,10 +133,9 @@ def extract_fields(
                 fields[field_name] = value
     from services.repayment_schedule import extract_repayment_summary
 
-    if _has_repayment_summary_evidence(text):
-        for field_name, value in extract_repayment_summary(text).items():
-            if fields.get(field_name) in (None, "", [], {}):
-                fields[field_name] = value
+    for field_name, value in extract_repayment_summary(text).items():
+        if fields.get(field_name) in (None, "", [], {}):
+            fields[field_name] = value
     return fields
 
 
@@ -666,30 +665,6 @@ def _numeric_line_after_label(text: str, *labels: str, max_lines: int = 8) -> st
             if match:
                 return match.group(1)
     return None
-
-
-def _has_repayment_summary_evidence(text: str) -> bool:
-    """Gate the broad KFS summary parser on real table structure.
-
-    Loan boilerplate can mention a KFS and ``rate of interest`` before a
-    numbered clause such as ``6. In case of digital loans``.  A loose
-    cross-line regex previously turned that clause number into ROI=6.  Real KFS
-    summaries expose at least two labelled rows (or the explicit APR
-    illustration heading).
-    """
-    raw = str(text or "")
-    if re.search(r"\billustration\s+for\s+computation\s+of\s+apr\b", raw, re.I):
-        return True
-    row_patterns = (
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?(?:sanctioned\s+)?loan\s+amount\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?loan\s+term\b",
-        r"(?:^|\n)\s*(?:[A-Z][.)]\s*)?type\s+of\s+emi\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?rate\s+of\s+interest\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?total\s+interest\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?net\s+disburs(?:ed|ement)\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?total\s+amount\s+to\s+be\s+paid\b",
-    )
-    return sum(bool(re.search(pattern, raw, re.I)) for pattern in row_patterns) >= 2
 
 
 def _int_or_none(value: str | None) -> int | None:
@@ -2924,10 +2899,15 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
     # The former all-caps-only pattern missed those pages, causing the generic
     # ``Name`` fallback to mistake a later profile label such as "Holding
     # Nature" for the account holder.
-    profile_name = re.search(
+    profile_match = re.search(
         r"\bCKYC\s*\n\s*([A-Za-z][A-Za-z .]{2,70}(?:\n\s*[A-Za-z][A-Za-z .]{2,70})?)"
         r"\s*\n\s*\d{4}-\d{2}-\d{2}",
         text,
+    )
+    profile_name = (
+        _clean_name_like_value(re.sub(r"\s+", " ", profile_match.group(1)))
+        if profile_match
+        else None
     )
     header_name = _bank_statement_header_holder_name(text)
     statement_title_name = _statement_holder_after_title(text)
@@ -2947,7 +2927,7 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         fallback_name = None
     return {
         "account_holder_name": (
-            cast(str, _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1)))).title()
+            profile_name.title()
             if profile_name
             else header_name or statement_title_name or fallback_name
         ),

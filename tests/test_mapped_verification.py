@@ -1,11 +1,8 @@
+import pytest
+
 import database.db as db
 from database.db import get_connection, init_db
 from services.automatic_document_index import build_automatic_document_index
-from services.company_data_provider import CompanyReferenceData, LocalJsonCompanyDataProvider
-from services.document_index_provider import (
-    ManualDocumentIndexProvider,
-    compose_verification_manifest,
-)
 from services.field_extractor import extract_fields
 from services.field_verification import verify_name
 from services.mapped_verification import compare_processed_pages, run_mapped_verification
@@ -15,6 +12,41 @@ from services.verification_manifest import VerificationManifest
 
 def _anomaly_text(anomalies: list[dict]) -> str:
     return repr(anomalies)
+
+
+@pytest.mark.parametrize("field_observed", [False, True])
+@pytest.mark.parametrize("confidence", [0.0, 0.3])
+def test_low_ocr_warning_preserves_person_and_manual_review_status(
+    field_observed: bool, confidence: float
+) -> None:
+    from services.mapped_verification import _verify_document_fields
+
+    observations = {
+        "pan_number" if field_observed else "phone_number": [
+            {"page_number": 7, "value": "TSTPA7009Z", "ocr_confidence": confidence}
+        ]
+    }
+    anomalies = []
+
+    _verify_document_fields(
+        expected={"pan_number": "ABCDE1234F"},
+        document_observations=observations,
+        readable_pages=[7],
+        provided_type="PAN",
+        person_id="coapplicant_1",
+        reference_data={},
+        anomalies=anomalies,
+    )
+
+    assert len(anomalies) == 1
+    warning = anomalies[0]
+    assert warning["rule_id"] == "LOW_CONFIDENCE_PAGE"
+    assert warning["severity"] == "LOW"
+    assert warning["field_name"] == "ocr_confidence"
+    assert warning["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert warning["person_id"] == "coapplicant_1"
+    assert warning["page_number"] == 7
+    assert "too low" in warning["reason"]
 
 
 class _FakeDocument:
@@ -1173,28 +1205,7 @@ def test_manifest_allows_automatic_document_identification_without_index() -> No
     assert manifest.pipeline_payload()["documents"] == []
 
 
-def test_company_data_and_manual_index_compose_without_pipeline_changes() -> None:
-    reference = LocalJsonCompanyDataProvider(
-        {
-            "loan_id": "MAP-COMPOSE",
-            "people": {"primary": {"pan_number": "ABCDE1234F"}},
-        }
-    ).get_reference_data("MAP-COMPOSE")
-    assert isinstance(reference, CompanyReferenceData)
-    index = ManualDocumentIndexProvider(
-        [{"person_id": "primary", "document_type": "PAN", "pages": [3]}]
-    ).get_document_index("unused.pdf")
-
-    manifest = compose_verification_manifest(reference, index)
-
-    assert manifest.loan_id == "MAP-COMPOSE"
-    assert manifest.document_index[0].pages == [3]
-    assert manifest.pipeline_payload()["reference_data"]["primary"]["pan_number"] == "ABCDE1234F"
-
-
 def test_manifest_rejects_unknown_person_and_conflicting_page_assignment() -> None:
-    import pytest
-
     with pytest.raises(ValueError, match="unknown people"):
         VerificationManifest.model_validate(
             {

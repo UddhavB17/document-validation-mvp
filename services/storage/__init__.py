@@ -33,16 +33,11 @@ class ObjectStore(Protocol):
     def list(self, prefix: str) -> list[str]: ...
 
 
-def _store_dir() -> Path:
-    """Resolve ``DMEF_LOCAL_STORE_DIR`` (default ``data/store``)."""
-    return local_store_dir()
-
-
 class LocalObjectStore:
     """Filesystem-backed store under ``DMEF_LOCAL_STORE_DIR``."""
 
     def __init__(self, base_dir: Path | str | None = None) -> None:
-        self.base_dir = Path(base_dir) if base_dir is not None else _store_dir()
+        self.base_dir = Path(base_dir) if base_dir is not None else local_store_dir()
 
     def _path(self, key: str) -> Path:
         check_key(key)

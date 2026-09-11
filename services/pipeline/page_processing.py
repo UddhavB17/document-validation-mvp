@@ -741,7 +741,7 @@ def _build_page_records(
             "words": list(ocr_metadata.get("words") or []),
             # Provider boxes kept in memory as a fallback so page_words can
             # coerce words even when derivation produced none; never
-            # persisted (ws-a data diet: _insert_page uses explicit columns).
+            # persisted (ws-a data diet: page inserts use explicit columns).
             "bounding_boxes": list(ocr_metadata.get("bounding_boxes") or []),
             # Small in-memory layout for field extraction/smoothing only;
             # never persisted (no "native" blob).

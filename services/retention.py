@@ -40,6 +40,16 @@ RETAINED_AUDIT_ACTIONS = frozenset(
         "cancel_requested",
         "resume_requested",
         "restart_requested",
+        "pipeline_pause_requested",
+        "pipeline_cancel_requested",
+        "pipeline_resume_requested",
+        "pipeline_paused",
+        "pipeline_resumed",
+        "pipeline_reprocess_queued",
+        "user_created",
+        "password_changed",
+        "user_deactivated",
+        "user_deleted",
     }
 )
 

@@ -1599,6 +1599,23 @@ def test_bank_statement_profile_extracts_title_case_holder_after_ckyc() -> None:
     assert result["account_number"] == "6368"
 
 
+@pytest.mark.parametrize("holder", [None, "Ramesh Kumar"])
+def test_bank_statement_rejected_profile_name_preserves_other_evidence(holder) -> None:
+    text = (
+        "Bank Statement\nAccount Number: 123456789012\n"
+        + (f"Customer Name: {holder}\n" if holder else "")
+        + "CKYC\nAccount Holder\n1994-12-05\nTRANSACTIONS\n"
+        "Transaction Date Narration Debit Credit Balance\n"
+        "01/05/2026 Cash 0 100 100"
+    )
+
+    result = extract_fields("Bank Statement", text)
+
+    assert result["account_holder_name"] == holder
+    assert result["account_number"] == "123456789012"
+    assert result["statement_period_end"] == "2026-05-01"
+
+
 def test_bank_statement_welcome_header_beats_relation_and_transaction_text() -> None:
     result = extract_fields(
         "Bank Statement",

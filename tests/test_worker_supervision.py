@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import database.db as db
 from database.db import init_db
 
@@ -65,6 +67,16 @@ def test_watchdog_disabled_in_production(monkeypatch) -> None:
     monkeypatch.delenv("DMEF_WORKER_WATCHDOG", raising=False)
     assert watchdog._watchdog_enabled() is False
     assert watchdog.start_worker_watchdog() is False
+
+
+@pytest.mark.parametrize("value", ["false", "0", "off", "no"])
+def test_watchdog_explicit_opt_out_disables_local_spawning(monkeypatch, value) -> None:
+    import services.worker_watchdog as watchdog
+
+    monkeypatch.setenv("DMEF_ENV", "local")
+    monkeypatch.setenv("DMEF_WORKER_WATCHDOG", value)
+
+    assert watchdog._watchdog_enabled() is False
 
 
 def test_watchdog_heals_stale_worker_with_pending_work(monkeypatch) -> None:
@@ -150,6 +162,16 @@ def test_admin_worker_start_endpoint(tmp_path, monkeypatch) -> None:
     assert response.status_code == 200, response.text
     assert response.json()["started"] is True
     assert spawned == ["admin panel"]
+
+    # Production spawning needs an explicit opt-in, parsed by the same config
+    # helper as other boolean runtime switches.
+    monkeypatch.setenv("DMEF_ENV", "production")
+    monkeypatch.setenv("DMEF_ALLOW_LOCAL_WORKER_SPAWN", "0")
+    assert client.post("/admin/worker/start", headers=headers).status_code == 409
+    assert spawned == ["admin panel"]
+    monkeypatch.setenv("DMEF_ALLOW_LOCAL_WORKER_SPAWN", "1")
+    assert client.post("/admin/worker/start", headers=headers).status_code == 200
+    assert spawned == ["admin panel", "admin panel"]
 
     # Non-admin cannot start workers.
     from services.auth.service import create_user

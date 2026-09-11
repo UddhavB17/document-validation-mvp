@@ -696,10 +696,6 @@ def condition_applies(condition: dict | None, system_data: dict) -> bool | None:
     return str(value).strip().lower() == str(expected).strip().lower()
 
 
-# Backward-compatible internal alias used by older tests/imports.
-_condition_applies = condition_applies
-
-
 def _people(system_data: dict) -> dict[str, dict]:
     raw = system_data.get("people") or system_data.get("reference_data")
     if isinstance(raw, dict) and any(isinstance(value, dict) for value in raw.values()):
@@ -1753,13 +1749,3 @@ def _run_quality_checks(pages: list[dict], ground_truth: dict) -> list[dict]:
                 )
 
     return anomalies
-
-
-def evaluate_checklist(checklist: dict, extracted_documents: dict) -> list[dict]:
-    required_docs = checklist.get("required_documents", [])
-    found_docs = set(extracted_documents.keys())
-    return [
-        {"document": doc_name, "issue": "missing"}
-        for doc_name in required_docs
-        if doc_name not in found_docs
-    ]

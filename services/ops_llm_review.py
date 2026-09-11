@@ -26,8 +26,6 @@ from services.review_prompts import (
 )
 from services.storage import get_store
 
-MAX_SUMMARY_CHARS = 6000
-
 
 def _json(text: str | None) -> dict:
     cleaned = (text or "").strip()
@@ -252,6 +250,7 @@ def generate_page_review(application_id: int, context: dict) -> dict[str, str]:
     if {r.get("ref") for r in assessments if isinstance(r, dict)} != {f["ref"] for f in findings}:
         raise ValueError("Finding review references do not match input")
     known_pages = {p["page"] for p in pages}
+    dismissal_row_ids = {}
     for item in assessments:
         if item.get("verdict") not in {"supported", "possible_false_positive", "unresolved"}:
             raise ValueError("Invalid finding recommendation")
@@ -263,6 +262,26 @@ def generate_page_review(application_id: int, context: dict) -> dict[str, str]:
             item["verdict"] = "unresolved"
         original = next(f for f in findings if f["ref"] == item["ref"])
         item["dismissed"] = _dismissible(item, original, pages)
+        if item["dismissed"]:
+            with get_connection() as connection:
+                matches = connection.execute(
+                    "SELECT id FROM validation_results "
+                    "WHERE application_id = ? AND rule_id = ? AND page_number = ? "
+                    "AND expected_value = ? AND found_value = ? AND status = 'open'",
+                    (
+                        application_id,
+                        original["rule_id"],
+                        original["page_number"],
+                        original["expected_value"],
+                        original["found_value"],
+                    ),
+                ).fetchall()
+            # Aggregate findings need not carry database IDs. When their values
+            # match multiple rows, retain the recommendation rather than dismiss
+            # an unresolved sibling that happens to share those values.
+            item["dismissed"] = len(matches) == 1
+            if item["dismissed"]:
+                dismissal_row_ids[item["ref"]] = matches[0]["id"]
 
     counts = {
         v: sum(r["verdict"] == v for r in assessments)
@@ -318,18 +337,18 @@ def generate_page_review(application_id: int, context: dict) -> dict[str, str]:
         json.dumps(report, ensure_ascii=False).encode(),
         "application/json",
     )
-    dismissed_refs = {r["ref"] for r in assessments if r["dismissed"]}
-    if dismissed_refs:
+    if dismissal_row_ids:
         # Keep original rows and evidence. Update only matching findings on this application.
         with get_connection() as connection:
             for f in findings:
-                if f["ref"] not in dismissed_refs:
+                if f["ref"] not in dismissal_row_ids:
                     continue
                 connection.execute(
                     "UPDATE validation_results SET status = 'dismissed_by_llm' "
-                    "WHERE application_id = ? AND rule_id = ? AND page_number = ? "
+                    "WHERE id = ? AND application_id = ? AND rule_id = ? AND page_number = ? "
                     "AND expected_value = ? AND found_value = ? AND status = 'open'",
                     (
+                        dismissal_row_ids[f["ref"]],
                         application_id,
                         f["rule_id"],
                         f["page_number"],
@@ -338,6 +357,6 @@ def generate_page_review(application_id: int, context: dict) -> dict[str, str]:
                     ),
                 )
         for i, finding in enumerate(context.get("findings") or []):
-            if i + 1 in dismissed_refs:
+            if i + 1 in dismissal_row_ids:
                 finding["status"] = "dismissed_by_llm"
     return report["summary"]

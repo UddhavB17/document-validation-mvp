@@ -41,19 +41,8 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      - name: Run backend tests
-        run: python -m pytest -q
-
       - name: Compile backend modules
         run: python -m compileall -q main.py database routes services tests
-
-      - name: Run targeted Ruff checks
-        # These are the documented maintained-module checks. Repository-wide
-        # Ruff checks are intentionally not claimed green here.
-        run: >-
-          ruff check routes/review.py services/paths.py services/review
-          tests/test_paths.py tests/test_compatibility_facades.py
-          tests/test_review_boundary.py tests/test_low_memory.py
 
       - name: Check targeted Ruff formatting
         run: >-

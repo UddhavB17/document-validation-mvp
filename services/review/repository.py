@@ -100,7 +100,7 @@ def load_application_review_bundle(
     """Read review summaries and private comparison evidence together.
 
     Keep the evidence separate so OCR/private metadata cannot enter the public
-    response, and avoid fetching all 891 page rows a second time.
+    response, and avoid fetching every page row a second time.
     """
     return _load_application_review(application_id, include_evidence=True)
 
@@ -203,34 +203,10 @@ def load_latest_decision(application_id: int) -> JsonRow | None:
     return dict(decision_row) if decision_row else None
 
 
-def load_comparison_evidence(application_id: int, pages: list[dict]) -> list[dict]:
-    """Hydrate validation evidence in one read, for internal calculation only.
-
-    Summary payloads deliberately omit OCR and private reliability metadata.
-    Comparisons need both; never attach them to the public ``data['pages']``.
-    """
-    if not pages:
-        return []
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT p.page_number, p.ocr_text, m.meta_json
-            FROM pages p
-            LEFT JOIN pages_meta m
-              ON m.application_id = p.application_id AND m.page_number = p.page_number
-            WHERE p.application_id = ?
-            ORDER BY p.page_number
-            """,
-            (application_id,),
-        ).fetchall()
-    return _hydrate_comparison_evidence(pages, rows)
-
-
 def _hydrate_comparison_evidence(pages: list[dict], rows: list[Any]) -> list[dict]:
-    details = {int(row["page_number"]): dict(row) for row in rows}
     evidence = []
-    for page in pages:
-        detail = details.get(int(page["page_number"]), {})
+    for page, row in zip(pages, rows, strict=True):
+        detail = dict(row)
         try:
             meta = json.loads(detail.get("meta_json") or "{}")
         except (TypeError, json.JSONDecodeError):
@@ -287,7 +263,7 @@ def load_worklist_data() -> tuple[
         placeholders = ",".join("?" for _ in application_ids)
         validation_rows = connection.execute(
             f"""
-            SELECT application_id, severity, rule_id, page_number, reason,
+            SELECT application_id, severity, rule_id, status, page_number, reason,
                    document_type, expected_value, found_value
             FROM validation_results
             WHERE application_id IN ({placeholders})

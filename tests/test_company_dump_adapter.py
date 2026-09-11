@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from services.company_dump_adapter import convert_company_database_dump
 from services.verification_manifest import VerificationManifest
 
@@ -91,6 +95,34 @@ def test_converts_valid_database_json_object() -> None:
     assert manifest["application_date"] == "17-August-2026"
     assert manifest["people"]["primary"]["applicant_name"] == "Ramesh Kumar"
     assert manifest["people"]["primary"]["loan_amount"] == "500000"
+
+
+@pytest.mark.parametrize("serialized", [False, True])
+def test_json_string_punctuation_preserves_people_and_trusted_fields(serialized: bool) -> None:
+    payload = {
+        "applicantdetails": {
+            "loanId": 42,
+            "fieldRemarks": "Review } note",
+            "entityName": "Primary One",
+            "mobileNo": "9000000001",
+            "address": 'House "A", Block [2]',
+        },
+        "coapplicantdetails": [
+            {"entityName": "Alice One", "fieldRemarks": "Review { note"},
+            {"entityName": "Bob Two", "mobileNo": "9000000002"},
+        ],
+    }
+
+    manifest = convert_company_database_dump(json.dumps(payload) if serialized else payload)
+
+    assert list(manifest["people"]) == ["primary", "coapplicant_1", "coapplicant_2"]
+    primary = manifest["people"]["primary"]
+    assert primary["phone_number"] == "9000000001"
+    assert primary["field_remarks"] == "Review } note"
+    assert primary["address"] == 'House "A", Block [2]'
+    assert manifest["people"]["coapplicant_1"]["applicant_name"] == "Alice One"
+    assert manifest["people"]["coapplicant_2"]["applicant_name"] == "Bob Two"
+    assert manifest["people"]["coapplicant_2"]["phone_number"] == "9000000002"
 
 
 def test_imports_explicit_submission_date_from_company_loan_section() -> None:

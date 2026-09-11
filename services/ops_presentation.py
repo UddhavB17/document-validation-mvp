@@ -29,7 +29,7 @@ TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "stale"})
 FAILED_JOB_STATUSES = frozenset({"failed"})
 
 # Rule-ID families per contracts §11, in code priority order. First match wins;
-# anything unmapped is admin-only and excluded from the operations payload.
+# remaining rules become REVIEW_REQUIRED under contracts §12.
 CODE_PATTERNS: list[tuple[str, list[str]]] = [
     (
         "NAME_MISMATCH",
@@ -186,9 +186,6 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
             break
     if evidence is None and pages:
         evidence = {"page": pages[0], "bbox": None, "text": str(found or "")}
-    # Evidence bbox may be null; contract allows null.
-    if evidence is not None and evidence.get("bbox") is None:
-        evidence = {"page": evidence["page"], "bbox": None, "text": evidence.get("text", "")}
     values = {
         "expected": "" if expected is None else str(expected),
         "found": "" if found is None else str(found),
@@ -211,7 +208,6 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         },
         "pages": pages,
         "evidence": evidence,
-        "_sort_pages": pages[:1],
     }
 
 
@@ -226,8 +222,8 @@ def _summaries(findings: list[dict]) -> dict[str, str]:
     count = len(findings)
     if not count:
         return {
-            "en": "No issues found. The file looks good.",
-            "hi": "कोई समस्या नहीं मिली। फ़ाइल ठीक है।",
+            "en": "No automated issues are recorded. Complete the required document and manual checks before making a decision.",
+            "hi": "कोई स्वचालित समस्या दर्ज नहीं है। निर्णय लेने से पहले आवश्यक दस्तावेज़ों और मानव जाँच को पूरा करें।",
         }
     noun_en = "issue" if count == 1 else "issues"
     parts_en = ", ".join(_summary_part(f["code"], f["pages"], "en") for f in findings)
@@ -255,7 +251,8 @@ def _load_anomalies(application_id: int) -> list[dict]:
     with get_connection() as connection:
         try:
             rows = connection.execute(
-                "SELECT * FROM validation_results WHERE application_id = ? AND status != 'dismissed_by_llm' ORDER BY id",
+                "SELECT * FROM validation_results WHERE application_id = ? "
+                "AND COALESCE(status, '') != 'dismissed_by_llm' ORDER BY id",
                 (application_id,),
             ).fetchall()
         except Exception:
@@ -317,17 +314,6 @@ def _load_pages(application_id: int) -> list[dict]:
                 page["extracted_fields"] = {}
         pages.append(page)
     return pages
-
-
-def _stored_findings(application: dict) -> dict | None:
-    raw = application.get("ops_findings_json")
-    if not raw:
-        return None
-    try:
-        payload = json.loads(raw) if isinstance(raw, str) else dict(raw)
-    except (TypeError, ValueError):
-        return None
-    return payload if isinstance(payload, dict) else None
 
 
 # ---------------------------------------------------------------------------
@@ -425,8 +411,6 @@ def compute_findings(anomalies: list[dict]) -> list[dict]:
             CODE_ORDER.index(f["code"]) if f["code"] in CODE_ORDER else len(CODE_ORDER),
         )
     )
-    for finding in findings:
-        finding.pop("_sort_pages", None)
     return findings
 
 
@@ -445,8 +429,6 @@ def build_ops_payload(application_id: int) -> dict:
     all_findings = compute_findings(anomalies)
     findings = all_findings[:5]
     overflow = _overflow_pages(all_findings[5:], anomalies)
-    summary = None
-
     if application.get("ops_summary_en") and application.get("ops_summary_hi"):
         summary = {"en": str(application["ops_summary_en"]), "hi": str(application["ops_summary_hi"])}
     else:
@@ -458,10 +440,13 @@ def build_ops_payload(application_id: int) -> dict:
         status = "failed"
     elif job_status and job_status not in TERMINAL_JOB_STATUSES:
         status = "processing"
-    elif findings:
-        status = "needs_review"
-    else:
+    elif not findings and (
+        job_status == "completed"
+        or (not job_status and progress.get("status") in {"completed", "completed_with_warnings"})
+    ):
         status = "clean"
+    else:
+        status = "needs_review"
 
     try:
         percentage = float(progress.get("percentage", 0) or 0)
@@ -496,11 +481,10 @@ def build_ops_payload(application_id: int) -> dict:
 
 def _overflow_pages(all_overflow: list[dict], anomalies: list[dict]) -> list[dict]:
     """Group findings beyond the top 5 by page for manual verification."""
-    by_page: dict[int, dict] = {}
+    by_page: dict[int, list[str]] = {}
     for finding in all_overflow:
         for page_num in finding.get("pages", []):
-            slot = by_page.setdefault(int(page_num), {"codes": [], "finding": finding})
-            slot["codes"].append(finding["code"])
+            by_page.setdefault(int(page_num), []).append(finding["code"])
     doc_by_page: dict[int, Any] = {}
     for anomaly in anomalies:
         for page_num in _anomaly_pages(anomaly):
@@ -509,10 +493,10 @@ def _overflow_pages(all_overflow: list[dict], anomalies: list[dict]) -> list[dic
     for page_num in sorted(by_page):
         document_type = doc_by_page.get(page_num)
         problems_en = ", ".join(
-            SUMMARY_PHRASES[code]["en"] for code in dict.fromkeys(by_page[page_num]["codes"])
+            SUMMARY_PHRASES[code]["en"] for code in dict.fromkeys(by_page[page_num])
         )
         problems_hi = ", ".join(
-            SUMMARY_PHRASES[code]["hi"] for code in dict.fromkeys(by_page[page_num]["codes"])
+            SUMMARY_PHRASES[code]["hi"] for code in dict.fromkeys(by_page[page_num])
         )
         result.append(
             {

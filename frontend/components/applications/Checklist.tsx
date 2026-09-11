@@ -129,7 +129,7 @@ export function Checklist({ data, onSelectPage }: { data: ApplicationReview; onS
                   <tr key={`${row.s_no ?? "row"}-${index}`} className={status === "MISSING" || status === "NOT_CHECKED" ? "bg-amber-50/50" : undefined}>
                     <td className="whitespace-nowrap px-3 py-3 font-mono text-xs font-bold">{row.s_no ?? "-"}</td>
                     <td className="whitespace-nowrap px-3 py-3">
-                      <span aria-label={`Checklist status: ${statusLabel(status)}`}><StatusBadge status={statusLabel(status)} /></span>
+                      <span aria-label={`Checklist status: ${statusLabel(status)}`}><StatusBadge status={status} /></span>
                     </td>
                     <td className="min-w-[220px] px-3 py-3 font-semibold">{row.description}</td>
                     <td className="min-w-[160px] px-3 py-3 text-slate-600">{row.document_types || "-"}</td>

@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import event
 
 import database.db as db
@@ -71,7 +72,7 @@ def test_large_page_and_finding_batches_preserve_evidence(application):
     assert len(evidence) == 891
     assert evidence[0]["ocr_text"] == pages[0]["ocr_text"]
     assert evidence[0]["extracted_fields"]["_field_provenance"]
-    public = json.dumps(data)
+    public = json.dumps(jsonable_encoder(data))
     assert "synthetic OCR evidence" not in public
     assert "meta_json" not in public
     assert "_field_provenance" not in public
@@ -91,3 +92,37 @@ def test_failed_batch_rolls_back_without_losing_saved_pages(application, monkeyp
         _save_pages(application, [{"page_number": 2, "ocr_text": "new page"}])
     saved = _load_page_checkpoints(application)
     assert [(p["page_number"], p["ocr_text"]) for p in saved] == [(1, "retained checkpoint")]
+
+
+def test_review_bundle_reads_private_evidence_once_without_overriding_public_fields(application):
+    _save_pages(application, [{
+        "page_number": 1,
+        "ocr_text": "synthetic evidence",
+        "extracted_fields": {"loan_amount": 500000},
+        "meta": {
+            "_identity_extraction_reliable": False,
+            "loan_amount": "must not override",
+        },
+    }])
+    page_reads = []
+    engine = db._get_engine()
+
+    def count_page_reads(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "FROM pages " in statement:
+            page_reads.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count_page_reads)
+    try:
+        data, evidence = load_application_review_bundle(application)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_page_reads)
+
+    assert len(page_reads) == 1
+    assert data["pages"][0]["extracted_fields"] == {"loan_amount": 500000}
+    assert "ocr_text" not in data["pages"][0]
+    assert "meta_json" not in data["pages"][0]
+    assert evidence[0]["ocr_text"] == "synthetic evidence"
+    assert evidence[0]["extracted_fields"] == {
+        "loan_amount": 500000,
+        "_identity_extraction_reliable": False,
+    }

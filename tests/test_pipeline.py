@@ -258,8 +258,8 @@ def test_reference_survives_early_exit(
     init_db()
     with get_connection() as connection:
         application_id = connection.execute(
-            "INSERT INTO applications (loan_id) VALUES (?)", ("EARLY-EXIT",)
-        ).lastrowid
+            "INSERT INTO applications (loan_id) VALUES (?) RETURNING id", ("EARLY-EXIT",)
+        ).fetchone()["id"]
 
     def page_crash(*_args, **_kwargs):
         raise RuntimeError("Page processing interrupted")

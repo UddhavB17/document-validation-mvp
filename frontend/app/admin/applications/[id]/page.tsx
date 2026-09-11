@@ -16,7 +16,7 @@ import { getReviewErrorPresentation } from "@/components/applications/reviewUtil
 import type { Anomaly } from "@/lib/api";
 import type { CaseTab, EvidenceSelection } from "@/components/applications/types";
 import { isApplicationReviewPollingStatus, useApplicationReview, useApplicationStatus } from "@/lib/queries";
-import { buildChecklistTaskId } from "@/lib/decisionPolicy";
+import { buildChecklistTaskId, checklistRequiresReview } from "@/lib/decisionPolicy";
 
 // This route is the case workspace boundary. Legacy query values are mapped
 // here so older worklist links continue to land on the closest new section.
@@ -184,7 +184,7 @@ export default function ApplicationReviewPage() {
                 expected_value: "-",
                 found_value: allPages ? `Combined pages: ${allPages.join(", ")}` : `Page ${pageNo}`
               };
-              handleSelectEvidence(mockAnomaly, pageNo, allPages, row.status?.toLowerCase() === "not_checked"
+              handleSelectEvidence(mockAnomaly, pageNo, allPages, checklistRequiresReview(row.status)
                 ? [buildChecklistTaskId(row.s_no, row.description)]
                 : undefined);
             }}

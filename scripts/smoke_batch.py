@@ -49,6 +49,7 @@ FINDING_CODES = frozenset(
         "OCR_FAILED",
         "DATA_MISSING",
         "PROCESSING_ERROR",
+        "REVIEW_REQUIRED",
     }
 )
 
@@ -330,15 +331,24 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"batch_id: {batch_id}")
 
-    rejected = [
-        item for item in batch.get("items", []) if item.get("application_id") is None
-    ]
+    items = batch.get("items")
+    if not isinstance(items, list) or len(items) != len(paths) or any(
+        not isinstance(item, dict)
+        or not (type(item.get("application_id")) is int or item.get("status") == "rejected")
+        for item in items
+    ):
+        print("error: batch response did not account for every uploaded file", file=sys.stderr)
+        return 1
+    rejected = [item for item in items if item.get("application_id") is None]
     for item in rejected:
         print(f"rejected: {item.get('filename')} — {item.get('reason')}")
 
-    latest: dict[int, dict[str, object]] = {}
+    latest = {item["application_id"]: item for item in items if item.get("application_id") is not None}
+    if len(latest) + len(rejected) != len(paths):
+        print("error: batch response contains duplicate application IDs", file=sys.stderr)
+        return 1
     poll_interval = max(1.0, float(args.poll_interval))
-    while True:
+    while any(str(item.get("status")) not in TERMINAL_STATUSES for item in latest.values()):
         now = time.monotonic()
         if now > deadline:
             break
@@ -362,10 +372,9 @@ def main(argv: list[str] | None = None) -> int:
             items = []
         for item in items:
             app_id = item.get("application_id")
-            if isinstance(app_id, int):
+            if app_id in latest:
                 latest[app_id] = item
-        pending = [item for item in items if str(item.get("status")) not in TERMINAL_STATUSES]
-        if not pending and items:
+        if all(str(item.get("status")) in TERMINAL_STATUSES for item in latest.values()):
             break
         time.sleep(poll_interval)
 

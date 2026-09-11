@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from database.db import get_connection, init_db
+from database.db import get_connection
 from services.auth.dependencies import get_current_user
 
 router = APIRouter(
@@ -29,7 +29,6 @@ def get_ops_application(application_id: int) -> dict[str, Any]:
 def get_ops_worklist() -> dict[str, list[dict[str, Any]]]:
     """Return operations worklist rows (no technical fields)."""
     # TODO(ws-d): scope this listing to the caller's role/ownership.
-    init_db()
     with get_connection() as connection:
         try:
             rows = connection.execute(
@@ -42,7 +41,8 @@ def get_ops_worklist() -> dict[str, list[dict[str, Any]]]:
         try:
             for row in connection.execute(
                 "SELECT application_id, COUNT(*) AS n FROM validation_results "
-                "GROUP BY application_id"
+                "WHERE COALESCE(status, '') != ? GROUP BY application_id",
+                ("dismissed_by_llm",),
             ).fetchall():
                 counts[int(row["application_id"])] = int(row["n"])
         except Exception:

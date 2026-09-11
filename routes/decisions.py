@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from database.db import dialect, get_connection, init_db
+from database.db import dialect, get_connection
 from services.auth.dependencies import CurrentUser, get_current_user
 from services.progress_tracker import operational_progress_status
 from services.reviewer import compute_final_status
@@ -47,11 +47,6 @@ def _lock_application(connection, application_id: int) -> None:
     if dialect() == "postgresql":
         connection.execute(
             "SELECT id FROM applications WHERE id = ? FOR UPDATE",
-            (application_id,),
-        )
-    else:
-        connection.execute(
-            "SELECT id FROM applications WHERE id = ?",
             (application_id,),
         )
 
@@ -97,7 +92,6 @@ class DecisionRequest(BaseModel):
 
 @router.get("/{application_id}", summary="Get latest decision for an application")
 def get_decision(application_id: int) -> dict[str, object]:
-    init_db()
     with get_connection() as connection:
         row = connection.execute(
             """
@@ -120,7 +114,6 @@ def create_decision(
     payload: DecisionRequest,
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, object]:
-    init_db()
     decision = payload.decision.upper()
     reviewer_note = payload.reviewer_note.strip()
 
@@ -209,7 +202,6 @@ def undo_decision(
     decision_id: int,
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, object]:
-    init_db()
     with get_connection() as connection:
         # Write lock before any reads so concurrent undos serialize.
         _begin_immediate(connection)
@@ -264,7 +256,7 @@ def undo_decision(
             restored_status = STATUS_BY_DECISION[str(preceding["decision"]).upper()]
         else:
             anomalies = connection.execute(
-                "SELECT severity, rule_id FROM validation_results WHERE application_id = ?",
+                "SELECT severity, rule_id, status FROM validation_results WHERE application_id = ?",
                 (application_id,),
             ).fetchall()
             restored_status = compute_final_status([dict(item) for item in anomalies])

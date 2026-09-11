@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
 
 import { useBatchStatus } from "@/lib/queries";
 
@@ -34,10 +33,6 @@ function pillClass(status: string): string {
 
 export function BatchStatusTable({ batchId }: { batchId: string }) {
   const { data, isLoading, error } = useBatchStatus(batchId);
-
-  useEffect(() => {
-    // Polling is owned by the query hook; nothing extra to do here.
-  }, [data]);
 
   if (isLoading) {
     return <p className="text-sm text-slate-500">Preparing file list…</p>;

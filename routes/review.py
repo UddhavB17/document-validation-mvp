@@ -14,7 +14,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-from database.db import init_db
 from services.auth.dependencies import get_current_user, require_role
 from services.checklist_service import (
     get_ai_checkable_items,
@@ -104,14 +103,12 @@ def _application_source_bytes(application_id: int) -> tuple[bytes, str]:
 @router.get("/worklist")
 def get_worklist() -> dict[str, list[dict[str, Any]]]:
     """Return the reviewer worklist for the Next.js UI."""
-    init_db()
     return build_worklist()
 
 
 @router.get("/activity/today", dependencies=[Depends(require_role("admin"))])
 def get_today_activity() -> dict[str, Any]:
     """Return today's reviewer decision summary."""
-    init_db()
     decision_rows = load_today_activity()
     return {
         "total": len(decision_rows),
@@ -256,7 +253,6 @@ def get_application_source_page(
     dependencies=[Depends(require_role("admin"))],
 )
 def reprocess_application(application_id: int) -> dict[str, Any]:
-    init_db()
     try:
         return queue_application_reprocess(application_id)
     except LookupError as exc:
@@ -368,7 +364,6 @@ def get_application_ocr_json(application_id: int) -> dict[str, Any]:
     from services.storage import get_store
     from services.storage.refs import record_ref
 
-    init_db()
     data = load_application_review_data(application_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Application not found")

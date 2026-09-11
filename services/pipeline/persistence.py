@@ -60,7 +60,7 @@ def _save_page_checkpoint(application_id: int, page: dict[str, Any]) -> None:
             "DELETE FROM pages_meta WHERE application_id = ? AND page_number = ?",
             (application_id, page_number),
         )
-        _insert_page(connection, application_id, page)
+        _insert_pages(connection, application_id, [page])
 
 
 def _public_extracted_fields(page: dict[str, Any]) -> dict[str, Any]:
@@ -80,10 +80,6 @@ def _page_meta(page: dict[str, Any]) -> dict[str, Any]:
     if isinstance(fields, dict):
         return {key: value for key, value in fields.items() if str(key).startswith("_")}
     return {}
-
-
-def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> None:
-    _insert_pages(connection, application_id, [page])
 
 
 def _insert_pages(connection: Any, application_id: int, pages: list[dict[str, Any]]) -> None:

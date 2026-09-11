@@ -99,7 +99,11 @@ def test_generate_summaries_provider_none_uses_fallback_and_records_nothing(
 
     result = generate_summaries(application_id, {"findings": []})
 
-    assert "no issues found" in result["en"]
+    assert "No issues were supplied" in result["en"]
+    assert "manual checks" in result["en"]
+    assert "मानव जाँच" in result["hi"]
+    assert "complete with no issues" not in result["en"]
+    assert "approval" not in result["en"]
     assert _llm_call_count() == 0
 
 

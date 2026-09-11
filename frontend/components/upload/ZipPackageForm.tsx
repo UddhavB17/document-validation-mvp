@@ -6,7 +6,6 @@ import { ErrorMessage } from "@/components/Message";
 import { Metric } from "@/components/Metric";
 import { api, UploadResponse, ZipPreparationProgress } from "@/lib/api";
 
-import { SelectField } from "./UploadField";
 import { ZipDocumentInventory } from "./ZipDocumentInventory";
 import { ZipPreparationProgress as ZipPreparationProgressPanel } from "./ZipPreparationProgress";
 import { CASE_TYPE_OPTIONS, getCaseType, getFormError, getSanitizedManifest } from "./uploadUtils";
@@ -41,7 +40,6 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
     }
     if (progress.status === "prepared" && preparingPackageId) {
       setIsPreparing(false);
-      setManifestText((current) => current || "");
     }
   }, [preparingPackageId, progress]);
 

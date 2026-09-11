@@ -98,10 +98,7 @@ def _is_legal_clearance_evidence(page: dict[str, Any], expected_type: str) -> bo
     has_positive_title_signal = any(
         term in text for term in ("marketable", "unencumbered", "clear title", "title is clear")
     )
-    if not (has_title_signal and has_positive_title_signal):
-        return False
-
-    return _meets_confidence_threshold(page)
+    return has_title_signal and has_positive_title_signal
 
 
 def is_exact_confident_document_match(page: dict[str, Any], document_type: str) -> bool:

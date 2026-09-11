@@ -285,6 +285,43 @@ def test_user_forbidden_on_settings_but_ok_on_worklist(client) -> None:
     )
 
 
+def test_operations_user_can_read_pdf_evidence_but_anonymous_user_cannot(client, monkeypatch) -> None:
+    import routes.review as review_routes
+
+    _create_ops_user(client, _admin_headers(client))
+    ops_headers = {"Authorization": f"Bearer {_login(client, OPS_EMAIL, OPS_PASSWORD)['token']}"}
+    pdf_bytes = b"%PDF-1.4 test evidence"
+    monkeypatch.setattr(review_routes, "_application_source_bytes", lambda _: (pdf_bytes, "source.pdf"))
+    path = "/review/applications/1/source-pdf"
+
+    response = client.get(path, headers=ops_headers)
+
+    assert response.status_code == 200
+    assert response.content == pdf_bytes
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"] == 'inline; filename="source.pdf"'
+    assert client.get(path).status_code == 401
+
+
+def test_operations_worklist_counts_only_active_findings(client) -> None:
+    headers = _admin_headers(client)
+    with get_connection() as connection:
+        application_id = connection.execute(
+            "INSERT INTO applications (loan_id) VALUES (?) RETURNING id", ("OPS-COUNT",)
+        ).fetchone()["id"]
+        for status in ("open", None, "dismissed_by_llm"):
+            connection.execute(
+                "INSERT INTO validation_results (application_id, rule_id, severity, status) "
+                "VALUES (?, ?, ?, ?)",
+                (application_id, "NAME_MISMATCH", "HIGH", status),
+            )
+
+    response = client.get("/ops/worklist", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["applications"][0]["findings_count"] == 2
+
+
 def test_admin_can_create_user(client) -> None:
     headers = _admin_headers(client)
     created = _create_ops_user(client, headers)
@@ -357,6 +394,48 @@ def test_admin_cannot_deactivate_self(client) -> None:
 
     me = client.get("/auth/me", headers=headers)
     assert me.status_code == 200
+
+
+def test_last_active_admin_cannot_be_demoted(client) -> None:
+    headers = _admin_headers(client)
+    admin_id = client.get("/auth/me", headers=headers).json()["id"]
+    other = create_user(
+        email="inactive-admin@example.com",
+        display_name="Inactive Admin",
+        role="admin",
+        password="InactiveStr0ngPass!",
+    )
+    assert client.patch(
+        f"/admin/users/{other['id']}", headers=headers, json={"is_active": False}
+    ).status_code == 200
+
+    response = client.patch(
+        f"/admin/users/{admin_id}", headers=headers, json={"role": "user"}
+    )
+
+    assert response.status_code == 400
+    assert "last active admin" in response.json()["detail"]
+    assert client.get("/admin/users", headers=headers).status_code == 200
+    assert client.get("/auth/me", headers=headers).json()["role"] == "admin"
+
+
+def test_admin_can_be_demoted_when_another_active_admin_remains(client) -> None:
+    headers = _admin_headers(client)
+    admin_id = client.get("/auth/me", headers=headers).json()["id"]
+    create_user(
+        email="second-admin@example.com",
+        display_name="Second Admin",
+        role="admin",
+        password="SecondStr0ngPass!",
+    )
+
+    response = client.patch(
+        f"/admin/users/{admin_id}", headers=headers, json={"role": "user"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "user"
+    assert client.get("/admin/users", headers=headers).status_code == 403
 
 
 def test_non_admin_cannot_manage_users(client) -> None:

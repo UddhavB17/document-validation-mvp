@@ -35,9 +35,9 @@ def _watchdog_enabled() -> bool:
         explicit = get_setting("DMEF_WORKER_WATCHDOG", "")
     except Exception:  # noqa: BLE001 - config unavailable; stay dormant
         return False
-    if str(explicit or "").strip().lower() in {"1", "true", "yes", "on"}:
+    if str(explicit).strip().lower() in {"1", "true", "yes", "on"}:
         return True
-    if str(explicit or "").strip().lower() in {"0", "false", "no", "off"}:
+    if str(explicit).strip().lower() in {"0", "false", "no", "off"}:
         return False
     try:
         env = str(get_setting("DMEF_ENV", "local") or "local").strip().lower()

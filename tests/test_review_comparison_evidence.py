@@ -171,35 +171,3 @@ def test_person_record_aliases_are_extracted_without_copying_expected():
         assert all(
             row["status"] == "match" and row["source_pages"] == [1] for row in person["fields"]
         )
-
-
-def test_repository_hydrates_private_evidence_once_without_changing_public_pages(monkeypatch):
-    from contextlib import contextmanager
-
-    from services.review import repository
-
-    calls = []
-
-    class Connection:
-        def execute(self, sql, params):
-            calls.append((sql, params))
-            return self
-
-        def fetchall(self):
-            return [{"page_number": 1, "ocr_text": "synthetic evidence", "meta_json": json.dumps({
-                "_identity_extraction_reliable": False, "loan_amount": "must not override",
-            })}]
-
-    @contextmanager
-    def connect():
-        yield Connection()
-
-    monkeypatch.setattr(repository, "get_connection", connect)
-    public_pages = [page(1, "Sanction Letter", {"loan_amount": 500000})]
-    before = deepcopy(public_pages)
-    evidence = repository.load_comparison_evidence(1, public_pages)
-    assert public_pages == before
-    assert len(calls) == 1 and calls[0][1] == (1,)
-    assert evidence[0]["ocr_text"] == "synthetic evidence"
-    assert evidence[0]["extracted_fields"]["_identity_extraction_reliable"] is False
-    assert evidence[0]["extracted_fields"]["loan_amount"] == 500000

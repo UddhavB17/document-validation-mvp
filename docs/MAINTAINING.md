@@ -87,12 +87,12 @@ because they are local; confirm ownership before removing anything.
 - LLM providers are optional. `LLM_PROVIDER=none` is the explicit no-LLM mode;
   `auto` chooses an API-compatible provider when a key exists and otherwise
   chooses Ollama. Do not put keys in source, tests, fixtures, or documentation.
-- The Settings UI writes selected settings to the local SQLite table. Secret
+- The Settings UI writes selected settings to the configured database. Secret
   values are masked in API responses; do not infer that masking makes the local
   database safe to share.
 - When changing a setting, check both `.env.example` and the database-backed
-  setting path. UI-managed settings can take precedence over copied `.env`
-  values.
+  setting path. Non-empty environment values take precedence over UI-managed
+  database settings.
 
 ## Setup and health check
 

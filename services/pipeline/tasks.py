@@ -126,31 +126,6 @@ def _do_pipeline_work(
     return result
 
 
-def _resolve_worker_source(
-    application_id: int, job_id: int, payload: dict[str, Any]
-) -> str:
-    """Stage the durable store bytes and return a real file path.
-
-    ``load_job_input`` already re-stages from the store before its checksum,
-    but the worker entry points resolve explicitly via ``resolve_job_source``
-    so the pipeline never hashes a deleted upload work dir.
-    """
-    from pathlib import Path
-
-    from services.pipeline.input_preparation import resolve_job_source
-
-    hint = str(payload.get("source_path") or "") or None
-    package_id = payload.get("package_id")
-    package_str = str(package_id) if package_id else None
-    try:
-        resolved = resolve_job_source(application_id, hint, job_id, package_id=package_str)
-    except FileNotFoundError:
-        if hint and Path(hint).is_file():
-            return hint
-        raise
-    return str(resolved)
-
-
 def run_pipeline_job(job_id: int) -> dict[str, Any]:
     """Run a plain (unmapped) pipeline job loaded from its persisted inputs."""
     from services.job_control import load_job_input
@@ -158,17 +133,16 @@ def run_pipeline_job(job_id: int) -> dict[str, Any]:
 
     job = _load_job_row(job_id)
     application_id = int(job["application_id"])
-    payload = load_job_input(application_id, job_id)
-    source_path = _resolve_worker_source(application_id, job_id, payload)
-    system_data = dict(payload.get("system_data") or {})
-    product_type = str(payload.get("product_type") or "LAP")
     try:
+        # load_job_input returns a staged, checksum-verified source. Downloading
+        # it again here could replace those bytes after the integrity check.
+        payload = load_job_input(application_id, job_id)
         return _do_pipeline_work(
             job_id,
-            source_path,
+            str(payload["source_path"]),
             application_id,
-            system_data,
-            product_type,
+            dict(payload.get("system_data") or {}),
+            str(payload.get("product_type") or "LAP"),
             mapped_manifest=None,
             package_id=(str(payload.get("package_id")) if payload.get("package_id") else None),
             generate_llm_summary=payload.get("generate_llm_summary"),
@@ -186,15 +160,14 @@ def run_mapped_job(job_id: int) -> dict[str, Any]:
 
     job = _load_job_row(job_id)
     application_id = int(job["application_id"])
-    payload = load_job_input(application_id, job_id)
-    manifest = payload.get("mapped_manifest")
-    if not isinstance(manifest, dict):
-        raise RuntimeError("Mapped job is missing its persisted manifest")
-    source_path = _resolve_worker_source(application_id, job_id, payload)
     try:
+        payload = load_job_input(application_id, job_id)
+        manifest = payload.get("mapped_manifest")
+        if not isinstance(manifest, dict):
+            raise RuntimeError("Mapped job is missing its persisted manifest")
         return _do_pipeline_work(
             job_id,
-            source_path,
+            str(payload["source_path"]),
             application_id,
             dict(payload.get("system_data") or {}),
             str(payload.get("product_type") or "LAP"),

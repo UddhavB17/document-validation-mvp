@@ -7,22 +7,11 @@ import {
   getSeverityBadgeColor,
   rejectionReasons,
   statusLabels,
-  summarizeFields,
 } from "../components/applications/reviewUtils";
 
 test("averagePageTime ignores pages without elapsed time", () => {
   assert.equal(averagePageTime([{ elapsed_seconds: 2 }, { elapsed_seconds: null }, { elapsed_seconds: 4 }] as never), 3);
   assert.equal(averagePageTime([]), 0);
-});
-
-test("summarizeFields hides private fields and truncates long output", () => {
-  assert.equal(summarizeFields(undefined), "-");
-  assert.equal(summarizeFields({ _internal: "hidden" }), '{"_internal":"hidden"}');
-  assert.equal(summarizeFields({ name: "Asha", _internal: "hidden" }), '{"name":"Asha"}');
-
-  const summary = summarizeFields({ note: "x".repeat(200) });
-  assert.equal(summary.length, 160);
-  assert.ok(summary.endsWith("..."));
 });
 
 test("formatLlmDocument handles structured classification confidence", () => {

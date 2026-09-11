@@ -157,3 +157,99 @@ def test_malformed_ids_cannot_be_automatically_dismissed(rule, value):
     finding = {"rule_id": rule, "expected_value": value, "found_value": value, "page_number": 1}
     item = {"verdict": "possible_false_positive", "confidence": 1.0, "pages": [1], "quote": value}
     assert not _dismissible(item, finding, [{"page": 1, "text": value}])
+
+
+@pytest.mark.parametrize("ambiguous,audit_fails", [(False, False), (True, False), (False, True)])
+def test_dismissal_requires_one_saved_finding_and_a_durable_audit(
+    tmp_path, monkeypatch, ambiguous, audit_fails
+):
+    import database.db as db
+    from database.db import get_connection, init_db
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ops-review.db")
+    init_db()
+    finding = {
+        "rule_id": "PAN_NUMBER_MISMATCH",
+        "page_number": 1,
+        "expected_value": "ABCDE1234F",
+        "found_value": "ABCDE 1234 F",
+        "reason": "Formatting differs",
+    }
+    findings = [finding]
+    if ambiguous:
+        findings.append({**finding, "reason": "Check the other document on this page"})
+    with get_connection() as connection:
+        application_id = connection.execute(
+            "INSERT INTO applications (loan_id) VALUES (?) RETURNING id", ("REVIEW",)
+        ).fetchone()["id"]
+        for original in findings:
+            connection.execute(
+                "INSERT INTO validation_results "
+                "(application_id, rule_id, page_number, expected_value, found_value, reason) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    application_id,
+                    original["rule_id"],
+                    original["page_number"],
+                    original["expected_value"],
+                    original["found_value"],
+                    original["reason"],
+                ),
+            )
+
+    reports = []
+
+    class Store:
+        def exists(self, key):
+            return False
+
+        def put(self, key, data, content_type):
+            if key.endswith("ops-review.json"):
+                if audit_fails:
+                    raise OSError("Audit unavailable")
+                reports.append(json.loads(data))
+
+    def fake(_app, purpose, instruction, data, tokens):
+        if purpose == "ops_page_review":
+            return {
+                "pages": [
+                    {"page": 1, "assessment": "needs_review", "reason": "PAN", "quote_ref": 0}
+                ]
+            }
+        if purpose == "ops_findings_review":
+            return {
+                "findings": [
+                    {
+                        "ref": n,
+                        "verdict": "possible_false_positive" if n == 1 else "unresolved",
+                        "confidence": 0.99,
+                        "reason": "Check PAN",
+                        "pages": [1],
+                        "quote": "ABCDE 1234 F",
+                    }
+                    for n in range(1, len(findings) + 1)
+                ]
+            }
+        if purpose == "ops_summary_en":
+            return {"en": "Review the PAN evidence."}
+        return {"hi": "पैन प्रमाण की जाँच करें।"}
+
+    monkeypatch.setattr("services.ops_llm_review._call", fake)
+    monkeypatch.setattr("services.ops_llm_review.get_store", Store)
+    context = {"pages": [{"page_number": 1, "ocr_text": "PAN ABCDE 1234 F"}], "findings": findings}
+    if audit_fails:
+        with pytest.raises(OSError, match="Audit unavailable"):
+            generate_page_review(application_id, context)
+    else:
+        generate_page_review(application_id, context)
+        assert reports[0]["dismissed_count"] == (0 if ambiguous else 1)
+
+    expected_status = "open" if ambiguous or audit_fails else "dismissed_by_llm"
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT status, reason FROM validation_results WHERE application_id = ? ORDER BY id",
+            (application_id,),
+        ).fetchall()
+    assert [row["status"] for row in rows] == [expected_status] * len(findings)
+    assert [row["reason"] for row in rows] == [item["reason"] for item in findings]
+    assert [item.get("status", "open") for item in findings] == [expected_status] * len(findings)

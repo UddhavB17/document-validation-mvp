@@ -32,61 +32,6 @@ def _mapped_role(role: object, person_id: str) -> ApplicantRole:
     return "co_applicant"
 
 
-def find_source_pages_for_value(
-    pages: list[dict[str, Any]],
-    value: str,
-    field_name: str,
-    person_id: str | None = None,
-    page_to_person: dict[int, str] | None = None,
-) -> list[int]:
-    """Find pages that contain a field value in extracted data or OCR text."""
-    if not value or len(value.strip()) < 3:
-        return []
-    normalized_value = value.strip().replace(" ", "").lower()
-    source_pages: list[int] = []
-
-    for page in pages:
-        page_number = page.get("page_number")
-        if page_number is None:
-            continue
-        page_number = int(page_number)
-
-        if person_id and page_to_person:
-            mapped_person_id = page_to_person.get(page_number)
-            if mapped_person_id and mapped_person_id != person_id:
-                document_type = str(page.get("document_type") or "").strip().lower()
-                if document_type not in {"application form", "cam"}:
-                    continue
-
-        is_match = False
-        extracted_fields = page.get("extracted_fields") or {}
-
-        field_value = extracted_fields.get(field_name)
-        mapped_fields = extracted_fields.get("_mapped_extraction")
-        if not field_value and isinstance(mapped_fields, dict):
-            field_value = mapped_fields.get(field_name)
-        if field_value:
-            if str(field_value).strip().replace(" ", "").lower() == normalized_value:
-                is_match = True
-
-        if not is_match:
-            for extracted_key, extracted_value in extracted_fields.items():
-                if extracted_key.startswith("_"):
-                    continue
-                if str(extracted_value).strip().replace(" ", "").lower() == normalized_value:
-                    is_match = True
-                    break
-
-        if not is_match and page.get("_ocr_clean"):
-            if normalized_value in page["_ocr_clean"]:
-                is_match = True
-
-        if is_match:
-            source_pages.append(page_number)
-
-    return sorted(list(set(source_pages)))
-
-
 def resolve_field_status(
     person_id: str,
     field_name: str,

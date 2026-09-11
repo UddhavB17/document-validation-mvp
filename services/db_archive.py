@@ -16,7 +16,7 @@ never deleted by retention: it is the long-term copy other future uses
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from database.db import get_connection
@@ -70,6 +70,8 @@ def _rows_to_jsonable(rows: list[Any]) -> list[dict[str, Any]]:
         for key, value in list(item.items()):
             if isinstance(value, (bytes, bytearray)):
                 item[key] = bytes(value).decode("utf-8", errors="replace")
+            elif isinstance(value, date):
+                item[key] = value.isoformat()
         serializable.append(item)
     return serializable
 

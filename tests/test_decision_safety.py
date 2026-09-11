@@ -362,9 +362,17 @@ def test_undo_restores_preceding_decision_status(tmp_path, monkeypatch, auth_hea
     assert _decision_count(application_id) == 1
 
 
-def test_successive_undo_falls_back_to_pipeline_status(tmp_path, monkeypatch, auth_headers) -> None:
+@pytest.mark.parametrize("finding_status,expected_status", [("open", "CRITICAL"), ("dismissed_by_llm", "CLEAN")])
+def test_successive_undo_falls_back_to_pipeline_status(
+    tmp_path, monkeypatch, auth_headers, finding_status, expected_status
+) -> None:
     _isolate(monkeypatch, tmp_path)
     application_id = _seed_application(app_status="processing")
+    with db.get_connection() as connection:
+        connection.execute(
+            "UPDATE validation_results SET status = ? WHERE application_id = ?",
+            (finding_status, application_id),
+        )
     _seed_completed(application_id)
     client = TestClient(app)
 
@@ -377,9 +385,9 @@ def test_successive_undo_falls_back_to_pipeline_status(tmp_path, monkeypatch, au
 
     second_undo = client.post(f"/decision/{first_id}/undo", headers=auth_headers)
     assert second_undo.status_code == 200
-    # No preceding decision left: pipeline-derived status from HIGH finding.
-    assert second_undo.json()["restored_status"] == "CRITICAL"
-    assert _app_status(application_id) == "CRITICAL"
+    # No preceding decision left: only actionable findings affect file status.
+    assert second_undo.json()["restored_status"] == expected_status
+    assert _app_status(application_id) == expected_status
     assert _decision_count(application_id) == 0
 
 

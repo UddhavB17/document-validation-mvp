@@ -1,3 +1,5 @@
+import pytest
+
 from services.checklist_engine import run_checks
 from services.consistency_checks import _matches, run_consistency_checks
 from services.field_extractor import extract_fields
@@ -7,6 +9,16 @@ from services.page_quality import is_confident_document_match
 
 def _anomaly_text(anomalies: list[dict]) -> str:
     return repr(anomalies)
+
+
+@pytest.mark.parametrize("field", ["aadhaar_number", "account_number"])
+def test_full_identifiers_with_same_last_four_digits_do_not_match(field):
+    assert not _matches(field, "123456781234", "987654321234")
+    assert _matches(field, "123456781234", "1234 5678 1234")
+    assert _matches(field, "123456781234", "XXXX XXXX 1234")
+    assert _matches(field, "123456781234", "****1234")
+    assert _matches(field, "123456781234", "1234")
+    assert not _matches(field, "123456781234", "XXXX XXXX 9999")
 
 
 def test_multiple_accounts_for_one_person_are_not_cross_document_mismatches() -> None:
@@ -1407,6 +1419,44 @@ def test_reliable_name_mismatch_requires_identity_affidavit() -> None:
     )
 
     assert any(item["rule_id"] == "IDENTITY_AFFIDAVIT_MISSING" for item in anomalies)
+
+
+def test_overlapping_validations_keep_each_applications_age_reference(monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    import services.consistency_checks as checks
+
+    both_ready = Barrier(2)
+    original = checks._identity_affidavit_checks
+
+    def check_after_both_validations_start(*args):
+        both_ready.wait(timeout=10)
+        return original(*args)
+
+    monkeypatch.setattr(checks, "_identity_affidavit_checks", check_after_both_validations_start)
+
+    def validate(reference_date):
+        anomalies = run_consistency_checks(
+            [page(
+                1, "PAN", "primary", applicant_name="Ramesh Kumar",
+                pan_number="ABCDE1234F", date_of_birth="01-January-2005",
+            )],
+            {
+                "reference_date": reference_date,
+                "people": {"primary": {
+                    "applicant_name": "Ramesh Kumar",
+                    "pan_number": "ABCDE1234F",
+                    "date_of_birth": "01-January-1990",
+                }},
+            },
+        )
+        assert any(item["rule_id"] == "TRUSTED_DATE_OF_BIRTH_MISMATCH" for item in anomalies)
+        return any(item["rule_id"] == "IDENTITY_AFFIDAVIT_MISSING" for item in anomalies)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(validate, ["2026-01-01", "2010-01-01"]))
+    assert results == [True, False]
 
 
 def test_dual_name_affidavit_resolves_affidavit_requirement() -> None:

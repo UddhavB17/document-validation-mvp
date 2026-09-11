@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -101,6 +102,8 @@ def classify_with_structured_llm(
     try:
         confidence = float(parsed.get("confidence"))
     except (TypeError, ValueError):
+        confidence = 0.0
+    if isinstance(parsed.get("confidence"), bool) or not math.isfinite(confidence):
         confidence = 0.0
 
     return {

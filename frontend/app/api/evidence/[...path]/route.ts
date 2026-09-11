@@ -17,7 +17,7 @@ export const revalidate = 0;
 /**
  * Same-origin streaming proxy for the fixed evidence paths only:
  * - /review/applications/{id}/source-page/{page} (any authenticated role)
- * - /review/applications/{id}/source-pdf (backend enforces admin)
+ * - /review/applications/{id}/source-pdf (any authenticated role)
  * - /review/applications/{id}/ocr-json (backend enforces admin)
  *
  * The browser sends the `dmef_session` httpOnly cookie automatically with

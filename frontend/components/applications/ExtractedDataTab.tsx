@@ -21,31 +21,6 @@ type ExtractedField = {
 const PAGE_SIZE = 50;
 const MAX_SOURCE_PAGES = 12;
 
-export function buildExtractedByDoc(data: ApplicationReview): Record<string, Record<string, unknown>> {
-  const extractedByDoc: Record<string, Record<string, unknown>> = {};
-  data.pages.forEach((p) => {
-    const docType = String(p.document_type || "Unknown Document");
-    const fields = p.extracted_fields || {};
-    const cleanFields: Record<string, unknown> = {};
-    Object.entries(fields).forEach(([k, v]) => {
-      if (!k.startsWith("_") && v !== null && v !== undefined && String(v).trim()) {
-        cleanFields[k] = v;
-      }
-    });
-
-    if (Object.keys(cleanFields).length > 0) {
-      if (!extractedByDoc[docType]) {
-        extractedByDoc[docType] = {};
-      }
-      extractedByDoc[docType] = {
-        ...extractedByDoc[docType],
-        ...cleanFields,
-      };
-    }
-  });
-  return extractedByDoc;
-}
-
 export function buildExtractedGroups(data: ApplicationReview): ExtractedField[] {
   const pagesByNumber = new Map<number, ApplicationReview["pages"][number]>();
   data.pages.forEach((page) => {

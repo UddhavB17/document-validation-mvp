@@ -14,7 +14,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ValidationError
 
-from database.db import get_connection, init_db
+from database.db import get_connection
 from services.auth.dependencies import require_role
 from services.company_dump_adapter import (
     CompanyDumpConversionError,
@@ -129,7 +129,6 @@ async def _save_upload_stream(file: UploadFile, file_path: Path) -> int:
 
 @router.post("/json", summary="Ingest partner OCR JSON payload")
 async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
-    init_db()
     from services.pipeline import run_partner_json_pipeline
 
     with get_connection() as connection:
@@ -213,7 +212,6 @@ async def upload_mapped_file(
     file: UploadFile = File(...),
 ) -> dict[str, object]:
     """Queue shared PDF processing plus trusted mapped JSON comparison."""
-    init_db()
 
     work_dir = _new_upload_work_dir("mapped")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -286,7 +284,6 @@ async def upload_zip_package(
     if not validation["is_valid"]:
         raise HTTPException(status_code=422, detail=validation["errors"])
 
-    init_db()
     package_id = uuid4().hex
     source_filename = file.filename or "documents.zip"
     package_dir = job_work_dir() / f"package-{package_id}"
@@ -544,7 +541,6 @@ async def verify_zip_package(
     case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
 ) -> dict[str, object]:
     """Apply a confirmed manifest to the package's normalized internal PDF."""
-    init_db()
     parsed = _parse_manifest(manifest)
     parsed.case_type = case_type
     row = _get_package_row(package_id)
@@ -816,24 +812,35 @@ async def _save_mapped_zip_package(
                 status_code=422,
                 detail="Mapped ZIP must contain exactly one JSON manifest file, or paste manifest JSON in the form",
             )
-        manifest_text = manifest_override or archive.read(json_members[0]).decode("utf-8")
+        manifest_text = manifest_override or _read_zip_member(archive, json_members[0]).decode("utf-8")
         manifest_payload = _decode_manifest_payload(manifest_text)
         pdf_member = _select_pdf_member(pdf_members, manifest_payload)
 
         original_filename = PurePosixPath(pdf_member.filename).name
-        pdf_bytes = archive.read(pdf_member)
+        pdf_bytes = _read_zip_member(archive, pdf_member)
         if not pdf_bytes:
             raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
-        if len(pdf_bytes) > max_file_size_bytes():
-            raise HTTPException(
-                status_code=400,
-                detail=f"File too large, max {max_file_size_bytes() // (1024 * 1024)}MB",
-            )
 
     file_path = job_work_dir() / f"mapped-{timestamp}-{uuid4().hex}" / "source.pdf"
     file_path.parent.mkdir(parents=True, exist_ok=False)
     file_path.write_bytes(pdf_bytes)
     return file_path, manifest_text, original_filename
+
+
+def _read_zip_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo) -> bytes:
+    """Apply the upload limit before and during ZIP decompression."""
+    limit = max_file_size_bytes()
+    if member.file_size > limit:
+        raise HTTPException(
+            status_code=400, detail=f"File too large, max {limit // (1024 * 1024)}MB"
+        )
+    with archive.open(member) as source:
+        payload = source.read(limit + 1)
+    if len(payload) > limit:
+        raise HTTPException(
+            status_code=400, detail=f"File too large, max {limit // (1024 * 1024)}MB"
+        )
+    return payload
 
 
 def _decode_manifest_payload(manifest_text: str) -> dict[str, object]:
@@ -1105,7 +1112,6 @@ def _write_package_preparation_progress(
 def _get_package_row(package_id: str):
     if not re.fullmatch(r"[0-9a-f]{32}", package_id):
         raise HTTPException(status_code=404, detail="ZIP package not found")
-    init_db()
     with get_connection() as connection:
         row = connection.execute(
             "SELECT * FROM intake_packages WHERE package_id = ?",
@@ -1177,7 +1183,6 @@ async def upload_file(
     application_date: str | None = Form(None),
     file: UploadFile = File(...),
 ) -> dict[str, object]:
-    init_db()
     work_dir = _new_upload_work_dir("upload")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     file_path = work_dir / f"{_safe_name(loan_id)}_{timestamp}.pdf"
@@ -1430,7 +1435,6 @@ async def upload_batch(
     case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
 ) -> dict[str, object]:
     """Create one application + one job per file sharing a batch_id."""
-    init_db()
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="A batch accepts at most 10 files")
     batch_id = uuid4().hex
@@ -1441,7 +1445,7 @@ async def upload_batch(
         name = (item.filename or "").lower()
         if name.endswith(".manifest.json"):
             stem = Path(item.filename or "").name[: -len(".manifest.json")]
-            manifests[stem.lower()] = await item.read()
+            manifests[stem.lower()] = await _read_upload_bytes(item)
 
     items: list[dict[str, object]] = []
     for item in files:
@@ -1542,7 +1546,7 @@ async def upload_batch(
             )
     # Persist rejections so GET /upload/batch/{id} can show them.
     # Insert failures are logged and re-raised, never swallowed: the table
-    # is created by init_db() via the schema registry, so a failure here is
+    # is created at startup via the schema registry, so a failure here is
     # a real DB problem the operator must see.
     for entry in items:
         if entry.get("status") == "rejected":
@@ -1560,7 +1564,6 @@ async def upload_batch(
 
 @router.get("/batch/{batch_id}", summary="Get per-file batch status")
 def get_batch_status(batch_id: str) -> dict[str, object]:
-    init_db()
     if not re.fullmatch(r"[0-9a-f]{32}", batch_id):
         raise HTTPException(status_code=404, detail="Batch not found")
     with get_connection() as connection:
@@ -1855,10 +1858,10 @@ async def _batch_single_mapped_zip(
                 status_code=422,
                 detail="Mapped ZIP must contain one PDF and one JSON manifest",
             )
-        manifest_text = archive.read(json_members[0]).decode("utf-8")
+        manifest_text = _read_zip_member(archive, json_members[0]).decode("utf-8")
         manifest_payload = _decode_manifest_payload(manifest_text)
         pdf_member = _select_pdf_member(pdf_members, manifest_payload)
-        pdf_bytes = archive.read(pdf_member)
+        pdf_bytes = _read_zip_member(archive, pdf_member)
         if not pdf_bytes:
             raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
     work_dir = _new_upload_work_dir("batch")

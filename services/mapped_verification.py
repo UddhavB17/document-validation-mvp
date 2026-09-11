@@ -179,12 +179,7 @@ _AGGREGATED_FIELD_DOC_TYPES = frozenset(
         "stamp duty",
         "insurance consent",
         "nach form",
-        # Multi-page statement/financial documents: name appears on first page only
-        "bank statement",
-        "passbook",
         "cheque",
-        "cibil report",
-        "crif report",
     }
 )
 
@@ -1125,9 +1120,9 @@ def _verify_document_fields(
                             provided_type,
                             "Readable OCR text",
                             f"OCR confidence {first_page_conf:.0%} — field extraction unreliable",
-                            "ocr_confidence",
-                            "MANUAL_REVIEW_REQUIRED",
-                            person_id,
+                            "OCR confidence is too low to determine whether the field is present.",
+                            field_name="ocr_confidence",
+                            person_id=person_id,
                         )
                     )
                 continue  # Skip individual field anomalies for low-confidence pages
@@ -1195,7 +1190,8 @@ def _verify_document_fields(
                 continue
 
             # Gate mismatch anomalies on OCR confidence
-            page_conf = float(observation.get("ocr_confidence") or 1.0)
+            observed_confidence = observation.get("ocr_confidence")
+            page_conf = float(observed_confidence) if observed_confidence is not None else 1.0
             if page_conf < _LOW_OCR_CONFIDENCE_THRESHOLD:
                 # Don't escalate low-confidence mismatches; emit one page-level warning
                 page_number = observation.get("page_number")
@@ -1209,9 +1205,9 @@ def _verify_document_fields(
                             provided_type,
                             "Reliable OCR text",
                             f"OCR confidence {page_conf:.0%} — field comparison unreliable",
-                            "ocr_confidence",
-                            "MANUAL_REVIEW_REQUIRED",
-                            person_id,
+                            "OCR confidence is too low to compare the extracted field reliably.",
+                            field_name="ocr_confidence",
+                            person_id=person_id,
                         )
                     )
                 emitted_mismatch = True
@@ -1908,13 +1904,6 @@ def _find_other_owner(
                 except Exception:
                     pass
     return None
-
-
-def _name_observation_is_reliable(page: dict[str, Any], value: Any) -> bool:
-    fields = page.get("extracted_fields") or {}
-    if isinstance(fields, dict) and fields.get("_identity_extraction_reliable") is False:
-        return False
-    return is_person_name_candidate(value)
 
 
 def _suppress_invalid_name_fields(fields: dict[str, Any]) -> None:

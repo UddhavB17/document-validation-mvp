@@ -9,11 +9,10 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
 import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
-import { useApplicationReview, useHealth } from "@/lib/queries";
+import { useHealth } from "@/lib/queries";
 import { adminStartWorkerRequest } from "@/lib/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { navigateCaseTab } from "@/lib/caseTabNavigation";
-import type { FieldComparison } from "@/lib/api";
 
 type IconName = "worklist" | "intake" | "activity" | "settings" | "users" | "menu" | "close" | "collapse" | "expand" | "api" | "ops";
 
@@ -312,17 +311,7 @@ function isNavItemActive(itemId: string, href: string, pathname: string, applica
 function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
   const searchParams = useSearchParams();
   const activeTab = searchParams.get("tab") || "review";
-  const applicationReview = useApplicationReview(applicationId);
-
-  const coreParameters = applicationReview.data?.comparison_matrix?.core_parameters ?? [];
-  const applicants = applicationReview.data?.comparison_matrix?.applicants ?? [];
-  const comparisonFields: FieldComparison[] = [
-    ...coreParameters,
-    ...applicants.flatMap((applicant) => applicant.fields),
-  ];
-  const anomalyCount = comparisonFields.filter((field) => field.status === "mismatch" || field.status === "attention").length;
-
-  const tabs: Array<{ key: string; label: string; icon: IconName; showCount?: boolean }> = [
+  const tabs: Array<{ key: string; label: string; icon: IconName }> = [
     { key: "review", label: "Review", icon: "worklist" },
     { key: "extracted", label: "Extracted data", icon: "intake" },
     { key: "checklist", label: "Checklist", icon: "worklist" },
@@ -344,7 +333,6 @@ function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
             >
               <Icon name={tab.icon} />
               <span>{tab.label}</span>
-              {tab.showCount && anomalyCount > 0 ? <span className="app-shell__count">{anomalyCount}</span> : null}
             </Link>
           </li>
         );

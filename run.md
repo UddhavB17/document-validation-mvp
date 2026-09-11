@@ -7,18 +7,17 @@ the dependencies are installed.
 
 ## Processes and URLs
 
-DMEF uses two local processes:
+DMEF uses an API, UI, and worker process:
 
 | Process | Responsibility | Default URL |
 |---|---|---|
 | FastAPI backend | Upload, processing, review, verification, decision, settings, and health APIs | <http://127.0.0.1:8000> |
 | Next.js UI | Browser interface | <http://localhost:3000> |
+| Worker | Claims queued document-processing jobs | No browser URL |
 
-The API health endpoint is deliberately small:
-
-```json
-{"status":"ok","version":"0.1.0"}
-```
+The API health endpoint reports database, storage, and worker status. A stale
+worker produces `status: degraded`; a database or storage error returns HTTP
+503. Processing is ready when all four statuses are `ok`.
 
 API docs: <http://127.0.0.1:8000/docs>. ReDoc:
 <http://127.0.0.1:8000/redoc>.
@@ -37,13 +36,15 @@ python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 Terminal 2, from any directory:
 
 ```bash
-npm --prefix /absolute/path/to/document-validation-mvp run dev -- -p 3000
+npm --prefix /absolute/path/to/document-validation-mvp/frontend run dev -- -p 3000
 ```
 
 Replace the placeholder with this checkout's path. If Terminal 2 is already in
 the repository root, use `npm --prefix frontend run dev -- -p 3000`.
 
-Check the backend from a third terminal:
+Run `python -m services.worker` in a third activated terminal to start the
+worker explicitly. Local uploads can also start it automatically. Check the
+backend from another terminal:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
@@ -191,9 +192,10 @@ API calls, set this in the ignored `.env` file and restart the backend:
 LLM_PROVIDER=none
 ```
 
-The `.env.example` default is `auto`: an API key selects an API-compatible
-provider, otherwise Ollama is selected. The macOS launcher explicitly selects
-Ollama and enables limited page-classification features.
+The final `LLM_PROVIDER` entry in `.env.example` selects Gemini. Set the
+provider explicitly for your run; `auto` selects an API-compatible provider
+when a key exists and otherwise selects Ollama. The macOS launcher explicitly
+selects Ollama and enables limited page-classification features.
 
 ### Local OCR test mode
 

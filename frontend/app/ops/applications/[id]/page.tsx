@@ -9,7 +9,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { EvidenceViewer, EvidenceSelection } from "@/components/ops/EvidenceViewer";
 import { FindingsList, PagesToVerifyTable } from "@/components/ops/FindingsList";
 import { OpsChecklist } from "@/components/ops/OpsChecklist";
-import { pickText, clampPercentage, statusProgressPercentage, takeTopFindings } from "@/components/ops/opsUtils";
+import { pickText, clampPercentage, statusProgressPercentage } from "@/components/ops/opsUtils";
 import { StatusPill, normalizeOpsStatus } from "@/components/ops/StatusPill";
 import { api, OpsFinding } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
@@ -94,13 +94,11 @@ export default function OpsApplicationPage() {
   const failureReason = status.data?.job?.failure_reason ?? data.processing.failure_reason;
 
   const openEvidence = (finding: OpsFinding, page: number) => {
-    const evidencePage = finding.evidence?.page;
-    const matches = evidencePage === page && finding.evidence?.bbox;
     setEvidence({
       page,
       pages: finding.pages.length > 0 ? finding.pages : [page],
-      evidencePage: evidencePage ?? null,
-      bbox: matches && finding.evidence?.bbox ? [...finding.evidence.bbox] : null,
+      evidencePage: finding.evidence?.page ?? null,
+      bbox: finding.evidence?.bbox ?? null,
       severity: finding.severity,
       title: pickText(finding.title, locale),
       highlight: finding.evidence?.text || undefined,
@@ -160,7 +158,7 @@ export default function OpsApplicationPage() {
 
       <section aria-labelledby="ops-findings-heading" className="space-y-3">
         <h2 id="ops-findings-heading" className="text-base font-bold text-slate-900">{t(locale, "ops.review.findings")}</h2>
-        <FindingsList findings={takeTopFindings(data.top_findings)} onOpenEvidence={openEvidence} />
+        <FindingsList findings={data.top_findings} onOpenEvidence={openEvidence} />
       </section>
 
       <section aria-labelledby="ops-verify-heading" className="space-y-3">
@@ -180,13 +178,7 @@ export default function OpsApplicationPage() {
         <EvidenceViewer
           applicationId={applicationId}
           selection={evidence}
-          onSelectPage={(page) => setEvidence((current) => {
-            if (!current) return current;
-            const pages = current.pages.includes(page) ? current.pages : [...current.pages, page].sort((a, b) => a - b);
-            // Keep the box while the new page is still the evidence page;
-            // clear it only when the page has no box.
-            return { ...current, page, pages };
-          })}
+          onSelectPage={(page) => setEvidence((current) => current ? { ...current, page } : current)}
           onClose={() => setEvidence(null)}
         />
       ) : null}

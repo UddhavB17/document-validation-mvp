@@ -13,7 +13,6 @@ from database.db import get_connection, init_db
 from main import app
 from services.review.comparison_matrix import (
     build_comparison_matrix_and_relationships,
-    find_source_pages_for_value,
     resolve_field_status,
 )
 from services.review.worklist import build_worklist
@@ -126,7 +125,9 @@ def test_full_review_reuses_settings_across_page_confidence_checks(tmp_path, mon
     application_id = _insert_application(loan_id="REVIEW-SPEED")
     for page_number in range(1, 31):
         _insert_page(
-            application_id, page_number=page_number, document_type="PAN",
+            application_id,
+            page_number=page_number,
+            document_type="PAN",
             extracted_fields={"pan_number": "ABCDE1234F"},
         )
     settings_queries = []
@@ -225,6 +226,24 @@ def test_worklist_refreshes_progress_and_settings_on_each_request(tmp_path, monk
             ("completed", application_id),
         )
     assert build_worklist()["items"][0]["pipeline_status"] == "completed"
+
+
+def test_worklist_excludes_dismissed_findings_from_actionable_counts(tmp_path, monkeypatch) -> None:
+    _use_temp_db(tmp_path, monkeypatch)
+    init_db()
+    application_id = _insert_application(loan_id="DISMISSED-1")
+    _insert_anomaly(application_id, rule_id="PAN_NUMBER_MISMATCH", page_number=1)
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE validation_results SET status = ? WHERE application_id = ?",
+            ("dismissed_by_llm", application_id),
+        )
+
+    item = build_worklist()["items"][0]
+    assert item["issues"] == 1  # Raw findings stay available for audit.
+    assert item["reviewer_issues"] == 0
+    assert item["business_issues"] == 0
+    assert item["processing_warnings"] == 0
 
 
 def test_worklist_item_payload_shape(tmp_path, monkeypatch, auth_headers) -> None:
@@ -500,11 +519,6 @@ def test_comparison_matrix_respects_anomaly_status(tmp_path, monkeypatch) -> Non
         )
         == "mismatch"
     )
-
-
-def test_find_source_pages_skips_short_values() -> None:
-    pages = [{"page_number": 1, "extracted_fields": {"loan_id": "AB"}, "_ocr_clean": "ab"}]
-    assert find_source_pages_for_value(pages, "AB", "loan_id") == []
 
 
 def test_application_review_payload_shape(tmp_path, monkeypatch, auth_headers) -> None:

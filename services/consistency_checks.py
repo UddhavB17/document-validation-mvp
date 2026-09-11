@@ -495,8 +495,7 @@ LOAN_FIELDS = {
 def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
     anomalies: list[dict] = []
     people = _people(trusted)
-    global _ACTIVE_REFERENCE_DATE
-    _ACTIVE_REFERENCE_DATE = _reference_date(trusted)
+    reference_date = _reference_date(trusted)
     # Ensure pages carry person_id even when callers skip checklist assign.
     try:
         from services.person_ownership import assign_page_owners
@@ -521,7 +520,7 @@ def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
     from services.repayment_schedule import validate_repayment_schedules
 
     anomalies.extend(validate_repayment_schedules(pages, trusted))
-    anomalies.extend(_identity_affidavit_checks(pages, anomalies, people))
+    anomalies.extend(_identity_affidavit_checks(pages, anomalies, people, reference_date))
     try:
         from services.evidence_boxes import attach_evidence_to_anomalies
 
@@ -1609,6 +1608,7 @@ def _identity_affidavit_checks(
     pages: list[dict],
     anomalies: list[dict],
     people: dict[str, dict],
+    reference_date: Any,
 ) -> list[dict]:
     """Require discrepancy-specific evidence when a name or DOB conflicts.
 
@@ -1640,6 +1640,7 @@ def _identity_affidavit_checks(
             anomaly,
             pages_by_number.get(int(anomaly.get("page_number") or 0), {}),
             people.get(str(anomaly.get("person_id") or "primary"), {}),
+            reference_date,
         )
     ]
     if not mismatches:
@@ -1686,7 +1687,9 @@ def _identity_affidavit_checks(
     return results
 
 
-def _identity_mismatch_is_affidavit_worthy(anomaly: dict, page: dict, person: dict) -> bool:
+def _identity_mismatch_is_affidavit_worthy(
+    anomaly: dict, page: dict, person: dict, reference_date: Any
+) -> bool:
     """Reject ownership/extraction noise before cascading to affidavit rules."""
     if not isinstance(page, dict) or not isinstance(person, dict) or not person:
         return False
@@ -1720,7 +1723,9 @@ def _identity_mismatch_is_affidavit_worthy(anomaly: dict, page: dict, person: di
     )
     rule_id = str(anomaly.get("rule_id") or "")
     if "DATE_OF_BIRTH" in rule_id:
-        if not _plausible_adult_date_of_birth(fields.get("date_of_birth") or fields.get("dob")):
+        if not _plausible_adult_date_of_birth(
+            fields.get("date_of_birth") or fields.get("dob"), reference_date
+        ):
             return False
         observed_name = fields.get("applicant_name") or fields.get("borrower_name")
         name_matches = observed_name not in (None, "") and _matches(
@@ -1733,27 +1738,19 @@ def _identity_mismatch_is_affidavit_worthy(anomaly: dict, page: dict, person: di
     return bool(has_exact_anchor)
 
 
-def _plausible_adult_date_of_birth(value: Any, reference: Any = None) -> bool:
+def _plausible_adult_date_of_birth(value: Any, reference: Any) -> bool:
     if value in (None, ""):
         return False
     try:
         from dateutil import parser
 
         parsed = parser.parse(str(value), dayfirst=True).date()
-        today = reference if reference is not None else _active_reference_date()
-        age = today.year - parsed.year - ((today.month, today.day) < (parsed.month, parsed.day))
+        age = reference.year - parsed.year - (
+            (reference.month, reference.day) < (parsed.month, parsed.day)
+        )
         return 18 <= age <= 100
     except (TypeError, ValueError, OverflowError):
         return False
-
-
-_ACTIVE_REFERENCE_DATE: Any = None
-
-
-def _active_reference_date() -> Any:
-    if _ACTIVE_REFERENCE_DATE is not None:
-        return _ACTIVE_REFERENCE_DATE
-    return _reference_date(None)
 
 
 def _is_identity_declaration(page: dict, person_id: str, person: dict) -> bool:
@@ -1959,6 +1956,14 @@ def _matches(field: str, left: Any, right: Any) -> bool:
             field in {"aadhaar_number", "aadhaar_last4", "account_number"}
             and len(left_compact) >= 4
             and len(right_compact) >= 4
+            and (
+                field == "aadhaar_last4"
+                or min(len(left_compact), len(right_compact)) == 4
+                or any(
+                    re.fullmatch(r"[xX*#•]+\d{4}", re.sub(r"[\s-]", "", str(value)))
+                    for value in (left, right)
+                )
+            )
             and left_compact[-4:] == right_compact[-4:]
         )
     if field in ADDRESS_FIELDS:
@@ -2147,15 +2152,6 @@ def _explicit_address_units(value: Any) -> dict[str, set[str]]:
     if leading:
         result["occupancy"].add(f"{leading.group(1)}{leading.group(2)}")
     return result
-
-
-def _without_honorific(value: Any) -> str:
-    return re.sub(
-        r"^\s*(?:mr|mrs|ms|miss|shri|smt|dr)\.?\s+",
-        "",
-        str(value or ""),
-        flags=re.IGNORECASE,
-    )
 
 
 def _related_names_equivalent(left: Any, right: Any) -> bool:

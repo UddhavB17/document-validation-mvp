@@ -41,7 +41,7 @@ export function PdfUploadForm({ onUploaded }: UploadFormProps) {
         branch: form.get("branch"),
         caseType: form.get("caseType"),
         applicationDate: form.get("applicationDate"),
-        file: form.get("file"),
+        file: selectedFiles[0],
       });
       setSubmitting(true);
       const result: UploadResponse = await api.uploadPdf(payload);

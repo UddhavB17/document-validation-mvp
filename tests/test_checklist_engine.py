@@ -4,20 +4,10 @@ from services.checklist_engine import (
     check_date_range,
     check_field_match,
     check_presence_any,
-    evaluate_checklist,
     run_checks,
 )
 from services.checklist_service import get_ai_checkable_items, get_human_review_items
 from services.field_extractor import extract_fields
-
-
-def test_evaluate_checklist_flags_missing_documents() -> None:
-    checklist = {"required_documents": ["PAN", "Aadhaar"]}
-    extracted_documents = {"PAN": {}}
-
-    assert evaluate_checklist(checklist, extracted_documents) == [
-        {"document": "Aadhaar", "issue": "missing"}
-    ]
 
 
 def test_presence_any_passes_with_aadhaar() -> None:

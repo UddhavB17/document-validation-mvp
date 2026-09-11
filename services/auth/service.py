@@ -230,6 +230,18 @@ def update_user(
         raise ValueError("No fields to update")
     params.append(user_id)
     with get_connection() as connection:
+        if role == "user" or is_active is False:
+            target = connection.execute(
+                "SELECT role, is_active FROM users WHERE id = ?", (user_id,)
+            ).fetchone()
+            if target is not None and target["role"] == "admin" and target["is_active"]:
+                remaining = connection.execute(
+                    "SELECT COUNT(*) AS total FROM users "
+                    "WHERE role = 'admin' AND is_active = ? AND id != ?",
+                    (True, user_id),
+                ).fetchone()
+                if int(remaining["total"]) == 0:
+                    raise ValueError("Cannot demote or deactivate the last active admin")
         updated = connection.execute(
             f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
             tuple(params),
@@ -244,11 +256,6 @@ def update_user(
             {"user_id": user_id, "email": user["email"]},
         )
     return user
-
-
-def deactivate(user_id: int) -> dict[str, Any]:
-    """Deactivate ``user_id`` (sets ``is_active`` to False)."""
-    return update_user(user_id, is_active=False)
 
 
 def delete_user(user_id: int, *, actor_id: int) -> None:

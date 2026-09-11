@@ -331,13 +331,6 @@ def _normalize_pan(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "")).upper()
 
 
-def _normalize_name(value: Any) -> str:
-    """Normalize case, punctuation, and repeated whitespace before fuzzy matching."""
-    text = str(value or "").casefold()
-    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
-    return " ".join(text.split())
-
-
 def _valid_pan(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", value))
 

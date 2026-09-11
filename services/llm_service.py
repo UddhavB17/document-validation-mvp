@@ -166,23 +166,21 @@ def generate_summaries(application_id: int, context: dict) -> dict[str, str]:
     The model receives TOON prompt input and must answer in JSON. Any
     validation failure (or provider ``none``) falls back to the deterministic
     count-based wording. The result is persisted to
-    ``applications.ops_summary_en/hi``; the ``reviewer_summaries`` write in
-    :func:`generate_explanation` is left untouched.
+    ``applications.ops_summary_en/hi``.
     """
     if isinstance(context, dict) and context.get("pages"):
         from services.ops_llm_review import generate_page_review
 
         try:
             result = generate_page_review(application_id, context)
-            _persist_ops_summaries(application_id, result)
-            return result
         except Exception as exc:
-            # Existing valid summaries survive failed refreshes. No fake success.
             logger.warning("Complete operations review unavailable (%s)", type(exc).__name__)
-            result = {"en": "Complete AI review unavailable. Review the saved findings and pages manually.",
-                      "hi": "पूर्ण एआई समीक्षा उपलब्ध नहीं है। सहेजी गई समस्याओं और पृष्ठों की मानव जाँच करें।"}
-            _persist_ops_summaries(application_id, result)
-            return result
+            result = {
+                "en": "Complete AI review unavailable. Review the saved findings and pages manually.",
+                "hi": "पूर्ण एआई समीक्षा उपलब्ध नहीं है। सहेजी गई समस्याओं और पृष्ठों की मानव जाँच करें।",
+            }
+        _persist_ops_summaries(application_id, result)
+        return result
     findings = _extract_findings(context)
     ground_truth = context.get("ground_truth") if isinstance(context, dict) else {}
     fallback = build_bilingual_fallback(findings)
@@ -261,12 +259,12 @@ def build_bilingual_fallback(findings: list[dict]) -> dict[str, str]:
 
     if total == 0:
         en = (
-            "This loan file looks complete with no issues found. "
-            "You may proceed with the next step of approval."
+            "No issues were supplied for this summary. "
+            "Complete the required document and manual checks before making a decision."
         )
         hi = (
-            "यह ऋण फ़ाइल पूरी लग रही है और इसमें कोई समस्या नहीं मिली। "
-            "आप अनुमोदन के अगले चरण के साथ आगे बढ़ सकते हैं।"
+            "इस सारांश के लिए कोई समस्या उपलब्ध नहीं कराई गई। "
+            "निर्णय लेने से पहले आवश्यक दस्तावेज़ों और मानव जाँच को पूरा करें।"
         )
         return {"en": en, "hi": hi}
 

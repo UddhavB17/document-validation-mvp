@@ -256,6 +256,9 @@ def run_job_by_id(job: dict[str, Any]) -> None:
         handle_job_exception(job_id, exc)
     finally:
         stop_event.set()
+        from services.pipeline.input_preparation import cleanup_job_source, job_source_dir
+
+        cleanup_job_source(job_source_dir(job_id))
 
 
 def handle_job_exception(job_id: int, exc: BaseException) -> None:

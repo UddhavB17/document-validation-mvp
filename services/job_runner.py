@@ -67,13 +67,6 @@ def enqueue(
         resume=bool(payload.get("resume", False)),
         refresh_cached_ocr=bool(payload.get("refresh_cached_ocr", False)),
     )
-    # Ensure the batch linkage survives even if the input persist path rewrote rows.
-    if batch_id is not None:
-        with get_connection() as connection:
-            connection.execute(
-                "UPDATE pipeline_jobs SET batch_id = ? WHERE id = ?",
-                (batch_id, job_id),
-            )
     return job_id
 
 

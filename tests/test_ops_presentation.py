@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
@@ -172,6 +172,37 @@ def test_no_internal_keys_leak(ops_db) -> None:
 
 def test_needs_review_status(ops_db) -> None:
     assert build_ops_payload(ops_db)["status"] == "needs_review"
+
+
+def test_null_status_findings_remain_visible(ops_db) -> None:
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE validation_results SET status = NULL WHERE application_id = ?",
+            (ops_db,),
+        )
+
+    payload = build_ops_payload(ops_db)
+
+    assert payload["top_findings"]
+    assert payload["status"] == "needs_review"
+
+
+@pytest.mark.parametrize("job_status", [None, "cancelled", "stale", "completed"])
+def test_clean_status_requires_completed_processing(ops_db, job_status) -> None:
+    with get_connection() as connection:
+        connection.execute("DELETE FROM validation_results WHERE application_id = ?", (ops_db,))
+        if job_status:
+            connection.execute(
+                "INSERT INTO pipeline_jobs (application_id, job_type, status, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (ops_db, "pdf_pipeline", job_status, datetime.now(UTC).isoformat()),
+            )
+
+    payload = build_ops_payload(ops_db)
+
+    assert payload["status"] == ("clean" if job_status == "completed" else "needs_review")
+    assert "manual checks" in payload["summary"]["en"]
+    assert "looks good" not in payload["summary"]["en"]
 
 
 def test_rule_to_code_families() -> None:

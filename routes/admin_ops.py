@@ -86,12 +86,12 @@ def worker_start_endpoint(
     manages the worker as its own service) unless
     ``DMEF_ALLOW_LOCAL_WORKER_SPAWN=1`` is set explicitly.
     """
-    from services.config import get_setting
+    from services.config import get_bool, get_setting
     from services.worker_launcher import ensure_worker_running, is_worker_alive
 
     try:
         env = str(get_setting("DMEF_ENV", "local") or "local").strip().lower()
-        spawn_allowed = str(get_setting("DMEF_ALLOW_LOCAL_WORKER_SPAWN", "") or "").strip() == "1"
+        spawn_allowed = get_bool("DMEF_ALLOW_LOCAL_WORKER_SPAWN", False)
     except Exception:  # noqa: BLE001 - config unavailable; fail closed
         raise HTTPException(status_code=503, detail="Worker supervisor is unavailable")
     if env == "production" and not spawn_allowed:

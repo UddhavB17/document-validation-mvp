@@ -37,7 +37,7 @@ def is_company_database_dump(value: Any) -> bool:
     if isinstance(value, dict):
         keys = {str(key).lower() for key in value}
         # Clean manifest guard: any clean-manifest key → definitely not a dump
-        if keys & _CLEAN_MANIFEST_KEYS or "schema_version" in keys:
+        if keys & _CLEAN_MANIFEST_KEYS:
             return False
         # DB view keys are unambiguous dump indicators
         if keys & _DB_VIEW_KEYS:
@@ -45,9 +45,7 @@ def is_company_database_dump(value: Any) -> bool:
         # loan_id / applicationid alone are NOT enough — they also appear in clean manifests.
         # Only treat them as dumps when NO clean-manifest keys are present AND the only
         # substantive keys are identifier-like (i.e. no documents/reference_data etc.)
-        if ("loanid" in keys or "applicationid" in keys or "application_id" in keys) and not (
-            keys & _CLEAN_MANIFEST_KEYS
-        ):
+        if keys & {"loanid", "applicationid", "application_id"}:
             return True
     elif isinstance(value, list):
         if value and isinstance(value[0], dict):
@@ -552,6 +550,12 @@ def _balanced_section(text: str, key: str, opening: str, closing: str) -> str | 
     if not match:
         return None
     start = text.find(opening, match.start())
+    try:
+        _, end = json.JSONDecoder().raw_decode(text[start:])
+        return text[start : start + end]
+    except json.JSONDecodeError:
+        # Pasted exports can contain broken quotes; retain their tolerant path.
+        pass
     depth = 0
     for index in range(start, len(text)):
         char = text[index]
@@ -565,6 +569,12 @@ def _balanced_section(text: str, key: str, opening: str, closing: str) -> str | 
 
 
 def _balanced_children(text: str, opening: str, closing: str) -> list[str]:
+    try:
+        records = json.loads(text)
+    except json.JSONDecodeError:
+        records = None
+    if isinstance(records, list):
+        return [json.dumps(item, ensure_ascii=False) for item in records if isinstance(item, dict)]
     children: list[str] = []
     depth = 0
     start: int | None = None
@@ -584,6 +594,16 @@ def _balanced_children(text: str, opening: str, closing: str) -> list[str]:
 def _value(section: str, key: str) -> str | None:
     if not section:
         return None
+    try:
+        record = json.loads(section)
+    except json.JSONDecodeError:
+        record = None
+    if isinstance(record, dict):
+        for field, value in record.items():
+            if field.lower() == key.lower() and not isinstance(value, (dict, list)):
+                if value is None:
+                    return None
+                return _clean_text(value if isinstance(value, str) else json.dumps(value))
     quoted = re.search(
         rf'"{re.escape(key)}"\s*:\s*"([^"\r\n]*)"',
         section,

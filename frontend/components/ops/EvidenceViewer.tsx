@@ -10,7 +10,7 @@ import { Bbox, bboxToStyle, severityBoxClass } from "./bbox";
 export interface EvidenceSelection {
   page: number;
   pages: number[];
-  /** Page the bbox belongs to; null when the selection has no box. */
+  /** Page the box or text highlight belongs to; null for a plain page preview. */
   evidencePage: number | null;
   bbox: Bbox | null;
   severity: string | null | undefined;

@@ -42,7 +42,8 @@ def test_reconciliation_exposes_matches_conflicts_gaps_and_database_only_fields(
     assert statuses[(None, "emi")] == "NOT_OBSERVED"
     assert statuses[(None, "workflow_note")] == "NOT_CHECKABLE"
     assert statuses[("primary", "pan_number")] == "MATCH"
-    assert statuses[("primary", "account_number")] == "MATCH"
+    # A shared last four digits cannot reconcile two different full account numbers.
+    assert statuses[("primary", "account_number")] == "MISMATCH"
     assert statuses[("primary", "qualification")] == "NOT_OBSERVED"
     assert result["summary"]["checked_fields"] == 4
 

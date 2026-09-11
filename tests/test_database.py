@@ -37,3 +37,16 @@ def test_get_connection_rolls_back_and_closes_on_error(tmp_path, monkeypatch) ->
         count = connection.execute("SELECT COUNT(*) FROM example").fetchone()[0]
 
     assert count == 0
+
+
+def test_schema_registry_idempotent() -> None:
+    """Registering the same statement list twice stores it once."""
+    from database import schema_registry
+
+    before = len(schema_registry.all_statements())
+    statements = ["CREATE TABLE IF NOT EXISTS ws0_probe (id INTEGER PRIMARY KEY)"]
+    schema_registry.register(statements)
+    schema_registry.register(list(statements))
+    matches = [s for s in schema_registry.all_statements() if "ws0_probe" in s]
+    assert len(matches) == 1
+    assert len(schema_registry.all_statements()) == before + 1

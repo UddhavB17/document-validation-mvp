@@ -129,6 +129,7 @@ def test_progress_poll_does_not_reinitialize_database(monkeypatch) -> None:
         lambda: (_ for _ in ()).throw(
             AssertionError("progress polling must not initialize the database")
         ),
+        raising=False,
     )
     monkeypatch.setattr(
         upload_route,
@@ -364,7 +365,7 @@ def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
         files={"file": ("loan-documents.zip", package, "application/zip")},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "prepared"
     assert body["total_files"] == 2

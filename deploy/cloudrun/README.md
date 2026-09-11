@@ -99,7 +99,7 @@ PROJECT_ID=my-proj REGION=asia-south1 TAG=v1.2.3 bash scripts/release.sh --dry-r
 ## What cannot be validated here
 
 - `gcloud run services replace api.yaml` needs project credentials; not run by the agent.
-- `gcloud scheduler jobs create` needs the API URL + OIDC SA; the equivalent
+- `gcloud scheduler jobs create` needs the API URL and scheduler token; the equivalent
   dry check is `python -c "import yaml; yaml.safe_load(open(...))"` plus the
   `dry_run=true` retention endpoint (see commit message).
 - Cloud smoke against Neon + GCS needs credentials; run the same

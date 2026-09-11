@@ -211,35 +211,93 @@ def test_load_job_input_restores_store_bytes_after_source_deleted(
     ).hexdigest()
 
 
-def test_resolve_job_source_prefers_store_over_deleted_hint(tmp_path, monkeypatch) -> None:
-    """resolve_job_source downloads from the store, never a deleted hint."""
-    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
-    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
-    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
-    monkeypatch.delenv("DMEF_STORAGE_BACKEND", raising=False)
-    init_db()
-
-    from services.pipeline.input_preparation import resolve_job_source
+@pytest.mark.parametrize("mapped", [False, True])
+@pytest.mark.parametrize("delete_source", [False, True])
+def test_pipeline_task_preserves_source_integrity_and_cleans_failed_staging(
+    tmp_path, monkeypatch, mapped, delete_source
+) -> None:
+    from services.pipeline import tasks
+    from services.pipeline.input_preparation import job_source_dir
     from services.storage import get_store
     from services.storage.refs import record_ref
 
-    with get_connection() as connection:
-        application_id = int(
-            connection.execute(
-                "INSERT INTO applications (loan_id, status) VALUES ('RESOLVE-001', 'processing')"
-                " RETURNING id"
-            ).fetchone()["id"]
-        )
-    pdf_bytes = b"%PDF-1.4 resolve bytes"
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    monkeypatch.setenv("DMEF_LOCAL_STORE_DIR", str(tmp_path / "store"))
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(tmp_path / "jobs"))
+    monkeypatch.setenv("DMEF_STORAGE_BACKEND", "local")
+    application_id, job_id, source = _seed_job(tmp_path)
+    verified_bytes = source.read_bytes()
+    persist_job_input(
+        job_id,
+        application_id,
+        source_path=source,
+        system_data={},
+        product_type="LAP",
+        mapped_manifest={} if mapped else None,
+    )
     store_key = f"applications/{application_id}/source/a.pdf"
-    get_store().put(store_key, pdf_bytes, "application/pdf")
+    get_store().put(store_key, b"changed after enqueue", "application/pdf")
     record_ref(
         "applications", application_id, "source", store_key, content_type="application/pdf"
     )
-    deleted_hint = tmp_path / "gone.pdf"
-    resolved = resolve_job_source(application_id, str(deleted_hint), "job-99")
-    assert Path(resolved).is_file()
-    assert Path(resolved).read_bytes() == pdf_bytes
+    observed = []
+
+    def capture_input(_job_id, file_path, *_args, **_kwargs):
+        observed.append(Path(file_path).read_bytes())
+        return {"pipeline_status": "completed"}
+
+    monkeypatch.setattr(tasks, "_do_pipeline_work", capture_input)
+    run = tasks.run_mapped_job if mapped else tasks.run_pipeline_job
+    if delete_source:
+        source.unlink()
+        with pytest.raises(JobInputUnavailableError, match="integrity"):
+            run(job_id)
+        assert observed == []
+    else:
+        assert run(job_id)["pipeline_status"] == "completed"
+        assert observed == [verified_bytes]
+        assert source.read_bytes() == verified_bytes
+    assert not job_source_dir(job_id).exists()
+
+
+def test_cleanup_job_source_is_idempotent_and_preserves_other_jobs(tmp_path, monkeypatch) -> None:
+    from services.pipeline.input_preparation import cleanup_job_source
+
+    work_root = tmp_path / "jobs"
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(work_root))
+    first = work_root / "job-1" / "source.pdf"
+    sibling = work_root / "job-2" / "source.pdf"
+    for source in (first, sibling):
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"staged source")
+
+    cleanup_job_source(first)
+    assert not first.parent.exists()
+    assert sibling.read_bytes() == b"staged source"
+
+    # Task and worker finalizers may both clean the same job directory.
+    cleanup_job_source(first.parent)
+    assert sibling.read_bytes() == b"staged source"
+
+
+@pytest.mark.parametrize("relative_path", [".", "source.pdf", "missing-job", "missing-job/source.pdf"])
+def test_cleanup_job_source_never_removes_shared_work_root(
+    tmp_path, monkeypatch, relative_path
+) -> None:
+    from services.pipeline.input_preparation import cleanup_job_source
+
+    work_root = tmp_path / "jobs"
+    monkeypatch.setenv("DMEF_JOB_WORK_DIR", str(work_root))
+    sibling = work_root / "job-2" / "source.pdf"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_bytes(b"another job")
+    (work_root / "source.pdf").write_bytes(b"unscoped source")
+
+    cleanup_job_source(work_root / relative_path)
+
+    assert sibling.read_bytes() == b"another job"
+    assert (work_root / "source.pdf").read_bytes() == b"unscoped source"
 
 
 def test_page_builder_skips_completed_checkpoint(tmp_path, monkeypatch) -> None:

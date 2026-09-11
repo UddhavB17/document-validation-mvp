@@ -29,14 +29,3 @@ def get_audit_trail(application_id: int) -> list[dict]:
         ).fetchall()
 
     return [dict(row) for row in rows]
-
-
-def record_audit_event(
-    action: str,
-    application_id: int | None = None,
-    metadata: dict | None = None,
-) -> dict:
-    """Compatibility wrapper around log_action."""
-    if application_id is not None:
-        log_action(application_id, action, metadata)
-    return {"application_id": application_id, "action": action, "metadata": metadata or {}}

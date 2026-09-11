@@ -117,15 +117,6 @@ export function averagePageTime(pageEvents: ApplicationReview["page_events"]): n
   return pageDurations.reduce((total, duration) => total + duration, 0) / pageDurations.length;
 }
 
-export function summarizeFields(fields: Record<string, unknown> | undefined): string {
-  if (!fields || Object.keys(fields).length === 0) {
-    return "-";
-  }
-  const visibleFields = Object.fromEntries(Object.entries(fields).filter(([key, value]) => !key.startsWith("_") && value));
-  const text = JSON.stringify(Object.keys(visibleFields).length ? visibleFields : fields);
-  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
-}
-
 export function summarizePublicFields(fields: Record<string, unknown> | undefined): string {
   if (!fields || Object.keys(fields).length === 0) {
     return "-";
