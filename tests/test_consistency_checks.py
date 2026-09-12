@@ -340,6 +340,7 @@ def test_scanned_application_form_skips_second_language_check() -> None:
                 "page_number": 79,
                 "document_type": "Application Form",
                 "page_type": "scanned",
+                "ocr_confidence": 0.99,
                 "ocr_text": "Loan Application Form applicant name Veeru Lal",
                 "extracted_fields": {"applicant_name": "Veeru Lal"},
             }

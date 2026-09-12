@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,19 +28,62 @@ from services.review_prompts import (
 from services.storage import get_store
 
 
+class ReviewValidationError(ValueError):
+    """A safe, stable validation category for the review audit.
+
+    The exception deliberately carries no model response or source text.  The
+    report and audit log can therefore explain why a stage did not complete
+    without making sensitive provider output durable.
+    """
+
+    def __init__(self, category: str):
+        self.category = category
+        super().__init__(category)
+
+
+def _safe_category(exc: BaseException, default: str) -> str:
+    category = getattr(exc, "category", None)
+    return category if isinstance(category, str) and category else default
+
+
+def _error_entry(
+    stage: str,
+    category: str,
+    contexts: list[dict] | None = None,
+) -> dict:
+    """Build bounded audit detail, mapping finding refs without source text."""
+    entry = {"stage": stage, "category": category}
+    if contexts:
+        refs = []
+        for context in contexts:
+            finding = context.get("finding") or {}
+            refs.append(
+                {
+                    "ref": finding.get("ref"),
+                    "rule_id": finding.get("rule_id"),
+                    "page_number": finding.get("page_number"),
+                }
+            )
+        entry["finding_refs"] = refs
+    return entry
+
+
 def _json(text: str | None) -> dict:
     cleaned = (text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned)
-    result = json.loads(cleaned)
+    try:
+        result = json.loads(cleaned)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ReviewValidationError("invalid_json") from exc
     if not isinstance(result, dict):
-        raise ValueError("Expected review object")
+        raise ReviewValidationError("invalid_object")
     return result
 
 
 def _call(application_id: int, purpose: str, instruction: str, data: Any, tokens: int) -> dict:
-    return _json(
-        call_llm_messages(
+    try:
+        raw = call_llm_messages(
             [
                 {
                     "role": "system",
@@ -53,7 +97,11 @@ def _call(application_id: int, purpose: str, instruction: str, data: Any, tokens
             max_tokens=tokens,
             timeout=120,
         )
-    )
+    except Exception as exc:  # noqa: BLE001 - caller records a safe category
+        raise ReviewValidationError("provider_error") from exc
+    if raw is None:
+        raise ReviewValidationError("provider_unavailable")
+    return _json(raw)
 
 
 def _page_records(pages: list[dict]) -> list[dict]:
@@ -232,19 +280,19 @@ def _validate_findings(result: dict, contexts: list[dict], pages: list[dict]) ->
     findings = [entry["finding"] for entry in contexts]
     assessments = result.get("findings")
     if not isinstance(assessments, list) or len(assessments) != len(findings):
-        raise ValueError("Incomplete finding review")
+        raise ReviewValidationError("incomplete_findings")
     if any(not isinstance(r, dict) or type(r.get("ref")) is not int for r in assessments):
-        raise ValueError("Invalid finding reference")
+        raise ReviewValidationError("invalid_finding_reference")
     if {r["ref"] for r in assessments} != {f["ref"] for f in findings}:
-        raise ValueError("Finding review references do not match input")
+        raise ReviewValidationError("finding_reference_mismatch")
     for item in assessments:
         if item.get("verdict") not in {"supported", "possible_false_positive", "unresolved"}:
-            raise ValueError("Invalid finding recommendation")
+            raise ReviewValidationError("invalid_verdict")
         if not isinstance(item.get("reason"), str) or not item["reason"].strip():
-            raise ValueError("Missing finding rationale")
+            raise ReviewValidationError("missing_finding_reason")
         confidence = item.get("confidence")
         if type(confidence) not in (int, float) or not 0 <= confidence <= 1:
-            raise ValueError("Invalid finding confidence")
+            raise ReviewValidationError("invalid_confidence")
         context = next(c for c in contexts if c["finding"]["ref"] == item["ref"])
         known_pages = {p["page"] for p in context["evidence"]}
         if (
@@ -252,7 +300,7 @@ def _validate_findings(result: dict, contexts: list[dict], pages: list[dict]) ->
             or any(type(n) is not int for n in item["pages"])
             or not set(item["pages"]).issubset(known_pages)
         ):
-            raise ValueError("Invalid finding evidence pages")
+            raise ReviewValidationError("invalid_evidence_pages")
         if item["verdict"] == "possible_false_positive":
             quote = item.get("quote")
             verified = (
@@ -265,9 +313,99 @@ def _validate_findings(result: dict, contexts: list[dict], pages: list[dict]) ->
                 )
             )
             if not verified:
-                raise ValueError("Unsupported false-positive evidence")
+                raise ReviewValidationError("unsupported_false_positive_evidence")
         item["dismissed"] = _dismissible(item, context["finding"], pages)
     return assessments
+
+
+def _validate_english_summary(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > 4500:
+        raise ReviewValidationError("invalid_summary_en")
+    return value.strip()
+
+
+def _validate_hindi_summary(value: Any, english: str) -> str:
+    if not isinstance(value, str) or not re.search(r"[\u0900-\u097f]", value):
+        raise ReviewValidationError("invalid_translation_hi")
+    if len(value) > 5500:
+        raise ReviewValidationError("translation_too_long")
+    if Counter(re.findall(r"\d+", english)) != Counter(re.findall(r"\d+", value)):
+        raise ReviewValidationError("translation_numeric_mismatch")
+    return value.strip()
+
+
+def _status_for_review(
+    total_batches: int,
+    failed_batches: int,
+    reviewed_findings: int,
+    total_findings: int,
+    stage_errors: list[dict],
+) -> str:
+    if failed_batches and reviewed_findings == 0 and total_findings:
+        return "failed"
+    if failed_batches or stage_errors:
+        return "partial"
+    if total_batches == 0 or reviewed_findings == total_findings:
+        return "completed"
+    return "partial"
+
+
+def _coverage_note(status: str, reviewed: int, total: int) -> str:
+    if status == "completed":
+        return (
+            f"Completed bounded exception review for {reviewed} of {total} supplied finding(s) "
+            "using selected source excerpts; no second whole-file AI page review was performed."
+        )
+    if status == "failed":
+        return (
+            f"Exception review failed before any of the {total} supplied finding(s) were assessed; "
+            "selected source excerpts and manual review are still required. This was not a full-page review."
+        )
+    return (
+        f"Partial bounded exception review assessed {reviewed} of {total} supplied finding(s) "
+        "using selected source excerpts; remaining findings require manual review. "
+        "This was not a full-page review."
+    )
+
+
+def _fallback_summaries(report: dict) -> dict[str, str]:
+    """A matched, bounded bilingual fallback based only on audited counts."""
+    total = int(report.get("total_findings") or 0)
+    reviewed = len(report.get("findings") or [])
+    counts = report.get("counts") or {}
+    supported = int(counts.get("supported") or 0)
+    possible = int(counts.get("possible_false_positive") or 0)
+    unresolved = int(counts.get("unresolved") or 0)
+    return {
+        "en": (
+            f"AI assessed {reviewed} of {total} supplied exceptions using selected source excerpts. "
+            "This was not a review of every page. "
+            f"Assessments: {supported} supported, {possible} possible false positives, "
+            f"{unresolved} unresolved. {total - reviewed} exceptions were not assessed. "
+            "Possible false positives remain recommendations unless independently verified "
+            "and recorded as dismissed. Complete the remaining document and human checks "
+            "before making a decision."
+        ),
+        "hi": (
+            f"चयनित स्रोत अंशों के आधार पर एआई ने {total} में से {reviewed} अपवादों की जाँच की। "
+            "यह हर पृष्ठ की समीक्षा नहीं थी। "
+            f"परिणाम: {supported} समर्थित, {possible} संभावित गलत अपवाद, "
+            f"{unresolved} अनिर्णीत। {total - reviewed} अपवादों की जाँच नहीं हुई। "
+            "संभावित गलत अपवाद सुझाव हैं, जब तक स्वतंत्र जाँच के बाद उन्हें खारिज दर्ज न किया जाए। "
+            "निर्णय लेने से पहले शेष दस्तावेज़ और मानव जाँच पूरी करें।"
+        ),
+    }
+
+
+def _finding_map(findings: list[dict]) -> list[dict]:
+    return [
+        {
+            "ref": f.get("ref"),
+            "rule_id": f.get("rule_id"),
+            "page_number": f.get("page_number"),
+        }
+        for f in findings
+    ]
 
 
 @cached_settings()
@@ -276,7 +414,12 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
     findings = _finding_records(context.get("findings") or [])
     finding_contexts = [_finding_context(f, pages) for f in findings]
     trusted_context = _trusted_context(context.get("ground_truth") or {})
-    model = llm_model()
+    stage_errors: list[dict] = []
+    try:
+        model = str(llm_model() or "unknown")
+    except Exception:
+        model = "unknown"
+        stage_errors.append(_error_entry("model_resolution", "provider_config"))
     digest = hashlib.sha256(
         json.dumps(
             {
@@ -291,41 +434,104 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
         ).encode()
     ).hexdigest()
     store = get_store()
-    assessments = []
-    for index in range(0, len(finding_contexts), 4):
-        batch = finding_contexts[index : index + 4]
-        key = (
-            f"applications/{application_id}/reports/ops-review/{digest}/findings-{index // 4}.json"
-        )
-        if store.exists(key):
-            assessments.extend(_validate_findings(json.loads(store.get(key)), batch, pages))
-            continue
-        # Retry only the invalid batch; successful batches remain durable.
-        for attempt in range(2):
-            try:
-                result = _call(
-                    application_id,
-                    "ops_findings_review",
-                    REVIEW_STAGE_PROMPTS["ops_findings_review"],
-                    {"finding_contexts": batch, "trusted_context": trusted_context},
-                    4000,
-                )
-                validated = _validate_findings(result, batch, pages)
-                break
-            except ValueError:
-                if attempt == 1:
-                    raise
-        store.put(
-            key,
-            json.dumps({"findings": validated}, ensure_ascii=False).encode(),
-            "application/json",
-        )
-        assessments.extend(validated)
+    assessments: list[dict] = []
+    batch_statuses: list[dict] = []
+    failed_batches = 0
+    batch_size = 4
+    for index in range(0, len(finding_contexts), batch_size):
+        batch = finding_contexts[index : index + batch_size]
+        batch_number = index // batch_size
+        refs = [c["finding"]["ref"] for c in batch]
+        key = f"applications/{application_id}/reports/ops-review/{digest}/findings-{batch_number}.json"
+        validated: list[dict] | None = None
+        attempts = 0
+        checkpoint_category: str | None = None
+        try:
+            if store.exists(key):
+                try:
+                    validated = _validate_findings(json.loads(store.get(key)), batch, pages)
+                except Exception as exc:  # noqa: BLE001 - retry a corrupt checkpoint
+                    checkpoint_category = _safe_category(exc, "invalid_checkpoint")
+                    validated = None
+        except Exception:
+            checkpoint_category = "checkpoint_read_failed"
 
-    dismissal_row_ids = {}
+        if validated is None:
+            # Retry only this failed batch. Earlier valid checkpoints remain intact.
+            last_error: BaseException | None = None
+            for attempt in range(1, 3):
+                attempts = attempt
+                try:
+                    instruction = REVIEW_STAGE_PROMPTS["ops_findings_review"]
+                    if last_error is not None:
+                        instruction += (
+                            "\nThe previous attempt failed validation: "
+                            + _safe_category(last_error, "invalid_response")
+                            + ". Return every supplied ref exactly once. Use unresolved when "
+                            "evidence is insufficient; do not invent a supporting quote."
+                        )
+                    result = _call(
+                        application_id,
+                        "ops_findings_review",
+                        instruction,
+                        {"finding_contexts": batch, "trusted_context": trusted_context},
+                        4000,
+                    )
+                    validated = _validate_findings(result, batch, pages)
+                    try:
+                        store.put(
+                            key,
+                            json.dumps({"findings": validated}, ensure_ascii=False).encode(),
+                            "application/json",
+                        )
+                    except Exception as exc:  # noqa: BLE001 - do not claim an uncheckpointed batch
+                        checkpoint_category = "checkpoint_write_failed"
+                        validated = None
+                        last_error = exc
+                    else:
+                        last_error = None
+                    if validated is not None:
+                        break
+                except Exception as exc:  # noqa: BLE001 - classify and retry this batch only
+                    last_error = exc
+                    validated = None
+                if validated is None and attempt == 2:
+                    category = _safe_category(
+                        last_error, checkpoint_category or "finding_review_failed"
+                    )
+                    stage_errors.append(_error_entry("ops_findings_review", category, batch))
+        if validated is None:
+            failed_batches += 1
+            batch_statuses.append(
+                {
+                    "batch": batch_number,
+                    "refs": refs,
+                    "status": "failed",
+                    "attempts": attempts,
+                }
+            )
+            continue
+        assessments.extend(validated)
+        batch_statuses.append(
+            {
+                "batch": batch_number,
+                "refs": refs,
+                "status": "completed",
+                "attempts": attempts,
+                "checkpoint": key,
+            }
+        )
+
+    assessments.sort(key=lambda item: item["ref"])
+    reviewed_refs = {item["ref"] for item in assessments}
+    unreviewed_refs = [f["ref"] for f in findings if f["ref"] not in reviewed_refs]
+
+    dismissal_row_ids: dict[int, int] = {}
     for item in assessments:
         original = next(f for f in findings if f["ref"] == item["ref"])
-        if item["dismissed"]:
+        if not item["dismissed"]:
+            continue
+        try:
             with get_connection() as connection:
                 matches = connection.execute(
                     "SELECT id FROM validation_results "
@@ -345,15 +551,26 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
             item["dismissed"] = len(matches) == 1
             if item["dismissed"]:
                 dismissal_row_ids[item["ref"]] = matches[0]["id"]
+        except Exception:
+            item["dismissed"] = False
+            stage_errors.append(
+                _error_entry(
+                    "dismissal_persistence", "dismissal_lookup_failed", [{"finding": original}]
+                )
+            )
 
     counts = {
-        v: sum(r["verdict"] == v for r in assessments)
-        for v in ("supported", "possible_false_positive", "unresolved")
+        value: sum(r["verdict"] == value for r in assessments)
+        for value in ("supported", "possible_false_positive", "unresolved")
     }
+    provisional_status = _status_for_review(
+        len(batch_statuses), failed_batches, len(assessments), len(findings), stage_errors
+    )
     report = {
         "prompt_version": REVIEW_PROMPT_VERSION,
         "prompt_fingerprint": REVIEW_PROMPT_FINGERPRINT,
         "model": model,
+        "review_status": provisional_status,
         "review_scope": "exceptions_only",
         "pages": [],
         "evidence_pages": sorted({p["page"] for c in finding_contexts for p in c["evidence"]}),
@@ -365,52 +582,95 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
             }
             for c in finding_contexts
         ],
-        "coverage_note": "All supplied exceptions reviewed using selected source excerpts; "
-        "no second whole-file AI page review was performed.",
+        "finding_map": _finding_map(findings),
+        "finding_batches": batch_statuses,
+        "coverage_note": _coverage_note(provisional_status, len(assessments), len(findings)),
         "findings": assessments,
         "counts": counts,
         "dismissed_count": sum(bool(r["dismissed"]) for r in assessments),
         "total_pages": len(pages),
         "total_findings": len(findings),
+        "reviewed_finding_refs": sorted(reviewed_refs),
+        "unreviewed_finding_refs": unreviewed_refs,
+        "stage_errors": stage_errors,
     }
-    english = _call(
-        application_id,
-        "ops_summary_en",
-        REVIEW_STAGE_PROMPTS["ops_summary_en"],
-        {
-            "review": report,
-            "original_findings": findings,
-            "case_context": {
-                k: (context.get("ground_truth") or {}).get(k)
-                for k in (
-                    "loan_amount",
-                    "sanction_amount",
-                    "tenure",
-                    "roi",
-                    "emi",
-                    "product_type",
-                    "case_type",
-                )
-            },
-        },
-        2200,
-    ).get("en")
-    if not isinstance(english, str) or not english.strip() or len(english) > 4500:
-        raise ValueError("Invalid English summary")
-    hindi = _call(
-        application_id,
-        "ops_summary_hi",
-        REVIEW_STAGE_PROMPTS["ops_summary_hi"],
-        {"en": english},
-        3800,
-    ).get("hi")
-    if not isinstance(hindi, str) or not re.search(r"[\u0900-\u097f]", hindi) or len(hindi) > 5500:
-        raise ValueError("Invalid Hindi translation")
-    if set(re.findall(r"\d+", english)) != set(re.findall(r"\d+", hindi)):
-        raise ValueError("Translation changed numeric references")
+    summary_status = {"en": "model", "hi": "model"}
+    try:
+        english = _validate_english_summary(
+            _call(
+                application_id,
+                "ops_summary_en",
+                REVIEW_STAGE_PROMPTS["ops_summary_en"],
+                {
+                    "review": report,
+                    "original_findings": findings,
+                    "case_context": {
+                        k: (context.get("ground_truth") or {}).get(k)
+                        for k in (
+                            "loan_amount",
+                            "sanction_amount",
+                            "tenure",
+                            "roi",
+                            "emi",
+                            "product_type",
+                            "case_type",
+                        )
+                    },
+                },
+                2200,
+            ).get("en")
+        )
+    except Exception as exc:  # noqa: BLE001 - retain finding review with fallback
+        stage_errors.append(_error_entry("ops_summary_en", _safe_category(exc, "summary_failed")))
+        summary_status["en"] = "fallback"
+        english = _fallback_summaries(report)["en"]
+
+    try:
+        hindi = _validate_hindi_summary(
+            _call(
+                application_id,
+                "ops_summary_hi",
+                REVIEW_STAGE_PROMPTS["ops_summary_hi"],
+                {"en": english},
+                3800,
+            ).get("hi"),
+            english,
+        )
+    except Exception as exc:  # noqa: BLE001 - retain English and finding review
+        stage_errors.append(
+            _error_entry("ops_summary_hi", _safe_category(exc, "translation_failed"))
+        )
+        summary_status["hi"] = "fallback"
+        # A generic Hindi fallback cannot be presented as a translation of a
+        # different model-written English summary. Fall back to a matched pair.
+        summary_status["en"] = "fallback"
+        fallback = _fallback_summaries(report)
+        english, hindi = fallback["en"], fallback["hi"]
+
+    final_status = _status_for_review(
+        len(batch_statuses), failed_batches, len(assessments), len(findings), stage_errors
+    )
+    if failed_batches:
+        # Deterministic coverage remains authoritative on incomplete reviews,
+        # even if the model summary incorrectly implies everything was checked.
+        fallback = _fallback_summaries(report)
+        english, hindi = fallback["en"], fallback["hi"]
+        summary_status = {"en": "fallback", "hi": "fallback"}
+    english += (
+        f"\n\nAI review {final_status}; model {model}. "
+        f"Assessed {len(assessments)} of {len(findings)} exceptions."
+    )
+    hindi += (
+        f"\n\nएआई समीक्षा: { {'completed': 'पूरी', 'partial': 'आंशिक', 'failed': 'विफल'}[final_status] }; "
+        f"मॉडल {model}। {len(findings)} में से {len(assessments)} अपवादों की जाँच हुई।"
+    )
     report.update(
         {
-            "summary": {"en": english.strip(), "hi": hindi.strip()},
+            "review_status": final_status,
+            "coverage_note": _coverage_note(final_status, len(assessments), len(findings)),
+            "stage_errors": stage_errors,
+            "summary_status": summary_status,
+            "summary": {"en": english, "hi": hindi},
             "generated_at": datetime.now(UTC).isoformat(),
             "input_digest": hashlib.sha256(
                 json.dumps(
@@ -421,7 +681,8 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
             ).hexdigest(),
         }
     )
-    # Durable audit first; do not publish a summary whose audit could not be saved.
+    # Durable audit first; do not publish a dismissal whose review report could
+    # not be saved. The report always includes valid batches and safe categories.
     store.put(
         f"applications/{application_id}/reports/ops-review.json",
         json.dumps(report, ensure_ascii=False).encode(),
@@ -449,4 +710,22 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
         for i, finding in enumerate(context.get("findings") or []):
             if i + 1 in dismissal_row_ids:
                 finding["status"] = "dismissed_by_llm"
+    try:
+        from services.audit_service import log_action
+
+        log_action(
+            application_id,
+            "llm_exception_review_finished",
+            {
+                "review_status": final_status,
+                "model": model,
+                "reviewed_finding_refs": sorted(reviewed_refs),
+                "unreviewed_finding_refs": unreviewed_refs,
+                "stage_errors": stage_errors,
+            },
+        )
+    except Exception:
+        # The object-store report is the source of truth for this review; an
+        # auxiliary audit row must not turn a completed run into a failure.
+        pass
     return report["summary"]

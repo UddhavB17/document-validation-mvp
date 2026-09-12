@@ -21,6 +21,7 @@ from services.checklist_engine import (
 from services.checklist_service import get_all_checklist_items
 from services.checklist_status_map import CHECKLIST_STATUSES
 from services.config import cached_settings
+from services.document_presence import assess_document_presence, review_presence_findings
 from services.page_quality import confident_pages_for_types
 
 
@@ -46,6 +47,7 @@ def build_checklist_verification_response(
     """Convert deterministic checklist output into the reviewer/API contract."""
     started_at = time.perf_counter()
     checklist_items = get_all_checklist_items(product_type)
+    anomalies = review_presence_findings(pages, anomalies, checklist_items)
     system_data = {**_document_derived_system_data(pages), **(system_data or {})}
     anomalies_by_sno = _anomalies_by_sno(anomalies)
     items = [
@@ -83,6 +85,7 @@ def _build_item(
     item_number = int(checklist_item.get("s_no") or 0)
     document_types = _document_types(checklist_item)
     matched_pages = confident_pages_for_types(pages, document_types)
+    presence = assess_document_presence(pages, document_types)
     missing_anomalies = [
         anomaly
         for anomaly in item_anomalies
@@ -108,6 +111,9 @@ def _build_item(
     elif review_anomalies:
         status = "manual_review"
         flagged_reason = _flagged_reason(review_anomalies[0])
+    elif presence.candidate_pages and not matched_pages:
+        status = "manual_review"
+        flagged_reason = "Possible document found; verify its readability, type and borrower."
     elif matched_pages or system_state is True:
         status = "required_and_present"
         flagged_reason = None

@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-REVIEW_PROMPT_VERSION = "dmef-review-2026-09-11-v3-exceptions"
+REVIEW_PROMPT_VERSION = "dmef-review-2026-09-12-v4-coverage"
 
 REVIEW_SYSTEM_PROMPT = """You are DMEF's evidence-based loan-file review assistant.
 Your purpose is to help a human reviewer understand document checks and exceptions.
@@ -90,6 +90,9 @@ not only the top five. Distinguish an observation
 from an established exception. Omit empty sections and avoid repeating the same issue
 for each page; group it with accurate page references. Counts must come from supplied
 review totals. total_pages is the file size, not the number of pages reviewed by AI.
+The report may be partial or failed: only reviewed_finding_refs were assessed.
+Never describe an unreviewed finding as AI-supported or dismissed. Explain any
+incomplete coverage and the remaining manual work.
 Explicitly state this is an exceptions review, not a full-page review. When there are
 no findings, say no exceptions were supplied; do not claim the file is verified.
 Do not claim that evidence pages equal verified documents, infer

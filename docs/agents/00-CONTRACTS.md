@@ -358,3 +358,17 @@ gate remains in force. English summarizes exception assessments and remaining
 human work, then Hindi translates that English. Existing runs are not regenerated.
 This authorizes focused changes to review service/prompts, their caller and tests;
 the shared operations payload and authentication contracts do not change.
+
+## 14. User-authorized ZIP-first accuracy work (2026-09-12)
+
+NEEDS-COORDINATION: the user requested plans followed by delegated implementation
+of ZIP-first intake and the discussed accuracy/review improvements. Task file
+ownership and verification are specified in docs/ZIP_FIRST_ACCURACY_PLAN.md.
+ZIP Package Intake becomes the default; Mapped Verification remains secondary,
+and standalone PDF/Partner JSON tabs are removed from intake navigation. Low
+confidence and incomplete evidence must not be labelled definite document absence;
+existing manual_review and REVIEW_REQUIRED states preserve evidence and human
+review. AI exception audits distinguish completion, partial review and failure.
+Existing dismissal safeguards, source storage, auth and payload budgets remain.
+Existing local repairs are preserved. No deployment, push, saved-case reprocessing,
+credential change or blanket AI page review is authorized by this update.

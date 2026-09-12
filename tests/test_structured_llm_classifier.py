@@ -60,6 +60,7 @@ def test_structured_llm_unavailable_returns_none(monkeypatch) -> None:
 
 
 def test_structured_llm_successful_response(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("ENABLE_STRUCTURED_LLM_CLASSIFIER", "true")
     monkeypatch.setenv("OLLAMA_CLASSIFIER_MODEL", "qwen2.5:7b-instruct-q4_0")
     monkeypatch.setattr(

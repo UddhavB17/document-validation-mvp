@@ -333,14 +333,15 @@ def _bureau_page_starts_new_subject(page: dict[str, Any]) -> bool:
     header = re.sub(r"\s+", " ", header)
     has_title = bool(
         re.search(
-            r"\b(?:cibil|crif|credit information|consumer credit)\s+(?:information\s+)?report\b",
+            r"\b(?:cibil|crif|credit information|consumer credit)\s*(?:™\s*)?"
+            r"(?:(?:information|combo)\s+)?report\b",
             header,
         )
     )
     has_subject = bool(
         re.search(
             r"\b(?:consumer|applicant|subject)\s+name\b|"
-            r"\b(?:report\s+id|control\s+number|member\s+reference\s+number)\b",
+            r"\b(?:report\s+id|control\s+number|member\s+reference\s+number|chm\s+ref)\b",
             header,
         )
     )

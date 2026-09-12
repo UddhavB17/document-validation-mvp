@@ -13,6 +13,7 @@ from dateutil.relativedelta import relativedelta
 from services import checklist_service
 from services.config import cached_settings, effective_config
 from services.consistency_checks import run_consistency_checks
+from services.document_presence import review_presence_findings
 from services.page_quality import confident_pages_for_types, is_confident_document_match
 from services.person_names import is_person_name_candidate
 from services.processing_policy import is_ocr_skipped_page
@@ -1041,7 +1042,7 @@ def _run_presence_checks(
                             )
                         )
 
-    return anomalies
+    return review_presence_findings(pages, anomalies, items)
 
 
 def _find_pages(pages: list[dict], document_type: str) -> list[dict]:

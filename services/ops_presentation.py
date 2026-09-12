@@ -142,6 +142,9 @@ def _anomaly_pages(anomaly: dict) -> list[int]:
                 pages.append(int(value))
             except (TypeError, ValueError):
                 continue
+    evidence = anomaly.get("evidence_json")
+    if isinstance(evidence, dict) and isinstance(evidence.get("pages"), list):
+        pages.extend(p for p in evidence["pages"] if type(p) is int and p > 0)
     return sorted(set(pages))
 
 
@@ -298,7 +301,9 @@ def _load_pages(application_id: int) -> list[dict]:
     with get_connection() as connection:
         try:
             rows = connection.execute(
-                "SELECT * FROM pages WHERE application_id = ? ORDER BY page_number",
+                "SELECT p.*, m.meta_json FROM pages p LEFT JOIN pages_meta m "
+                "ON m.application_id = p.application_id AND m.page_number = p.page_number "
+                "WHERE p.application_id = ? ORDER BY p.page_number",
                 (application_id,),
             ).fetchall()
         except Exception:
@@ -312,8 +317,36 @@ def _load_pages(application_id: int) -> list[dict]:
                 page["extracted_fields"] = json.loads(extracted)
             except (TypeError, ValueError):
                 page["extracted_fields"] = {}
+        fields = page.get("extracted_fields")
+        if not isinstance(fields, dict):
+            fields = {}
+        try:
+            meta = json.loads(page.pop("meta_json", None) or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if isinstance(meta, dict):
+            fields.update({key: value for key, value in meta.items() if key.startswith("_")})
+        page["extracted_fields"] = fields
+        owner = fields.get("_ownership")
+        if isinstance(owner, dict) and owner.get("person_id"):
+            page["person_id"] = owner["person_id"]
         pages.append(page)
     return pages
+
+
+def _load_checklist_context(application_id: int) -> dict:
+    """Use the saved trusted inputs when rebuilding scoped/applicable rows."""
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT raw_json FROM ground_truth WHERE application_id = ? "
+            "ORDER BY extracted_at DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+    try:
+        context = json.loads(row["raw_json"] or "{}") if row else {}
+    except (TypeError, ValueError):
+        return {}
+    return context if isinstance(context, dict) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +366,9 @@ _CHECKLIST_STATUS_MAP = {
 }
 
 
-def _checklist_section(application: dict, pages: list[dict], anomalies: list[dict]) -> dict:
+def _checklist_section(
+    application: dict, pages: list[dict], anomalies: list[dict], system_data: dict | None = None
+) -> dict:
     try:
         from services.checklist_output import build_checklist_verification_response
 
@@ -342,6 +377,7 @@ def _checklist_section(application: dict, pages: list[dict], anomalies: list[dic
             pages=pages,
             anomalies=anomalies,
             product_type=str(application.get("product_type") or "LAP"),
+            system_data=system_data,
         )
     except Exception as exc:
         LOGGER.warning("checklist build failed for ops payload: %s", exc)
@@ -359,6 +395,7 @@ def _checklist_section(application: dict, pages: list[dict], anomalies: list[dic
     rows = []
     from services.checklist_output import _document_types
     from services.checklist_service import get_all_checklist_items
+    from services.document_presence import assess_document_presence
     from services.page_quality import confident_pages_for_types
 
     definitions = {int(i["s_no"]): i for i in get_all_checklist_items(str(application.get("product_type") or "LAP"))}
@@ -369,6 +406,9 @@ def _checklist_section(application: dict, pages: list[dict], anomalies: list[dic
         status = _CHECKLIST_STATUS_MAP.get(str(item.status), "NOT_CHECKED")
         for page in confident_pages_for_types(pages, _document_types(definitions.get(item.item_number, {}))):
             pages_by_sno.setdefault(item.item_number, set()).add(int(page["page_number"]))
+        if status == "NOT_CHECKED":
+            assessment = assess_document_presence(pages, _document_types(definitions.get(item.item_number, {})))
+            pages_by_sno.setdefault(item.item_number, set()).update(assessment.review_pages)
         counts[status] += 1
         rows.append(
             {
@@ -475,7 +515,9 @@ def build_ops_payload(application_id: int) -> dict:
         "summary": summary,
         "top_findings": findings,
         "pages_to_verify": overflow,
-        "checklist": _checklist_section(application, pages, anomalies),
+        "checklist": _checklist_section(
+            application, pages, anomalies, _load_checklist_context(application_id)
+        ),
     }
 
 

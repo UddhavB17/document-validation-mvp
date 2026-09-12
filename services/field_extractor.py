@@ -1480,6 +1480,15 @@ def _extract_pan(text: str) -> dict[str, Any]:
         )
         inline_name = _clean_name_like_value(name_match.group(1)) if name_match else None
     dob = _extract_date_near(text.lower(), "date of birth", "dob")
+    if dob is None and pan_match:
+        # A damaged English DOB label can retain the Hindi birth label and
+        # its immediately following date. Do not use unrelated dates on PAN
+        # verification letters or acknowledgments.
+        hindi_dob = re.search(
+            r"जन्म[^\n]{0,60}\n\s*(\d{2}[/.-]\d{2}[/.-]\d{4})\b", text
+        )
+        if hindi_dob:
+            dob = _parse_date(hindi_dob.group(1))
     if dob is None:
         damaged_date = re.search(
             r"(?:date|fafuDate)\s+(\d{2})7(\d{2})/(\d{4})", text, re.IGNORECASE
@@ -3073,6 +3082,15 @@ def _statement_holder_after_title(text: str) -> str | None:
     so a generic ``Name`` lookup lands on a logo token. The subject printed
     immediately after an explicit statement-of-account title is stronger.
     """
+    inline_holder = re.search(
+        r"\bloan\s+account\s+statement\s+for\s*:[^\n()]*\(([^\n()]+)\)",
+        str(text or ""),
+        re.IGNORECASE,
+    )
+    if inline_holder:
+        candidate = canonicalize_person_name(inline_holder.group(1))
+        if candidate.valid:
+            return candidate.value
     lines = [re.sub(r"\s+", " ", line).strip(" ,.;") for line in str(text or "").splitlines()]
     title_index = next(
         (
@@ -3220,7 +3238,8 @@ def _extract_statement_period(text: str) -> tuple[str | None, str | None]:
         r"|\d{1,2}\s+\w+\s+\d{4}"
     )
     match = re.search(
-        rf"(?:period|statement\s+period|from)\s*[:\-–]?\s*({date_pattern})\s*(?:to|\-|\u2013|\u2014)\s*({date_pattern})",
+        rf"(?:period|statement\s+period|from)\s*[:\-–]?\s*({date_pattern})"
+        rf"\s*(?:to\s*[:\-–]?|\-|\u2013|\u2014)\s*({date_pattern})",
         text,
         re.IGNORECASE,
     )

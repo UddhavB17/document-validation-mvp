@@ -66,5 +66,5 @@ def test_build_checklist_status_requires_confident_match() -> None:
     )
 
     pan_row = next(row for row in rows if row["s_no"] == 7)
-    assert pan_row["status"] == "required_and_missing"
-    assert pan_row["pages"] == "-"
+    assert pan_row["status"] == "manual_review"
+    assert pan_row["pages"] == "1"

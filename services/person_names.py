@@ -24,6 +24,12 @@ NAME_FIELD_ALIASES = {
 }
 
 _LABEL_ONLY_VALUES = {
+    "loan detail",
+    "loan details",
+    "customer detail",
+    "customer details",
+    "financial detail",
+    "financial details",
     "applicant name",
     "borrower name",
     "name of applicant",

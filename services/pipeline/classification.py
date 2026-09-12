@@ -339,6 +339,8 @@ def _smooth_page_classifications(
                 "Unknown",
             }
             and _looks_like_loan_agreement_continuation(text)
+            and not _looks_like_kfs_start(text)
+            and not (curr_type == "KFS" and _looks_like_kfs_continuation(text))
             and (prev_type in agreement_types or next_type in agreement_types)
         ):
             target = (
@@ -862,8 +864,10 @@ def _looks_like_explicit_bureau_report_start(text: str) -> bool:
         title in header
         for title in (
             "cibil report",
+            "cibil combo report",
             "crif report",
             "credit information report",
+            "credit informationtmreport",
             "consumer credit report",
         )
     )
@@ -876,6 +880,7 @@ def _looks_like_explicit_bureau_report_start(text: str) -> bool:
             "report id",
             "control number",
             "member reference number",
+            "chm ref",
         )
     )
     return has_report_title and has_new_subject
@@ -938,6 +943,17 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
     if not normalized_text:
         return False
 
+    # Account-aggregator and lender covers have long headings containing the
+    # account/period. Their explicit title must end the previous document run.
+    if any(
+        re.match(r"statement of .+?\baccount\s+(?:no|number)\b", line)
+        or re.match(r"loan account statement for\b", line)
+        for line in (_normalize_fresh_document_text(value) for value in raw_header_lines)
+    ):
+        return True
+    if _looks_like_explicit_bureau_report_start(raw_text):
+        return True
+
     # Strong title-like phrases only — bare generics like "form"/"statement"
     # appear on continuation pages and must not break inheritance.
     strong_title_phrases = (
@@ -983,6 +999,10 @@ def _looks_like_fresh_page_without_match(text: str) -> bool:
         _normalize_fresh_document_text(line)
         for line in raw_header_lines
         if _normalize_fresh_document_text(line)
+    ]
+    normalized_header_lines = [
+        line for line in normalized_header_lines
+        if not re.match(r"(?:loan|facility) agreement (?:having|which|that|relating)\b", line)
     ]
     if any(
         line == phrase

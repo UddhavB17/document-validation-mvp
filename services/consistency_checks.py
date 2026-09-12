@@ -2008,9 +2008,7 @@ def _matches(field: str, left: Any, right: Any) -> bool:
                 _names_equivalent(short_name, comparable_long_name)
                 or _similarity(short_name, comparable_long_name) >= 0.75
             )
-            if relation_name_matches and (
-                min(len(left_tokens), len(right_tokens)) <= 3 or len(shared) >= 3
-            ):
+            if relation_name_matches and min(len(left_tokens), len(right_tokens)) <= 3:
                 return True
             # Short trusted prefix vs long OCR address: same PIN + relation match is enough.
             same_pin_for_prefix = bool(

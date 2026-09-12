@@ -17,7 +17,11 @@ from services.job_control import cooperate
 from services.language_detection import analyze_text_languages, normalize_language_code
 from services.llm_page_classifier import is_llm_classification_candidate
 from services.ocr_router import OCRResult, OCRRouter, get_ocr_router, run_fast_ocr_on_page
-from services.page_classification import classify_page_text, create_llm_classifier_budget
+from services.page_classification import (
+    _llm_document_type_has_required_evidence,
+    classify_page_text,
+    create_llm_classifier_budget,
+)
 from services.pipeline.classification import (
     _assign_sequential_document_type,
     _content_category_for_image_type,
@@ -134,6 +138,13 @@ def _build_page_records(
     refresh_cached_ocr: bool = False,
 ) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
+    # The inventory is authoritative even when a caller does not separately
+    # provide source_page_starts (for example a cached-processing caller).
+    source_page_starts = set(source_page_starts or ()) | {
+        int(source["internal_page_start"])
+        for source in source_documents or []
+        if source.get("internal_page_start") is not None
+    }
     llm_budget = create_llm_classifier_budget()
     total_pages = len(page_structure)
     selected_scanned_pages = selected_scanned_page_numbers(page_structure)
@@ -166,6 +177,7 @@ def _build_page_records(
             current_ocr_route = None
         checkpoint = checkpoints.get(page_number)
         if checkpoint is not None:
+            checkpoint = copy.deepcopy(checkpoint)
             if refresh_cached_ocr:
                 checkpoint = _refresh_page_from_cached_ocr(
                     checkpoint,
@@ -174,6 +186,13 @@ def _build_page_records(
                     current_detected_page=current_detected_page,
                     source_documents=source_documents or [],
                 )
+            # Source IDs are not top-level columns in saved page checkpoints.
+            # Restore them before smoothing, or it can bridge different ZIP
+            # members and turn an unrelated attachment into a document match.
+            attach_field_provenance(
+                checkpoint,
+                source_document=_source_document_for_page(source_documents or [], page_number),
+            )
             pages.append(checkpoint)
             current_type = str(checkpoint.get("document_type") or "Unknown")
             current_confidence = float(checkpoint.get("classification_confidence") or 0.0)
@@ -831,6 +850,30 @@ def _refresh_page_from_cached_ocr(
         layout_metadata=None,
         llm_budget=None,
     )
+    # This path makes no new model call. Keep an accepted model observation
+    # from this same OCR when current rules still have no confident answer;
+    # otherwise a refresh silently loses documents only the model recognized.
+    previous_classification = (checkpoint.get("meta") or {}).get("_classification") or (
+        checkpoint.get("extracted_fields") or {}
+    ).get("_classification", {})
+    cached_type = previous_classification.get("llm_document_type")
+    cached_confidence = float(previous_classification.get("llm_confidence") or 0.0)
+    if (
+        classification_meta.get("source") == "rules"
+        and float(classification.get("confidence") or 0.0) < 0.70
+        and previous_classification.get("source") == "llm"
+        and cached_type not in {None, "", "None", "Unknown"}
+        and cached_confidence >= 0.70
+        and _llm_document_type_has_required_evidence(cached_type, text)[0]
+    ):
+        classification = {"document_type": cached_type, "confidence": cached_confidence}
+        classification_meta.update(
+            source="llm",
+            llm_document_type=cached_type,
+            llm_confidence=cached_confidence,
+            llm_reason=previous_classification.get("llm_reason"),
+            cached_llm_reused=True,
+        )
     assigned = _assign_sequential_document_type(
         page_number=page_number,
         text=text,

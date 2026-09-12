@@ -435,7 +435,8 @@ def test_low_confidence_document_does_not_satisfy_presence() -> None:
 
     anomalies = run_checks(pages, {}, {}, "LAP")
 
-    assert any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
+    assert not any(anomaly["rule_id"] == "MISSING_DOC_S7" for anomaly in anomalies)
+    assert any(anomaly["rule_id"] == "REVIEW_REQUIRED_S7" for anomaly in anomalies)
 
 
 def _confident_page(page_number: int, document_type: str, **extra) -> dict:

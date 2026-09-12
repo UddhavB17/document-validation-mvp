@@ -52,6 +52,36 @@ curl -fsS http://127.0.0.1:8000/health
 
 Press `Ctrl+C` in each manual terminal to stop its process.
 
+### ZIP intake with Gemini 3.8 Flash
+
+The intake page opens ZIP Package Intake. Upload the original files together in
+a ZIP, inspect the source-file inventory, supply trusted case data, then start
+verification. Mapped Verification remains available for explicit mappings or
+a combined PDF. A single combined PDF inside a ZIP does not restore the original
+document boundaries.
+
+To select Gemini 3.8 Flash consistently, use the existing runtime wrapper for
+both the API and a manually started worker:
+
+```bash
+bash scripts/with_gemini38.sh .venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+In a separate terminal:
+
+```bash
+bash scripts/with_gemini38.sh .venv/bin/python -m services.worker
+```
+
+The wrapper selects `gemini-3.8-flash` and the global endpoint without editing
+credentials or `.env`. An automatically launched worker inherits the API's
+environment. A previously running worker retains its original model until it
+is stopped normally and restarted; do not start a second worker to change the
+model during an active run. Plain commands use configured environment/settings,
+which can select a different model than the code default. Check the saved audit's
+actual model and completion status; successful API-call accounting alone does
+not establish that the exception review completed.
+
 ### Windows PowerShell: supported launcher
 
 From the repository root:

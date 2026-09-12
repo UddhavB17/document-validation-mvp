@@ -21,12 +21,13 @@ _DOCUMENT_TYPE_ALIASES: dict[str, set[str]] = {
 
 def is_confident_document_match(page: dict[str, Any], document_type: str) -> bool:
     """Return True when a page can safely satisfy a checklist document type."""
-    actual_type = page.get("document_type")
-    if actual_type != document_type and actual_type not in _DOCUMENT_TYPE_ALIASES.get(
-        document_type, set()
-    ):
-        if not _is_legal_clearance_evidence(page, document_type):
-            return False
+    if not is_document_type_candidate(page, document_type):
+        return False
+
+    if page.get("is_readable") is False:
+        return False
+    if str(page.get("ocr_status") or "").strip().casefold() in {"failed", "no_text_extracted"}:
+        return False
 
     if not _meets_confidence_threshold(page):
         return False
@@ -50,6 +51,19 @@ def is_confident_document_match(page: dict[str, Any], document_type: str) -> boo
     return True
 
 
+def is_document_type_candidate(page: dict[str, Any], document_type: str) -> bool:
+    """Return True when the assigned type is plausible evidence for a type.
+
+    This intentionally ignores quality thresholds.  Presence assessment uses
+    it to retain low-confidence, unreadable, and owner-uncertain pages for a
+    reviewer rather than turning them into a false missing-document finding.
+    """
+    actual_type = page.get("document_type")
+    if actual_type == document_type or actual_type in _DOCUMENT_TYPE_ALIASES.get(document_type, set()):
+        return True
+    return _is_legal_clearance_evidence(page, document_type)
+
+
 def _meets_confidence_threshold(page: dict[str, Any]) -> bool:
     config = effective_config()
     classification_confidence = page.get("classification_confidence")
@@ -60,7 +74,9 @@ def _meets_confidence_threshold(page: dict[str, Any]) -> bool:
         return False
 
     ocr_confidence = page.get("ocr_confidence")
-    if page.get("page_type") == "scanned" and ocr_confidence is not None:
+    if page.get("page_type") == "scanned":
+        if ocr_confidence is None:
+            return False
         return float(ocr_confidence) >= config.min_scanned_ocr_confidence
 
     return True
