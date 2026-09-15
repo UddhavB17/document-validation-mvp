@@ -17,6 +17,17 @@ from database.db import get_connection
 
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
+# File-level severity is deliberately count-based.  Individual finding
+# severities remain domain-specific and continue to drive reviewer safeguards;
+# this label answers a different question: how many active errors are in the
+# complete file, including processing warnings.
+FILE_SEVERITY_THRESHOLDS = (
+    (50, "CRITICAL"),
+    (30, "HIGH"),
+    (10, "MEDIUM"),
+    (1, "LOW"),
+)
+
 PROCESSING_QUALITY_RULES = frozenset(
     {
         "UNCLASSIFIED_PAGE",
@@ -163,13 +174,33 @@ def split_reviewer_anomalies(anomalies: list[dict]) -> tuple[list[dict], list[di
 
 
 def compute_final_status(anomalies: list[dict]) -> str:
-    """Derive file status from actionable anomalies, not raw OCR noise."""
-    collapsed = collapse_for_reviewer(anomalies)
-    if not collapsed:
+    """Derive the file-level label from all active, combined errors.
+
+    A clean file has no errors.  Otherwise thresholds are applied to the
+    deduplicated persisted findings, including processing-quality warnings:
+    1–9 LOW, 10–29 MEDIUM, 30–49 HIGH, and 50+ CRITICAL.  The existing
+    ``collapse_for_reviewer`` path is intentionally not used here because its
+    summaries are a presentation aid and must not hide repeated file errors.
+    """
+    active = _dedupe_exact(
+        [anomaly for anomaly in anomalies if anomaly.get("status") != "dismissed_by_llm"]
+    )
+    if not active:
         return "CLEAN"
-    if any(str(item.get("severity", "")).upper() == "HIGH" for item in collapsed):
-        return "CRITICAL"
-    return "NEEDS_REVIEW"
+    return file_severity_for_error_count(len(active))
+
+
+def file_severity_for_error_count(error_count: int) -> str:
+    """Return the file-level severity label for an error count.
+
+    Negative values are treated as zero so callers reading an optional count
+    cannot accidentally produce a high-risk label.
+    """
+    count = max(0, int(error_count))
+    for minimum, label in FILE_SEVERITY_THRESHOLDS:
+        if count >= minimum:
+            return label
+    return "CLEAN"
 
 
 def _sort_anomalies(anomalies: list[dict]) -> list[dict]:

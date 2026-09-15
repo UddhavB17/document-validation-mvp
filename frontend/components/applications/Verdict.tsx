@@ -6,7 +6,6 @@ export function Verdict({ data }: { data: ApplicationReview }) {
   const pipelineStatus = String(data.progress?.operational_status ?? data.progress?.status ?? "unknown");
   const processingState = getDecisionProcessingState(pipelineStatus, data.progress?.is_stale);
   const reviewerCount = data.summary.reviewer_count;
-  const highCount = data.summary.business_anomalies.filter((item) => item.severity?.toUpperCase() === "HIGH").length;
   const businessCount = data.summary.business_count;
   const processingWarningCount = data.summary.processing_warning_count;
   let title = "NEEDS REVIEW";
@@ -24,18 +23,22 @@ export function Verdict({ data }: { data: ApplicationReview }) {
     title = "PROCESSING";
     detail = "Validation is not complete; decisions are disabled";
     classes = "border-blue-300 bg-blue-50 text-blue-900";
-  } else if (pipelineStatus.toLowerCase() === "completed_with_warnings") {
-    title = "COMPLETED WITH WARNINGS";
-    detail = `${businessCount} business exception(s); ${processingWarningCount} processing warning(s)`;
-    classes = "border-[#A0701C] bg-[#FBF2E1] text-[#A0701C]";
   } else if (status === "CLEAN" || (processingState === "completed" && reviewerCount === 0)) {
     title = "CLEAN";
     detail = "No checklist issues found";
     classes = "border-[#1F7A5C] bg-[#E7F3EE] text-[#1F7A5C]";
-  } else if (status === "CRITICAL" || highCount > 0) {
-    title = "CRITICAL";
-    detail = highCount > 0 ? `${highCount} high-severity business exception(s)` : "Critical result requires reviewer attention";
-    classes = "border-[#AF3B2E] bg-[#FBEBE8] text-[#AF3B2E]";
+  } else if (["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(status)) {
+    title = status === "LOW" || status === "MEDIUM" || status === "HIGH" ? status : "CRITICAL";
+    detail = `${data.summary.raw_count} combined error(s) in this file`;
+    classes = status === "LOW"
+      ? "border-blue-300 bg-blue-50 text-blue-900"
+      : status === "MEDIUM"
+        ? "border-[#A0701C] bg-[#FBF2E1] text-[#A0701C]"
+        : "border-[#AF3B2E] bg-[#FBEBE8] text-[#AF3B2E]";
+  } else if (pipelineStatus.toLowerCase() === "completed_with_warnings") {
+    title = "COMPLETED WITH WARNINGS";
+    detail = `${businessCount} business exception(s); ${processingWarningCount} processing warning(s)`;
+    classes = "border-[#A0701C] bg-[#FBF2E1] text-[#A0701C]";
   }
 
   return (

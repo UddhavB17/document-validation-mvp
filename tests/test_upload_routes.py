@@ -57,7 +57,7 @@ def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch, auth_heade
     body = response.json()
     assert body["application_id"]
     assert body["pipeline_status"] == "completed"
-    assert body["status"] in {"CLEAN", "NEEDS_REVIEW", "CRITICAL"}
+    assert body["status"] in {"CLEAN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
     assert "PAN" in body["documents_found"]
 
     with db.get_connection() as connection:

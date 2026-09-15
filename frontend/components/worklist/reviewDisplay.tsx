@@ -4,6 +4,9 @@ export type ReviewStateKind = "case" | "processing" | "decision";
 
 const CASE_STATE_LABELS: Record<string, string> = {
   CLEAN: "Clean",
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
   CRITICAL: "Critical",
   NEEDS_REVIEW: "Needs review",
   incomplete: "Docs requested",
@@ -120,8 +123,11 @@ function getStateTone(status: string, kind: ReviewStateKind): "match" | "attenti
   if (["clean", "verified"].includes(status)) {
     return "match";
   }
-  if (["critical"].includes(status)) {
+  if (["critical", "high"].includes(status)) {
     return "mismatch";
+  }
+  if (["low"].includes(status)) {
+    return "match";
   }
   return "attention";
 }

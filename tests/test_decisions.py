@@ -115,7 +115,7 @@ def test_undo_decision_within_window(tmp_path, monkeypatch, auth_headers) -> Non
 
     undo_response = client.post(f"/decision/{decision_id}/undo", headers=auth_headers)
     assert undo_response.status_code == 200
-    assert undo_response.json()["restored_status"] == "CRITICAL"
+    assert undo_response.json()["restored_status"] == "LOW"
 
     with db.get_connection() as connection:
         application = connection.execute(
@@ -126,7 +126,7 @@ def test_undo_decision_within_window(tmp_path, monkeypatch, auth_headers) -> Non
             "SELECT COUNT(*) AS count FROM reviewer_decisions WHERE application_id = ?",
             (application_id,),
         ).fetchone()
-    assert application["status"] == "CRITICAL"
+    assert application["status"] == "LOW"
     assert remaining["count"] == 0
 
 

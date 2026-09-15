@@ -15,6 +15,9 @@ export function StatusBadge({ status, uppercase = true }: { status: string; uppe
     match: "Match",
     success: "Success",
     accepted: "Accepted",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
     critical: "Critical",
     pipeline_failed: "Pipeline failed",
     incomplete: "Incomplete",
@@ -54,11 +57,14 @@ function getTone(status: string): "success" | "warning" | "danger" | "info" | "n
   if (["clean", "verified", "verified_with_override", "found", "prepared", "match", "success", "accepted", "ok", "required_and_present"].includes(status)) {
     return "success";
   }
-  if (["critical", "pipeline_failed", "incomplete", "missing", "failed", "mismatch", "stale", "flagged", "request_docs", "sent_back", "required_and_missing"].includes(status)) {
+  if (["critical", "high", "pipeline_failed", "incomplete", "missing", "failed", "mismatch", "stale", "flagged", "request_docs", "sent_back", "required_and_missing"].includes(status)) {
     return "danger";
   }
-  if (["needs_review", "processing", "ocr_completed", "queued", "preparing", "attention", "review", "overridden", "override", "manual_review", "unknown", "not_evaluated_by_engine", "no_text_extracted"].includes(status)) {
+  if (["medium", "needs_review", "processing", "ocr_completed", "queued", "preparing", "attention", "review", "overridden", "override", "manual_review", "unknown", "not_evaluated_by_engine", "no_text_extracted"].includes(status)) {
     return "warning";
+  }
+  if (["low"].includes(status)) {
+    return "info";
   }
   if (["info", "pending", "running"].includes(status)) {
     return "info";

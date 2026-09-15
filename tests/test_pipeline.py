@@ -212,7 +212,7 @@ def test_run_pipeline_persists_results(
     assert result["pipeline_status"] == "completed"
     assert result["total_pages"] == 1
     assert result["digital_pages"] == 1
-    assert result["final_status"] in {"CLEAN", "NEEDS_REVIEW", "CRITICAL"}
+    assert result["final_status"] in {"CLEAN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
 
     with get_connection() as connection:
         application = connection.execute(

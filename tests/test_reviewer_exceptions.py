@@ -84,12 +84,12 @@ def test_keeps_high_severity_checklist_items() -> None:
     assert collapsed[0]["rule_id"] == "MISSING_DOC_S7"
 
 
-def test_compute_final_status_ignores_low_noise_only() -> None:
+def test_compute_final_status_counts_low_noise_toward_file_label() -> None:
     anomalies = [
         {"rule_id": "LOW_OCR_CONFIDENCE", "severity": "LOW", "page_number": 1},
         {"rule_id": "LOW_OCR_CONFIDENCE", "severity": "LOW", "page_number": 2},
     ]
-    assert compute_final_status(anomalies) == "NEEDS_REVIEW"
+    assert compute_final_status(anomalies) == "LOW"
 
 
 def test_summarize_for_display_counts() -> None:
@@ -252,7 +252,7 @@ def test_trusted_person_scope_missing_raw_and_summary_are_processing_warnings() 
     assert display["processing_warnings"][0]["collapsed_page_numbers"] == [20, 21]
 
 
-def test_only_scope_missing_stays_needs_review() -> None:
+def test_only_scope_missing_is_a_low_count_file() -> None:
     anomalies = [
         {
             "rule_id": "TRUSTED_PERSON_SCOPE_MISSING",
@@ -262,7 +262,7 @@ def test_only_scope_missing_stays_needs_review() -> None:
             "reason": "Documents belong to a participant role that is absent from trusted data",
         }
     ]
-    assert compute_final_status(anomalies) == "NEEDS_REVIEW"
+    assert compute_final_status(anomalies) == "LOW"
     display = summarize_for_display(anomalies)
     assert display["business_anomalies"] == []
     assert len(display["processing_warnings"]) == 1
@@ -303,7 +303,7 @@ def test_genuine_mismatch_stays_business_critical_with_scope_missing() -> None:
         "DATE_OF_BIRTH_MISMATCH",
     }
     assert [item["rule_id"] for item in processing] == ["TRUSTED_PERSON_SCOPE_MISSING"]
-    assert compute_final_status(anomalies) == "CRITICAL"
+    assert compute_final_status(anomalies) == "LOW"
 
     display = summarize_for_display(anomalies)
     assert display["business_count"] == 2

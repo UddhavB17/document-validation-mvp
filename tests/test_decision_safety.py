@@ -362,7 +362,7 @@ def test_undo_restores_preceding_decision_status(tmp_path, monkeypatch, auth_hea
     assert _decision_count(application_id) == 1
 
 
-@pytest.mark.parametrize("finding_status,expected_status", [("open", "CRITICAL"), ("dismissed_by_llm", "CLEAN")])
+@pytest.mark.parametrize("finding_status,expected_status", [("open", "LOW"), ("dismissed_by_llm", "CLEAN")])
 def test_successive_undo_falls_back_to_pipeline_status(
     tmp_path, monkeypatch, auth_headers, finding_status, expected_status
 ) -> None:
@@ -472,7 +472,7 @@ def test_concurrent_undo_same_decision_single_winner(tmp_path, monkeypatch, auth
     # PostgreSQL reports it as no-longer-latest. Either way it must not apply.
     assert error_codes == [404] or error_codes == [409]
     assert _decision_count(application_id) == 0
-    assert _app_status(application_id) == "CRITICAL"
+    assert _app_status(application_id) == "LOW"
 
 
 def test_undo_waits_for_sqlite_write_lock(tmp_path, monkeypatch, auth_headers) -> None:
@@ -530,4 +530,4 @@ def test_undo_waits_for_sqlite_write_lock(tmp_path, monkeypatch, auth_headers) -
 
     assert outcome["result"][0] == "ok"
     assert _decision_count(application_id) == 0
-    assert _app_status(application_id) == "CRITICAL"
+    assert _app_status(application_id) == "LOW"
