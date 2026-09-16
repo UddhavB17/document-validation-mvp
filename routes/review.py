@@ -125,7 +125,14 @@ def get_today_activity() -> dict[str, Any]:
 )
 def get_application_review(application_id: int) -> dict[str, Any]:
     """Return the full reviewer detail payload for one application."""
-    data, evidence_pages = load_application_review_bundle(application_id)
+    # Public review rows are compact.  Comparison evidence is hydrated only
+    # for pages that carry fields expected by the saved ground truth; loading
+    # OCR/meta for every page makes large applications time out before the
+    # reviewer UI can render.
+    data, evidence_pages = load_application_review_bundle(
+        application_id,
+        sparse_evidence=True,
+    )
     if data is None:
         raise HTTPException(status_code=404, detail="Application not found")
 

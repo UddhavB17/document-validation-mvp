@@ -96,27 +96,38 @@ def load_application_review_data(application_id: int) -> ApplicationReviewData |
 
 def load_application_review_bundle(
     application_id: int,
+    *,
+    sparse_evidence: bool = False,
 ) -> tuple[ApplicationReviewData | None, list[dict]]:
     """Read review summaries and private comparison evidence together.
 
     Keep the evidence separate so OCR/private metadata cannot enter the public
-    response, and avoid fetching every page row a second time.
+    response, and avoid fetching every page row a second time.  The application
+    review route uses ``sparse_evidence``: it only reads OCR/meta blobs for
+    pages that contain fields expected by the saved ground truth.  The legacy
+    full-evidence mode remains available to callers that explicitly need the
+    complete private bundle (for example, OCR export/backfill tooling).
     """
-    return _load_application_review(application_id, include_evidence=True)
+    return _load_application_review(
+        application_id,
+        include_evidence=True,
+        sparse_evidence=sparse_evidence,
+    )
 
 
 def _load_application_review(
-    application_id: int, *, include_evidence: bool
+    application_id: int, *, include_evidence: bool, sparse_evidence: bool = False
 ) -> tuple[ApplicationReviewData | None, list[dict]]:
     columns = ", ".join(f"p.{column.strip()}" for column in PAGE_SUMMARY_COLUMNS.split(","))
-    if include_evidence:
+    if include_evidence and not sparse_evidence:
         columns += ", p.ocr_text, m.meta_json"
     join = (
         "LEFT JOIN pages_meta m ON m.application_id = p.application_id "
         "AND m.page_number = p.page_number"
-        if include_evidence
+        if include_evidence and not sparse_evidence
         else ""
     )
+    evidence_rows: list[Any] = []
     with get_connection() as connection:
         application_row = connection.execute(
             "SELECT * FROM applications WHERE id = ?",
@@ -156,6 +167,33 @@ def _load_application_review(
             (application_id,),
         ).fetchall()
 
+        # OCR and private metadata are needed only while constructing the
+        # comparison matrix.  A full-page join makes a large review (for
+        # example application 11) read megabytes of text and metadata even
+        # though most pages carry no ground-truth comparison fields.  First
+        # load compact page summaries, then fetch blobs only for candidate
+        # pages selected from their business fields.
+        if include_evidence and sparse_evidence:
+            candidate_pages = _comparison_evidence_page_numbers(
+                page_rows,
+                ground_truth_row,
+            )
+            if candidate_pages:
+                placeholders = ",".join("?" for _ in candidate_pages)
+                evidence_rows = connection.execute(
+                    f"""
+                    SELECT p.page_number, p.ocr_text, m.meta_json
+                    FROM pages p
+                    LEFT JOIN pages_meta m
+                      ON m.application_id = p.application_id
+                     AND m.page_number = p.page_number
+                    WHERE p.application_id = ?
+                      AND p.page_number IN ({placeholders})
+                    ORDER BY p.page_number
+                    """,
+                    (application_id, *candidate_pages),
+                ).fetchall()
+
     # Normalize database rows before deriving the document index and response payload.
     normalized_page_rows: list[JsonRow] = [coerce_json_row(row) for row in page_rows]
     normalized_anomaly_rows: list[JsonRow] = [dict(row) for row in anomaly_rows]
@@ -166,9 +204,12 @@ def _load_application_review(
         if document_type and document_type != "Unknown" and page_number is not None:
             document_pages.setdefault(str(document_type), []).append(_required_int(page_number))
 
-    evidence = (
-        _hydrate_comparison_evidence(normalized_page_rows, page_rows) if include_evidence else []
-    )
+    if not include_evidence:
+        evidence = []
+    elif sparse_evidence:
+        evidence = _hydrate_sparse_comparison_evidence(normalized_page_rows, evidence_rows)
+    else:
+        evidence = _hydrate_comparison_evidence(normalized_page_rows, page_rows)
     return {
         "application": dict(application_row),
         "uploaded_file": dict(uploaded_file_row) if uploaded_file_row else {},
@@ -216,6 +257,128 @@ def _hydrate_comparison_evidence(pages: list[dict], rows: list[Any]) -> list[dic
             fields.update({key: value for key, value in meta.items() if key.startswith("_")})
         evidence.append(
             {**page, "ocr_text": detail.get("ocr_text") or "", "extracted_fields": fields}
+        )
+    return evidence
+
+
+_COMPARISON_FIELD_ALIASES = {
+    "phone": "phone_number",
+    "mobile": "phone_number",
+    "mobile_number": "phone_number",
+    "pan": "pan_number",
+    "pincode": "pin_code",
+    "application_number": "loan_id",
+}
+
+
+def _comparison_field_name(value: object) -> str:
+    key = str(value or "").strip().casefold().replace("-", "_").replace(" ", "_")
+    return _COMPARISON_FIELD_ALIASES.get(key, key)
+
+
+def _ground_truth_comparison_fields(row: Any) -> set[str]:
+    """Return expected comparison keys without loading any page blobs."""
+    if row is None:
+        return set()
+    try:
+        raw_json = json.loads(str(row["raw_json"] or "{}"))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return set()
+    if not isinstance(raw_json, dict):
+        return set()
+
+    fields: set[str] = set()
+    for key, value in raw_json.items():
+        if key in {"people", "reference_data"}:
+            continue
+        if value not in (None, "", [], {}):
+            fields.add(_comparison_field_name(key))
+    people = raw_json.get("people") or raw_json.get("reference_data") or {}
+    if isinstance(people, dict):
+        for profile in people.values():
+            if not isinstance(profile, dict):
+                continue
+            for key, value in profile.items():
+                if value not in (None, "", [], {}):
+                    fields.add(_comparison_field_name(key))
+    return fields
+
+
+def _comparison_evidence_page_numbers(page_rows: list[Any], ground_truth_row: Any) -> list[int]:
+    """Select pages whose persisted fields can affect the comparison matrix.
+
+    ``pages.extracted_fields`` contains only business fields, so it is safe to
+    inspect those compact values first.  OCR text and ``pages_meta`` are then
+    fetched for this small candidate set only.  ``person_records`` is included
+    when any record carries an expected field, preserving multi-person forms.
+    """
+    expected = _ground_truth_comparison_fields(ground_truth_row)
+    if not expected:
+        return []
+    numbers: list[int] = []
+    for row in page_rows:
+        try:
+            page_number = int(row["page_number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        try:
+            fields = json.loads(row["extracted_fields"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            fields = {}
+        if not isinstance(fields, dict):
+            continue
+        direct_fields = {
+            _comparison_field_name(key)
+            for key, value in fields.items()
+            if not str(key).startswith("_") and value not in (None, "", [], {})
+        }
+        if direct_fields & expected:
+            numbers.append(page_number)
+            continue
+        records = fields.get("person_records")
+        if isinstance(records, list) and any(
+            isinstance(record, dict)
+            and any(
+                _comparison_field_name(key) in expected
+                and value not in (None, "", [], {})
+                for key, value in record.items()
+            )
+            for record in records
+        ):
+            numbers.append(page_number)
+    return numbers
+
+
+def _hydrate_sparse_comparison_evidence(
+    pages: list[dict], rows: list[Any]
+) -> list[dict]:
+    """Hydrate all summaries while attaching raw evidence only to candidates."""
+    details_by_page = {}
+    for row in rows:
+        try:
+            details_by_page[int(row["page_number"])] = dict(row)
+        except (KeyError, TypeError, ValueError):
+            continue
+    evidence: list[dict] = []
+    for page in pages:
+        try:
+            page_number = int(page.get("page_number"))
+        except (TypeError, ValueError):
+            page_number = 0
+        detail = details_by_page.get(page_number, {})
+        try:
+            meta = json.loads(detail.get("meta_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            meta = {}
+        fields = dict(page.get("extracted_fields") or {})
+        if isinstance(meta, dict):
+            fields.update({key: value for key, value in meta.items() if key.startswith("_")})
+        evidence.append(
+            {
+                **page,
+                "ocr_text": detail.get("ocr_text") or "",
+                "extracted_fields": fields,
+            }
         )
     return evidence
 
