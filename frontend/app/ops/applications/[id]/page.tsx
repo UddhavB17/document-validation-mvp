@@ -1,24 +1,36 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef } from "react";
 
 import { ErrorMessage, LoadingMessage } from "@/components/Message";
-import { UserPortal } from "@/components/portal/UserPortal";
+import { UserPortal, type PortalView } from "@/components/portal/UserPortal";
 import { statusProgressPercentage } from "@/components/ops/opsUtils";
 import { normalizeOpsStatus } from "@/components/ops/StatusPill";
 import { t, useLocale } from "@/lib/i18n";
+import { portalApplicationHref, portalViewFromSearch } from "@/lib/portalNavigation";
 import { isApplicationReviewPollingStatus, useApplicationStatus, useOpsApplication } from "@/lib/queries";
 
-export default function OpsApplicationPage() {
+function OpsApplicationContent() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const applicationId = Number(params.id);
   const isValid = Number.isInteger(applicationId) && applicationId > 0;
   const { locale } = useLocale();
   const ops = useOpsApplication(isValid ? applicationId : null);
   const status = useApplicationStatus(isValid ? applicationId : null);
   const wasProcessing = useRef(false);
+  const selectedKey = searchParams.get("exception");
+  const view: PortalView = portalViewFromSearch(searchParams);
+
+  const navigate = useCallback(
+    (next: { view: PortalView; selectedKey?: string | null }) => {
+      router.push(portalApplicationHref(applicationId, searchParams.toString(), next));
+    },
+    [applicationId, router, searchParams],
+  );
 
   const liveStatus = status.data?.status ?? ops.data?.status;
   const processing = normalizeOpsStatus(liveStatus) === "processing";
@@ -89,6 +101,15 @@ export default function OpsApplicationPage() {
       application={ops.data}
       liveProgressPct={typeof progress === "number" ? progress : null}
       fallbackId={applicationId}
+      navigation={{ view, selectedKey, onNavigate: navigate }}
     />
+  );
+}
+
+export default function OpsApplicationPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-[1100px] p-6"><LoadingMessage message="Loading the file summary…" /></div>}>
+      <OpsApplicationContent />
+    </Suspense>
   );
 }

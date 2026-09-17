@@ -12,11 +12,13 @@ import {
   fetchApplicationStatus,
   fetchNdcState,
   fetchOpsApplication,
+  fetchOpsReviewItems,
   fetchOpsWorklist,
   fetchPortalApplication,
   fetchPortalStatus,
   fetchPortalWorklist,
   setNdcCheck,
+  updateOpsReviewItem,
 } from "./api";
 
 // These hooks are the frontend's cache and polling boundary. Components use
@@ -114,6 +116,40 @@ export function useOpsApplication(applicationId: number | null) {
     },
     enabled: applicationId !== null,
     refetchInterval: getApplicationReviewPollInterval(),
+  });
+}
+
+export function useOpsReviewItems(applicationId: number | null) {
+  return useQuery({
+    queryKey: ["opsReviewItems", applicationId],
+    queryFn: () => {
+      if (applicationId === null) {
+        throw new Error("Application ID is required");
+      }
+      return fetchOpsReviewItems(applicationId);
+    },
+    enabled: applicationId !== null,
+    refetchInterval: false,
+    retry: false,
+  });
+}
+
+export function useUpdateOpsReviewItem(applicationId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ itemId, ...payload }: {
+      itemId: string;
+      expected_revision: string;
+      disposition: "correct" | "reopen";
+      note?: string;
+    }) => updateOpsReviewItem(applicationId, itemId, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["opsReviewItems", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsWorklist"] }),
+      ]);
+    },
   });
 }
 
@@ -306,7 +342,8 @@ export function useSetNdcCheck(applicationId: number) {
   return useMutation({
     mutationFn: (payload: { s_no: number; role: string; checked: boolean }) =>
       setNdcCheck(applicationId, payload),
-    onSuccess: async () => {
+    onSuccess: async (data) => {
+      queryClient.setQueryData(["ndcState", applicationId], data);
       await queryClient.invalidateQueries({ queryKey: ["ndcState", applicationId] });
     },
   });

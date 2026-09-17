@@ -168,7 +168,7 @@ function ShellChrome({
             <ul className="app-shell__nav-list">
               {primaryNav.map((item) => {
                 const active = isNavItemActive(item.id, item.href, pathname, applicationId);
-                const showSubmenu = isAdmin && item.id === "worklist" && applicationId !== null;
+                const showSubmenu = item.id === "worklist" && applicationId !== null;
 
                 return (
                   <li key={item.href}>
@@ -184,7 +184,7 @@ function ShellChrome({
                     </Link>
                     {showSubmenu ? (
                       <Suspense fallback={null}>
-                        <AppSidebarSubmenu applicationId={applicationId} />
+                        <AppSidebarSubmenu applicationId={applicationId} isAdmin={isAdmin} />
                       </Suspense>
                     ) : null}
                   </li>
@@ -308,16 +308,24 @@ function isNavItemActive(itemId: string, href: string, pathname: string, applica
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
+function AppSidebarSubmenu({ applicationId, isAdmin }: { applicationId: number; isAdmin: boolean }) {
   const searchParams = useSearchParams();
-  const activeTab = searchParams.get("tab") || "review";
-  const tabs: Array<{ key: string; label: string; icon: IconName }> = [
-    { key: "review", label: "Review", icon: "worklist" },
-    { key: "extracted", label: "Extracted data", icon: "intake" },
-    { key: "checklist", label: "Checklist", icon: "worklist" },
-    { key: "processing", label: "Processing", icon: "activity" },
-    { key: "files", label: "Files", icon: "intake" },
-  ];
+  const activeTab = searchParams.get("tab") || (searchParams.has("exception") ? "action-needed" : "review");
+  const tabs: Array<{ key: string; label: string; icon: IconName }> = isAdmin
+    ? [
+        { key: "review", label: "Review", icon: "worklist" },
+        { key: "extracted", label: "Extracted data", icon: "intake" },
+        { key: "checklist", label: "Checklist", icon: "worklist" },
+        { key: "processing", label: "Processing", icon: "activity" },
+        { key: "files", label: "Files", icon: "intake" },
+      ]
+    : [
+        { key: "review", label: "Overview", icon: "worklist" },
+        { key: "action-needed", label: "Action needed", icon: "worklist" },
+        { key: "reviewed", label: "Reviewed", icon: "ops" },
+        { key: "checklist", label: "Checklist", icon: "intake" },
+      ];
+  const basePath = isAdmin ? `/admin/applications/${applicationId}` : `/ops/applications/${applicationId}`;
 
   return (
     <ul className="app-shell__submenu" aria-label="Application review sections">
@@ -326,8 +334,8 @@ function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
         return (
           <li key={tab.key}>
             <Link
-              href={tab.key === "review" ? `/admin/applications/${applicationId}` : `/admin/applications/${applicationId}?tab=${tab.key}`}
-              onClick={(event) => navigateCaseTab(event, tab.key === "review" ? `/admin/applications/${applicationId}` : `/admin/applications/${applicationId}?tab=${tab.key}`)}
+              href={tab.key === "review" ? basePath : `${basePath}?tab=${tab.key}`}
+              onClick={(event) => navigateCaseTab(event, tab.key === "review" ? basePath : `${basePath}?tab=${tab.key}`)}
               className={`app-shell__submenu-link${active ? " is-active" : ""}`}
               aria-current={active ? "page" : undefined}
             >

@@ -116,6 +116,12 @@ def aggregate(
 
 def save_aggregation(application_id: int, anomalies: list[dict], final_status: str) -> None:
     with get_connection() as connection:
+        # Review state belongs to the findings being replaced. Remove it first
+        # to satisfy the foreign key and require fresh review after reprocessing.
+        # Audit history is retained; a failed replacement rolls back both deletes.
+        connection.execute(
+            "DELETE FROM ops_review_items WHERE application_id = ?", (application_id,)
+        )
         connection.execute(
             "DELETE FROM validation_results WHERE application_id = ?", (application_id,)
         )

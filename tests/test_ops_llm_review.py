@@ -165,6 +165,8 @@ def test_failed_finding_batch_retries_without_repeating_successes(monkeypatch, r
     assert report["unreviewed_finding_refs"] == [5]
     assert report["reviewed_finding_refs"] == [1, 2, 3, 4]
     assert "4 of 5" in summary["en"]
+    assert "Assessed" not in summary["en"]
+    assert "model" not in summary["en"]
     generate_exception_review(4, context)
     assert calls == [[1, 2, 3, 4], [5], [5], [5]]
     report = json.loads(review_store["applications/4/reports/ops-review.json"])
@@ -215,7 +217,9 @@ def test_invalid_evidence_is_retried_with_reason_and_never_dismissed(monkeypatch
     assert report["stage_errors"][0]["category"] == "unsupported_false_positive_evidence"
     assert report["dismissed_count"] == 0
     assert report["findings"] == []
-    assert "0 of 1" in result["en"] and "model test-model" in result["en"]
+    assert "0 of 1" in result["en"]
+    assert "model test-model" not in result["en"]
+    assert "manual review" in result["en"]
     assert "Everything was reviewed" not in result["en"]
 
 

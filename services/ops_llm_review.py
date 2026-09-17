@@ -653,14 +653,9 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
         fallback = _fallback_summaries(report)
         english, hindi = fallback["en"], fallback["hi"]
         summary_status = {"en": "fallback", "hi": "fallback"}
-    english += (
-        f"\n\nAI review {final_status}; model {model}. "
-        f"Assessed {len(assessments)} of {len(findings)} exceptions."
-    )
-    hindi += (
-        f"\n\nएआई समीक्षा: { {'completed': 'पूरी', 'partial': 'आंशिक', 'failed': 'विफल'}[final_status] }; "
-        f"मॉडल {model}। {len(findings)} में से {len(assessments)} अपवादों की जाँच हुई।"
-    )
+    if final_status != "completed":
+        english = f"{english}\n\nSome exceptions still need manual review."
+        hindi = f"{hindi}\n\nकुछ अपवादों की मानव समीक्षा अभी बाकी है।"
     report.update(
         {
             "review_status": final_status,

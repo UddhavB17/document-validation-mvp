@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
-
 import type { OpsWorklistItem } from "@/lib/api";
+import { useLocale } from "@/lib/i18n";
 import { usePortalWorklist } from "@/lib/queries";
 
-import { LangButton, PortalHeader, type PortalLang } from "./UserPortal";
+import { PortalHeader, type PortalLang } from "./UserPortal";
 
 const DEMO_WORKLIST: OpsWorklistItem[] = [
   { application_id: 4, loan_id: "LN-001", applicant_name: "Peeru Lal", status: "needs_review", findings_count: 3 },
@@ -51,7 +50,9 @@ export function PortalWorklist({
   /** False when embedded in the ops shell (AppShell provides the chrome). */
   chrome?: boolean;
 }) {
-  const [lang, setLang] = useState<PortalLang>("EN");
+  const { locale, setLocale } = useLocale();
+  const lang: PortalLang = locale === "hi" ? "HI" : "EN";
+  const setLanguage = (next: PortalLang) => setLocale(next === "HI" ? "hi" : "en");
   const worklist = usePortalWorklist();
 
   const liveRows = worklist.data?.applications ?? [];
@@ -62,14 +63,10 @@ export function PortalWorklist({
       {chrome ? (
       <PortalHeader
         lang={lang}
-        onLangChange={setLang}
+        onLangChange={setLanguage}
         meta={lang === "EN" ? "Your loan files" : "आपकी ऋण फ़ाइलें"}
       />
-      ) : (
-        <div className="mx-auto flex max-w-3xl justify-end px-4 pt-4 sm:px-6">
-          <LangButton lang={lang} onLangChange={setLang} />
-        </div>
-      )}
+      ) : null}
 
       <main className="mx-auto max-w-3xl space-y-4 p-4 sm:p-6">
         <div>

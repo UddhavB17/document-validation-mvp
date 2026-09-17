@@ -237,6 +237,40 @@ def _summaries(findings: list[dict]) -> dict[str, str]:
     }
 
 
+_LEGACY_SUMMARY_FOOTER_EN = re.compile(
+    r"\s*(?:\n\s*)+AI review\s+(?P<status>completed|partial|failed)\b.*?"
+    r"Assessed\s+\d+\s+of\s+\d+\s+exceptions?\.?\s*\Z",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_LEGACY_SUMMARY_FOOTER_HI = re.compile(
+    r"\s*(?:\n\s*)+एआई समीक्षा:[^\n]*मॉडल[^\n]*।\s*\d+\s+में\s+से\s+\d+\s+अपवादों की जाँच हुई।\s*\Z",
+    flags=re.DOTALL,
+)
+
+
+def _clean_saved_summary(value: Any, lang: str) -> str:
+    """Remove the old technical footer without losing incomplete-review warnings."""
+    text = str(value or "").strip()
+    if not text:
+        return text
+    incomplete = False
+    if lang == "en":
+        match = _LEGACY_SUMMARY_FOOTER_EN.search(text)
+        if match is not None:
+            incomplete = match.group("status").lower() != "completed"
+            text = text[: match.start()].rstrip()
+        if incomplete and "manual review" not in text.lower():
+            text = f"{text}\n\nSome exceptions still need manual review."
+    else:
+        match = _LEGACY_SUMMARY_FOOTER_HI.search(text)
+        if match is not None:
+            incomplete = "आंशिक" in match.group(0) or "विफल" in match.group(0)
+            text = text[: match.start()].rstrip()
+        if incomplete and "मानव समीक्षा" not in text:
+            text = f"{text}\n\nकुछ अपवादों की मानव समीक्षा अभी बाकी है।"
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Database loading
 # ---------------------------------------------------------------------------
@@ -470,7 +504,10 @@ def build_ops_payload(application_id: int) -> dict:
     findings = all_findings[:5]
     overflow = _overflow_pages(all_findings[5:], anomalies)
     if application.get("ops_summary_en") and application.get("ops_summary_hi"):
-        summary = {"en": str(application["ops_summary_en"]), "hi": str(application["ops_summary_hi"])}
+        summary = {
+            "en": _clean_saved_summary(application["ops_summary_en"], "en"),
+            "hi": _clean_saved_summary(application["ops_summary_hi"], "hi"),
+        }
     else:
         summary = _summaries(findings)
 

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 import database.db as db
 from database.db import get_connection, init_db
 from services.checklist_engine import is_bank_statement_old
-from services.ops_presentation import build_ops_payload, rule_to_code
+from services.ops_presentation import _clean_saved_summary, build_ops_payload, rule_to_code
 
 
 class _Text(BaseModel):
@@ -236,6 +236,23 @@ def test_generated_summary_takes_priority_over_cached_templates(ops_db):
     payload = build_ops_payload(ops_db)
     assert payload["summary"] == {"en": "Evidence review", "hi": "प्रमाण की समीक्षा"}
     assert payload["top_findings"]
+
+
+def test_legacy_summary_footer_is_removed_without_losing_incomplete_warning() -> None:
+    english = _clean_saved_summary(
+        "Check the highlighted documents.\n\nAI review partial; model gemini-3.8-flash. Assessed 4 of 5 exceptions.",
+        "en",
+    )
+    hindi = _clean_saved_summary(
+        "चिह्नित दस्तावेज़ जाँचें।\n\nएआई समीक्षा: आंशिक; मॉडल gemini-3.8-flash। 5 में से 4 अपवादों की जाँच हुई।",
+        "hi",
+    )
+    assert "gemini-3.8-flash" not in english
+    assert "Assessed" not in english
+    assert "manual review" in english
+    assert "gemini-3.8-flash" not in hindi
+    assert "मॉडल" not in hindi
+    assert "मानव समीक्षा" in hindi
 
 
 def test_current_checklist_statuses_and_evidence_pages(monkeypatch):

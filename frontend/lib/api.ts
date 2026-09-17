@@ -1091,3 +1091,60 @@ export async function setNdcCheck(
   });
   return parseApiResponse(response, ndcStateSchema as z.ZodType<NdcState>);
 }
+
+// --- tmp/user-portal-ux persisted exception review ---
+const opsReviewReviewerSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+});
+
+export const opsReviewItemSchema = z.object({
+  item_id: z.string(),
+  application_id: z.number(),
+  validation_result_id: z.number(),
+  revision: z.string(),
+  code: z.string(),
+  severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
+  title: opsTextSchema,
+  detail: opsTextSchema,
+  pages: z.array(z.number()),
+  evidence: opsEvidenceSchema.nullable(),
+  status: z.enum(["pending", "reviewed"]),
+  disposition: z.enum(["correct", "reopen"]).nullable(),
+  reviewer: opsReviewReviewerSchema.nullable(),
+  reviewed_at: z.string().nullable(),
+  note: z.string().nullable(),
+});
+
+export const opsReviewItemsSchema = z.object({
+  application_id: z.number(),
+  items: z.array(opsReviewItemSchema),
+  counts: z.object({
+    total: z.number(),
+    pending: z.number(),
+    reviewed: z.number(),
+  }),
+});
+
+export type OpsReviewItem = z.infer<typeof opsReviewItemSchema>;
+export type OpsReviewItems = z.infer<typeof opsReviewItemsSchema>;
+
+export async function fetchOpsReviewItems(applicationId: number): Promise<OpsReviewItems> {
+  return getJsonResponse(
+    `/ops/applications/${applicationId}/review-items`,
+    opsReviewItemsSchema,
+  );
+}
+
+export async function updateOpsReviewItem(
+  applicationId: number,
+  itemId: string,
+  payload: { expected_revision: string; disposition: "correct" | "reopen"; note?: string },
+): Promise<OpsReviewItem> {
+  const response = await fetch(`${API_BASE_URL}/ops/applications/${applicationId}/review-items/${itemId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response, opsReviewItemSchema);
+}

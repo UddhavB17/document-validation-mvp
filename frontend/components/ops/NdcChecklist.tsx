@@ -31,6 +31,7 @@ function TickCell({
   byName,
   disabled,
   readOnly,
+  saveState,
   onChange,
 }: {
   label: string;
@@ -38,6 +39,7 @@ function TickCell({
   byName: string;
   disabled: boolean;
   readOnly: boolean;
+  saveState?: "saving" | "saved" | "error";
   onChange: (next: boolean) => void;
 }) {
   if (readOnly) {
@@ -57,7 +59,7 @@ function TickCell({
     );
   }
   return (
-    <div className="flex flex-col items-center gap-1">
+    <label className="flex min-h-11 cursor-pointer flex-col items-center gap-1 rounded-md px-2 py-1 hover:bg-slate-50">
       <input
         type="checkbox"
         aria-label={label}
@@ -67,7 +69,10 @@ function TickCell({
         className="h-5 w-5 shrink-0 accent-emerald-700"
       />
       {byName ? <span className="max-w-[7rem] truncate text-[10px] text-slate-500">{byName}</span> : null}
-    </div>
+      {saveState === "saving" ? <span role="status" className="text-[10px] text-slate-500">Saving…</span> : null}
+      {saveState === "saved" ? <span role="status" className="text-[10px] font-semibold text-emerald-700">Saved</span> : null}
+      {saveState === "error" ? <span role="status" className="text-[10px] font-semibold text-rose-700">Not saved</span> : null}
+    </label>
   );
 }
 
@@ -89,6 +94,7 @@ export function NdcChecklist({
   const setCheck = useSetNdcCheck(applicationId);
   const createDecision = useCreateDecision(applicationId);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [cellState, setCellState] = useState<Record<string, "saving" | "saved" | "error">>({});
 
   const groups = useMemo(() => {
     const rows = ndc.data?.rows ?? [];
@@ -137,9 +143,13 @@ export function NdcChecklist({
 
   async function toggleCheck(sNo: number, role: string, checked: boolean): Promise<void> {
     setActionError(null);
+    const cellKey = `${sNo}:${role}`;
+    setCellState((current) => ({ ...current, [cellKey]: "saving" }));
     try {
       await setCheck.mutateAsync({ s_no: sNo, role, checked });
+      setCellState((current) => ({ ...current, [cellKey]: "saved" }));
     } catch (error) {
+      setCellState((current) => ({ ...current, [cellKey]: "error" }));
       if (error instanceof TypeError) {
         // The request never reached the backend (down, restarting, offline).
         setActionError(t(locale, "ops.ndc.offline"));
@@ -272,6 +282,7 @@ export function NdcChecklist({
                           byName={row.checks.cso.by_name}
                           disabled={busy}
                           readOnly={!interactive}
+                          saveState={cellState[`${row.s_no}:cso`]}
                           onChange={(next) => void toggleCheck(row.s_no, "cso", next)}
                         />
                       </div>
@@ -285,6 +296,7 @@ export function NdcChecklist({
                           byName={row.checks.cops.by_name}
                           disabled={busy}
                           readOnly={!interactive}
+                          saveState={cellState[`${row.s_no}:cops`]}
                           onChange={(next) => void toggleCheck(row.s_no, "cops", next)}
                         />
                       </div>

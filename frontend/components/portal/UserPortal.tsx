@@ -4,11 +4,14 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { bboxToStyle } from "@/components/ops/bbox";
 import { NdcChecklist } from "@/components/ops/NdcChecklist";
-import type { OpsApplication } from "@/lib/api";
+import type { OpsApplication, OpsReviewItem } from "@/lib/api";
 import { evidenceProxyPageImageUrl } from "@/lib/evidenceProxy";
+import { t, useLocale } from "@/lib/i18n";
+import type { PortalView } from "@/lib/portalNavigation";
+import { useOpsReviewItems, useUpdateOpsReviewItem } from "@/lib/queries";
 
 export type PortalLang = "EN" | "HI";
-type PortalView = "dashboard" | "report";
+export type { PortalView } from "@/lib/portalNavigation";
 
 export interface PortalActionItem {
   key: string;
@@ -20,6 +23,13 @@ export interface PortalActionItem {
   pages: number[];
   tone: "amber" | "rose";
   evidenceBbox: [number, number, number, number] | null;
+  reviewItemId?: string;
+  revision?: string;
+  reviewStatus?: "pending" | "reviewed";
+  disposition?: "correct" | "reopen" | null;
+  reviewerName?: string;
+  reviewedAt?: string | null;
+  reviewNote?: string | null;
 }
 
 const DEMO_ITEMS: PortalActionItem[] = [
@@ -58,8 +68,34 @@ const DEMO_ITEMS: PortalActionItem[] = [
   },
 ];
 
-function toActionItems(application: OpsApplication | null): PortalActionItem[] {
+function fromReviewItem(item: OpsReviewItem, applicant: string): PortalActionItem {
+  return {
+    key: item.item_id,
+    titleEn: item.title.en,
+    titleHi: item.title.hi,
+    detailEn: item.detail.en,
+    detailHi: item.detail.hi,
+    applicant,
+    pages: item.pages,
+    tone: item.severity === "HIGH" ? "rose" : "amber",
+    evidenceBbox: item.evidence?.bbox ?? null,
+    reviewItemId: item.item_id,
+    revision: item.revision,
+    reviewStatus: item.status,
+    disposition: item.disposition,
+    reviewerName: item.reviewer?.name,
+    reviewedAt: item.reviewed_at,
+    reviewNote: item.note,
+  };
+}
+
+function toActionItems(application: OpsApplication | null, reviewItems?: OpsReviewItem[]): PortalActionItem[] {
   if (!application) return DEMO_ITEMS;
+  if (reviewItems) {
+    return reviewItems
+      .filter((item) => item.status === "pending")
+      .map((item) => fromReviewItem(item, application.applicant_name || "Applicant"));
+  }
   const findings: PortalActionItem[] = application.top_findings.slice(0, 5).map((finding, index) => ({
     key: `${finding.code}-${index}`,
     titleEn: finding.title.en,
@@ -89,6 +125,13 @@ function toActionItems(application: OpsApplication | null): PortalActionItem[] {
       evidenceBbox: null,
     }));
   return [...findings, ...pageItems];
+}
+
+function toReviewedItems(application: OpsApplication | null, reviewItems?: OpsReviewItem[]): PortalActionItem[] {
+  if (!application || !reviewItems) return [];
+  return reviewItems
+    .filter((item) => item.status === "reviewed")
+    .map((item) => fromReviewItem(item, application.applicant_name || "Applicant"));
 }
 
 function healthRingClass(pct: number): string {
@@ -227,19 +270,49 @@ export function UserPortal({
   liveProgressPct,
   fallbackId,
   chrome = true,
+  navigation,
 }: {
   application: OpsApplication | null;
   liveProgressPct?: number | null;
   fallbackId?: number | null;
   /** False when embedded in the ops shell (AppShell provides the chrome). */
   chrome?: boolean;
+  navigation?: {
+    view: PortalView;
+    selectedKey: string | null;
+    onNavigate: (next: { view: PortalView; selectedKey?: string | null }) => void;
+  };
 }) {
-  const [view, setView] = useState<PortalView>("dashboard");
+  const [localView, setLocalView] = useState<PortalView>("dashboard");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [lang, setLang] = useState<PortalLang>("EN");
+  const { locale, setLocale } = useLocale();
+  const lang: PortalLang = locale === "hi" ? "HI" : "EN";
+  const view = navigation?.view ?? localView;
+  const activeSelectedKey = navigation?.selectedKey ?? selectedKey;
+  const portalAppId = application?.application_id ?? fallbackId ?? null;
+  const reviewItemsQuery = useOpsReviewItems(chrome ? null : portalAppId);
+  const updateReviewItem = useUpdateOpsReviewItem(portalAppId ?? 0);
 
-  const items = useMemo(() => toActionItems(application), [application]);
-  const selected = items.find((item) => item.key === selectedKey) ?? null;
+  const items = useMemo(
+    () => toActionItems(application, reviewItemsQuery.data?.items),
+    [application, reviewItemsQuery.data?.items],
+  );
+  const reviewedItems = useMemo(
+    () => toReviewedItems(application, reviewItemsQuery.data?.items),
+    [application, reviewItemsQuery.data?.items],
+  );
+  const selected = [...items, ...reviewedItems].find((item) => item.key === activeSelectedKey) ?? null;
+
+  useEffect(() => {
+    if (
+      navigation?.view === "report" &&
+      navigation.selectedKey &&
+      reviewItemsQuery.isSuccess &&
+      selected === null
+    ) {
+      navigation.onNavigate({ view: "dashboard", selectedKey: null });
+    }
+  }, [navigation, reviewItemsQuery.isSuccess, selected]);
 
   const total = application?.checklist.total ?? 28;
   const found = application?.checklist.found ?? 25;
@@ -267,21 +340,34 @@ export function UserPortal({
     "आपकी ऋण फ़ाइल में 3 छोटे सुधार चाहिए: पैन नाम सुधार, एक गायब भुगतान फ़ॉर्म और पता अद्यतन। तीनों आसानी से ठीक हो जाएंगे।";
   const missing = application?.checklist.missing ?? 3;
   const notChecked = application?.checklist.not_checked ?? 0;
-  const portalAppId = application?.application_id ?? fallbackId ?? null;
 
   const openIssue = (key: string) => {
-    setSelectedKey(key);
-    setView("report");
+    if (navigation) {
+      navigation.onNavigate({ view: "report", selectedKey: key });
+    } else {
+      setSelectedKey(key);
+      setLocalView("report");
+    }
   };
+
+  const navigate = (next: PortalView) => {
+    if (navigation) {
+      navigation.onNavigate({ view: next, selectedKey: next === "report" ? activeSelectedKey : null });
+    } else {
+      setLocalView(next);
+    }
+  };
+
+  const setLanguage = (next: PortalLang) => setLocale(next === "HI" ? "hi" : "en");
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
       {chrome ? (
       <PortalHeader
         lang={lang}
-        onLangChange={setLang}
+        onLangChange={setLanguage}
         view={view}
-        onViewChange={setView}
+        onViewChange={navigate}
         meta={
           <>
             Application ID: <span className="font-mono font-semibold text-slate-700">{appLabel}</span>
@@ -291,11 +377,7 @@ export function UserPortal({
           </>
         }
       />
-      ) : (
-        <div className="mx-auto flex max-w-7xl justify-end px-4 pt-4 sm:px-6">
-          <LangButton lang={lang} onLangChange={setLang} />
-        </div>
-      )}
+      ) : null}
 
       <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
         {view === "dashboard" ? (
@@ -314,13 +396,37 @@ export function UserPortal({
             applicationId={portalAppId}
             onFixIssue={openIssue}
           />
+        ) : view === "report" ? (
+          selected ? (
+            <DocumentReportView
+              lang={lang}
+              item={selected}
+              applicationId={portalAppId}
+              reviewItem={selected.reviewItemId ? selected : null}
+              onBack={() => navigate("dashboard")}
+              onReview={async (item, disposition, note) => {
+                if (!item.reviewItemId || !item.revision || portalAppId === null) return;
+                await updateReviewItem.mutateAsync({
+                  itemId: item.reviewItemId,
+                  expected_revision: item.revision,
+                  disposition,
+                  note,
+                });
+              }}
+              reviewPending={updateReviewItem.isPending}
+            />
+          ) : (
+            <p role="status" className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
+              {lang === "EN" ? "Loading this exception…" : "यह अपवाद लोड हो रहा है…"}
+            </p>
+          )
+        ) : view === "reviewed" ? (
+          <ReviewedItemsView lang={lang} items={reviewedItems} onOpen={openIssue} />
         ) : (
-          <DocumentReportView
-            lang={lang}
-            item={selected ?? items[0] ?? DEMO_ITEMS[0]}
-            applicationId={application?.application_id ?? fallbackId ?? null}
-            onBack={() => setView("dashboard")}
-          />
+          <section aria-label={lang === "EN" ? "Checklist" : "चेकलिस्ट"} className="space-y-4">
+            <h2 className="text-lg font-black text-slate-900">{lang === "EN" ? "Checklist" : "चेकलिस्ट"}</h2>
+            {portalAppId !== null ? <NdcChecklist applicationId={portalAppId} /> : null}
+          </section>
         )}
       </main>
     </div>
@@ -529,16 +635,74 @@ function DashboardView({
   );
 }
 
+function ReviewedItemsView({
+  lang,
+  items,
+  onOpen,
+}: {
+  lang: PortalLang;
+  items: PortalActionItem[];
+  onOpen: (key: string) => void;
+}) {
+  return (
+    <section aria-labelledby="reviewed-heading" className="space-y-4">
+      <div>
+        <h2 id="reviewed-heading" className="text-lg font-black text-slate-900">
+          {lang === "EN" ? "Reviewed" : "समीक्षित"}
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          {lang === "EN" ? "Exceptions marked correct by a reviewer." : "समीक्षक द्वारा सही चिह्नित अपवाद।"}
+        </p>
+      </div>
+      {items.length === 0 ? (
+        <p role="status" className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600">
+          {lang === "EN" ? "No exceptions have been reviewed yet." : "अभी किसी अपवाद की समीक्षा नहीं हुई है।"}
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {items.map((item) => (
+            <li key={item.key} className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">{lang === "EN" ? item.titleEn : item.titleHi}</h3>
+                  <p className="mt-1 text-xs text-slate-600">{lang === "EN" ? item.detailEn : item.detailHi}</p>
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    {item.reviewerName ? `${item.reviewerName} · ` : ""}
+                    {item.reviewedAt ? new Date(item.reviewedAt).toLocaleString(lang === "EN" ? "en-IN" : "hi-IN") : ""}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onOpen(item.key)}
+                  className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100"
+                >
+                  {lang === "EN" ? "Open review" : "समीक्षा खोलें"}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function DocumentReportView({
   lang,
   item,
   applicationId,
+  reviewItem,
   onBack,
+  onReview,
+  reviewPending,
 }: {
   lang: PortalLang;
   item: PortalActionItem;
   applicationId: number | null;
+  reviewItem: PortalActionItem | null;
   onBack: () => void;
+  onReview: (item: PortalActionItem, disposition: "correct" | "reopen", note: string) => Promise<void>;
+  reviewPending: boolean;
 }) {
   // Real page render when we know the application and page; otherwise (or
   // when the render fails, e.g. logged-out demo) fall back to the mock box.
@@ -547,14 +711,21 @@ function DocumentReportView({
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
+  const [reviewNote, setReviewNote] = useState(reviewItem?.reviewNote ?? "");
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewSaved, setReviewSaved] = useState(false);
   useEffect(() => {
     setImgFailed(false);
     setImgLoading(true);
     setZoom(1);
     setRotation(0);
-  }, [item.key]);
+    setReviewNote(reviewItem?.reviewNote ?? "");
+    setReviewError(null);
+    setReviewSaved(false);
+  }, [item.key, reviewItem?.reviewNote]);
   const pageNo = item.pages.length > 0 ? item.pages[0] : null;
   const showPreview = applicationId !== null && pageNo !== null && !imgFailed;
+  const evidenceReady = applicationId === null || (pageNo !== null && !imgFailed && !imgLoading);
 
   function reloadImage(): void {
     setImgFailed(false);
@@ -570,7 +741,7 @@ function DocumentReportView({
           className="flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition hover:text-slate-900"
         >
           <span aria-hidden="true" className="mr-1.5">←</span>
-          {lang === "EN" ? "Back to Dashboard" : "डैशबोर्ड पर वापस जाएं"}
+          {lang === "EN" ? "Back to application" : "आवेदन पर वापस जाएं"}
         </button>
         <span className="text-xs font-semibold text-slate-500">
           {item.pages.length > 0 ? `Page ${item.pages[0]}` : lang === "EN" ? "Document review" : "दस्तावेज़ समीक्षा"}
@@ -672,6 +843,12 @@ function DocumentReportView({
                 />
               ) : null}
             </>
+          ) : applicationId !== null ? (
+          <div className="flex min-h-[280px] items-center justify-center rounded-lg border border-amber-200 bg-amber-50 p-6 text-center text-sm font-semibold text-amber-900">
+            {lang === "EN"
+              ? "Source evidence is unavailable. Do not mark this exception correct until the original page can be checked."
+              : "मूल प्रमाण उपलब्ध नहीं है। मूल पृष्ठ की जाँच होने तक इस अपवाद को सही चिह्नित न करें।"}
+          </div>
           ) : (
           <div className="relative flex min-h-[280px] items-center justify-center overflow-hidden rounded-lg border border-slate-300 bg-slate-900 p-4">
             <div className="relative w-full max-w-md space-y-3 rounded-lg border-2 border-blue-600 bg-amber-100/90 p-4 text-slate-900 shadow-2xl">
@@ -729,6 +906,83 @@ function DocumentReportView({
                 <li>{lang === "EN" ? "If the name differs, add a name affidavit (नाम शपथ पत्र)." : "यदि नाम अलग है, तो नाम शपथ पत्र जोड़ें।"}</li>
               </ul>
             </div>
+
+            {reviewItem ? (
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900">
+                    {lang === "EN" ? "Reviewer decision for this exception" : "इस अपवाद पर समीक्षक का निर्णय"}
+                  </h4>
+                  {reviewItem.reviewStatus === "reviewed" ? (
+                    <p className="mt-1 text-xs font-semibold text-emerald-800">
+                      {lang === "EN" ? "Marked correct" : "सही चिह्नित"}
+                      {reviewItem.reviewerName ? ` · ${reviewItem.reviewerName}` : ""}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs font-semibold text-amber-800">
+                      {lang === "EN" ? "Pending human review" : "मानव समीक्षा लंबित"}
+                    </p>
+                  )}
+                </div>
+                <label className="block text-xs font-semibold text-slate-700" htmlFor="review-note">
+                  {lang === "EN" ? "Note (optional)" : "नोट (वैकल्पिक)"}
+                </label>
+                <textarea
+                  id="review-note"
+                  value={reviewNote}
+                  onChange={(event) => setReviewNote(event.target.value)}
+                  rows={3}
+                  maxLength={2000}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                  placeholder={lang === "EN" ? "What did you verify?" : "आपने क्या जाँचा?"}
+                />
+                {reviewError ? <p role="alert" className="text-xs font-semibold text-rose-700">{reviewError}</p> : null}
+                {reviewSaved ? (
+                  <p role="status" className="text-xs font-semibold text-emerald-700">
+                    {lang === "EN" ? "Review saved." : "समीक्षा सहेजी गई।"}
+                  </p>
+                ) : null}
+                {applicationId !== null && !evidenceReady ? (
+                  <p role="status" className="text-xs font-semibold text-amber-800">
+                    {lang === "EN" ? "Load the real source page before marking this exception correct." : "इस अपवाद को सही चिह्नित करने से पहले मूल पृष्ठ लोड करें।"}
+                  </p>
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={reviewPending || (applicationId !== null && !evidenceReady)}
+                    onClick={() => {
+                      setReviewError(null);
+                      setReviewSaved(false);
+                      void onReview(item, "correct", reviewNote).then(
+                        () => setReviewSaved(true),
+                        (error: unknown) => setReviewError(error instanceof Error ? error.message : "Unable to save review."),
+                      );
+                    }}
+                    className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-600 disabled:opacity-50"
+                  >
+                    {reviewPending ? (lang === "EN" ? "Saving…" : "सहेजा जा रहा है…") : lang === "EN" ? "Mark exception correct" : "अपवाद को सही चिह्नित करें"}
+                  </button>
+                  {reviewItem.reviewStatus === "reviewed" ? (
+                    <button
+                      type="button"
+                      disabled={reviewPending}
+                      onClick={() => {
+                        setReviewError(null);
+                        setReviewSaved(false);
+                        void onReview(item, "reopen", reviewNote).then(
+                          () => setReviewSaved(true),
+                          (error: unknown) => setReviewError(error instanceof Error ? error.message : "Unable to reopen review."),
+                        );
+                      }}
+                      className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+                    >
+                      {lang === "EN" ? "Reopen exception" : "अपवाद फिर खोलें"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

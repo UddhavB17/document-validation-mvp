@@ -5,6 +5,7 @@ from database import (  # noqa: F401
     batch_rejections,
     llm_calls,
     ops_ndc,
+    ops_reviews,
     schema_registry,
     storage_schema,
     worker_heartbeat,
