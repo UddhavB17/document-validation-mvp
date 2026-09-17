@@ -176,8 +176,8 @@ def generate_summaries(application_id: int, context: dict) -> dict[str, str]:
         except Exception as exc:
             logger.warning("AI exception review unavailable (%s)", type(exc).__name__)
             result = {
-                "en": "AI exception review unavailable. Review the saved findings and their evidence manually.",
-                "hi": "एआई अपवाद समीक्षा उपलब्ध नहीं है। सहेजी गई समस्याओं और उनके प्रमाण की मानव जाँच करें।",
+                "en": "The smart check did not work. Please check the saved problems by hand.",
+                "hi": "स्मार्ट जाँच काम नहीं करी। कृपया सहेजी गई समस्याएँ खुद जाँचें।",
             }
         _persist_ops_summaries(application_id, result)
         return result
@@ -194,8 +194,10 @@ def generate_summaries(application_id: int, context: dict) -> dict[str, str]:
                     {
                         "role": "system",
                         "content": (
-                            "You write short loan-file summaries for non-technical "
-                            "operations staff in India. Use plain words only."
+                            "You write for field staff who read slowly. Use only "
+                            "easy everyday words a 10-year-old understands. Short "
+                            "sentences. Only what is wrong and what to do next. "
+                            "Nothing extra."
                         ),
                     },
                     {"role": "user", "content": prompt},
@@ -253,36 +255,18 @@ def build_bilingual_fallback(findings: list[dict]) -> dict[str, str]:
     """Deterministic count-based summary in English and Hindi."""
     items = findings or []
     total = len(items)
-    high = sum(1 for item in items if str(item.get("severity", "")).upper() == "HIGH")
-    medium = sum(1 for item in items if str(item.get("severity", "")).upper() == "MEDIUM")
-    low = sum(1 for item in items if str(item.get("severity", "")).upper() == "LOW")
 
     if total == 0:
-        en = (
-            "No issues were supplied for this summary. "
-            "Complete the required document and manual checks before making a decision."
-        )
-        hi = (
-            "इस सारांश के लिए कोई समस्या उपलब्ध नहीं कराई गई। "
-            "निर्णय लेने से पहले आवश्यक दस्तावेज़ों और मानव जाँच को पूरा करें।"
-        )
+        en = "This loan file looks good. There is nothing to fix."
+        hi = "यह ऋण फ़ाइल ठीक लग रही है। इसमें कुछ ठीक नहीं करना है."
         return {"en": en, "hi": hi}
 
-    parts = []
-    if high:
-        parts.append(f"{high} high priority")
-    if medium:
-        parts.append(f"{medium} medium priority")
-    if low:
-        parts.append(f"{low} low priority")
-    breakdown = ", ".join(parts)
-
     en = (
-        f"Review of this loan file found {total} issue(s) needing attention: {breakdown}. "
-        "Please check the highlighted pages with your branch team before approval."
+        f"This loan file has {total} {'problem' if total == 1 else 'problems'}. "
+        "Please check the marked pages with your branch team before approval."
     )
     hi = (
-        f"इस ऋण फ़ाइल की समीक्षा में {total} समस्या(एँ) पाई गईं जिन पर ध्यान देना आवश्यक है: {breakdown}। "
+        f"इस ऋण फ़ाइल में {total} {'समस्या है' if total == 1 else 'समस्याएँ हैं'}। "
         "कृपया अनुमोदन से पहले अपनी शाखा टीम के साथ चिह्नित पृष्ठों की जाँच करें।"
     )
     return {"en": en[:MAX_SUMMARY_CHARS], "hi": hi[:MAX_SUMMARY_CHARS]}
@@ -312,12 +296,13 @@ def _build_bilingual_prompt(findings: list[dict], ground_truth: dict) -> str:
         for item in findings
     ]
     return (
-        "Summarize this loan-file review for non-technical operations staff.\n"
-        "Write 2-3 sentences in English and 2-3 sentences in Hindi. "
-        "Use plain words only: no rule IDs, no codes, no technical terms.\n"
+        "Summarize this loan-file review for field staff who read slowly.\n"
+        "Write 2-3 very short sentences in English and 2-3 in Hindi. "
+        "Keep each sentence under 12 words. Use only easy everyday words. "
+        "No codes, no hard words, nothing extra — only what is wrong and what to do next.\n"
         'Answer in JSON only, exactly: {"en": "...", "hi": "..."}\n'
         "Keep each summary under 600 characters. "
-        "The Hindi text must be written in Devanagari script.\n\n"
+        "The Hindi text must use simple words in Devanagari script.\n\n"
         f"Known issue titles (for your understanding only, do not repeat codes):\n{known_codes}\n\n"
         "Review findings (TOON):\n"
         f"{encode(compact)}\n"

@@ -4,7 +4,10 @@ import type { NextRequest } from "next/server";
 import { verifySessionToken } from "../../../lib/sessionVerify";
 
 const SESSION_COOKIE = "dmef_session";
-const TOKEN_TTL_SECONDS = 12 * 60 * 60;
+// Long-lived sessions for field/ops use (tmp/user-portal-ux): checkers must
+// not be logged out mid-checklist. The cookie slides forward on every
+// successful check below, so active users stay logged in.
+const TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 // Authenticated content must never sit in a shared cache: every response
 // below carries private,no-store so roles and bearer tokens are not kept.
@@ -56,7 +59,11 @@ export async function GET(request: NextRequest) {
   if (outcome.status === "valid" && outcome.user) {
     // The bearer is returned so page code can call the backend directly
     // (existing bearer-call architecture; see lib/sessionVerify.ts note).
-    return jsonResponse({ token, role: outcome.user.role }, 200, request);
+    // The cookie is re-set with a fresh maxAge on every check (sliding
+    // session) so active users are never logged out mid-work.
+    const response = jsonResponse({ token, role: outcome.user.role }, 200, request);
+    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions(request));
+    return response;
   }
   if (outcome.status === "invalid") {
     return jsonResponse({ detail: "Invalid session" }, 401, request, true);

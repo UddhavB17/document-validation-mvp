@@ -192,7 +192,7 @@ def test_worklist_uses_batched_repository_queries(tmp_path, monkeypatch) -> None
     assert len(payload["items"]) == 20
     assert all(item["issues"] == 2 for item in payload["items"])
     assert all(item["pipeline_status"] == "processing" for item in payload["items"])
-    assert len(queries) == 3  # application/progress join, findings, settings snapshot
+    assert len(queries) == 4  # application/progress join, findings, latest jobs, settings snapshot
     assert len(connections) == 2  # data transaction, settings transaction
     assert sum("system_settings" in sql for sql in queries) == 1
 
@@ -273,6 +273,7 @@ def test_worklist_item_payload_shape(tmp_path, monkeypatch, auth_headers) -> Non
         "processing_warnings",
         "pipeline_status",
         "pipeline_retryable",
+        "pipeline_resumable",
         "pipeline_processed_pages",
         "pipeline_total_pages",
         "pipeline_percentage",

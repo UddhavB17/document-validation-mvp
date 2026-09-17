@@ -27,6 +27,7 @@ from routes import (
     decisions,
     llm_settings,
     ops,
+    ops_ndc,
     review,
     review_pages,
     settings,
@@ -104,6 +105,7 @@ app.include_router(llm_settings.router)
 app.include_router(auth.router)
 app.include_router(admin_users.router)
 app.include_router(ops.router)
+app.include_router(ops_ndc.router)
 app.include_router(review_pages.router)
 app.include_router(storage.router)
 app.include_router(admin_ops.router)

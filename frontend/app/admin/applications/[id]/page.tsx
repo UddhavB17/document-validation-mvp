@@ -8,6 +8,7 @@ import { Checklist } from "@/components/applications/Checklist";
 import { Downloads } from "@/components/applications/Downloads";
 import { EvidenceViewerModal } from "@/components/applications/EvidenceViewerModal";
 import { ExtractedDataTab } from "@/components/applications/ExtractedDataTab";
+import { NdcChecklist } from "@/components/ops/NdcChecklist";
 import { CaseNavigation } from "@/components/applications/case/CaseNavigation";
 import { ProcessingTab } from "@/components/applications/case/ProcessingTab";
 import { CaseReviewTab } from "@/components/applications/case/CaseReviewTab";
@@ -173,6 +174,7 @@ export default function ApplicationReviewPage() {
         )}
 
         {activeTab === "checklist" ? (
+          <>
           <Checklist
             data={applicationReview.data}
             onSelectPage={(row, pageNo, allPages) => {
@@ -189,6 +191,10 @@ export default function ApplicationReviewPage() {
                 : undefined);
             }}
           />
+          <div className="mt-6">
+            <NdcChecklist applicationId={applicationId} />
+          </div>
+          </>
         ) : null}
 
         {activeTab === "processing" ? (

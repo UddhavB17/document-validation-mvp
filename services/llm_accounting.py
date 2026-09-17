@@ -15,10 +15,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# prices as of 2026-09-04 (USD per 1M tokens: input, output).
+# prices as of 2026-09-16 (USD per 1M tokens: input, output).
 # Overridable at runtime with GEMINI_PRICING_JSON, e.g.
-# GEMINI_PRICING_JSON='{"gemini-2.5-flash": [0.30, 2.50]}'.
+# GEMINI_PRICING_JSON='{"gemini-3.8-flash": [0.75, 3.75]}'.
 MODEL_PRICES_USD_PER_1M: dict[str, tuple[float, float]] = {
+    "gemini-3.5-flash": (1.50, 9.00),
+    "gemini-3.8-flash": (0.75, 3.75),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-pro": (1.25, 10.00),
     "gemini-2.0-flash": (0.10, 0.40),

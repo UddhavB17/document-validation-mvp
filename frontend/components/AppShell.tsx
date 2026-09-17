@@ -25,7 +25,7 @@ interface NavItem {
 }
 
 const OPERATIONS_NAV: NavItem[] = [
-  { href: "/ops", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "ops" },
+  { href: "/ops", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "worklist" },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -55,7 +55,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [redirectTarget, router]);
 
-  if (pathname === "/login") {
+  if (pathname === "/login" || pathname === "/portal" || pathname.startsWith("/portal/")) {
     return <>{children}</>;
   }
 

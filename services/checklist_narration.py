@@ -13,7 +13,8 @@ CHECKLIST_NARRATION_SYSTEM_PROMPT = (
     "Your only job is to explain why that exact status was assigned in plain English. "
     "Never override, re-derive, contradict, or invent a status. "
     "Use only the provided deterministic status, confidence detail, extracted fields, "
-    "and flagged reason. Write 1-2 factual sentences. Do not hedge with phrases like "
+    "and flagged reason. Write 1-2 very short factual sentences using easy everyday "
+    "words that a 10-year-old understands. Do not hedge with phrases like "
     "'appears to', 'might be', or 'possibly'. If fields are missing, state that they "
     "were not extracted. The status word in your answer must be exactly the status "
     "provided by the caller."
@@ -26,8 +27,8 @@ CHECKLIST_NARRATION_USER_PROMPT_TEMPLATE = (
     "Flagged reason: {flagged_reason}\n"
     "Extracted fields JSON:\n"
     "{extracted_fields_json}\n\n"
-    "Write 1-2 sentences explaining why the deterministic status '{status}' was assigned. "
-    "Do not use any other status word."
+    "Write 1-2 short simple sentences explaining why the deterministic status '{status}' was assigned. "
+    "Use easy everyday words. Do not use any other status word."
 )
 
 

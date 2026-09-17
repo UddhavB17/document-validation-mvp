@@ -5,7 +5,10 @@ import { verifySessionToken } from "@/lib/sessionVerify";
 
 const SESSION_COOKIE = "dmef_session";
 
-/** Role redirect driven by verified backend state (GET /auth/me). */
+/** Role redirect driven by verified backend state (GET /auth/me).
+ * Admins land on the admin workspace; every other role lands on the
+ * operations worklist (/ops). The borrower portal (/portal) stays
+ * reachable from the sidebar and by URL. */
 export default async function HomePage() {
   const session = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!session) {

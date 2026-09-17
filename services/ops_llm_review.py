@@ -378,21 +378,18 @@ def _fallback_summaries(report: dict) -> dict[str, str]:
     unresolved = int(counts.get("unresolved") or 0)
     return {
         "en": (
-            f"AI assessed {reviewed} of {total} supplied exceptions using selected source excerpts. "
-            "This was not a review of every page. "
-            f"Assessments: {supported} supported, {possible} possible false positives, "
-            f"{unresolved} unresolved. {total - reviewed} exceptions were not assessed. "
-            "Possible false positives remain recommendations unless independently verified "
-            "and recorded as dismissed. Complete the remaining document and human checks "
-            "before making a decision."
+            f"Checked {reviewed} of {total} problems from selected pages. "
+            "This is not a full file check. "
+            f"{supported} confirmed, {possible} may be wrong, "
+            f"{unresolved} unclear. {total - reviewed} not checked. "
+            "Check all pages by hand before deciding."
         ),
         "hi": (
-            f"चयनित स्रोत अंशों के आधार पर एआई ने {total} में से {reviewed} अपवादों की जाँच की। "
-            "यह हर पृष्ठ की समीक्षा नहीं थी। "
-            f"परिणाम: {supported} समर्थित, {possible} संभावित गलत अपवाद, "
-            f"{unresolved} अनिर्णीत। {total - reviewed} अपवादों की जाँच नहीं हुई। "
-            "संभावित गलत अपवाद सुझाव हैं, जब तक स्वतंत्र जाँच के बाद उन्हें खारिज दर्ज न किया जाए। "
-            "निर्णय लेने से पहले शेष दस्तावेज़ और मानव जाँच पूरी करें।"
+            f"चुने गए पृष्ठों से {total} में से {reviewed} समस्याएँ जाँचीं। "
+            "यह पूरी फ़ाइल की जाँच नहीं है। "
+            f"{supported} पक्की, {possible} गलत हो सकती हैं, "
+            f"{unresolved} साफ नहीं। {total - reviewed} जाँची नहीं गईं। "
+            "फैसले से पहले सभी पृष्ठ हाथ से जाँचें।"
         ),
     }
 

@@ -39,38 +39,64 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadSession() {
-      // GET /api/session verifies the cookie against backend GET /auth/me,
-      // so token/role here are verified (current DB role), never stale
-      // JWT claims. Any failure lands unauthenticated (fail closed).
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    async function loadSession(remaining: number) {
+      let response: Response | null = null;
       try {
-        const response = await fetch("/api/session");
-        if (!response.ok) {
-          throw new Error("No session");
-        }
-        const session = (await response.json()) as { token: string; role: string };
-        if (cancelled) {
+        response = await fetch("/api/session");
+      } catch {
+        response = null;
+      }
+      if (cancelled) {
+        return;
+      }
+      // An unreachable backend (network failure) or a 503 from the session
+      // check is a transient blip (e.g. the database waking up), not a
+      // logout: stay in "loading" and retry instead of bouncing an active
+      // checker to /login. A real 401 still logs out immediately below.
+      if (response === null || response.status === 503) {
+        if (remaining > 0) {
+          timer = setTimeout(() => {
+            void loadSession(remaining - 1);
+          }, 5000);
           return;
         }
-        // Store-first ordering: the bearer getter serves this token before
-        // (and regardless of) the `authenticated` render, so protected
-        // queries mounted by that render always carry Authorization.
-        tokenStore.setToken(session.token);
-        setToken(session.token);
-        setRole(session.role);
-        setStatus("authenticated");
-      } catch {
-        if (!cancelled) {
-          tokenStore.clearToken();
-          setToken(null);
-          setRole(null);
-          setStatus("unauthenticated");
+      } else if (response.ok) {
+        try {
+          const session = (await response.json()) as { token: string; role: string };
+          if (cancelled) {
+            return;
+          }
+          // Store-first ordering: the bearer getter serves this token before
+          // (and regardless of) the `authenticated` render, so protected
+          // queries mounted by that render always carry Authorization.
+          tokenStore.setToken(session.token);
+          setToken(session.token);
+          setRole(session.role);
+          setStatus("authenticated");
+        } catch {
+          if (!cancelled) {
+            tokenStore.clearToken();
+            setToken(null);
+            setRole(null);
+            setStatus("unauthenticated");
+          }
         }
+        return;
+      }
+      if (!cancelled) {
+        tokenStore.clearToken();
+        setToken(null);
+        setRole(null);
+        setStatus("unauthenticated");
       }
     }
-    void loadSession();
+    void loadSession(12);
     return () => {
       cancelled = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
     };
   }, []);
 

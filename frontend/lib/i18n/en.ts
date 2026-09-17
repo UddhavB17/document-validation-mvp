@@ -1,5 +1,6 @@
 export const en = {
   "nav.worklist": "Worklist",
+  "nav.portal": "My loan file",
   "nav.signOut": "Sign out",
   "nav.language": "Language",
   "nav.admin": "Admin",
@@ -52,6 +53,26 @@ export const en = {
   "ops.evidence.pageOf": "Page",
   "ops.common.retry": "Try again",
   "ops.common.unknown": "—",
+  "ops.ndc.title": "Non-Discrepancy Checklist",
+  "ops.ndc.howTo": "Rows the system already checked are ticked. Tick the rest by hand — both columns — then mark the file verified.",
+  "ops.ndc.readOnlyNote": "Green rows are already verified. The rest need a branch visit or a clearer upload.",
+  "ops.ndc.progress": "complete",
+  "ops.ndc.colDocument": "Documents",
+  "ops.ndc.colSystem": "System",
+  "ops.ndc.colCso": "CSO / BOPS",
+  "ops.ndc.colCops": "COPS",
+  "ops.ndc.systemChecked": "Checked by the system",
+  "ops.ndc.systemPending": "Not found by the system",
+  "ops.ndc.manualTag": "Check by hand",
+  "ops.ndc.allDone": "Every row is checked. Mark the file verified to finish.",
+  "ops.ndc.markVerified": "Mark verified",
+  "ops.ndc.verifying": "Marking verified…",
+  "ops.ndc.print": "Print checklist",
+  "ops.ndc.verifiedNote": "Verified. You can print the checklist for the file.",
+  "ops.ndc.needProcessing": "Finish checking before marking verified.",
+  "ops.ndc.loadError": "Could not load the checklist. Check the connection and try again.",
+  "ops.ndc.offline": "Could not reach the server. Check the backend is running and try again.",
+  "ops.ndc.noService": "Checklist service not found. Restart the backend and try again.",
 } as const;
 
 export type OpsStrings = typeof en;

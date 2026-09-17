@@ -400,13 +400,15 @@ def load_saved_document_ocr_json(application_id: int) -> JsonRow | None:
 
 
 def load_worklist_data() -> tuple[
-    list[JsonRow], dict[int, list[JsonRow]], dict[int, dict[str, object]]
+    list[JsonRow], dict[int, list[JsonRow]], dict[int, dict[str, object]], dict[int, dict[str, object]]
 ]:
-    """Read the worklist in two queries sharing one connection.
+    """Read the worklist in three queries sharing one connection.
 
     Join the one-to-one progress row, but fetch anomalies separately so an
     application with many findings does not repeat its metadata on the wire.
-    Settings/stale detection run after releasing this read transaction.
+    A third batched query carries each application's latest pipeline job
+    (status + heartbeat) for resume gating. Settings/stale detection run
+    after releasing this read transaction.
     """
     with get_connection() as connection:
         application_rows = connection.execute(
@@ -421,7 +423,7 @@ def load_worklist_data() -> tuple[
             """
         ).fetchall()
         if not application_rows:
-            return [], {}, {}
+            return [], {}, {}, {}
         application_ids = [_required_int(row["id"]) for row in application_rows]
         placeholders = ",".join("?" for _ in application_ids)
         validation_rows = connection.execute(
@@ -433,11 +435,21 @@ def load_worklist_data() -> tuple[
             """,
             application_ids,
         ).fetchall()
+        job_rows = connection.execute(
+            """
+            SELECT application_id, status, heartbeat_at FROM pipeline_jobs
+            WHERE id IN (SELECT MAX(id) FROM pipeline_jobs GROUP BY application_id)
+            """
+        ).fetchall()
 
     results_by_application: dict[int, list[JsonRow]] = defaultdict(list)
     for row in validation_rows:
         application_id = _required_int(row["application_id"])
         results_by_application[application_id].append(dict(row))
+
+    jobs_by_application: dict[int, dict[str, object]] = {}
+    for row in job_rows:
+        jobs_by_application[_required_int(row["application_id"])] = dict(row)
 
     applications: list[JsonRow] = []
     progress_by_application: dict[int, dict[str, object]] = {}
@@ -459,7 +471,7 @@ def load_worklist_data() -> tuple[
             "total_pages": progress.get("total_pages"),
             "percentage": progress.get("percentage"),
         }
-    return applications, results_by_application, progress_by_application
+    return applications, results_by_application, progress_by_application, jobs_by_application
 
 
 def load_today_activity() -> list[JsonRow]:

@@ -1,8 +1,14 @@
 """Bearer JWT issue/decode for ``ws-d-auth`` (contracts §6).
 
-HS256 with ``DMEF_AUTH_SECRET`` and a 12 h expiry. Env is read through
-``services/config.py`` helpers only (contracts §7); a missing secret raises
-``RuntimeError`` with a clear message at startup/test time.
+HS256 with ``DMEF_AUTH_SECRET`` and a long expiry for field/ops use
+(tmp/user-portal-ux: operators stay logged in across long checking
+sessions). Env is read through ``services/config.py`` helpers only
+(contracts §7); a missing secret raises ``RuntimeError`` with a clear
+message at startup/test time.
+
+Note: logout clears the browser cookie but cannot revoke the bearer
+itself, so a copied token stays valid until expiry; deactivation is
+still enforced per request in ``get_current_user``.
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ import jwt
 
 from services.config import get_setting
 
-TOKEN_TTL = timedelta(hours=12)
+TOKEN_TTL = timedelta(days=30)
 ALGORITHM = "HS256"
 
 

@@ -3,7 +3,7 @@
 import hashlib
 import json
 
-REVIEW_PROMPT_VERSION = "dmef-review-2026-09-12-v4-coverage"
+REVIEW_PROMPT_VERSION = "dmef-review-2026-09-16-v5-simple"
 
 REVIEW_SYSTEM_PROMPT = """You are DMEF's evidence-based loan-file review assistant.
 Your purpose is to help a human reviewer understand document checks and exceptions.
@@ -81,30 +81,28 @@ contradicting source evidence verbatim, not an interpretation or paraphrase. Pre
 the original finding's source page when it supplies that proof. Without sufficient
 source evidence, use unresolved. A possible_false_positive remains a recommendation
 until the backend checks it; do not assert that it is already dismissed.""",
-    "ops_summary_en": """Write a moderately detailed English review. Return
-{"en":"..."}. Use short paragraphs in this order: exception-review scope and evidence limitations;
-supported exceptions and affected pages; suspected false positives and their reasons,
-stating which are actually marked dismissed=true; unresolved or unknown-page concerns;
-concrete remaining human checks. Include all issue families from the finding review
-not only the top five. Distinguish an observation
-from an established exception. Omit empty sections and avoid repeating the same issue
-for each page; group it with accurate page references. Counts must come from supplied
-review totals. total_pages is the file size, not the number of pages reviewed by AI.
-The report may be partial or failed: only reviewed_finding_refs were assessed.
-Never describe an unreviewed finding as AI-supported or dismissed. Explain any
-incomplete coverage and the remaining manual work.
-Explicitly state this is an exceptions review, not a full-page review. When there are
-no findings, say no exceptions were supplied; do not claim the file is verified.
-Do not claim that evidence pages equal verified documents, infer
-checklist completion, expose internal rule codes, or approve the file.
-Maximum 4500 characters.""",
-    "ops_summary_hi": """Translate the complete supplied English review into natural
-Hindi in Devanagari. Return {"hi":"..."}. Translate, do not reassess the file.
-Preserve every finding, qualification, negation, dismissal status, page reference,
-count and requested human action. Keep all numbers in their original ASCII digits,
-and retain necessary identifiers and acronyms such as PAN and Aadhaar. Preserve
-paragraph order and breaks. Do not add findings, resolve uncertainties, or omit
-content merely to shorten the translation. Maximum 5500 characters.""",
+    "ops_summary_en": """Write a very short note about this loan file for field
+staff who read slowly. Return {"en":"..."}. Rules:
+- Use 2 to 4 short sentences. Keep each sentence under 12 words.
+- Use only easy everyday words a 10-year-old understands. No hard words,
+no codes, no office short forms.
+- Say only three things: how many problems were found, what they are in
+simple words, and what to do next.
+- Count only from the supplied review totals. Never say the file is good,
+checked, or approved.
+- Never call a problem solved or checked unless the review says so. If some
+problems were not reviewed, say that in one short sentence.
+Good example: {"en":"This file has 3 problems. The name on the PAN card is
+wrong. Upload a clear PAN photo. The payout form is missing."}
+Keep the whole answer under 600 characters.""",
+    "ops_summary_hi": """Translate the supplied English note into simple everyday
+Hindi in Devanagari. Return {"hi":"..."}. Rules:
+- Use words a 10-year-old understands. No hard official words and no
+English mixed in.
+- Keep the same short sentences and the same order. Keep all numbers in
+their original ASCII digits. Keep names like PAN and Aadhaar as they are.
+- Translate only. Do not add anything and do not remove anything.
+Keep the whole answer under 700 characters.""",
 }
 
 # Hash the actual policy and stage text: edits cannot accidentally reuse an old

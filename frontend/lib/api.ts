@@ -157,6 +157,7 @@ export const worklistItemSchema = z.object({
   processing_warnings: z.number(),
   pipeline_status: z.string(),
   pipeline_retryable: z.boolean(),
+  pipeline_resumable: z.boolean().optional(),
   pipeline_processed_pages: z.number().nullable().optional(),
   pipeline_total_pages: z.number().nullable().optional(),
   pipeline_percentage: z.number().nullable().optional(),
@@ -990,4 +991,103 @@ export async function fetchOpsWorklist(): Promise<OpsWorklist> {
 
 export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {
   return getJsonResponse(`/review/applications/${applicationId}/status`, applicationStatusSchema);
+}
+
+// --- portal ---
+// Borrower-portal readers must never trigger the global 401 -> /login
+// redirect (handleUnauthorized above): unauthenticated visitors fall back
+// to the in-app sample content instead of leaving the page. Logged-in
+// visitors still send their bearer via authHeaders and get live data.
+async function getPortalJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  return withReadTimeout(async (signal) => {
+    const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() }, signal });
+    const text = await response.text();
+    let payload: unknown = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      throw new ApiError(text || "Backend returned a non-JSON response", response.status);
+    }
+    if (!response.ok) {
+      const detail = typeof payload === "string" ? payload : JSON.stringify(payload);
+      throw new ApiError(detail || "Request failed", response.status);
+    }
+    return schema.parse(payload);
+  });
+}
+
+export async function fetchPortalWorklist(): Promise<OpsWorklist> {
+  return getPortalJsonResponse("/ops/worklist", opsWorklistSchema as z.ZodType<OpsWorklist>);
+}
+
+export async function fetchPortalApplication(applicationId: number): Promise<OpsApplication> {
+  return getPortalJsonResponse(
+    `/ops/applications/${applicationId}`,
+    opsApplicationSchema as z.ZodType<OpsApplication>,
+  );
+}
+
+export async function fetchPortalStatus(applicationId: number): Promise<ApplicationStatus> {
+  return getPortalJsonResponse(
+    `/review/applications/${applicationId}/status`,
+    applicationStatusSchema,
+  );
+}
+
+// --- ndc ---
+// Staff NDC checklist state. Unlike the portal readers above these use the
+// authenticated transport: the checklist lives behind staff login.
+const ndcCheckCellSchema = z.object({
+  checked: z.boolean(),
+  by: z.number().nullable(),
+  by_name: z.string(),
+  at: z.string().nullable(),
+});
+
+export const ndcRowSchema = z.object({
+  s_no: z.number(),
+  group: z.string(),
+  title: z.string(),
+  mode: z.string(),
+  hint: z.string(),
+  system_checked: z.boolean(),
+  system_only_manual: z.boolean(),
+  checks: z.object({ cso: ndcCheckCellSchema, cops: ndcCheckCellSchema }),
+  complete: z.boolean(),
+});
+
+export const ndcStateSchema = z.object({
+  version: z.string(),
+  application_id: z.number(),
+  loan_id: z.string().nullable().optional(),
+  applicant_name: z.string().nullable().optional(),
+  checked_at: z.string(),
+  total: z.number(),
+  complete_count: z.number(),
+  complete: z.boolean(),
+  verified: z.boolean(),
+  latest_decision: z.string().nullable(),
+  rows: z.array(ndcRowSchema),
+});
+
+export type NdcState = z.infer<typeof ndcStateSchema>;
+export type NdcRow = z.infer<typeof ndcRowSchema>;
+
+export async function fetchNdcState(applicationId: number): Promise<NdcState> {
+  return getJsonResponse(
+    `/ops/applications/${applicationId}/ndc`,
+    ndcStateSchema as z.ZodType<NdcState>,
+  );
+}
+
+export async function setNdcCheck(
+  applicationId: number,
+  payload: { s_no: number; role: string; checked: boolean },
+): Promise<NdcState> {
+  const response = await fetch(`${API_BASE_URL}/ops/applications/${applicationId}/ndc`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response, ndcStateSchema as z.ZodType<NdcState>);
 }

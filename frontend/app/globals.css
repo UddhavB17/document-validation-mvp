@@ -990,3 +990,25 @@ a {
   background: #AAB7C7;
   background-clip: padding-box;
 }
+
+/* NDC checklist printing (tmp/user-portal-ux): print only the checklist. */
+@media print {
+  body.printing-ndc {
+    visibility: hidden;
+  }
+
+  body.printing-ndc #ndc-print-root,
+  body.printing-ndc #ndc-print-root * {
+    visibility: visible;
+  }
+
+  body.printing-ndc #ndc-print-root {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+  }
+
+  body.printing-ndc .ndc-no-print {
+    display: none !important;
+  }
+}
