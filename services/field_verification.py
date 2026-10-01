@@ -85,16 +85,26 @@ def verify_date(extracted: str, db_value: str) -> FieldVerificationResult:
             method="exact",
             mismatch_reason="Date could not be parsed — OCR quality or unsupported format",
         )
-    return _exact_result("date_of_birth", extracted, db_value, extracted_date == db_date)
+    from services.config import get_int
+
+    tolerance_days = get_int("VALIDATION_DATE_TOLERANCE_DAYS", 0, minimum=0, maximum=365)
+    if tolerance_days > 0:
+        is_match = abs((extracted_date - db_date).days) <= tolerance_days
+    else:
+        is_match = (extracted_date == db_date)
+    return _exact_result("date_of_birth", extracted, db_value, is_match)
 
 
 def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
-    """Verify loan amounts numerically with a one percent tolerance."""
+    """Verify loan amounts numerically with a configurable tolerance."""
     extracted_amount = _parse_amount(extracted)
     db_amount = _parse_amount(db_value)
     if extracted_amount is None or db_amount is None:
         return _failed("loan_amount", extracted, db_value, "exact", "Amount missing or invalid")
-    tolerance = abs(db_amount) * 0.01
+    from services.config import get_float
+
+    pct = get_float("VALIDATION_AMOUNT_TOLERANCE_PERCENT", 1.0, minimum=0.0, maximum=100.0)
+    tolerance = abs(db_amount) * (pct / 100.0)
     matched = abs(extracted_amount - db_amount) <= tolerance
     confidence = (
         1.0
@@ -108,7 +118,7 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
         match=matched,
         confidence=round(confidence, 3),
         method="exact",
-        mismatch_reason=None if matched else "Amount differs by more than 1%",
+        mismatch_reason=None if matched else f"Amount differs by more than {pct:g}%",
     )
 
 
@@ -127,7 +137,12 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
             mismatch_reason="Name candidate is unreliable and requires manual review",
         )
     score = name_match_score(extracted, db_value)
-    matched = score >= NAME_MATCH_THRESHOLD
+    from services.config import get_float
+
+    threshold = get_float(
+        "VALIDATION_NAME_FUZZY_THRESHOLD", float(NAME_MATCH_THRESHOLD), minimum=0.0, maximum=100.0
+    )
+    matched = score >= threshold
     if matched and score >= 99:
         return _exact_result("applicant_name", extracted, db_value, True)
     return FieldVerificationResult(

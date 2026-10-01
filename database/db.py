@@ -594,6 +594,30 @@ def seed_defaults(connection: _Connection) -> None:
             "Application Form Required Fields",
             "Fields required to validate an Application Form.",
         ),
+        (
+            "validation.name_fuzzy_threshold",
+            "85.0",
+            "float",
+            "validation",
+            "Fuzzy Name Match Threshold",
+            "Minimum similarity percentage (0-100) for fuzzy person name matching.",
+        ),
+        (
+            "validation.amount_tolerance_percent",
+            "1.0",
+            "float",
+            "validation",
+            "Amount Tolerance Percentage",
+            "Allowable percentage difference when matching loan amounts.",
+        ),
+        (
+            "validation.date_tolerance_days",
+            "0",
+            "int",
+            "validation",
+            "Date Tolerance (Days)",
+            "Allowable date discrepancy in days between documents.",
+        ),
     ]
     for key, val, val_type, cat, lbl, desc in defaults:
         connection.execute(
