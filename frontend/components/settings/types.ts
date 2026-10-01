@@ -1,6 +1,6 @@
 import type { Setting } from "@/lib/api";
 
-export type SettingsTab = "general" | "fields";
+export type SettingsTab = "general" | "classification" | "fields" | "ocr" | "llm";
 
 export interface DocumentFieldSchema {
   label: string;
