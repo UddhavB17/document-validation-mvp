@@ -948,9 +948,9 @@ def test_utility_bill_does_not_treat_billing_month_as_pin_code() -> None:
 def test_aadhaar_address_stops_at_first_pin_code() -> None:
     result = extract_fields(
         "Aadhaar",
-        "Unique Identification Authority of India Address: W/O: Ukar Lal, Semlibakta, Jhalawar, Rajasthan 326502 9999 8888 0003 help@uidai.gov.in",
+        "Unique Identification Authority of India Address: W/O: Sample Person, Example Nagar, Test District, Test State 000000 Aadhaar Number: TEST-ID sample@example.invalid",
     )
-    assert result["address"] == "W/O: Ukar Lal, Semlibakta, Jhalawar, Rajasthan 326502"
+    assert result["address"] == "W/O: Sample Person, Example Nagar, Test District, Test State 000000"
 
 
 # ════════════════════════════════════════════
@@ -1870,7 +1870,7 @@ def test_utility_bill_prefers_service_block_over_provider_header() -> None:
         "Utility Bill",
         """UTTAR GUJARAT VIJ COMPANY LIMITED
 ADDRESS : VISNAGAR ROAD
-WEBSITE : www.ugvcl.com EMAIL : corporate@ugvcl.com
+WEBSITE : www.ugvcl.com EMAIL : support@example.invalid
 E-ELECTRICITY BILL : Apr,26
 THE EXE ENGR GHB PH 2
 B 402 PANDIT DINDAYAL-2
@@ -1913,14 +1913,14 @@ Address:
 भारतीय विशिष्ट पहचान प्राधिकरण
 Unique Identification Authority of India
 पता:
-S/O Deeka Ram Deena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023
-3575 9300 0596
-help@uidai.gov.in
+S/O Sample Person, 1 Example Road, Testville, Test State-000000
+Aadhaar Number: TEST-ID
+sample@example.invalid
 """,
     )
 
     assert fields["address"] == (
-        "S/O Deeka Ram Deena, 44, Ward No 02, Deoli, Tonk, Rajasthan-304023"
+        "S/O Sample Person, 1 Example Road, Testville, Test State-000000"
     )
     assert "authority" not in fields["address"].casefold()
 
@@ -1929,30 +1929,30 @@ def test_whole_application_extraction_never_uses_company_header_as_person() -> N
     fields = extract_fields(
         "Application Form",
         """MS FINCAP PRIVATE LIMITED
-Corporate Office: Jaipur
+Corporate Office: Example City
 Customer Application Form
 APPLICANT DETAILS
 NAME
-Mannu Lal Deena
+Sample Applicant
 DATE OF BIRTH
-02-12-1992
+SAMPLE DATE
 CO-APPLICANT ADDRESS
 COMMUNICATION ADDRESS
 NAME
 ADDRESS
-Dika Ram Deena
-44 Ward 2 Deoli Rajasthan 304023
+Sample Co-Applicant
+1 Example Road, Testville, Test State 000000
 PERMANENT ADDRESS
 NAME
 ADDRESS
-Dika Ram Deena
-44 Ward 2 Deoli Rajasthan 304023
+Sample Co-Applicant
+1 Example Road, Testville, Test State 000000
 OFFICE ADDRESS
 """,
     )
 
-    assert fields["applicant_name"] == "Mannu Lal Deena"
-    assert fields["person_records"][0]["applicant_name"] == "Dika Ram Deena"
+    assert fields["applicant_name"] == "Sample Applicant"
+    assert fields["person_records"][0]["applicant_name"] == "Sample Co-Applicant"
     assert all("FINCAP" not in str(record) for record in fields["person_records"])
 
 
