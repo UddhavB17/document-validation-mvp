@@ -348,7 +348,7 @@ def seed_defaults(connection: _Connection) -> None:
     defaults = [
         (
             "llm_enabled",
-            "false",
+            "true",
             "bool",
             "llm",
             "Enable LLM Verification",
@@ -356,7 +356,7 @@ def seed_defaults(connection: _Connection) -> None:
         ),
         (
             "llm_provider",
-            "ollama",
+            "gemini",
             "str",
             "llm",
             "LLM Provider",
@@ -364,7 +364,7 @@ def seed_defaults(connection: _Connection) -> None:
         ),
         (
             "llm_model",
-            "llama3.2",
+            "gemini-3.1-pro",
             "str",
             "llm",
             "Model Name",
