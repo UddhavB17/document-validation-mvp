@@ -38,7 +38,7 @@ def test_consistency_owner_fallback_is_narrow_and_logged(monkeypatch, caplog) ->
             "document_type": "PAN Card",
             "extracted_fields": {
                 "pan_number": "TSTAA0001T",
-                "applicant_name": "Peeru Lal",
+                "applicant_name": "Veeru Lal",
             },
             "ocr_text": "PAN TSTAA0001T",
         }
@@ -47,7 +47,7 @@ def test_consistency_owner_fallback_is_narrow_and_logged(monkeypatch, caplog) ->
         "people": {
             "primary": {
                 "pan_number": "TSTAA0001T",
-                "applicant_name": "Peeru Lal",
+                "applicant_name": "Veeru Lal",
             }
         }
     }

@@ -8,14 +8,15 @@ export function ZipDocumentInventory({ documents }: { documents: ZipDocument[] }
       <h3 className="text-sm font-bold text-slate-800">Source Files Inventory</h3>
       <div className="overflow-x-auto rounded-xl border border-[#E1E5EB] bg-white shadow-3xs">
         <table className="min-w-full divide-y divide-[#E1E5EB] text-left text-xs">
+          <caption className="sr-only">Original files found in the ZIP package and their consolidated page ranges</caption>
           <thead className="bg-[#F6F7FA] font-bold uppercase tracking-wider text-[#5C6B7A]">
             <tr>
-              <th className="px-4 py-3 border-b border-[#E1E5EB]">ID</th>
-              <th className="px-4 py-3 border-b border-[#E1E5EB]">Filename</th>
-              <th className="px-4 py-3 border-b border-[#E1E5EB]">Inferred Document</th>
-              <th className="px-4 py-3 border-b border-[#E1E5EB]">Format</th>
-              <th className="px-4 py-3 border-b border-[#E1E5EB]">Worksheets</th>
-              <th className="px-4 py-3 border-b border-[#E1E5EB]">Page Ranges</th>
+              <th scope="col" className="px-4 py-3 border-b border-[#E1E5EB]">ID</th>
+              <th scope="col" className="px-4 py-3 border-b border-[#E1E5EB]">Filename</th>
+              <th scope="col" className="px-4 py-3 border-b border-[#E1E5EB]">Inferred Document</th>
+              <th scope="col" className="px-4 py-3 border-b border-[#E1E5EB]">Format</th>
+              <th scope="col" className="px-4 py-3 border-b border-[#E1E5EB]">Worksheets</th>
+              <th scope="col" className="px-4 py-3 border-b border-[#E1E5EB]">Page Ranges</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#E1E5EB] text-[#16202E]">

@@ -6,6 +6,20 @@ import ast
 import importlib
 from pathlib import Path
 
+import pytest
+
+
+@pytest.mark.parametrize("confidence_key", ["confidence", "ocr_confidence"])
+def test_partner_pages_preserve_explicit_zero_confidence(confidence_key) -> None:
+    from services.pipeline.partner import _build_partner_pages
+
+    pages = _build_partner_pages(
+        {"pan": {"text": "Permanent Account Number ABCDE1234F", confidence_key: 0.0}}
+    )
+
+    assert pages[0]["ocr_confidence"] == 0.0
+    assert pages[0]["classification_confidence"] == 0.0
+
 
 def test_pipeline_public_facade_exports_expected_symbols() -> None:
     pipeline = importlib.import_module("services.pipeline")

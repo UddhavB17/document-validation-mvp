@@ -70,49 +70,17 @@ def prepare_intake_source(package_id: str, job_id: int | str) -> Path:
     return target
 
 
-def resolve_job_source(
-    application_id: int,
-    hint_path: str | Path | None,
-    job_id: int | str,
-    package_id: str | None = None,
-) -> Path:
-    """Return a local PDF path for the pipeline, preferring the store.
-
-    When the store holds a ``source``/``normalized_pdf`` key it is downloaded
-    to the job work dir and that staged path is returned. Store download
-    failures propagate (never fall back to a deleted hint path). Only when no
-    store reference exists at all is ``hint_path`` (legacy staged file)
-    returned; when neither exists ``FileNotFoundError`` is raised.
-    """
-    from services.storage.refs import get_ref
-
-    ref = get_ref("applications", application_id, "source") or get_ref(
-        "applications", application_id, "normalized_pdf"
-    )
-    if ref is not None:
-        # Durable source of truth is the object store. Propagate download
-        # errors so callers never hash a deleted upload work dir.
-        return prepare_job_source(application_id, job_id)
-    if package_id:
-        intake_ref = get_ref("intake_packages", package_id, "normalized_pdf")
-        if intake_ref is not None:
-            return prepare_intake_source(package_id, job_id)
-    if hint_path is not None:
-        return Path(hint_path)
-    raise FileNotFoundError(
-        f"No source PDF available for application {application_id}"
-    )
-
-
 def cleanup_job_source(path: str | Path | None) -> None:
     """Delete ``DMEF_JOB_WORK_DIR``-scoped pipeline inputs.
 
-    Only directories inside the configured job work dir are removed, so
-    legacy paths (``data/uploads``, test tmp dirs) are never deleted here.
+    Only existing directories strictly inside the configured job work dir
+    are removed. Repeated cleanup must never reach the shared work root.
     """
     if path is None:
         return
     candidate = Path(path)
+    if not candidate.exists():
+        return
     if candidate.is_dir():
         root = candidate
     else:
@@ -125,7 +93,7 @@ def cleanup_job_source(path: str | Path | None) -> None:
         resolved = root.resolve()
     except Exception:
         return
-    if resolved == work_root or work_root in resolved.parents:
+    if work_root in resolved.parents:
         shutil.rmtree(resolved, ignore_errors=True)
 
 

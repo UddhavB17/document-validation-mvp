@@ -43,6 +43,17 @@ _PAGE_COUNTER_VALUE_RE = re.compile(
 WEAK_INHERITED_METHODS = {"inherited", "sandwich_smoothed", "agreement_context_smoothed"}
 
 
+def bank_statement_header(text: str) -> str:
+    """Exclude transaction counterparties from account-holder evidence."""
+    return re.split(
+        r"(?:^|\n)\s*(?:transactions?|transaction\s+details|date\s+particulars|"
+        r"opening\s+balance)\s*(?:\n|$)",
+        str(text or ""),
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+
 def is_aadhaar_verification_appendix(text: Any) -> bool:
     """Return True for the signed-XML appendix bundled with some e-Aadhaar PDFs.
 
@@ -125,6 +136,9 @@ def attach_field_provenance(
     recovery_metadata = fields.get("_trusted_candidate_recovery")
     if not isinstance(recovery_metadata, dict):
         recovery_metadata = {}
+    region_evidence = fields.get("_address_region_evidence")
+    if not isinstance(region_evidence, dict):
+        region_evidence = {}
 
     provenance: dict[str, Any] = {}
     for field_name, value in list(fields.items()):
@@ -148,6 +162,28 @@ def attach_field_provenance(
                 text_confidence,
                 _float(recovery.get("confidence"), confidence),
             )
+        if field_key in ADDRESS_FIELDS:
+            entries = region_evidence.get(field_name)
+            if entries is None:
+                entries = region_evidence.get(field_key)
+            if isinstance(entries, list):
+                normalized_value = re.sub(r"\s+", " ", str(value).strip().casefold())
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    candidate_value = entry.get("value")
+                    candidate_conf = entry.get("confidence")
+                    if candidate_value in (None, "") or candidate_conf in (None, ""):
+                        continue
+                    try:
+                        candidate_conf_f = max(0.0, float(candidate_conf))
+                    except (TypeError, ValueError):
+                        continue
+                    if re.sub(r"\s+", " ", str(candidate_value).strip().casefold()) == (
+                        normalized_value
+                    ):
+                        confidence = min(confidence, candidate_conf_f)
+                        break
         item = {
             "source_pages": [page.get("page_number")],
             "source_file": page.get("source_filename"),

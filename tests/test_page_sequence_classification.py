@@ -290,7 +290,7 @@ def test_embedded_kfs_heading_breaks_agreement_and_keeps_kfs_tables_together() -
                 "Borrower consent and information sharing clauses. "
                 * 20
                 + "\nKEY FACT STATEMENT (KFS)\nPART - 1 (Interest Rate & Fees/Charges)\n"
-                "Loan Proposal/Ac No. GJ000030765\nSanctioned loan Amount (in Rs.) 450000.00"
+                "Loan Proposal/Ac No. GJ900000002\nSanctioned loan Amount (in Rs.) 450000.00"
             ),
             (
                 "Type Of Loan\nLoan Terms (Months) 84\nInstallments Details\n"
@@ -308,7 +308,7 @@ def test_embedded_kfs_heading_breaks_agreement_and_keeps_kfs_tables_together() -
                 "The IRR and Repayment Schedule specified in this Key Facts Statement (KFS) "
                 "may change with the actual disbursement date."
             ),
-            "SANCTION LETTER\nApplicant Name SUTHAR ANUPKUMAR\nSanction Amount 450000",
+            "SANCTION LETTER\nApplicant Name SUTAR AJAYKUMAR\nSanction Amount 450000",
         ],
     )
 
@@ -362,7 +362,7 @@ def test_bureau_appendix_detected_as_crif_still_inherits_open_report() -> None:
             {"document_type": "CRIF Report", "confidence": 1.0},
         ],
         texts=[
-            "CRIF High Mark Credit Information Report Consumer Name Mosmee Meena Credit Score",
+            "CRIF High Mark Credit Information Report Consumer Name Rasmee Deena Credit Score",
             "Account Information Payment History Overdue High Mark Credit Member Asset Classification",
         ],
     )
@@ -399,7 +399,7 @@ def test_disbursement_request_continuation_is_not_bank_statement() -> None:
             {"document_type": "Bank Statement", "confidence": 1.0},
         ],
         texts=[
-            "Request For Disbursal\nLoan No GJ000030765",
+            "Request For Disbursal\nLoan No GJ900000002",
             "In case of Balance Transfer use the Foreclosure Letter or Statement of Account. Yours faithfully.",
         ],
     )
@@ -546,16 +546,16 @@ def test_generic_zip_folders_are_not_invented_as_document_types() -> None:
 def test_archive_root_folder_keywords_do_not_leak_into_every_member() -> None:
     # A shared ZIP root ("Quality_Checker_Documents") once matched the bare
     # "check" keyword and stamped "Cheque" onto all 175 unknown pages of a run.
-    root = "26000_Quality_Checker_Documents"
+    root = "90005_Quality_Checker_Documents"
     assert (
-        _infer_document_type_from_filename(f"{root}/LOAN/TASK/Batti lal jambandi.pdf") != "Cheque"
+        _infer_document_type_from_filename(f"{root}/LOAN/TASK/Mannu lal jambandi.pdf") != "Cheque"
     )
     assert (
         _infer_document_type_from_filename(f"{root}/LOAN/TASK/Technical Valuation Report (8).pdf")
         != "Cheque"
     )
     assert (
-        _infer_document_type_from_filename(f"{root}/Co-Applicant/KYC/8955707373_aadhaar.pdf")
+        _infer_document_type_from_filename(f"{root}/Co-Applicant/KYC/9000001030_aadhaar.pdf")
         == "Aadhaar"
     )
     assert (
@@ -566,10 +566,10 @@ def test_archive_root_folder_keywords_do_not_leak_into_every_member() -> None:
 
 def test_short_filename_keywords_require_word_boundaries() -> None:
     assert _infer_document_type_from_filename("Loan/TASK/KYC checklist.pdf") != "Cheque"
-    assert _infer_document_type_from_filename("Loan/TASK/cancelled cheque peeru.pdf") == "Cheque"
+    assert _infer_document_type_from_filename("Loan/TASK/cancelled cheque veeru.pdf") == "Cheque"
     assert _infer_document_type_from_filename("Loan/TASK/CHQ scan.pdf") == "Cheque"
     assert _infer_document_type_from_filename("Loan/TASK/company profile.pdf") != "PAN Card"
-    assert _infer_document_type_from_filename("Loan/KYC/pan card peeru.pdf") == "PAN Card"
+    assert _infer_document_type_from_filename("Loan/KYC/pan card veeru.pdf") == "PAN Card"
     assert _infer_document_type_from_filename("Loan/TASK/handle bracket.pdf") != "Driving License"
 
 
@@ -605,15 +605,15 @@ def test_smoothed_unknown_page_marks_unanchored_identity_unreliable() -> None:
 
 
 def test_evidentiary_filenames_have_safe_specific_fallbacks() -> None:
-    assert _infer_document_type_from_filename("Loan/TASK/peeru spdc.pdf") == "PDC"
+    assert _infer_document_type_from_filename("Loan/TASK/veeru spdc.pdf") == "PDC"
     assert _infer_document_type_from_filename("Loan/TASK/insurance Calu.pdf") == "Insurance Form"
     assert (
-        _infer_document_type_from_filename("Loan/TASK/Radha bai 6 month banking.pdf")
+        _infer_document_type_from_filename("Loan/TASK/Sudha bai 6 month banking.pdf")
         == "Bank Statement"
     )
     assert _infer_document_type_from_filename("LOAN/COLLATERAL/IMG-1.jpg") == "Property Image"
     assert (
-        _infer_document_type_from_filename("LOAN/COLLATERAL/peeru lal proprty paper.pdf")
+        _infer_document_type_from_filename("LOAN/COLLATERAL/veeru lal proprty paper.pdf")
         == "Property Document"
     )
     assert _infer_document_type_from_filename("Loan/TASK/House Photo.pdf") == "House Photo"
@@ -639,7 +639,7 @@ def test_cached_spdc_filename_overrides_bank_statement_content_classification() 
         source_documents=[
             {
                 "source_document_id": "file-0018",
-                "original_filename": "LOAN/TASK/peeru spdc.pdf",
+                "original_filename": "LOAN/TASK/veeru spdc.pdf",
                 "internal_page_start": 59,
                 "internal_page_end": 60,
             }

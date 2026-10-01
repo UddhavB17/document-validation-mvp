@@ -346,13 +346,6 @@ def _normalize_pan(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "")).upper()
 
 
-def _normalize_name(value: Any) -> str:
-    """Normalize case, punctuation, and repeated whitespace before fuzzy matching."""
-    text = str(value or "").casefold()
-    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
-    return " ".join(text.split())
-
-
 def _valid_pan(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", value))
 
@@ -458,5 +451,4 @@ def _relationship_prefix_matches(left: Any, right: Any) -> bool:
         short_name, long_name = right_relation[1], left_relation[1]
     compare_words = long_name[: max(1, len(short_name))]
     name_score = fuzz.ratio(" ".join(short_name), " ".join(compare_words))
-    shared = left_tokens & right_tokens
-    return name_score >= 75 and (min(len(left_tokens), len(right_tokens)) <= 3 or len(shared) >= 3)
+    return name_score >= 75 and min(len(left_tokens), len(right_tokens)) <= 3

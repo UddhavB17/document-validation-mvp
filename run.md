@@ -7,18 +7,17 @@ the dependencies are installed.
 
 ## Processes and URLs
 
-DMEF uses two local processes:
+DMEF uses an API, UI, and worker process:
 
 | Process | Responsibility | Default URL |
 |---|---|---|
 | FastAPI backend | Upload, processing, review, verification, decision, settings, and health APIs | <http://127.0.0.1:8000> |
 | Next.js UI | Browser interface | <http://localhost:3000> |
+| Worker | Claims queued document-processing jobs | No browser URL |
 
-The API health endpoint is deliberately small:
-
-```json
-{"status":"ok","version":"0.1.0"}
-```
+The API health endpoint reports database, storage, and worker status. A stale
+worker produces `status: degraded`; a database or storage error returns HTTP
+503. Processing is ready when all four statuses are `ok`.
 
 API docs: <http://127.0.0.1:8000/docs>. ReDoc:
 <http://127.0.0.1:8000/redoc>.
@@ -37,19 +36,51 @@ python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 Terminal 2, from any directory:
 
 ```bash
-npm --prefix /absolute/path/to/document-validation-mvp run dev -- -p 3000
+npm --prefix /absolute/path/to/document-validation-mvp/frontend run dev -- -p 3000
 ```
 
 Replace the placeholder with this checkout's path. If Terminal 2 is already in
 the repository root, use `npm --prefix frontend run dev -- -p 3000`.
 
-Check the backend from a third terminal:
+Run `python -m services.worker` in a third activated terminal to start the
+worker explicitly. Local uploads can also start it automatically. Check the
+backend from another terminal:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
 ```
 
 Press `Ctrl+C` in each manual terminal to stop its process.
+
+### ZIP intake with Gemini 3.8 Flash
+
+The intake page opens ZIP Package Intake. Upload the original files together in
+a ZIP, inspect the source-file inventory, supply trusted case data, then start
+verification. Mapped Verification remains available for explicit mappings or
+a combined PDF. A single combined PDF inside a ZIP does not restore the original
+document boundaries.
+
+To select Gemini 3.8 Flash consistently, use the existing runtime wrapper for
+both the API and a manually started worker:
+
+```bash
+bash scripts/with_gemini38.sh .venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+In a separate terminal:
+
+```bash
+bash scripts/with_gemini38.sh .venv/bin/python -m services.worker
+```
+
+The wrapper selects `gemini-3.8-flash` and the global endpoint without editing
+credentials or `.env`. An automatically launched worker inherits the API's
+environment. A previously running worker retains its original model until it
+is stopped normally and restarted; do not start a second worker to change the
+model during an active run. Plain commands use configured environment/settings,
+which can select a different model than the code default. Check the saved audit's
+actual model and completion status; successful API-call accounting alone does
+not establish that the exception review completed.
 
 ### Windows PowerShell: supported launcher
 
@@ -191,9 +222,10 @@ API calls, set this in the ignored `.env` file and restart the backend:
 LLM_PROVIDER=none
 ```
 
-The `.env.example` default is `auto`: an API key selects an API-compatible
-provider, otherwise Ollama is selected. The macOS launcher explicitly selects
-Ollama and enables limited page-classification features.
+The final `LLM_PROVIDER` entry in `.env.example` selects Gemini. Set the
+provider explicitly for your run; `auto` selects an API-compatible provider
+when a key exists and otherwise selects Ollama. The macOS launcher explicitly
+selects Ollama and enables limited page-classification features.
 
 ### Local OCR test mode
 

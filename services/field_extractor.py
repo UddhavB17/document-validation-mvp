@@ -32,6 +32,7 @@ from services.cersai import DEBTOR_BASED, search_criteria_text, search_type
 from services.identifiers import plausible_aadhaar_digits
 from services.person_names import canonicalize_person_name, is_name_field
 from services.validation_gates import (
+    bank_statement_header,
     has_labeled_aadhaar_value,
     is_aadhaar_verification_appendix,
     is_amortization_schedule,
@@ -132,10 +133,9 @@ def extract_fields(
                 fields[field_name] = value
     from services.repayment_schedule import extract_repayment_summary
 
-    if _has_repayment_summary_evidence(text):
-        for field_name, value in extract_repayment_summary(text).items():
-            if fields.get(field_name) in (None, "", [], {}):
-                fields[field_name] = value
+    for field_name, value in extract_repayment_summary(text).items():
+        if fields.get(field_name) in (None, "", [], {}):
+            fields[field_name] = value
     return fields
 
 
@@ -667,30 +667,6 @@ def _numeric_line_after_label(text: str, *labels: str, max_lines: int = 8) -> st
     return None
 
 
-def _has_repayment_summary_evidence(text: str) -> bool:
-    """Gate the broad KFS summary parser on real table structure.
-
-    Loan boilerplate can mention a KFS and ``rate of interest`` before a
-    numbered clause such as ``6. In case of digital loans``.  A loose
-    cross-line regex previously turned that clause number into ROI=6.  Real KFS
-    summaries expose at least two labelled rows (or the explicit APR
-    illustration heading).
-    """
-    raw = str(text or "")
-    if re.search(r"\billustration\s+for\s+computation\s+of\s+apr\b", raw, re.I):
-        return True
-    row_patterns = (
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?(?:sanctioned\s+)?loan\s+amount\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?loan\s+term\b",
-        r"(?:^|\n)\s*(?:[A-Z][.)]\s*)?type\s+of\s+emi\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?rate\s+of\s+interest\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?total\s+interest\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?net\s+disburs(?:ed|ement)\b",
-        r"(?:^|\n)\s*(?:\d+[.)]\s*)?total\s+amount\s+to\s+be\s+paid\b",
-    )
-    return sum(bool(re.search(pattern, raw, re.I)) for pattern in row_patterns) >= 2
-
-
 def _int_or_none(value: str | None) -> int | None:
     try:
         return int(float(str(value))) if value not in (None, "") else None
@@ -755,8 +731,16 @@ def _extract_roi(text_lower: str) -> float | None:
 
 def _extract_percentage_near(text_lower: str, *labels: str) -> float | None:
     for label in labels:
-        match = re.search(rf"\b{re.escape(label)}\b\s*[:\-–]?\s*(\d+(?:\.\d+)?)\s*%?", text_lower)
-        if match:
+        for match in re.finditer(
+            rf"\b{re.escape(label)}\b\s*[:\-–]?\s*(\d+(?:\.\d+)?)\s*(%?)", text_lower
+        ):
+            if label == "apr" and not match.group(2):
+                # APR is also April in ledger dates, not an interest rate.
+                prefix = text_lower[max(0, match.start() - 6) : match.start()]
+                if re.search(r"\b\d{1,2}[-/.\s]+$", prefix) or re.fullmatch(
+                    r"(?:19|20)\d{2}", match.group(1)
+                ):
+                    continue
             return float(match.group(1))
     return None
 
@@ -1404,16 +1388,24 @@ def _extract_loan_agreement(text: str) -> dict[str, Any]:
     """
     t = text.lower()
     schedule_name = re.search(
-        r"APPLICANT\s+NAME\s+ADDRESS\s+TYPE\s+ADDRESS\s+(?:Mr\.?|Mrs\.?|Ms\.?)?\s*"
+        r"(?:APPLICANT\s+NAME\s+ADDRESS\s+TYPE\s+ADDRESS|"
+        r"(?:^|\n)[ \t]*आवेदक\s+का\s+विवरण\s+नाम\s+पता\s+का\s+प्रकार\s+पता)"
+        r"\s+(?:Mr\.?|Mrs\.?|Ms\.?)?\s*"
         r"([A-Za-z][A-Za-z\s]{2,60}?)\s+(?:Current|Permanent)",
         text,
         re.IGNORECASE,
     )
     return {
         "loan_amount": _extract_amount(
-            t, "amount of facility", "loan amount", "sanctioned amount", "amount sanctioned"
+            t,
+            "amount of facility",
+            "loan amount",
+            "sanctioned amount",
+            "amount sanctioned",
+            "ऋण की राशि",
         )
-        or _normalize_amount(_numeric_line_after_label(text, "amount of facility (in rs.)")),
+        or _normalize_amount(_numeric_line_after_label(text, "amount of facility (in rs.)"))
+        or _normalize_amount(_numeric_line_after_label(text, "ऋण की राशि", max_lines=1)),
         "tenure": _extract_tenure_months(t)
         or _int_or_none(_numeric_line_after_label(text, "term or tenure")),
         "emi": _extract_emi(t)
@@ -1488,6 +1480,15 @@ def _extract_pan(text: str) -> dict[str, Any]:
         )
         inline_name = _clean_name_like_value(name_match.group(1)) if name_match else None
     dob = _extract_date_near(text.lower(), "date of birth", "dob")
+    if dob is None and pan_match:
+        # A damaged English DOB label can retain the Hindi birth label and
+        # its immediately following date. Do not use unrelated dates on PAN
+        # verification letters or acknowledgments.
+        hindi_dob = re.search(
+            r"जन्म[^\n]{0,60}\n\s*(\d{2}[/.-]\d{2}[/.-]\d{4})\b", text
+        )
+        if hindi_dob:
+            dob = _parse_date(hindi_dob.group(1))
     if dob is None:
         damaged_date = re.search(
             r"(?:date|fafuDate)\s+(\d{2})7(\d{2})/(\d{4})", text, re.IGNORECASE
@@ -1919,12 +1920,17 @@ _LAYOUT_ADDRESS_REJECT_PREFIXES = (
 
 def _extract_application_layout_addresses(
     structured_content: dict[str, Any] | None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Extract application-form address rows from OCR bounding boxes.
 
     Google Vision's flat text can interleave two form columns.  Region geometry
     keeps values on the same visual row as their address label and prevents a
     distant PAN, education, or contact field from entering the address.
+
+    Returns address values plus ``_address_region_evidence`` carrying the
+    confidence of the selected value regions bound to the candidate value.
+    Low-confidence rejections are also recorded so an identical text fallback
+    cannot silently regain whole-page confidence in validation.
     """
     if not isinstance(structured_content, dict):
         return {}
@@ -1940,10 +1946,14 @@ def _extract_application_layout_addresses(
         geometry = _layout_region_geometry(raw_region)
         if not text or geometry is None:
             continue
-        try:
-            confidence = float(raw_region.get("confidence") or 0.0)
-        except (TypeError, ValueError):
-            confidence = 0.0
+        raw_confidence = raw_region.get("confidence")
+        if raw_confidence in (None, ""):
+            confidence: float | None = None
+        else:
+            try:
+                confidence = float(raw_confidence)
+            except (TypeError, ValueError):
+                confidence = None
         x0, y0, x1, y1 = geometry
         regions.append(
             {
@@ -1957,16 +1967,27 @@ def _extract_application_layout_addresses(
             }
         )
 
-    extracted: dict[str, str] = {}
+    extracted: dict[str, Any] = {}
+    region_evidence: dict[str, list[dict[str, Any]]] = {}
     for field_name, labels in _APPLICATION_LAYOUT_ADDRESS_LABELS.items():
         anchors = [
             region for region in regions if any(label in region["normalized"] for label in labels)
         ]
+        field_rejected: list[dict[str, Any]] = []
         for anchor in anchors:
-            value = _layout_address_value(regions, anchor)
+            value, body_confidence, rejected_candidate = _layout_address_value(regions, anchor)
             if value:
                 extracted[field_name] = value
+                if body_confidence is not None:
+                    region_evidence[field_name] = [{"value": value, "confidence": body_confidence}]
                 break
+            if rejected_candidate is not None and body_confidence is not None:
+                field_rejected.append({"value": rejected_candidate, "confidence": body_confidence})
+        else:
+            if field_name not in extracted and field_rejected:
+                region_evidence[field_name] = field_rejected
+    if region_evidence:
+        extracted["_address_region_evidence"] = region_evidence
     return extracted
 
 
@@ -1989,7 +2010,9 @@ def _normalized_layout_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
 
 
-def _layout_address_value(regions: list[dict[str, Any]], anchor: dict[str, Any]) -> str | None:
+def _layout_address_value(
+    regions: list[dict[str, Any]], anchor: dict[str, Any]
+) -> tuple[str | None, float | None, str | None]:
     label_right = float(anchor["x1"])
     label_top = float(anchor["y0"])
     label_bottom = float(anchor["y1"])
@@ -2023,7 +2046,7 @@ def _layout_address_value(regions: list[dict[str, Any]], anchor: dict[str, Any])
     if not any(re.search(r"\b[1-8]\d{5}\b", str(region["text"])) for region in selected):
         selected.extend(pin_regions[:1])
     if not selected:
-        return None
+        return None, None, None
 
     pieces: list[str] = []
     for region in selected:
@@ -2034,20 +2057,24 @@ def _layout_address_value(regions: list[dict[str, Any]], anchor: dict[str, Any])
             pieces.append(piece)
     value = " ".join(pieces)
     if not _looks_like_postal_address(value) or _address_value_is_contaminated(value):
-        return None
+        return None, None, None
 
-    confidences = [float(region["confidence"]) for region in selected if region["confidence"]]
-    if confidences and sum(confidences) / len(confidences) < 0.60:
-        return None
     core_confidences = [
         float(region["confidence"])
         for region in selected
-        if region["confidence"]
+        if region.get("confidence") is not None
         and not re.fullmatch(r"(?:pin\s*)?[1-8]\d{5}(?:\s+tele)?", region["normalized"])
     ]
+    body_confidence: float | None = min(core_confidences) if core_confidences else None
+
+    confidences = [
+        float(region["confidence"]) for region in selected if region.get("confidence") is not None
+    ]
+    if confidences and sum(confidences) / len(confidences) < 0.60:
+        return None, body_confidence, value
     if core_confidences and min(core_confidences) < 0.60:
-        return None
-    return value
+        return None, body_confidence, value
+    return value, body_confidence, None
 
 
 def _is_layout_address_piece(text: str, normalized: str) -> bool:
@@ -2680,13 +2707,80 @@ def _extract_pdc(text: str) -> dict[str, Any]:
     cheque_numbers = list(
         dict.fromkeys(
             match.group(1)
-            for match in re.finditer(r"(?<!\d)(\d{6})[\s'\"*]*(\d{9})(?!\d)", text or "")
+            for match in re.finditer(r"(?<!\d)(\d{6})[\s'\"*⑈⑆]*(\d{9})(?!\d)", text or "")
         )
     )
     return {
         "cheque_numbers": cheque_numbers,
         "cheque_count": len(cheque_numbers) or None,
     }
+
+
+_BUREAU_REPORT_DATE_LABELS = (
+    "report generated",
+    "report generated on",
+    "date of report",
+    "report date",
+    "date of issue",
+    "report issue date",
+)
+_BUREAU_TITLE_RE = re.compile(
+    r"\b(?:CIBIL\s+COMBO\s+REPORT|CRIF\s+HIGH\s+MARK|HIGH\s+MARK|COMBO\s+REPORT"
+    r"|CREDIT\s+INFORMATION\s+REPORT|CIBIL\s+REPORT|CRIF\s+REPORT|CREDIT\s+REPORT)\b",
+    re.IGNORECASE,
+)
+_BUREAU_BODY_START_RE = re.compile(
+    r"^\s*(?:SEARCH\s+INFORMATION\b|CONSUMER\s+INFORMATION\b"
+    r"|EMPLOYMENT\s+(?:INFORMATION|DETAILS|SUMMARY)\b"
+    r"|ACCOUNTS?\s+(?:INFORMATION|SUMMARY|DETAILS)\b"
+    r"|RECENT\s+(?:ENQUIR|INQUIR)(?:Y|IES)\b"
+    r"|(?:ENQUIR|INQUIR)(?:Y|IES)\s+(?:INFORMATION|DETAILS|SUMMARY|HISTORY)\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_BUREAU_DATE_SAME_LINE_RE = re.compile(r"\s*DATE\s*[:\-–]\s*(.+?)\s*", re.IGNORECASE)
+_BUREAU_DATE_ALONE_RE = re.compile(r"\s*DATE\s*[:\-–]?\s*", re.IGNORECASE)
+
+
+def _extract_bureau_report_date(text: str) -> str | None:
+    """Extract only the bureau report issue date.
+
+    Explicit report labels are accepted anywhere. A generic date is only
+    accepted from a standalone ``DATE`` label line (same-line or next-line
+    value) inside the pre-body header when the bureau title sits near the
+    start ahead of it. Substring matches such as Birth/Payment/Updated Date
+    are rejected by the standalone-line check, and ``ENQUIRY ID`` metadata
+    is not a section boundary. Date values are parsed by reusing
+    ``_extract_date_after_label`` on the matched block, so no date grammar
+    is duplicated here.
+    """
+    explicit = _extract_date_after_label(text, *_BUREAU_REPORT_DATE_LABELS)
+    if explicit:
+        return explicit
+    raw = str(text or "")
+    body = _BUREAU_BODY_START_RE.search(raw)
+    header = raw[: body.start()] if body else raw
+    title = _BUREAU_TITLE_RE.search(header[:800])
+    if not title:
+        return None
+    title_line = header[: title.start()].count("\n")
+    lines = header.splitlines()
+    for index, line in enumerate(lines):
+        if index <= title_line:
+            continue
+        same = _BUREAU_DATE_SAME_LINE_RE.fullmatch(line)
+        if same:
+            parsed = _extract_date_after_label(f"DATE: {same.group(1)}", "date")
+            if parsed:
+                return parsed
+            continue
+        if _BUREAU_DATE_ALONE_RE.fullmatch(line):
+            for nxt in lines[index + 1 : index + 4]:
+                if nxt.strip():
+                    parsed = _extract_date_after_label(f"DATE: {nxt.strip()}", "date")
+                    if parsed:
+                        return parsed
+                    break
+    return None
 
 
 def _extract_crif_report(text: str) -> dict[str, Any]:
@@ -2716,8 +2810,9 @@ def _extract_crif_report(text: str) -> dict[str, Any]:
     if score is None and has_explicit_no_score_evidence(text):
         score = "0"
 
-    # Report date
-    report_date = _extract_date_near(t, "report generated", "as on", "date of report")
+    # Report date: only report-specific labels or a bureau header DATE.
+    # A bare "as on" previously picked up EMPLOYMENT INFORMATION AS ON dates.
+    report_date = _extract_bureau_report_date(text)
 
     # Applicant name: first substantive non-header line
     applicant_name: str | None = _extract_bureau_applicant_name(text)
@@ -2765,6 +2860,8 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         return {
             "_validation_blocked_reason": "amortization_schedule_not_bank_statement",
         }
+    statement_text = text
+    text = bank_statement_header(text)
     account_match = re.search(
         r"(?:account\s*(?:number|no\.?|#)|a/c\s*(?:no\.?|number)?)\s*[:\-–]?\s*([0-9Xx* ]{6,24})",
         text,
@@ -2781,8 +2878,8 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         re.IGNORECASE,
     )
     type_match = re.search(r"\baccount\s+type\s*[:\-–]?\s*([^\n\r]{2,30})", text, re.IGNORECASE)
-    period_start, period_end = _extract_statement_period(text)
-    transaction_dates = _extract_bank_transaction_dates(text)
+    period_start, period_end = _extract_statement_period(statement_text)
+    transaction_dates = _extract_bank_transaction_dates(statement_text)
     period_source = "statement_period" if period_start and period_end else None
     if not period_source and transaction_dates:
         period_start, period_end = transaction_dates[0], transaction_dates[-1]
@@ -2811,10 +2908,15 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
     # The former all-caps-only pattern missed those pages, causing the generic
     # ``Name`` fallback to mistake a later profile label such as "Holding
     # Nature" for the account holder.
-    profile_name = re.search(
+    profile_match = re.search(
         r"\bCKYC\s*\n\s*([A-Za-z][A-Za-z .]{2,70}(?:\n\s*[A-Za-z][A-Za-z .]{2,70})?)"
         r"\s*\n\s*\d{4}-\d{2}-\d{2}",
         text,
+    )
+    profile_name = (
+        _clean_name_like_value(re.sub(r"\s+", " ", profile_match.group(1)))
+        if profile_match
+        else None
     )
     header_name = _bank_statement_header_holder_name(text)
     statement_title_name = _statement_holder_after_title(text)
@@ -2834,7 +2936,7 @@ def _extract_bank_statement(text: str) -> dict[str, Any]:
         fallback_name = None
     return {
         "account_holder_name": (
-            cast(str, _clean_name_like_value(re.sub(r"\s+", " ", profile_name.group(1)))).title()
+            profile_name.title()
             if profile_name
             else header_name or statement_title_name or fallback_name
         ),
@@ -2980,6 +3082,15 @@ def _statement_holder_after_title(text: str) -> str | None:
     so a generic ``Name`` lookup lands on a logo token. The subject printed
     immediately after an explicit statement-of-account title is stronger.
     """
+    inline_holder = re.search(
+        r"\bloan\s+account\s+statement\s+for\s*:[^\n()]*\(([^\n()]+)\)",
+        str(text or ""),
+        re.IGNORECASE,
+    )
+    if inline_holder:
+        candidate = canonicalize_person_name(inline_holder.group(1))
+        if candidate.valid:
+            return candidate.value
     lines = [re.sub(r"\s+", " ", line).strip(" ,.;") for line in str(text or "").splitlines()]
     title_index = next(
         (
@@ -3115,8 +3226,9 @@ def _extract_cheque_number(text: str) -> str | None:
     )
     if labeled:
         return labeled.group(1)
-    candidates = re.findall(r"\b\d{6}\b", text)
-    return candidates[0] if candidates else None
+    # An arbitrary six-digit value may be the branch's postal code.
+    candidates = _extract_pdc(text)["cheque_numbers"]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _extract_statement_period(text: str) -> tuple[str | None, str | None]:
@@ -3126,7 +3238,8 @@ def _extract_statement_period(text: str) -> tuple[str | None, str | None]:
         r"|\d{1,2}\s+\w+\s+\d{4}"
     )
     match = re.search(
-        rf"(?:period|statement\s+period|from)\s*[:\-–]?\s*({date_pattern})\s*(?:to|\-|\u2013|\u2014)\s*({date_pattern})",
+        rf"(?:period|statement\s+period|from)\s*[:\-–]?\s*({date_pattern})"
+        rf"\s*(?:to\s*[:\-–]?|\-|\u2013|\u2014)\s*({date_pattern})",
         text,
         re.IGNORECASE,
     )
@@ -3167,8 +3280,19 @@ def _extract_bank_transaction_dates(text: str) -> list[str]:
 def _extract_salary_slip(text: str) -> dict[str, Any]:
     """Extract fields from a salary slip."""
     t = text.lower()
+    # OCR can wrap one handwritten name over several lines. Only join lines
+    # inside the labelled employee-name row, stopping at the next field.
+    employee_name = re.search(
+        r"\bEmployee\s+Details\s*\n\s*Name\s*[:\-–]+\s*"
+        r"([A-Za-z][A-Za-z .\n\r'-]{1,120}?)\s*\n\s*Designation\b",
+        text,
+        re.IGNORECASE,
+    )
     return {
-        "applicant_name": _line_after_label(text, "employee name", "name"),
+        "applicant_name": (
+            _clean_name_like_value(employee_name.group(1)) if employee_name else None
+        )
+        or _line_after_label(text, "employee name", "name"),
         "net_salary": _extract_amount(t, "net salary", "net pay", "take home"),
         "salary_month": _extract_salary_month(text),
     }

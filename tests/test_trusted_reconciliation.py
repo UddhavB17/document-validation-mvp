@@ -42,7 +42,8 @@ def test_reconciliation_exposes_matches_conflicts_gaps_and_database_only_fields(
     assert statuses[(None, "emi")] == "NOT_OBSERVED"
     assert statuses[(None, "workflow_note")] == "NOT_CHECKABLE"
     assert statuses[("primary", "pan_number")] == "MATCH"
-    assert statuses[("primary", "account_number")] == "MATCH"
+    # A shared last four digits cannot reconcile two different full account numbers.
+    assert statuses[("primary", "account_number")] == "MISMATCH"
     assert statuses[("primary", "qualification")] == "NOT_OBSERVED"
     assert result["summary"]["checked_fields"] == 4
 
@@ -51,13 +52,13 @@ def test_reconciliation_ignores_cached_page_counter_address() -> None:
     trusted = {
         "people": {
             "primary": {
-                "applicant_name": "Peeru Lal",
-                "address": "S/O: Unkar Lal",
+                "applicant_name": "Veeru Lal",
+                "address": "S/O: Ambar Lal",
             }
         }
     }
     pages = [
-        _page(1, "CAM", "primary", address="S/O: Unkar Lal, Semlibakta 326502"),
+        _page(1, "CAM", "primary", address="S/O: Ambar Lal, Semlibakta 326502"),
         _page(2, "Application Form", "primary", permanent_address="Page 2 of 128"),
     ]
 
@@ -71,7 +72,7 @@ def test_reconciliation_ignores_cached_page_counter_address() -> None:
     assert address["status"] == "MATCH"
     assert address["evidence"] == [
         {
-            "value": "S/O: Unkar Lal, Semlibakta 326502",
+            "value": "S/O: Ambar Lal, Semlibakta 326502",
             "document_type": "CAM",
             "page_number": 1,
             "match": True,

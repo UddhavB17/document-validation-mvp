@@ -169,14 +169,7 @@ export function ManualReviewAndDecision({ applicationId, data, onSelectPage }: {
   }, [applicationId]);
 
   function toggleTask(taskId: string): void {
-    setCheckedTaskIds((current) => {
-      const next = new Set(current);
-      const checked = !next.has(taskId);
-      if (checked) next.add(taskId);
-      else next.delete(taskId);
-      setReviewTaskChecked(applicationId, taskId, checked);
-      return next;
-    });
+    setReviewTaskChecked(applicationId, taskId, !checkedTaskIds.has(taskId));
     setActionError(null);
   }
 

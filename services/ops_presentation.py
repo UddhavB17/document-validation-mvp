@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from database.db import get_connection
+from services.config import cached_settings
 from services.ops_templates_en_hi import (
     CODE_ORDER,
     SEVERITY_ORDER,
@@ -28,7 +29,7 @@ TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "stale"})
 FAILED_JOB_STATUSES = frozenset({"failed"})
 
 # Rule-ID families per contracts §11, in code priority order. First match wins;
-# anything unmapped is admin-only and excluded from the operations payload.
+# remaining rules become REVIEW_REQUIRED under contracts §12.
 CODE_PATTERNS: list[tuple[str, list[str]]] = [
     (
         "NAME_MISMATCH",
@@ -77,6 +78,7 @@ CODE_PATTERNS: list[tuple[str, list[str]]] = [
         ["*_NOT_FOUND", "*_EXTRACTION_UNRELIABLE", "FIELD_VALUE_MISSING_S*"],
     ),
     ("PROCESSING_ERROR", ["PAGE_PROCESSING_ERROR"]),
+    ("REVIEW_REQUIRED", ["*"]),
 ]
 
 SUMMARY_PHRASES: dict[str, dict[str, str]] = {
@@ -92,6 +94,7 @@ SUMMARY_PHRASES: dict[str, dict[str, str]] = {
     "OCR_FAILED": {"en": "page could not be read", "hi": "पृष्ठ पढ़ा नहीं जा सका"},
     "DATA_MISSING": {"en": "information missing", "hi": "जानकारी नहीं मिली"},
     "PROCESSING_ERROR": {"en": "processing error", "hi": "प्रसंस्करण त्रुटि"},
+    "REVIEW_REQUIRED": {"en": "additional evidence needs review", "hi": "अतिरिक्त प्रमाण की जाँच आवश्यक है"},
 }
 
 
@@ -139,6 +142,9 @@ def _anomaly_pages(anomaly: dict) -> list[int]:
                 pages.append(int(value))
             except (TypeError, ValueError):
                 continue
+    evidence = anomaly.get("evidence_json")
+    if isinstance(evidence, dict) and isinstance(evidence.get("pages"), list):
+        pages.extend(p for p in evidence["pages"] if type(p) is int and p > 0)
     return sorted(set(pages))
 
 
@@ -151,7 +157,11 @@ def _evidence_shape(evidence: Any) -> dict | None:
         page_num = int(page) if page is not None else None
     except (TypeError, ValueError):
         page_num = None
-    if page_num is None or not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+    if page_num is None:
+        return None
+    if bbox is None:
+        return {"page": page_num, "bbox": None, "text": str(evidence.get("text") or "")}
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
     try:
         bbox_floats = [float(value) for value in bbox]
@@ -178,10 +188,7 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         if evidence is not None:
             break
     if evidence is None and pages:
-        evidence = {"page": pages[0], "bbox": None, "text": ""}
-    # Evidence bbox may be null; contract allows null.
-    if evidence is not None and evidence.get("bbox") is None:
-        evidence = {"page": evidence["page"], "bbox": None, "text": evidence.get("text", "")}
+        evidence = {"page": pages[0], "bbox": None, "text": str(found or "")}
     values = {
         "expected": "" if expected is None else str(expected),
         "found": "" if found is None else str(found),
@@ -204,7 +211,6 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         },
         "pages": pages,
         "evidence": evidence,
-        "_sort_pages": pages[:1],
     }
 
 
@@ -219,8 +225,8 @@ def _summaries(findings: list[dict]) -> dict[str, str]:
     count = len(findings)
     if not count:
         return {
-            "en": "No issues found. The file looks good.",
-            "hi": "कोई समस्या नहीं मिली। फ़ाइल ठीक है।",
+            "en": "No automated issues are recorded. Complete the required document and manual checks before making a decision.",
+            "hi": "कोई स्वचालित समस्या दर्ज नहीं है। निर्णय लेने से पहले आवश्यक दस्तावेज़ों और मानव जाँच को पूरा करें।",
         }
     noun_en = "issue" if count == 1 else "issues"
     parts_en = ", ".join(_summary_part(f["code"], f["pages"], "en") for f in findings)
@@ -229,6 +235,40 @@ def _summaries(findings: list[dict]) -> dict[str, str]:
         "en": f"{count} {noun_en} need your attention: {parts_en}.",
         "hi": f"{count} समस्याओं पर ध्यान दें: {parts_hi}।",
     }
+
+
+_LEGACY_SUMMARY_FOOTER_EN = re.compile(
+    r"\s*(?:\n\s*)+AI review\s+(?P<status>completed|partial|failed)\b.*?"
+    r"Assessed\s+\d+\s+of\s+\d+\s+exceptions?\.?\s*\Z",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_LEGACY_SUMMARY_FOOTER_HI = re.compile(
+    r"\s*(?:\n\s*)+एआई समीक्षा:[^\n]*मॉडल[^\n]*।\s*\d+\s+में\s+से\s+\d+\s+अपवादों की जाँच हुई।\s*\Z",
+    flags=re.DOTALL,
+)
+
+
+def _clean_saved_summary(value: Any, lang: str) -> str:
+    """Remove the old technical footer without losing incomplete-review warnings."""
+    text = str(value or "").strip()
+    if not text:
+        return text
+    incomplete = False
+    if lang == "en":
+        match = _LEGACY_SUMMARY_FOOTER_EN.search(text)
+        if match is not None:
+            incomplete = match.group("status").lower() != "completed"
+            text = text[: match.start()].rstrip()
+        if incomplete and "manual review" not in text.lower():
+            text = f"{text}\n\nSome exceptions still need manual review."
+    else:
+        match = _LEGACY_SUMMARY_FOOTER_HI.search(text)
+        if match is not None:
+            incomplete = "आंशिक" in match.group(0) or "विफल" in match.group(0)
+            text = text[: match.start()].rstrip()
+        if incomplete and "मानव समीक्षा" not in text:
+            text = f"{text}\n\nकुछ अपवादों की मानव समीक्षा अभी बाकी है।"
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +288,8 @@ def _load_anomalies(application_id: int) -> list[dict]:
     with get_connection() as connection:
         try:
             rows = connection.execute(
-                "SELECT * FROM validation_results WHERE application_id = ? ORDER BY id",
+                "SELECT * FROM validation_results WHERE application_id = ? "
+                "AND COALESCE(status, '') != 'dismissed_by_llm' ORDER BY id",
                 (application_id,),
             ).fetchall()
         except Exception:
@@ -294,7 +335,9 @@ def _load_pages(application_id: int) -> list[dict]:
     with get_connection() as connection:
         try:
             rows = connection.execute(
-                "SELECT * FROM pages WHERE application_id = ? ORDER BY page_number",
+                "SELECT p.*, m.meta_json FROM pages p LEFT JOIN pages_meta m "
+                "ON m.application_id = p.application_id AND m.page_number = p.page_number "
+                "WHERE p.application_id = ? ORDER BY p.page_number",
                 (application_id,),
             ).fetchall()
         except Exception:
@@ -308,19 +351,36 @@ def _load_pages(application_id: int) -> list[dict]:
                 page["extracted_fields"] = json.loads(extracted)
             except (TypeError, ValueError):
                 page["extracted_fields"] = {}
+        fields = page.get("extracted_fields")
+        if not isinstance(fields, dict):
+            fields = {}
+        try:
+            meta = json.loads(page.pop("meta_json", None) or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        if isinstance(meta, dict):
+            fields.update({key: value for key, value in meta.items() if key.startswith("_")})
+        page["extracted_fields"] = fields
+        owner = fields.get("_ownership")
+        if isinstance(owner, dict) and owner.get("person_id"):
+            page["person_id"] = owner["person_id"]
         pages.append(page)
     return pages
 
 
-def _stored_findings(application: dict) -> dict | None:
-    raw = application.get("ops_findings_json")
-    if not raw:
-        return None
+def _load_checklist_context(application_id: int) -> dict:
+    """Use the saved trusted inputs when rebuilding scoped/applicable rows."""
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT raw_json FROM ground_truth WHERE application_id = ? "
+            "ORDER BY extracted_at DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
     try:
-        payload = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        context = json.loads(row["raw_json"] or "{}") if row else {}
     except (TypeError, ValueError):
-        return None
-    return payload if isinstance(payload, dict) else None
+        return {}
+    return context if isinstance(context, dict) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +388,10 @@ def _stored_findings(application: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 _CHECKLIST_STATUS_MAP = {
+    "required_and_present": "FOUND",
+    "required_and_missing": "MISSING",
+    "manual_review": "NOT_CHECKED",
+    "not_evaluated_by_engine": "NOT_CHECKED",
     "verified": "FOUND",
     "missing": "MISSING",
     "needs_review": "NOT_CHECKED",
@@ -336,7 +400,9 @@ _CHECKLIST_STATUS_MAP = {
 }
 
 
-def _checklist_section(application: dict, pages: list[dict], anomalies: list[dict]) -> dict:
+def _checklist_section(
+    application: dict, pages: list[dict], anomalies: list[dict], system_data: dict | None = None
+) -> dict:
     try:
         from services.checklist_output import build_checklist_verification_response
 
@@ -345,6 +411,7 @@ def _checklist_section(application: dict, pages: list[dict], anomalies: list[dic
             pages=pages,
             anomalies=anomalies,
             product_type=str(application.get("product_type") or "LAP"),
+            system_data=system_data,
         )
     except Exception as exc:
         LOGGER.warning("checklist build failed for ops payload: %s", exc)
@@ -360,9 +427,22 @@ def _checklist_section(application: dict, pages: list[dict], anomalies: list[dic
         for page_num in _anomaly_pages(anomaly):
             pages_by_sno.setdefault(sno, set()).add(page_num)
     rows = []
+    from services.checklist_output import _document_types
+    from services.checklist_service import get_all_checklist_items
+    from services.document_presence import assess_document_presence
+    from services.page_quality import confident_pages_for_types
+
+    definitions = {int(i["s_no"]): i for i in get_all_checklist_items(str(application.get("product_type") or "LAP"))}
     counts = {"FOUND": 0, "MISSING": 0, "NOT_CHECKED": 0}
     for item in response.items:
+        if item.status == "not_applicable":
+            continue
         status = _CHECKLIST_STATUS_MAP.get(str(item.status), "NOT_CHECKED")
+        for page in confident_pages_for_types(pages, _document_types(definitions.get(item.item_number, {}))):
+            pages_by_sno.setdefault(item.item_number, set()).add(int(page["page_number"]))
+        if status == "NOT_CHECKED":
+            assessment = assess_document_presence(pages, _document_types(definitions.get(item.item_number, {})))
+            pages_by_sno.setdefault(item.item_number, set()).update(assessment.review_pages)
         counts[status] += 1
         rows.append(
             {
@@ -392,6 +472,8 @@ def compute_findings(anomalies: list[dict]) -> list[dict]:
     for anomaly in anomalies:
         if not isinstance(anomaly, dict):
             continue
+        if anomaly.get("status") == "dismissed_by_llm":
+            continue
         code = rule_to_code(anomaly.get("rule_id"))
         if code is None:
             continue
@@ -403,11 +485,10 @@ def compute_findings(anomalies: list[dict]) -> list[dict]:
             CODE_ORDER.index(f["code"]) if f["code"] in CODE_ORDER else len(CODE_ORDER),
         )
     )
-    for finding in findings:
-        finding.pop("_sort_pages", None)
     return findings
 
 
+@cached_settings()
 def build_ops_payload(application_id: int) -> dict:
     """Build the operator-facing payload for one application (§5)."""
     application = _load_application(application_id)
@@ -417,25 +498,18 @@ def build_ops_payload(application_id: int) -> dict:
     job = _load_job(application_id) or {}
     progress = _load_progress(application_id) or {}
 
-    stored = _stored_findings(application)
-    if stored and isinstance(stored.get("top_findings"), list):
-        findings = stored["top_findings"]
-        overflow = stored.get("pages_to_verify", [])
-        summary = stored.get("summary")
+    # Recompute inexpensive groups so newly supported categories are included
+    # for existing applications without reprocessing their documents.
+    all_findings = compute_findings(anomalies)
+    findings = all_findings[:5]
+    overflow = _overflow_pages(all_findings[5:], anomalies)
+    if application.get("ops_summary_en") and application.get("ops_summary_hi"):
+        summary = {
+            "en": _clean_saved_summary(application["ops_summary_en"], "en"),
+            "hi": _clean_saved_summary(application["ops_summary_hi"], "hi"),
+        }
     else:
-        all_findings = compute_findings(anomalies)
-        findings = all_findings[:5]
-        overflow = _overflow_pages(all_findings[5:], anomalies)
-        summary = None
-
-    if not summary or not summary.get("en") or not summary.get("hi"):
-        stored_summary = None
-        if application.get("ops_summary_en") and application.get("ops_summary_hi"):
-            stored_summary = {
-                "en": str(application["ops_summary_en"]),
-                "hi": str(application["ops_summary_hi"]),
-            }
-        summary = stored_summary or _summaries(findings)
+        summary = _summaries(findings)
 
     job_status = str(job.get("status") or "").strip().casefold()
     failure_reason = job.get("failure_reason") or job.get("error")
@@ -443,10 +517,13 @@ def build_ops_payload(application_id: int) -> dict:
         status = "failed"
     elif job_status and job_status not in TERMINAL_JOB_STATUSES:
         status = "processing"
-    elif findings:
-        status = "needs_review"
-    else:
+    elif not findings and (
+        job_status == "completed"
+        or (not job_status and progress.get("status") in {"completed", "completed_with_warnings"})
+    ):
         status = "clean"
+    else:
+        status = "needs_review"
 
     try:
         percentage = float(progress.get("percentage", 0) or 0)
@@ -475,17 +552,18 @@ def build_ops_payload(application_id: int) -> dict:
         "summary": summary,
         "top_findings": findings,
         "pages_to_verify": overflow,
-        "checklist": _checklist_section(application, pages, anomalies),
+        "checklist": _checklist_section(
+            application, pages, anomalies, _load_checklist_context(application_id)
+        ),
     }
 
 
 def _overflow_pages(all_overflow: list[dict], anomalies: list[dict]) -> list[dict]:
     """Group findings beyond the top 5 by page for manual verification."""
-    by_page: dict[int, dict] = {}
+    by_page: dict[int, list[str]] = {}
     for finding in all_overflow:
         for page_num in finding.get("pages", []):
-            slot = by_page.setdefault(int(page_num), {"codes": [], "finding": finding})
-            slot["codes"].append(finding["code"])
+            by_page.setdefault(int(page_num), []).append(finding["code"])
     doc_by_page: dict[int, Any] = {}
     for anomaly in anomalies:
         for page_num in _anomaly_pages(anomaly):
@@ -494,10 +572,10 @@ def _overflow_pages(all_overflow: list[dict], anomalies: list[dict]) -> list[dic
     for page_num in sorted(by_page):
         document_type = doc_by_page.get(page_num)
         problems_en = ", ".join(
-            SUMMARY_PHRASES[code]["en"] for code in dict.fromkeys(by_page[page_num]["codes"])
+            SUMMARY_PHRASES[code]["en"] for code in dict.fromkeys(by_page[page_num])
         )
         problems_hi = ", ".join(
-            SUMMARY_PHRASES[code]["hi"] for code in dict.fromkeys(by_page[page_num]["codes"])
+            SUMMARY_PHRASES[code]["hi"] for code in dict.fromkeys(by_page[page_num])
         )
         result.append(
             {

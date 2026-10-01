@@ -17,8 +17,8 @@ There are two independent checks:
 
 1. The local prerequisite check confirms Python, required imports, paths, and
    the checklist file.
-2. The running API check confirms that FastAPI started and initialized the
-   local SQLite schema.
+2. The running API check reports database, object-store, and worker health.
+   `status: degraded` means the API is reachable but the worker is not ready.
 
 After those checks, the browser UI can be opened. A fresh checkout does not
 contain an approved sample PDF, so document-processing tests need a dummy or
@@ -30,14 +30,17 @@ approved document supplied separately.
 flowchart LR
     Browser[Next.js UI\nfrontend/] -->|HTTP| API[FastAPI\nmain.py]
     API --> Routes[routes/\nupload, review, verification, decision, settings]
-    Routes --> Pipeline[services/pipeline/\nprocess and persist]
+    Routes --> Jobs[(Durable job queue)]
+    Worker[services.worker] -->|claims jobs| Jobs
+    Worker --> Pipeline[services/pipeline/\nprocess and persist]
     Routes --> Review[services/review/\nworklist and review assembly]
     Pipeline --> Text[Embedded PDF text\ndigital pages]
     Pipeline --> OCR[Google Vision\nscanned pages]
     Pipeline --> Classifier[Deterministic classification\noptional LLM fallback]
     Pipeline --> Checklist[Checklist, field checks,\nexceptions and reports]
-    API --> DB[(SQLite\ndata/dmef.db)]
-    Pipeline --> Files[(data/uploads\ndata/processed\ndata/reports)]
+    API --> DB[(SQLite or PostgreSQL)]
+    Pipeline --> DB
+    Pipeline --> Files[(Local or GCS object store)]
 ```
 
 The normal pipeline is asynchronous after upload: the upload route queues a
@@ -56,7 +59,7 @@ an explicit developer test path described below.
 | `services/` | OCR routing, text/field extraction, document classification, checklist evaluation, reports, configuration, and review helpers. |
 | `services/review/` | Read-oriented worklist, comparison, summaries, and repository boundary for review data. |
 | `database/` | SQLite connection helpers and schema/data models. |
-| `frontend/` | Next.js 14 App Router UI, TypeScript, Tailwind, TanStack Query, and Zod. |
+| `frontend/` | Next.js App Router UI, TypeScript, Tailwind, TanStack Query, and Zod. |
 | `data/` | Tracked checklist/registry definitions plus ignored local database, uploads, processed pages, reports, and logs. |
 | `docs/` | Architecture, policy, change, and example-manifest documentation. |
 
@@ -94,6 +97,11 @@ cp .env.example .env
 python -m services.local_health --no-ollama
 ```
 
+Set `DMEF_AUTH_SECRET`, `DMEF_BOOTSTRAP_ADMIN_EMAIL`, and
+`DMEF_BOOTSTRAP_ADMIN_PASSWORD` in `.env` before starting. The first API start
+creates the admin account when the users table is empty. Sign in with that
+account; admins can create regular users.
+
 Start the backend in Terminal 1:
 
 ```bash
@@ -113,11 +121,10 @@ Verify the first successful API path:
 curl -fsS http://127.0.0.1:8000/health
 ```
 
-Expected response:
-
-```json
-{"status":"ok","version":"0.1.0"}
-```
+Check `database` and `storage` are `ok`. For a ready processing system,
+`status` and `worker.status` must also be `ok`. Start a worker explicitly in
+another terminal with `python -m services.worker`. Local uploads can also
+start a worker automatically; production uses a separately deployed worker.
 
 Open <http://localhost:3000>. API documentation is available at
 <http://127.0.0.1:8000/docs> and ReDoc at
@@ -145,13 +152,8 @@ Verify the first successful API path from another PowerShell window:
 Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
-Expected response:
-
-```text
-status version
------- -------
-ok     0.1.0
-```
+The response includes database, storage, and worker status. A stale worker
+produces `status: degraded`; start it with `.\run_worker.ps1`.
 
 Open <http://localhost:3000>. The script prints process IDs, URLs, and log
 paths. Stop the services later with:
@@ -189,7 +191,7 @@ The first real scanned-page run is the credential check.
 The `.env.example` value `GOOGLE_VISION_AUTH=auto` uses an API key when one is
 configured and otherwise uses ADC. Set `api_key` or `adc` explicitly when you
 need to force one path. Once the database has been initialized, the Settings
-UI's database-backed OCR setting can take precedence over a copied `.env`.
+UI's database-backed OCR setting applies when its environment override is empty.
 
 #### API-key authentication
 
@@ -242,7 +244,7 @@ LLM calls are optional. `LLM_PROVIDER` supports these effective modes:
 |---|---|
 | `none` | Disable shared LLM calls. Useful for a no-network local smoke run. |
 | `ollama` | Use the local/explicit Ollama endpoint and configured model. |
-| `auto` | Use an API-key provider when a key is present; otherwise use Ollama. This is the `.env.example` default. |
+| `auto` | Use an API-key provider when a key is present; otherwise use Ollama. |
 | `openai` / `openai_compatible` | Use an API-key-backed `/chat/completions`-compatible endpoint. |
 
 Ollama is not required to start FastAPI or the UI. If it is unavailable, the
@@ -335,9 +337,9 @@ Do not copy a real database or real customer data into the repository.
 
 ## Known MVP limitations
 
-- This is a local-development application, not a production deployment. There
-  is no general application authentication layer in the routes; keep services
-  bound to loopback and do not expose them to an untrusted network.
+- Routes use bearer-token authentication with admin and user roles. Cloud
+  deployment templates are in `deploy/`; local checks do not validate a live
+  deployment.
 - A live scanned-document run depends on Google Vision credentials, network
   access, API enablement, and billing. The health check cannot prove any of
   those conditions.

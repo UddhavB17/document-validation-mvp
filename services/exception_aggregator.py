@@ -116,10 +116,16 @@ def aggregate(
 
 def save_aggregation(application_id: int, anomalies: list[dict], final_status: str) -> None:
     with get_connection() as connection:
+        # Review state belongs to the findings being replaced. Remove it first
+        # to satisfy the foreign key and require fresh review after reprocessing.
+        # Audit history is retained; a failed replacement rolls back both deletes.
+        connection.execute(
+            "DELETE FROM ops_review_items WHERE application_id = ?", (application_id,)
+        )
         connection.execute(
             "DELETE FROM validation_results WHERE application_id = ?", (application_id,)
         )
-        for anomaly in anomalies:
+        if anomalies:
             connection.execute(
                 """
                 INSERT INTO validation_results (
@@ -136,18 +142,21 @@ def save_aggregation(application_id: int, anomalies: list[dict], final_status: s
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    application_id,
-                    anomaly.get("rule_id"),
-                    anomaly.get("s_no"),
-                    anomaly.get("severity"),
-                    anomaly.get("document_type"),
-                    _stringify(anomaly.get("expected_value")),
-                    _stringify(anomaly.get("found_value")),
-                    anomaly.get("page_number"),
-                    anomaly.get("reason"),
-                    _stringify(anomaly.get("evidence_json")),
-                ),
+                [
+                    (
+                        application_id,
+                        anomaly.get("rule_id"),
+                        anomaly.get("s_no"),
+                        anomaly.get("severity"),
+                        anomaly.get("document_type"),
+                        _stringify(anomaly.get("expected_value")),
+                        _stringify(anomaly.get("found_value")),
+                        anomaly.get("page_number"),
+                        anomaly.get("reason"),
+                        _stringify(anomaly.get("evidence_json")),
+                    )
+                    for anomaly in anomalies
+                ],
             )
         connection.execute(
             "UPDATE applications SET status = ? WHERE id = ?",

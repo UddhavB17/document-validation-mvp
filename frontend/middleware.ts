@@ -49,6 +49,8 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (
     pathname === "/login" ||
+    pathname === "/portal" ||
+    pathname.startsWith("/portal/") ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/")
   ) {
@@ -64,7 +66,7 @@ export async function middleware(request: NextRequest) {
       (pathname === "/admin" || pathname.startsWith("/admin/")) &&
       outcome.user.role !== "admin"
     ) {
-      return redirectTo(request, "/ops");
+      return redirectTo(request, "/review");
     }
     const response = NextResponse.next();
     response.headers.set("Cache-Control", NO_STORE);

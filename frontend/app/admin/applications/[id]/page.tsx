@@ -8,6 +8,7 @@ import { Checklist } from "@/components/applications/Checklist";
 import { Downloads } from "@/components/applications/Downloads";
 import { EvidenceViewerModal } from "@/components/applications/EvidenceViewerModal";
 import { ExtractedDataTab } from "@/components/applications/ExtractedDataTab";
+import { NdcChecklist } from "@/components/ops/NdcChecklist";
 import { CaseNavigation } from "@/components/applications/case/CaseNavigation";
 import { ProcessingTab } from "@/components/applications/case/ProcessingTab";
 import { CaseReviewTab } from "@/components/applications/case/CaseReviewTab";
@@ -16,7 +17,7 @@ import { getReviewErrorPresentation } from "@/components/applications/reviewUtil
 import type { Anomaly } from "@/lib/api";
 import type { CaseTab, EvidenceSelection } from "@/components/applications/types";
 import { isApplicationReviewPollingStatus, useApplicationReview, useApplicationStatus } from "@/lib/queries";
-import { buildChecklistTaskId } from "@/lib/decisionPolicy";
+import { buildChecklistTaskId, checklistRequiresReview } from "@/lib/decisionPolicy";
 
 // This route is the case workspace boundary. Legacy query values are mapped
 // here so older worklist links continue to land on the closest new section.
@@ -85,6 +86,26 @@ export default function ApplicationReviewPage() {
     );
   }
 
+  // Live progress must not wait for checklist/comparison data from the full
+  // review. Keep this tab usable even when that independent request fails.
+  if (activeTab === "processing" && !applicationReview.data) {
+    return (
+      <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-4">
+        <h1 className="text-lg font-semibold text-slate-950">Application {applicationId} · Processing</h1>
+        <CaseNavigation applicationId={applicationId} activeTab={activeTab} />
+        <ProcessingTab applicationId={applicationId} />
+        {applicationReview.isError ? (
+          <CaseErrorState
+            title="Review details could not be loaded"
+            message="Live processing is loaded separately above. Retry review details to enable page evidence previews."
+            onRetry={() => void applicationReview.refetch()}
+            isRetrying={applicationReview.isFetching}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   if (applicationReview.isLoading) {
     return <CaseLoadingSkeleton />;
   }
@@ -95,6 +116,7 @@ export default function ApplicationReviewPage() {
         title={errorPresentation.title}
         message={errorPresentation.message}
         onRetry={() => void applicationReview.refetch()}
+        isRetrying={applicationReview.isFetching}
       />
     );
   }
@@ -104,6 +126,7 @@ export default function ApplicationReviewPage() {
         title="Application review is unavailable"
         message="The review API returned no application data. Retry the request and check the local API health if it continues."
         onRetry={() => void applicationReview.refetch()}
+        isRetrying={applicationReview.isFetching}
       />
     );
   }
@@ -151,6 +174,7 @@ export default function ApplicationReviewPage() {
         )}
 
         {activeTab === "checklist" ? (
+          <>
           <Checklist
             data={applicationReview.data}
             onSelectPage={(row, pageNo, allPages) => {
@@ -162,11 +186,15 @@ export default function ApplicationReviewPage() {
                 expected_value: "-",
                 found_value: allPages ? `Combined pages: ${allPages.join(", ")}` : `Page ${pageNo}`
               };
-              handleSelectEvidence(mockAnomaly, pageNo, allPages, row.status?.toLowerCase() === "not_checked"
+              handleSelectEvidence(mockAnomaly, pageNo, allPages, checklistRequiresReview(row.status)
                 ? [buildChecklistTaskId(row.s_no, row.description)]
                 : undefined);
             }}
           />
+          <div className="mt-6">
+            <NdcChecklist applicationId={applicationId} />
+          </div>
+          </>
         ) : null}
 
         {activeTab === "processing" ? (

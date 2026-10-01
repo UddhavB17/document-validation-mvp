@@ -18,12 +18,18 @@ CODE_ORDER: list[str] = [
     "OCR_FAILED",
     "DATA_MISSING",
     "PROCESSING_ERROR",
+    "REVIEW_REQUIRED",
 ]
 
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
 # Placeholders: {expected}, {found}, {document}, {pages}, {months}.
 TEMPLATES: dict[str, dict[str, dict[str, str]]] = {
+    "REVIEW_REQUIRED": {
+        "title": {"en": "Additional evidence needs review", "hi": "अतिरिक्त प्रमाण की जाँच आवश्यक है"},
+        "detail": {"en": "Check the highlighted pages for unresolved document or field checks ({pages}).",
+                   "hi": "दस्तावेज़ या जानकारी की अनसुलझी जाँच के लिए चिह्नित पृष्ठ देखें ({pages})।"},
+    },
     "NAME_MISMATCH": {
         "title": {
             "en": "Applicant name does not match",

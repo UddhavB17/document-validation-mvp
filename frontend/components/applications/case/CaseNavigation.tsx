@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import type { CaseTab } from "@/components/applications/types";
+import { navigateCaseTab } from "@/lib/caseTabNavigation";
 
 const CASE_TABS: ReadonlyArray<{ key: CaseTab; label: string }> = [
   { key: "review", label: "Review" },
@@ -26,6 +27,7 @@ export function CaseNavigation({ applicationId, activeTab }: { applicationId: nu
           <Link
             key={tab.key}
             href={caseTabHref(applicationId, tab.key)}
+            onClick={(event) => navigateCaseTab(event, caseTabHref(applicationId, tab.key))}
             aria-current={active ? "page" : undefined}
             className={`rounded-lg px-3.5 py-2 text-[13px] font-bold transition-colors sm:px-4 ${
               active

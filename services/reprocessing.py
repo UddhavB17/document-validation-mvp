@@ -58,6 +58,41 @@ def resume_application(application_id: int) -> dict[str, Any]:
     )
 
 
+def is_resumable(latest_job: dict[str, Any] | None, operational_status: str | None) -> bool:
+    """Pure resume-accept check shared by single-app and batched callers.
+
+    ``latest_job`` is the newest pipeline_jobs row (or None); the heartbeat
+    decides whether a live-looking worker is really dead. Terminal job rows
+    defer to the progress state, matching ``resume_application``.
+    """
+    if latest_job is not None:
+        status = str(latest_job.get("status") or "")
+        if status in {"paused", "pause_requested"}:
+            return True
+        if status in {"queued", "running"}:
+            return not _heartbeat_is_recent(latest_job.get("heartbeat_at"))
+    state = str(operational_status or "not_started")
+    return state in {"stale", "failed", "cancelled", "completed_with_warnings"}
+
+
+def can_resume_application(application_id: int) -> bool:
+    """Return True when ``resume_application`` would accept this application.
+
+    Side-effect free mirror of the resume accept rules so list views can
+    offer a Resume button for crash-stuck jobs (a ``running`` job whose
+    worker died keeps a stale heartbeat; resume reaps it and requeues from
+    the last checkpoint). Returns False while a worker is actively alive.
+    """
+    with get_connection() as connection:
+        job = connection.execute(
+            "SELECT status, heartbeat_at FROM pipeline_jobs WHERE application_id = ? ORDER BY id DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+    progress = get_progress(application_id)
+    state = str((progress or {}).get("operational_status") or "not_started")
+    return is_resumable(dict(job) if job is not None else None, state)
+
+
 def restart_application(
     application_id: int,
     *,

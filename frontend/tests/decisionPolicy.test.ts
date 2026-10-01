@@ -16,9 +16,30 @@ const manualReviewItems = [
 ];
 
 const checklistRows = [
-  { s_no: 19, status: "MISSING", description: "Bank statement", pages: "-", document_types: "Bank Statement" },
-  { s_no: 26, status: "NOT_CHECKED", description: "CERSAI", pages: "4", document_types: "CERSAI" },
+  { s_no: 19, status: "required_and_missing", description: "Bank statement", pages: "-", document_types: "Bank Statement" },
+  { s_no: 26, status: "not_evaluated_by_engine", description: "CERSAI", pages: "4", document_types: "CERSAI" },
 ];
+
+test("current manual checklist states require acknowledgement before accepting", () => {
+  for (const status of ["manual_review", "not_evaluated_by_engine", "NOT_CHECKED"]) {
+    const input = {
+      action: "ACCEPT" as const,
+      processingStatus: "completed",
+      checklistRows: [{ ...checklistRows[1], status }],
+      rationale: "Reviewed the available evidence.",
+    };
+    const unchecked = evaluateDecisionPolicy(input);
+    assert.equal(unchecked.allowed, false, status);
+    assert.equal(unchecked.requiredTasks.length, 1, status);
+    assert.equal(unchecked.requiredTasks[0].pageNumber, 4, status);
+    assert.equal(evaluateDecisionPolicy({
+      ...input, checkedTaskIds: [unchecked.requiredTasks[0].id],
+    }).allowed, true, status);
+  }
+  for (const status of ["required_and_present", "not_applicable"]) {
+    assert.deepEqual(buildDecisionTasks({ checklistRows: [{ ...checklistRows[1], status }] }), []);
+  }
+});
 
 test("processing gate distinguishes completed warnings from blocked states", () => {
   assert.equal(getDecisionProcessingState("completed_with_warnings"), "completed");

@@ -5,10 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import { AiExplanationDisclosure } from "@/components/applications/AiAuditInsights";
-import { HighlightedEvidenceText } from "@/components/applications/EvidenceHighlight";
 import { EvidenceValue } from "@/components/applications/EvidenceValue";
 import { bboxToStyle, severityBoxClass } from "@/components/ops/bbox";
-import { getAffectedPages, getReviewIssueKey } from "@/components/applications/review/issueQueue";import {
+import { getReviewIssueKey } from "@/components/applications/review/issueQueue";
+import {
   getReviewIssueState,
   markReviewIssueCheckedWithTasks,
   markReviewIssueViewed,
@@ -16,8 +16,6 @@ import { getAffectedPages, getReviewIssueKey } from "@/components/applications/r
 import { EvidenceSelection } from "@/components/applications/types";
 import { api, ApplicationReview, parseAnomalyEvidence } from "@/lib/api";
 import { asText } from "@/lib/format";
-
-const MAX_OCR_PREVIEW = 5000;
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
   return Array.from(container.querySelectorAll<HTMLElement>(
@@ -38,7 +36,6 @@ export function EvidenceViewerModal({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const ocrSectionRef = useRef<HTMLDivElement>(null);
   const pages = useMemo(() => {
     const selectedPages = selectedEvidence.allPageNumbers?.length
       ? selectedEvidence.allPageNumbers
@@ -53,7 +50,6 @@ export function EvidenceViewerModal({
   const [imageReady, setImageReady] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [fileLevelDetailsReady, setFileLevelDetailsReady] = useState(false);
-  const [showFullOcr, setShowFullOcr] = useState(false);
   const issueKey = getReviewIssueKey(applicationId, selectedEvidence.anomaly);
   const [isChecked, setIsChecked] = useState(() => getReviewIssueState(issueKey) === "Checked");
 
@@ -66,16 +62,12 @@ export function EvidenceViewerModal({
     setImageReady(false);
     setImageError(false);
     setFileLevelDetailsReady(false);
-    setShowFullOcr(false);
     setIsChecked(getReviewIssueState(issueKey) === "Checked");
   }, [issueKey, pages, selectedEvidence]);
 
   const activeIndex = Math.max(0, activePage === null ? 0 : pages.indexOf(activePage));
   const renderedPage = activePage === null ? null : pages[activeIndex] ?? activePage;
   const activePageData = renderedPage === null ? undefined : data.pages.find((page) => Number(page.page_number) === renderedPage);
-  const ocrText = typeof activePageData?.ocr_text === "string" ? activePageData.ocr_text.trim() : "";
-  const ocrIsTruncated = ocrText.length > MAX_OCR_PREVIEW;
-  const visibleOcrText = showFullOcr ? ocrText : ocrText.slice(0, MAX_OCR_PREVIEW);
   const adjacentPage = renderedPage !== null && pages.length > 1 ? pages[activeIndex + 1] ?? pages[activeIndex - 1] : undefined;
   const imageHighlight = String(selectedEvidence.anomaly.found_value || selectedEvidence.anomaly.expected_value || "").slice(0, 160);
   const adjacentImageUrl = adjacentPage
@@ -104,7 +96,6 @@ export function EvidenceViewerModal({
     setImageError(false);
     setZoom(1);
     setRotation(0);
-    setShowFullOcr(false);
   }, [renderedPage]);
 
   useEffect(() => {
@@ -279,13 +270,6 @@ export function EvidenceViewerModal({
                 >
                   Rotate 90°
                 </button>
-                <button
-                  type="button"
-                  onClick={() => ocrSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })}
-                  className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2B4C7E]"
-                >
-                  Jump to OCR
-                </button>
               </div>
             </div>
 
@@ -293,7 +277,7 @@ export function EvidenceViewerModal({
               {imageError ? (
                 <div role="alert" className="mx-auto flex max-w-md flex-col items-center justify-center rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
                   <h3 className="text-sm font-bold text-amber-900">Page image could not be rendered</h3>
-                  <p className="mt-2 text-xs font-medium leading-relaxed text-amber-800">Use the original PDF for this page. The review workspace remains available for the rule details and OCR returned by the review API.</p>
+                  <p className="mt-2 text-xs font-medium leading-relaxed text-amber-800">Use the original PDF for this page. The review workspace remains available for the rule details.</p>
                   <a
                     href={api.sourcePdfUrl(applicationId, renderedPage!)}
                     target="_blank"
@@ -366,29 +350,7 @@ export function EvidenceViewerModal({
               </div>
             </section>
 
-            {hasPageEvidence ? <div ref={ocrSectionRef} id="evidence-ocr" className="mt-5 space-y-2">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">Active-page OCR</h2>
-                <span className="text-[10px] font-semibold text-slate-400">PDF page {renderedPage} only</span>
-              </div>
-              <div className="max-h-80 overflow-y-auto rounded-lg bg-slate-950 p-3 font-mono text-[11px] leading-relaxed text-slate-100">
-                {visibleOcrText ? (
-                  <HighlightedEvidenceText
-                    text={visibleOcrText}
-                    needle={selectedEvidence.anomaly.found_value ?? selectedEvidence.anomaly.expected_value ?? ""}
-                  />
-                ) : "No OCR text was extracted for this page."}
-              </div>
-              {ocrIsTruncated ? (
-                <button
-                  type="button"
-                  onClick={() => setShowFullOcr((value) => !value)}
-                  className="text-xs font-bold text-[#2B4C7E] underline decoration-dotted underline-offset-2 hover:text-[#1E3559] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2B4C7E]"
-                >
-                  {showFullOcr ? "Show preview" : "Show full text"}
-                </button>
-              ) : null}
-            </div> : <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs font-medium leading-relaxed text-blue-900">This issue is file-level and has no explicit source page. Review the metadata and rule details above; page and PDF controls are unavailable.</div>}
+            {!hasPageEvidence ? <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs font-medium leading-relaxed text-blue-900">This issue is file-level and has no explicit source page. Review the metadata and rule details above; page and PDF controls are unavailable.</div> : null}
 
             {hasPageEvidence && renderedPage !== null ? <div className="mt-5">
               <AiExplanationDisclosure data={data} anomaly={selectedEvidence.anomaly} pageNumber={renderedPage} />

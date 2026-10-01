@@ -21,6 +21,10 @@ export default function AdminUsersPage() {
   const deleteUser = useDeleteAdminUser();
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetError, setResetError] = useState<string | null>(null);
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -57,18 +61,41 @@ export default function AdminUsersPage() {
     }
   }
 
-  async function handleResetPassword(user: AdminUser) {
+  function openResetPassword(user: AdminUser) {
     setFormError(null);
     setNotice(null);
-    const next = window.prompt(`Set a new password for ${user.email}:`);
-    if (!next) {
+    setResetError(null);
+    setNewPassword("");
+    setConfirmPassword("");
+    setResetTarget(user);
+  }
+
+  function closeResetPassword() {
+    if (resetPassword.isPending) {
+      return;
+    }
+    setResetTarget(null);
+    setNewPassword("");
+    setConfirmPassword("");
+    setResetError(null);
+  }
+
+  async function handleResetPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!resetTarget) {
+      return;
+    }
+    setResetError(null);
+    if (newPassword !== confirmPassword) {
+      setResetError("The passwords do not match.");
       return;
     }
     try {
-      await resetPassword.mutateAsync({ userId: user.id, newPassword: next });
-      setNotice(`Password updated for ${user.email}.`);
+      await resetPassword.mutateAsync({ userId: resetTarget.id, newPassword });
+      setNotice(`Password updated for ${resetTarget.email}.`);
+      closeResetPassword();
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Could not reset the password.");
+      setResetError(error instanceof Error ? error.message : "Could not reset the password.");
     }
   }
 
@@ -166,7 +193,7 @@ export default function AdminUsersPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleResetPassword(user)}
+                        onClick={() => openResetPassword(user)}
                         disabled={resetPassword.isPending}
                         className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                       >
@@ -187,6 +214,79 @@ export default function AdminUsersPage() {
             </tbody>
           </table>
         </section>
+      ) : null}
+
+      {resetTarget ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeResetPassword();
+            }
+          }}
+        >
+          <form
+            onSubmit={handleResetPassword}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-password-title"
+            aria-describedby="reset-password-description"
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-2xl"
+          >
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">User management</p>
+            <h2 id="reset-password-title" className="mt-1 text-xl font-bold text-slate-950">Reset password</h2>
+            <p id="reset-password-description" className="mt-2 text-sm text-slate-600">
+              Set a new password for <span className="font-semibold text-slate-900">{resetTarget.email}</span>.
+            </p>
+            <div className="mt-5 space-y-4">
+              <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
+                New password
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  autoFocus
+                  required
+                  minLength={10}
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  className="rounded-lg border border-[#E1E5EB] px-3 py-2 font-normal text-slate-900 focus:border-[#2B4C7E] focus:outline-none"
+                />
+                <span className="text-xs font-normal text-slate-500">Use at least 10 characters and avoid common passwords.</span>
+              </label>
+              <label className="flex flex-col gap-1 text-sm font-semibold text-slate-700">
+                Confirm new password
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                  minLength={10}
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  className="rounded-lg border border-[#E1E5EB] px-3 py-2 font-normal text-slate-900 focus:border-[#2B4C7E] focus:outline-none"
+                />
+              </label>
+            </div>
+            {resetError ? <ErrorMessage message={resetError} /> : null}
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeResetPassword}
+                disabled={resetPassword.isPending}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={resetPassword.isPending}
+                className="rounded-lg bg-[#2B4C7E] px-4 py-2 text-sm font-bold text-white hover:bg-[#1E3559] disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {resetPassword.isPending ? "Resetting…" : "Reset password"}
+              </button>
+            </div>
+          </form>
+        </div>
       ) : null}
     </div>
   );

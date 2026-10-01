@@ -83,7 +83,7 @@ def test_generate_summaries_malformed_json_uses_fallback(monkeypatch, tmp_path) 
     result = generate_summaries(application_id, context)
 
     assert result == build_bilingual_fallback(context["findings"])
-    assert "1 issue(s)" in result["en"]
+    assert "1 problem" in result["en"]
 
 
 def test_generate_summaries_provider_none_uses_fallback_and_records_nothing(
@@ -99,7 +99,8 @@ def test_generate_summaries_provider_none_uses_fallback_and_records_nothing(
 
     result = generate_summaries(application_id, {"findings": []})
 
-    assert "no issues found" in result["en"]
+    assert "nothing to fix" in result["en"]
+    assert "कुछ ठीक नहीं करना" in result["hi"]
     assert _llm_call_count() == 0
 
 
@@ -107,6 +108,6 @@ def test_parse_bilingual_summary_rejects_bad_payloads() -> None:
     assert parse_bilingual_summary("") is None
     assert parse_bilingual_summary('{"en": "only english"}') is None
     assert parse_bilingual_summary('{"en": "ok", "hi": "no devanagari here"}') is None
-    assert parse_bilingual_summary(json.dumps({"en": "x" * 601, "hi": "जाँच"})) is None
+    assert parse_bilingual_summary(json.dumps({"en": "x" * 6001, "hi": "जाँच"})) is None
     good = parse_bilingual_summary('```json\n{"en": "All good.", "hi": "सब ठीक है।"}\n```')
     assert good == {"en": "All good.", "hi": "सब ठीक है।"}

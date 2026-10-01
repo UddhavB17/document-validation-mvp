@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from typing import Any
@@ -281,7 +282,9 @@ def classify_page_with_llm(text: str) -> dict[str, Any] | None:
     try:
         confidence_value = float(confidence)
     except (TypeError, ValueError):
-        confidence_value = 0.85
+        confidence_value = 0.0
+    if isinstance(confidence, bool) or not math.isfinite(confidence_value):
+        confidence_value = 0.0
 
     confidence_value = max(0.0, min(1.0, confidence_value))
     return {

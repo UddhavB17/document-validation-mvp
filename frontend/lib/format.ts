@@ -1,9 +1,5 @@
 // Small display-only formatters shared by tables, metrics, and review panels.
 
-const POSITIVE_STATUSES = new Set(["CLEAN", "verified", "verified_with_override", "required_and_present"]);
-const NEGATIVE_STATUSES = new Set(["CRITICAL", "pipeline_failed", "incomplete", "required_and_missing"]);
-const IN_PROGRESS_STATUSES = new Set(["NEEDS_REVIEW", "processing", "ocr_completed", "manual_review", "not_evaluated_by_engine"]);
-
 export function asText(value: unknown): string {
   if (value === null || value === undefined || value === "") {
     return "-";
@@ -14,29 +10,9 @@ export function asText(value: unknown): string {
   return String(value);
 }
 
-export function formatNumber(value: unknown): string {
-  if (typeof value !== "number") {
-    return "-";
-  }
-  return value.toLocaleString("en-IN");
-}
-
 export function formatSeconds(value: unknown): string {
   if (typeof value !== "number") {
     return "-";
   }
   return `${value.toFixed(2)}s`;
-}
-
-export function statusTone(status: string): string {
-  if (POSITIVE_STATUSES.has(status)) {
-    return "text-emerald-700";
-  }
-  if (NEGATIVE_STATUSES.has(status)) {
-    return "text-red-700";
-  }
-  if (IN_PROGRESS_STATUSES.has(status)) {
-    return "text-amber-700";
-  }
-  return "text-slate-700";
 }

@@ -22,8 +22,10 @@ function statusLabel(status: string, locale: "en" | "hi"): string {
   return key ? t(locale, key) : status;
 }
 
-export function OpsChecklist({ rows }: { rows: OpsChecklistRow[] }) {
+export function OpsChecklist({ rows, onOpenPage }: { rows: OpsChecklistRow[]; onOpenPage: (page: number) => void }) {
   const { locale } = useLocale();
+  const reviewRows = rows.filter((row) => row.status !== "FOUND");
+  const foundRows = rows.filter((row) => row.status === "FOUND");
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
       <table className="min-w-full border-collapse text-left text-sm">
@@ -37,7 +39,7 @@ export function OpsChecklist({ rows }: { rows: OpsChecklistRow[] }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 text-slate-800">
-          {rows.map((row) => {
+          {reviewRows.map((row) => {
             const tone = CHECKLIST_STATUS_TONE[row.status] ?? CHECKLIST_STATUS_TONE.NOT_CHECKED;
             return (
               <tr key={row.s_no} className="hover:bg-slate-50">
@@ -48,12 +50,13 @@ export function OpsChecklist({ rows }: { rows: OpsChecklistRow[] }) {
                     {statusLabel(row.status, locale)}
                   </span>
                 </td>
-                <td className="px-3 py-3 font-mono text-xs text-slate-600">{formatPageList(row.pages)}</td>
+                <td className="px-3 py-3 font-mono text-xs text-slate-600">{row.pages.map(page => <button key={page} onClick={() => onOpenPage(page)} className="m-1 rounded border px-2 py-1" aria-label={`${t(locale, "ops.review.openEvidence")} ${page}`}>{page}</button>)}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      <details className="border-t p-4"><summary className="cursor-pointer font-semibold">{t(locale, "ops.review.statusFound")} ({foundRows.length})</summary><ul className="mt-3 space-y-2">{foundRows.map(row => <li key={row.s_no}>✓ {row.description} · {formatPageList(row.pages)}</li>)}</ul></details>
     </div>
   );
 }

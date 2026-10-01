@@ -15,6 +15,13 @@ WORKER_ID = uuid.uuid4().hex[:12]
 _shutdown_requested = False
 BACKOFF_SECONDS = (30, 120)
 
+#: Lock file guaranteeing a single live worker. The OS releases the lock
+#: automatically when the holder dies, so — unlike a PID file — a crash can
+#: never leave a stale "worker running" state behind.
+WORKER_LOCK_FILENAME = ".worker.lock"
+
+_lock_file: Any = None
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -27,6 +34,61 @@ def _utc_now_iso() -> str:
 def request_shutdown(*_args: Any) -> None:
     global _shutdown_requested
     _shutdown_requested = True
+
+
+def worker_lock_path() -> Any:
+    """Return the singleton lock file path (created alongside worker logs).
+
+    ``DMEF_WORKER_LOCK_FILE`` overrides the path (tests use a temp file so
+    a live worker on the same machine never interferes with the suite).
+    """
+    import os
+    from pathlib import Path
+
+    override = os.getenv("DMEF_WORKER_LOCK_FILE", "").strip()
+    if override:
+        return Path(override)
+    log_dir = Path(__file__).resolve().parents[1] / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / WORKER_LOCK_FILENAME
+
+
+def acquire_worker_lock() -> Any:
+    """Take the cross-process singleton lock; ``None`` when held elsewhere.
+
+    The open handle is kept in ``_lock_file`` for the process lifetime —
+    closing it releases the lock. The OS frees the lock if this process
+    dies, so crashed workers never block a replacement.
+    """
+    global _lock_file
+    import os
+
+    handle = open(worker_lock_path(), "a+b")  # noqa: PTH123 - lock file
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    _lock_file = handle
+    return handle
+
+
+def release_worker_lock() -> None:
+    """Release the singleton lock (also happens automatically on exit)."""
+    global _lock_file
+    handle, _lock_file = _lock_file, None
+    if handle is not None:
+        try:
+            handle.close()
+        except Exception:  # noqa: BLE001 - best effort on teardown
+            pass
 
 
 def backoff_seconds(attempt: int) -> int:
@@ -57,7 +119,7 @@ def failure_reason_for(exc: BaseException) -> str:
     return "Processing failed after 3 attempts. Contact an administrator."
 
 
-def _claim_select_sql() -> str:
+def _claim_select_sql(job_id: int | None = None) -> str:
     """Return the dialect-branched dequeue SELECT (contracts §4).
 
     Postgres uses ``FOR UPDATE SKIP LOCKED`` so concurrent workers never
@@ -72,8 +134,10 @@ def _claim_select_sql() -> str:
             FROM pipeline_jobs
             WHERE status IN ('queued', 'retrying')
               AND (next_run_at IS NULL OR next_run_at <= ?)
-            ORDER BY id LIMIT 1
             """
+    if job_id is not None:
+        base += " AND id = ? AND control_state = 'running'"
+    base += " ORDER BY id LIMIT 1"
     if db_module.dialect() == "postgresql":
         return base + " FOR UPDATE SKIP LOCKED"
     return base
@@ -163,7 +227,7 @@ def recover_stale_jobs(*, stale_minutes: int = 10) -> int:
         return len(rows)
 
 
-def claim_next_job() -> dict[str, Any] | None:
+def claim_next_job(job_id: int | None = None) -> dict[str, Any] | None:
     """Claim one queued/retrying job that is due. Returns the job row or None."""
     import database.db as db_module
 
@@ -175,8 +239,8 @@ def claim_next_job() -> dict[str, Any] | None:
             # instead (see _claim_select_sql); never run BEGIN IMMEDIATE there.
             connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
-            _claim_select_sql(),
-            (now_iso,),
+            _claim_select_sql(job_id),
+            (now_iso,) if job_id is None else (now_iso, job_id),
         ).fetchone()
         if row is None:
             return None
@@ -219,6 +283,7 @@ def _heartbeat_loop(job_id: int, stop_event: threading.Event) -> None:
                 )
         except Exception:
             continue
+        _touch_idle_heartbeat()
 
 
 def run_job_by_id(job: dict[str, Any]) -> None:
@@ -237,40 +302,25 @@ def run_job_by_id(job: dict[str, Any]) -> None:
             pipeline_tasks.run_mapped_job(job_id)
         else:
             # Dispatch on persisted manifest so plain/mapped routing survives
-            # even when job_type was left as the default.
-            try:
-                routed_mapped = False
-                with get_connection() as connection:
-                    app_row = connection.execute(
-                        "SELECT application_id FROM pipeline_jobs WHERE id = ?",
-                        (job_id,),
-                    ).fetchone()
-                if app_row is not None:
-                    from services.job_control import load_job_input
+            # even when job_type was left as the default. Execute exactly one
+            # runner per claim: a pipeline exception belongs to the retry
+            # policy, not a second immediate run through a different runner.
+            from services.job_control import load_job_input
 
-                    stored = load_job_input(int(app_row["application_id"]), job_id)
-                    routed_mapped = isinstance(stored.get("mapped_manifest"), dict)
-                if routed_mapped:
-                    pipeline_tasks.run_mapped_job(job_id)
-                else:
-                    pipeline_tasks.run_pipeline_job(job_id)
-            except PipelineCancelled:
-                raise
-            except Exception as dispatch_exc:
-                # If dispatch itself failed, fall back to plain runner so the
-                # error surfaces through the normal retry path.
-                if "No secure recovery payload" in str(dispatch_exc):
-                    raise
-                try:
-                    pipeline_tasks.run_pipeline_job(job_id)
-                except Exception:
-                    raise dispatch_exc from None
+            stored = load_job_input(int(job["application_id"]), job_id)
+            if isinstance(stored.get("mapped_manifest"), dict):
+                pipeline_tasks.run_mapped_job(job_id)
+            else:
+                pipeline_tasks.run_pipeline_job(job_id)
     except PipelineCancelled:
         return
     except Exception as exc:  # noqa: BLE001
         handle_job_exception(job_id, exc)
     finally:
         stop_event.set()
+        from services.pipeline.input_preparation import cleanup_job_source, job_source_dir
+
+        cleanup_job_source(job_source_dir(job_id))
 
 
 def handle_job_exception(job_id: int, exc: BaseException) -> None:
@@ -436,7 +486,7 @@ def start_health_server(port: int):
 
 
 def run_worker(
-    poll_seconds: float | None = None, once: bool = False
+    poll_seconds: float | None = None, once: bool = False, job_id: int | None = None
 ) -> None:
     """Claim → run → finalize loop. ``once`` processes a single job."""
     global _shutdown_requested
@@ -447,6 +497,29 @@ def run_worker(
     effective_poll = (
         float(poll_seconds) if poll_seconds is not None else _default_poll_seconds()
     )
+    if job_id is not None:
+        # An explicitly scoped worker must never recover or dequeue other jobs.
+        # Claims still use the same transaction/row lock as the regular worker.
+        while not _shutdown_requested:
+            job = claim_next_job(job_id)
+            if job is not None:
+                run_job_by_id(job)
+                if once:
+                    return
+            with get_connection() as connection:
+                state = connection.execute(
+                    "SELECT status, control_state FROM pipeline_jobs WHERE id = ?",
+                    (job_id,),
+                ).fetchone()
+            if (
+                state is None
+                or state["status"] not in {"queued", "retrying"}
+                or state["control_state"] != "running"
+                or once
+            ):
+                return
+            time.sleep(effective_poll)
+        return
     recover_stale_jobs()
     _touch_idle_heartbeat()
     last_idle_touch = time.monotonic()
@@ -476,6 +549,10 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="Process one job and exit")
     parser.add_argument("--poll-seconds", type=float, default=None)
     parser.add_argument(
+        "--job-id", type=int, default=None,
+        help="Process only this queued job and its retries; skip global stale recovery",
+    )
+    parser.add_argument(
         "--serve-health",
         type=int,
         default=None,
@@ -483,6 +560,12 @@ def main() -> None:
         help="Start a minimal GET /health server for Cloud Run probes",
     )
     args = parser.parse_args()
+    if acquire_worker_lock() is None:
+        # Another worker is alive and holding the lock; exit quietly so
+        # duplicate launches (double-clicked scripts, watchdog races) can
+        # never stack up and drain the database connection pool.
+        print("Another DMEF worker is already running; exiting without starting.")
+        return
     if args.serve_health is not None:
         start_health_server(args.serve_health)
     run_worker(
@@ -490,6 +573,7 @@ def main() -> None:
         if args.poll_seconds is not None
         else _default_poll_seconds(),
         once=args.once,
+        job_id=args.job_id,
     )
 
 

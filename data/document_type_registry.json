@@ -1154,6 +1154,8 @@
         "Registered Deed",
         "सेल डीड",
         "बैनामा",
+        "आवासीय भूमि का पट्टा",
+        "आबादी भूमि का पट्टा",
         "વેચાણ દસ્તાવેજ",
         "મિલકત દસ્તાવેજ",
         "માલિકી હક દસ્તાવેજ",
@@ -1169,6 +1171,8 @@
         "property",
         "संपत्ति",
         "बैनामा",
+        "आवासीय भूमि का पट्टा",
+        "आबादी भूमि का पट्टा",
         "મિલકત",
         "સર્વે નંબર",
         "પ્લોટ નંબર",
@@ -1626,6 +1630,7 @@
       "headings": [
         "Customer Application Form",
         "Application Form",
+        "Personal Details",
         "Loan Application",
         "SOURCING DETAILS",
         "ગ્રાહક અરજી ફોર્મ"
@@ -1636,6 +1641,7 @@
         "loan application",
         "sourcing details",
         "application details",
+        "applicant kyc details",
         "co-applicant kyc",
         "guarantor kyc",
         "applicant name",
@@ -1679,6 +1685,9 @@
         "महोदय",
         "end-use letter",
         "end use letter from the borrower"
+      ],
+      "field_patterns": [
+        "(?s)(?:APPLICANT|GUARANTOR)\\s+KYC\\s+DETAILS.{0,250}APPLICANT\\s+NAME.{0,250}AADHAAR.{0,100}PAN"
       ],
       "min_confidence": 0.5
     },

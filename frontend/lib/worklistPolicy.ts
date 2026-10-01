@@ -49,7 +49,9 @@ export function rankWorklistItem(item: WorklistItem): number {
   if (state === "closed") return 4;
   const caseState = String(item.status ?? "").toLowerCase();
   if (caseState === "critical") return 1;
-  if (caseState === "needs_review") return 2;
+  if (caseState === "high") return 2;
+  if (caseState === "medium" || caseState === "needs_review") return 3;
+  if (caseState === "low") return 4;
   return 3;
 }
 

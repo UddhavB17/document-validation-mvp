@@ -2,7 +2,10 @@
 __pycache__/
 *.pyc
 .git/
-data/
+data/*
+!data/checklist.json
+!data/document_type_registry.json
+!data/stamp_duty_rules.json
 uploads/
 outputs/
 frontend/node_modules/
