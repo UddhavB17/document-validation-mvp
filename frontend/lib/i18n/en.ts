@@ -1,5 +1,8 @@
 export const en = {
   "nav.worklist": "Worklist",
+  "nav.queue": "Queue",
+  "nav.savedReviews": "Saved reviews",
+  "nav.myFiles": "My files",
   "nav.portal": "My loan file",
   "nav.signOut": "Sign out",
   "nav.language": "Language",

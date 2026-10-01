@@ -272,3 +272,202 @@ def update_review_item(
         updated, current_finding = _find_current_item(connection, application_id, item_id)
         names = _reviewer_names(connection, {reviewer_id})
         return _serialize_item(current_finding, updated, names.get(reviewer_id))
+
+
+def complete_application_review(
+    application_id: int,
+    reviewer_id: int,
+    note: str | None = None,
+) -> dict[str, Any]:
+    """Mark every pending exception on a file as reviewed in one save."""
+    clean_note = (note or "").strip() or None
+    now = _now()
+    saved_ids: list[str] = []
+    loan_id: str | None = None
+    applicant_name: str | None = None
+    with get_connection() as connection:
+        app_row = connection.execute(
+            "SELECT id, loan_id, applicant_name FROM applications WHERE id = ?",
+            (application_id,),
+        ).fetchone()
+        if app_row is None:
+            raise KeyError(application_id)
+        loan_id = app_row["loan_id"]
+        applicant_name = app_row["applicant_name"]
+        findings = _load_active_findings(connection, application_id)
+        states = _ensure_review_rows(connection, application_id, findings, now)
+        for finding in findings:
+            revision = finding_revision(finding)
+            item_id = review_item_id(application_id, int(finding["id"]), revision)
+            state = states[item_id]
+            if str(state.get("status")) == "reviewed":
+                continue
+            connection.execute(
+                """
+                UPDATE ops_review_items
+                SET status = ?, disposition = ?, reviewer_id = ?, reviewed_at = ?, note = ?, updated_at = ?
+                WHERE application_id = ? AND item_id = ? AND finding_revision = ?
+                """,
+                (
+                    "reviewed",
+                    "correct",
+                    reviewer_id,
+                    now,
+                    clean_note,
+                    now,
+                    application_id,
+                    item_id,
+                    revision,
+                ),
+            )
+            saved_ids.append(item_id)
+        if saved_ids:
+            connection.execute(
+                """
+                INSERT INTO audit_log (application_id, action, details)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    application_id,
+                    "ops_exception_review_completed",
+                    json.dumps(
+                        {
+                            "reviewer_id": reviewer_id,
+                            "saved_item_ids": saved_ids,
+                            "note": clean_note,
+                            "count": len(saved_ids),
+                        }
+                    ),
+                ),
+            )
+    payload = get_review_items(application_id)
+    payload["saved_count"] = len(saved_ids)
+    payload["loan_id"] = loan_id
+    payload["applicant_name"] = applicant_name
+    return payload
+
+
+def list_review_history(limit: int = 50) -> dict[str, Any]:
+    """Return saved file reviews: who reviewed and which problems were kept."""
+    capped = max(1, min(int(limit), 200))
+    with get_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                ori.application_id,
+                a.loan_id,
+                a.applicant_name,
+                a.status AS application_status,
+                ori.item_id,
+                ori.validation_result_id,
+                ori.finding_revision,
+                ori.status,
+                ori.disposition,
+                ori.reviewer_id,
+                ori.reviewed_at,
+                ori.note,
+                vr.rule_id,
+                vr.severity,
+                vr.document_type,
+                vr.page_number,
+                vr.reason,
+                vr.expected_value,
+                vr.found_value,
+                vr.evidence_json,
+                vr.s_no,
+                vr.status AS validation_status
+            FROM ops_review_items ori
+            JOIN applications a ON a.id = ori.application_id
+            JOIN validation_results vr ON vr.id = ori.validation_result_id
+            WHERE ori.status = 'reviewed'
+            ORDER BY ori.reviewed_at DESC, ori.application_id DESC
+            LIMIT ?
+            """,
+            (capped * 20,),
+        ).fetchall()
+        user_ids = {
+            int(row["reviewer_id"])
+            for row in rows
+            if row["reviewer_id"] is not None
+        }
+        names = _reviewer_names(connection, user_ids)
+
+    grouped: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        app_id = int(row["application_id"])
+        entry = grouped.get(app_id)
+        if entry is None:
+            entry = {
+                "application_id": app_id,
+                "loan_id": row["loan_id"],
+                "applicant_name": row["applicant_name"],
+                "application_status": row["application_status"],
+                "reviewed_at": row["reviewed_at"],
+                "reviewers": [],
+                "problems": [],
+            }
+            grouped[app_id] = entry
+        reviewer_id = row["reviewer_id"]
+        if reviewer_id is not None:
+            reviewer = {
+                "id": int(reviewer_id),
+                "name": names.get(int(reviewer_id), f"user {int(reviewer_id)}"),
+            }
+            if reviewer not in entry["reviewers"]:
+                entry["reviewers"].append(reviewer)
+        if row["reviewed_at"] and (
+            entry["reviewed_at"] is None or str(row["reviewed_at"]) > str(entry["reviewed_at"])
+        ):
+            entry["reviewed_at"] = row["reviewed_at"]
+        finding = {
+            "rule_id": row["rule_id"],
+            "s_no": row["s_no"],
+            "severity": row["severity"],
+            "document_type": row["document_type"],
+            "expected_value": row["expected_value"],
+            "found_value": row["found_value"],
+            "page_number": row["page_number"],
+            "reason": row["reason"],
+            "evidence_json": _parse_evidence(row["evidence_json"]),
+            "status": row["validation_status"],
+        }
+        try:
+            serialized = _serialize_item(
+                finding,
+                {
+                    "item_id": row["item_id"],
+                    "application_id": app_id,
+                    "validation_result_id": row["validation_result_id"],
+                    "finding_revision": row["finding_revision"],
+                    "status": row["status"],
+                    "disposition": row["disposition"],
+                    "reviewer_id": reviewer_id,
+                    "reviewed_at": row["reviewed_at"],
+                    "note": row["note"],
+                },
+                names.get(int(reviewer_id)) if reviewer_id is not None else None,
+            )
+        except ValueError:
+            continue
+        entry["problems"].append(
+            {
+                "item_id": serialized["item_id"],
+                "code": serialized["code"],
+                "severity": serialized["severity"],
+                "title": serialized["title"],
+                "detail": serialized["detail"],
+                "pages": serialized["pages"],
+                "reviewer": serialized["reviewer"],
+                "reviewed_at": serialized["reviewed_at"],
+                "note": serialized["note"],
+            }
+        )
+
+    files = sorted(
+        grouped.values(),
+        key=lambda item: str(item.get("reviewed_at") or ""),
+        reverse=True,
+    )[:capped]
+    for file_entry in files:
+        file_entry["problem_count"] = len(file_entry["problems"])
+    return {"files": files, "count": len(files)}

@@ -37,9 +37,11 @@ test("stores are independent instances", () => {
   assert.equal(second.getToken(), null);
 });
 
-test("only /login is public", () => {
+test("/login and /portal are public", () => {
   assert.equal(isPublicPath("/login"), true);
-  for (const path of ["/", "/ops", "/admin", "/admin/users", "/ops/applications/1"]) {
+  assert.equal(isPublicPath("/portal"), true);
+  assert.equal(isPublicPath("/portal/"), true);
+  for (const path of ["/", "/ops", "/admin", "/admin/users", "/ops/applications/1", "/review"]) {
     assert.equal(isPublicPath(path), false, path);
   }
 });

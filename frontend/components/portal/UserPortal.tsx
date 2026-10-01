@@ -161,12 +161,12 @@ function fixabilityVerdict(
   if (hard === 0) {
     return lang === "EN"
       ? {
-          label: "🔧 Easy to fix",
+          label: "Easy to fix",
           guidance: "Just upload the missing papers — no branch visit needed.",
           pill: "border-emerald-300 bg-emerald-100 text-emerald-800",
         }
       : {
-          label: "🔧 ठीक करना आसान",
+          label: "ठीक करना आसान",
           guidance: "बस गायब कागज़ अपलोड करें — शाखा जाने की ज़रूरत नहीं।",
           pill: "border-emerald-300 bg-emerald-100 text-emerald-800",
         };
@@ -174,24 +174,24 @@ function fixabilityVerdict(
   if (hard * 2 <= items.length) {
     return lang === "EN"
       ? {
-          label: "🔧 Mostly easy to fix",
+          label: "Mostly easy to fix",
           guidance: `Only ${hard} of ${items.length} may need a branch visit — the rest just need an upload.`,
           pill: "border-amber-300 bg-amber-100 text-amber-800",
         }
       : {
-          label: "🔧 अधिकतर आसान",
+          label: "अधिकतर आसान",
           guidance: `केवल ${hard} कार्य के लिए शाखा जाना पड़ सकता है — बाकी सिर्फ अपलोड से हो जाएंगे।`,
           pill: "border-amber-300 bg-amber-100 text-amber-800",
         };
   }
   return lang === "EN"
     ? {
-        label: "🏦 Needs branch support",
+        label: "Needs branch support",
         guidance: "Please visit your branch with your documents — the team will help you fix these.",
         pill: "border-rose-300 bg-rose-100 text-rose-800",
       }
     : {
-        label: "🏦 शाखा की मदद चाहिए",
+        label: "शाखा की मदद चाहिए",
         guidance: "कृपया अपने दस्तावेज़ लेकर शाखा जाएं — टीम आपकी मदद करेगी।",
         pill: "border-rose-300 bg-rose-100 text-rose-800",
       };
@@ -206,12 +206,10 @@ export function LangButton({
 }) {
   return (
     <button
-      type="button"
-      onClick={() => onLangChange(lang === "EN" ? "HI" : "EN")}
-      className="rounded-md bg-slate-200 px-2.5 py-1 text-xs font-bold text-slate-700 transition hover:bg-slate-300"
-      aria-label="Switch language"
+      type="button" onClick={() => onLangChange(lang === "EN" ? "HI" : "EN")}
+      className="portal-theme-langbtn rounded-lg px-2.5 py-1 text-xs font-semibold transition" aria-label="Switch language"
     >
-      {lang === "EN" ? "🌐 हिंदी में बदलें" : "🌐 English"}
+      {lang === "EN" ? "हिंदी में बदलें" : "English"}
     </button>
   );
 }
@@ -230,31 +228,27 @@ export function PortalHeader({
   onViewChange?: (next: PortalView) => void;
 }) {
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
+    <header className="portal-theme-header sticky top-0 z-40 px-4 py-3 backdrop-blur">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="rounded-lg bg-blue-600 px-3 py-1.5 text-lg font-black tracking-wide text-white">DMEF</div>
+          <div className="portal-theme-mark rounded-lg px-3 py-1.5 text-sm font-bold tracking-wide text-white">DMEF</div>
           <div>
-            <h1 className="text-base font-bold leading-tight text-slate-900">Loan Verification Portal</h1>
-            <p className="text-xs text-slate-500">{meta}</p>
+            <h1 className="portal-theme-title text-base font-semibold leading-tight">My loan file</h1>
+            <p className="portal-theme-meta text-xs">{meta}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {view && onViewChange ? (
-            <div className="flex rounded-lg border border-slate-200 bg-slate-100 p-1 text-xs font-medium">
+            <div className="portal-theme-tabs flex rounded-xl p-1 text-xs font-medium">
               <button
-                type="button"
-                onClick={() => onViewChange("dashboard")}
-                className={`rounded-md px-3 py-1 transition-all ${view === "dashboard" ? "bg-white font-bold text-blue-600 shadow" : "text-slate-600"}`}
-              >
-                Dashboard
+                type="button" onClick={() => onViewChange("dashboard")}
+                className={`rounded-lg px-3 py-1.5 transition-all ${view === "dashboard" ? "portal-theme-tab is-active" : "portal-theme-tab"}`}
+              > Overview
               </button>
               <button
-                type="button"
-                onClick={() => onViewChange("report")}
-                className={`rounded-md px-3 py-1 transition-all ${view === "report" ? "bg-white font-bold text-blue-600 shadow" : "text-slate-600"}`}
-              >
-                Fix Document
+                type="button" onClick={() => onViewChange("report")}
+                className={`rounded-lg px-3 py-1.5 transition-all ${view === "report" ? "portal-theme-tab is-active" : "portal-theme-tab"}`}
+              > Fix document
               </button>
             </div>
           ) : null}
@@ -361,7 +355,7 @@ export function UserPortal({
   const setLanguage = (next: PortalLang) => setLocale(next === "HI" ? "hi" : "en");
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+    <div className="portal-theme-root min-h-full font-sans">
       {chrome ? (
       <PortalHeader
         lang={lang}
@@ -369,17 +363,15 @@ export function UserPortal({
         view={view}
         onViewChange={navigate}
         meta={
-          <>
-            Application ID: <span className="font-mono font-semibold text-slate-700">{appLabel}</span>
-            <span className="ml-2 hidden sm:inline">
-              Borrower: <span className="font-semibold text-slate-700">{borrower}</span>
+          <> Application ID: <span className="font-mono font-semibold">{appLabel}</span>
+            <span className="ml-2 hidden sm:inline"> Borrower: <span className="font-semibold">{borrower}</span>
             </span>
           </>
         }
       />
       ) : null}
 
-      <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
+      <main className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
         {view === "dashboard" ? (
           <DashboardView
             lang={lang}
@@ -468,7 +460,7 @@ function DashboardView({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 rounded-r-xl border-l-4 border-amber-500 bg-amber-50 p-4 shadow-sm md:flex-row md:items-center md:justify-between">
         <div className="flex items-start gap-3">
-          <span aria-hidden="true" className="mt-0.5 text-xl">⚠️</span>
+          <span aria-hidden="true" className="mt-0.5 inline-block h-2.5 w-2.5 rounded-full bg-amber-500" />
           <div>
             <h2 className="text-base font-bold text-amber-900">
               {lang === "EN"
@@ -500,7 +492,7 @@ function DashboardView({
             <p className="mt-1 text-xl font-black text-slate-900">{borrower}</p>
             <p className="mt-0.5 text-[11px] text-slate-500">{loanId}</p>
           </div>
-          <div className="rounded-xl bg-blue-50 p-3 text-xl" aria-hidden="true">📄</div>
+          <div className="rounded-xl bg-blue-50 p-3" aria-hidden="true"><span className="block h-2.5 w-2.5 rounded-full bg-blue-500" /></div>
         </div>
         <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div>
@@ -508,7 +500,7 @@ function DashboardView({
             <p className="mt-1 text-xl font-black text-emerald-600">{found} / {total} Passed</p>
             <p className="mt-0.5 text-[11px] text-slate-500">{items.length} need attention</p>
           </div>
-          <div className="rounded-xl bg-emerald-50 p-3 text-xl" aria-hidden="true">🛡️</div>
+          <div className="rounded-xl bg-emerald-50 p-3" aria-hidden="true"><span className="block h-2.5 w-2.5 rounded-full bg-emerald-500" /></div>
         </div>
         <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div>
@@ -516,14 +508,13 @@ function DashboardView({
             <p className="mt-1 text-xl font-black text-amber-600">{items.length} Items</p>
             <p className="mt-0.5 text-[11px] font-medium text-amber-700">Requires re-upload</p>
           </div>
-          <div className="rounded-xl bg-amber-50 p-3 text-xl" aria-hidden="true">⚠️</div>
+          <div className="rounded-xl bg-amber-50 p-3" aria-hidden="true"><span className="block h-2.5 w-2.5 rounded-full bg-amber-500" /></div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <h3 className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-900">
-            <span aria-hidden="true">📋</span>
             {lang === "EN" ? "Report Summary" : "रिपोर्ट सारांश"}
           </h3>
           <p className="text-sm leading-relaxed text-slate-700">{lang === "EN" ? summaryEn : summaryHi}</p>
@@ -531,7 +522,6 @@ function DashboardView({
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900">
-            <span aria-hidden="true">❤️</span>
             {lang === "EN" ? "File Health" : "फ़ाइल की स्थिति"}
           </h3>
           <div className="flex items-center gap-4">
@@ -539,13 +529,7 @@ function DashboardView({
               <svg viewBox="0 0 120 120" className="h-28 w-28 -rotate-90" role="img" aria-label={lang === "EN" ? `File health ${progress} percent` : `फ़ाइल की स्थिति ${progress} प्रतिशत`}>
                 <circle cx="60" cy="60" r="52" fill="none" strokeWidth="12" className="stroke-slate-200" />
                 <circle
-                  cx="60"
-                  cy="60"
-                  r="52"
-                  fill="none"
-                  strokeWidth="12"
-                  strokeLinecap="round"
-                  className={healthRingClass(progress)}
+                  cx="60" cy="60" r="52" fill="none" strokeWidth="12" strokeLinecap="round" className={healthRingClass(progress)}
                   strokeDasharray={ringC}
                   strokeDashoffset={ringC * (1 - Math.min(100, Math.max(0, progress)) / 100)}
                 />
@@ -570,9 +554,7 @@ function DashboardView({
             </ul>
           </div>
           <div
-            className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-200"
-            role="img"
-            aria-label={lang === "EN" ? `${found} passed, ${missing} missing, ${notChecked} not checked` : `${found} पास, ${missing} गायब, ${notChecked} जांच लंबित`}
+            className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-slate-200" role="img" aria-label={lang === "EN" ? `${found} passed, ${missing} missing, ${notChecked} not checked` : `${found} पास, ${missing} गायब, ${notChecked} जांच लंबित`}
           >
             <div className="bg-emerald-500" style={{ width: `${total > 0 ? (found / total) * 100 : 0}%` }} />
             <div className="bg-amber-500" style={{ width: `${total > 0 ? (missing / total) * 100 : 0}%` }} />
@@ -603,7 +585,7 @@ function DashboardView({
               >
                 <div className="flex items-start gap-3">
                   <div className={`mt-0.5 shrink-0 rounded-lg p-2.5 text-lg ${item.tone === "rose" ? "bg-rose-100" : "bg-amber-100"}`} aria-hidden="true">
-                    {item.tone === "rose" ? "📤" : "📄"}
+                    {item.tone === "rose" ? "Upload" : "Doc"}
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900">{lang === "EN" ? item.titleEn : item.titleHi}</h4>
@@ -615,8 +597,7 @@ function DashboardView({
                   </div>
                 </div>
                 <button
-                  type="button"
-                  onClick={() => onFixIssue(item.key)}
+                  type="button" onClick={() => onFixIssue(item.key)}
                   className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-blue-700 sm:w-auto"
                 >
                   <span>{lang === "EN" ? "Fix Document" : "दस्तावेज़ सुधारें"}</span>
@@ -672,8 +653,7 @@ function ReviewedItemsView({
                   </p>
                 </div>
                 <button
-                  type="button"
-                  onClick={() => onOpen(item.key)}
+                  type="button" onClick={() => onOpen(item.key)}
                   className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100"
                 >
                   {lang === "EN" ? "Open review" : "समीक्षा खोलें"}
@@ -736,8 +716,7 @@ function DocumentReportView({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <button
-          type="button"
-          onClick={onBack}
+          type="button" onClick={onBack}
           className="flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition hover:text-slate-900"
         >
           <span aria-hidden="true" className="mr-1.5">←</span>
@@ -756,31 +735,28 @@ function DocumentReportView({
             </h3>
             <div className="flex items-center gap-1">
               <button
-                type="button"
-                onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 10) / 10))}
+                type="button" onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.5) * 10) / 10))}
                 disabled={zoom <= 1}
                 title={lang === "EN" ? "Zoom out" : "छोटा करें"}
                 aria-label={lang === "EN" ? "Zoom out" : "छोटा करें"}
                 className="rounded bg-slate-100 p-1.5 text-xs transition hover:bg-slate-200 disabled:opacity-40"
               >
-                <span aria-hidden="true">🔍−</span>
+                <span aria-hidden="true">-</span>
               </button>
               <span className="min-w-10 text-center font-mono text-[11px] font-bold text-slate-500" aria-live="polite">
                 {Math.round(zoom * 100)}%
               </span>
               <button
-                type="button"
-                onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.5) * 10) / 10))}
+                type="button" onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.5) * 10) / 10))}
                 disabled={zoom >= 3}
                 title={lang === "EN" ? "Zoom in" : "बड़ा करें"}
                 aria-label={lang === "EN" ? "Zoom in" : "बड़ा करें"}
                 className="rounded bg-slate-100 p-1.5 text-xs transition hover:bg-slate-200 disabled:opacity-40"
               >
-                <span aria-hidden="true">🔍+</span>
+                <span aria-hidden="true">+</span>
               </button>
               <button
-                type="button"
-                onClick={() => setRotation((r) => (r + 90) % 360)}
+                type="button" onClick={() => setRotation((r) => (r + 90) % 360)}
                 title={lang === "EN" ? "Rotate 90 degrees" : "90 डिग्री घुमाएँ"}
                 aria-label={lang === "EN" ? "Rotate 90 degrees" : "90 डिग्री घुमाएँ"}
                 className="rounded bg-slate-100 p-1.5 text-xs transition hover:bg-slate-200"
@@ -788,8 +764,7 @@ function DocumentReportView({
                 <span aria-hidden="true" className="inline-block" style={{ transform: `rotate(${rotation}deg)` }}>↻</span>
               </button>
               <button
-                type="button"
-                onClick={reloadImage}
+                type="button" onClick={reloadImage}
                 disabled={applicationId === null}
                 title={lang === "EN" ? "Reload image" : "तस्वीर फिर से लोड करें"}
                 aria-label={lang === "EN" ? "Reload image" : "तस्वीर फिर से लोड करें"}
@@ -802,8 +777,7 @@ function DocumentReportView({
 
           <div className="relative overflow-auto rounded-lg border border-slate-300 bg-slate-100" style={{ maxHeight: 560 }}>
             <div
-              className="relative mx-auto"
-              style={{
+              className="relative mx-auto" style={{
                 width: `${zoom * 100}%`,
                 maxWidth: zoom > 1 ? "none" : undefined,
                 transform: rotation ? `rotate(${rotation}deg)` : undefined,
@@ -813,12 +787,10 @@ function DocumentReportView({
             <>
               {imgLoading ? (
                 <div
-                  className="flex min-h-[280px] items-center justify-center gap-2 p-8 text-sm font-medium text-slate-500"
-                  role="status"
+                  className="flex min-h-[280px] items-center justify-center gap-2 p-8 text-sm font-medium text-slate-500" role="status"
                 >
                   <span
-                    className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600"
-                    aria-hidden="true"
+                    className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-blue-600" aria-hidden="true"
                   />
                   {lang === "EN" ? "Loading page…" : "पृष्ठ लोड हो रहा है…"}
                 </div>
@@ -832,13 +804,11 @@ function DocumentReportView({
                   setImgLoading(false);
                 }}
                 alt={lang === "EN" ? `Scanned page ${pageNo}` : `स्कैन किया गया पृष्ठ ${pageNo}`}
-                className="w-full"
-                style={{ display: imgLoading ? "none" : undefined }}
+                className="w-full" style={{ display: imgLoading ? "none" : undefined }}
               />
               {!imgLoading && item.evidenceBbox ? (
                 <div
-                  className="pointer-events-none absolute rounded border-[3px] border-rose-600 bg-rose-500/10"
-                  style={bboxToStyle(item.evidenceBbox)}
+                  className="pointer-events-none absolute rounded border-[3px] border-rose-600 bg-rose-500/10" style={bboxToStyle(item.evidenceBbox)}
                   aria-hidden="true"
                 />
               ) : null}
@@ -859,8 +829,7 @@ function DocumentReportView({
               <p className="text-xs leading-relaxed">{lang === "EN" ? item.detailEn : item.detailHi}</p>
               {item.evidenceBbox ? (
                 <div
-                  className="pointer-events-none absolute rounded border-2 border-rose-600 bg-rose-500/10"
-                  style={{
+                  className="pointer-events-none absolute rounded border-2 border-rose-600 bg-rose-500/10" style={{
                     left: `${item.evidenceBbox[0] * 100}%`,
                     top: `${item.evidenceBbox[1] * 100}%`,
                     width: `${Math.max(8, (item.evidenceBbox[2] - item.evidenceBbox[0]) * 100)}%`,
@@ -886,7 +855,7 @@ function DocumentReportView({
           <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <span className="rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">
-                🟡 {lang === "EN" ? "Action Needed" : "सुधार आवश्यक"}
+                {lang === "EN" ? "Action Needed" : "सुधार आवश्यक"}
               </span>
               <span className="font-mono text-xs text-slate-500">{item.applicant}</span>
             </div>
@@ -898,7 +867,6 @@ function DocumentReportView({
 
             <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50/70 p-3">
               <p className="flex items-center gap-1 text-xs font-bold text-blue-900">
-                <span aria-hidden="true">❓</span>
                 {lang === "EN" ? "How to resolve this easily:" : "इसे आसानी से कैसे हल करें:"}
               </p>
               <ul className="list-inside list-disc space-y-1 text-xs text-blue-800">
@@ -928,13 +896,11 @@ function DocumentReportView({
                   {lang === "EN" ? "Note (optional)" : "नोट (वैकल्पिक)"}
                 </label>
                 <textarea
-                  id="review-note"
-                  value={reviewNote}
+                  id="review-note" value={reviewNote}
                   onChange={(event) => setReviewNote(event.target.value)}
                   rows={3}
                   maxLength={2000}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-                  placeholder={lang === "EN" ? "What did you verify?" : "आपने क्या जाँचा?"}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800" placeholder={lang === "EN" ? "What did you verify?" : "आपने क्या जाँचा?"}
                 />
                 {reviewError ? <p role="alert" className="text-xs font-semibold text-rose-700">{reviewError}</p> : null}
                 {reviewSaved ? (
@@ -949,8 +915,7 @@ function DocumentReportView({
                 ) : null}
                 <div className="flex flex-wrap gap-2">
                   <button
-                    type="button"
-                    disabled={reviewPending || (applicationId !== null && !evidenceReady)}
+                    type="button" disabled={reviewPending || (applicationId !== null && !evidenceReady)}
                     onClick={() => {
                       setReviewError(null);
                       setReviewSaved(false);
@@ -965,8 +930,7 @@ function DocumentReportView({
                   </button>
                   {reviewItem.reviewStatus === "reviewed" ? (
                     <button
-                      type="button"
-                      disabled={reviewPending}
+                      type="button" disabled={reviewPending}
                       onClick={() => {
                         setReviewError(null);
                         setReviewSaved(false);

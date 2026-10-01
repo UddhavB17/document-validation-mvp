@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from services.auth.dependencies import CurrentUser, get_current_user
-from services.ops_reviews import StaleReviewItemError, get_review_items, update_review_item
+from services.ops_reviews import (
+    StaleReviewItemError,
+    complete_application_review,
+    get_review_items,
+    list_review_history,
+    update_review_item,
+)
 
 router = APIRouter(
     prefix="/ops", tags=["ops"], dependencies=[Depends(get_current_user)]
@@ -21,10 +27,33 @@ class ReviewItemUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class ReviewCompleteRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/review-history")
+def review_history(limit: int = Query(default=50, ge=1, le=200)) -> dict:
+    """List saved file reviews with reviewer names and problem summaries."""
+    return list_review_history(limit)
+
+
 @router.get("/applications/{application_id}/review-items")
 def list_review_items(application_id: int) -> dict:
     try:
         return get_review_items(application_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+
+@router.post("/applications/{application_id}/review-items/complete")
+def complete_review_items(
+    application_id: int,
+    payload: ReviewCompleteRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Save every pending exception on this file as reviewed."""
+    try:
+        return complete_application_review(application_id, user.id, payload.note)
     except KeyError:
         raise HTTPException(status_code=404, detail="Application not found")
 

@@ -187,6 +187,54 @@ def test_reprocessing_clears_review_state_and_preserves_audit(
     assert client.get(other_path, headers=auth_headers).json() == other_before
 
 
+def test_complete_review_saves_all_pending_and_history_lists_reviewer(auth_headers) -> None:
+    application_id, _validation_result_id = _seed_review_case()
+    # Second finding on the same file.
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO validation_results (
+                application_id, rule_id, s_no, severity, document_type,
+                expected_value, found_value, page_number, reason, evidence_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                application_id,
+                "AADHAAR_NUMBER_MISMATCH",
+                3,
+                "MEDIUM",
+                "Aadhaar",
+                "EXPECTED",
+                "FOUND",
+                4,
+                "ID digits differ",
+                json.dumps({"page": 4, "bbox": [0.2, 0.2, 0.5, 0.4], "text": "FOUND"}),
+            ),
+        )
+    client = TestClient(app)
+    listed = client.get(f"/ops/applications/{application_id}/review-items", headers=auth_headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["counts"]["pending"] == 2
+
+    completed = client.post(
+        f"/ops/applications/{application_id}/review-items/complete",
+        headers=auth_headers,
+        json={"note": "Checked both exceptions on this file."},
+    )
+    assert completed.status_code == 200, completed.text
+    body = completed.json()
+    assert body["saved_count"] == 2
+    assert body["counts"] == {"total": 2, "pending": 0, "reviewed": 2}
+
+    history = client.get("/ops/review-history", headers=auth_headers)
+    assert history.status_code == 200, history.text
+    files = history.json()["files"]
+    match = next(item for item in files if item["application_id"] == application_id)
+    assert match["problem_count"] == 2
+    assert any(person["name"] == "Administrator" for person in match["reviewers"])
+    assert {problem["code"] for problem in match["problems"]} >= {"ID_MISMATCH"}
+
+
 def test_failed_reprocessing_restores_findings_and_saved_review(auth_headers) -> None:
     application_id, validation_result_id = _seed_review_case()
     client = TestClient(app)

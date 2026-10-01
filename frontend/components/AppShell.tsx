@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { LanguageToggle } from "@/components/ops/LanguageToggle";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ThemePicker } from "@/components/ThemePicker";
 import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
 import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
@@ -25,7 +26,9 @@ interface NavItem {
 }
 
 const OPERATIONS_NAV: NavItem[] = [
-  { href: "/ops", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "worklist" },
+  { href: "/review?tab=queue", labelKey: "nav.queue", fallback: "Queue", icon: "worklist", id: "queue" },
+  { href: "/review", labelKey: "nav.savedReviews", fallback: "Saved reviews", icon: "ops", id: "review" },
+  { href: "/portal", labelKey: "nav.myFiles", fallback: "My files", icon: "intake", id: "portal" },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -55,7 +58,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   }, [redirectTarget, router]);
 
-  if (pathname === "/login" || pathname === "/portal" || pathname.startsWith("/portal/")) {
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
+
+  const isPortalPath = pathname === "/portal" || pathname.startsWith("/portal/");
+  // Public / logged-out portal demo stays shell-free. Signed-in users get the
+  // same reviewer sidebar on My files as on Queue and Saved reviews.
+  if (isPortalPath && session.status !== "authenticated") {
+    if (session.status === "loading") {
+      return (
+        <div className="app-shell">
+          <main id="main-content" className="app-shell__main" tabIndex={-1}>
+            <p role="status">Loading…</p>
+          </main>
+        </div>
+      );
+    }
     return <>{children}</>;
   }
 
@@ -72,7 +91,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <ShellChrome pathname={pathname} role={session.role} onLogout={() => void session.logout()}>{children}</ShellChrome>;
+  return (
+    <Suspense fallback={<div className="app-shell"><main className="app-shell__main">Loading...</main></div>}>
+      <ShellChrome pathname={pathname} role={session.role} onLogout={() => void session.logout()}>
+        {children}
+      </ShellChrome>
+    </Suspense>
+  );
 }
 
 function WorkerStartButton() {
@@ -126,15 +151,25 @@ function ShellChrome({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const applicationId = getApplicationIdFromPath(pathname);
-  const healthStatus = health.data?.status === "ok" ? "ok" : "failed";
+  const searchParams = useSearchParams();
+  // Backend /health returns "degraded" when the worker heartbeat is stale but
+  // the API/DB are fine - that must not look like a total outage in the shell.
+  const healthStatus =
+    health.data?.status === "ok" || health.data?.status === "degraded" ? "ok" : "failed";
   const isAdmin = role === "admin";
-  const primaryNav = isAdmin ? ADMIN_NAV : OPERATIONS_NAV;
-  const homeHref = isAdmin ? "/admin/worklist" : "/ops";
+  const primaryNav = isAdmin
+    ? [
+        ...ADMIN_NAV,
+        { href: "/review", labelKey: "nav.worklist" as const, fallback: "Reviewer", icon: "ops" as const, id: "review" },
+      ]
+    : OPERATIONS_NAV;
+  const homeHref = isAdmin ? "/admin/worklist" : "/review";
 
   const closeMobileNavigation = () => setIsMobileNavOpen(false);
+  const reviewTab = searchParams.get("tab");
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-user-shell={isAdmin ? "admin" : "reviewer"}>
       <a className="skip-link" href="#main-content">Skip to content</a>
 
       <aside
@@ -150,7 +185,9 @@ function ShellChrome({
               <span className="app-shell__brand-mark" aria-hidden="true">D</span>
               <span className="app-shell__brand-copy">
                 <span className="app-shell__brand-name">DMEF</span>
-                <span className="app-shell__brand-subtitle">Operations review</span>
+                <span className="app-shell__brand-subtitle">
+                  {isAdmin ? "Admin workspace" : "Reviewer workspace"}
+                </span>
               </span>
             </Link>
             <button
@@ -167,7 +204,7 @@ function ShellChrome({
             <div className="app-shell__nav-label">Workspace</div>
             <ul className="app-shell__nav-list">
               {primaryNav.map((item) => {
-                const active = isNavItemActive(item.id, item.href, pathname, applicationId);
+                const active = isNavItemActive(item.id, item.href, pathname, applicationId, reviewTab);
                 const showSubmenu = item.id === "worklist" && applicationId !== null;
 
                 return (
@@ -229,6 +266,9 @@ function ShellChrome({
             <div className="app-shell__nav-row">
               <LanguageToggle />
             </div>
+            <div className="app-shell__nav-row app-shell__theme-row">
+              <ThemePicker />
+            </div>
             <button
               type="button"
               onClick={onLogout}
@@ -284,7 +324,9 @@ function ShellChrome({
           </button>
           <div className="app-shell__header-copy">
             <span className="app-shell__header-kicker">DMEF</span>
-            <span className="app-shell__header-title">Document validation operations</span>
+            <span className="app-shell__header-title">
+              {isAdmin ? "Document validation operations" : "Loan file reviews"}
+            </span>
           </div>
         </header>
         <main id="main-content" className="app-shell__main" tabIndex={-1}>{children}</main>
@@ -294,18 +336,37 @@ function ShellChrome({
 }
 
 function getApplicationIdFromPath(pathname: string): number | null {
-  const applicationPathMatch = pathname.match(/^\/(?:admin\/applications|ops\/applications|applications)\/(\d+)/);
+  const applicationPathMatch = pathname.match(
+    /^\/(?:admin\/applications|ops\/applications|review\/applications|applications)\/(\d+)/,
+  );
   return applicationPathMatch ? Number(applicationPathMatch[1]) : null;
 }
 
-function isNavItemActive(itemId: string, href: string, pathname: string, applicationId: number | null) {
+function isNavItemActive(
+  itemId: string,
+  href: string,
+  pathname: string,
+  applicationId: number | null,
+  reviewTab: string | null = null,
+) {
   if (itemId === "worklist" && applicationId !== null && pathname.startsWith("/admin/applications/")) {
     return true;
   }
   if (itemId === "ops" && applicationId !== null && pathname.startsWith("/ops/applications/")) {
     return true;
   }
-  return pathname === href || pathname.startsWith(`${href}/`);
+  if (itemId === "queue") {
+    return pathname === "/review" && reviewTab === "queue";
+  }
+  if (itemId === "review") {
+    if (pathname.startsWith("/review/applications/")) return true;
+    return pathname === "/review" && reviewTab !== "queue";
+  }
+  if (itemId === "portal" && (pathname === "/portal" || pathname.startsWith("/portal/"))) {
+    return true;
+  }
+  const pathOnly = href.split("?")[0];
+  return pathname === pathOnly || pathname.startsWith(`${pathOnly}/`);
 }
 
 function AppSidebarSubmenu({ applicationId, isAdmin }: { applicationId: number; isAdmin: boolean }) {

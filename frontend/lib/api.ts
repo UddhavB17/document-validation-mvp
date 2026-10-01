@@ -1148,3 +1148,61 @@ export async function updateOpsReviewItem(
   });
   return parseApiResponse(response, opsReviewItemSchema);
 }
+
+// --- friendlier reviewer: save-all + history ---
+export const opsReviewCompleteSchema = opsReviewItemsSchema.extend({
+  saved_count: z.number(),
+  loan_id: z.string().nullable().optional(),
+  applicant_name: z.string().nullable().optional(),
+});
+export type OpsReviewComplete = z.infer<typeof opsReviewCompleteSchema>;
+
+export async function completeOpsReviewItems(
+  applicationId: number,
+  payload: { note?: string } = {},
+): Promise<OpsReviewComplete> {
+  const response = await fetch(
+    `${API_BASE_URL}/ops/applications/${applicationId}/review-items/complete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(payload),
+    },
+  );
+  return parseApiResponse(response, opsReviewCompleteSchema);
+}
+
+const opsReviewHistoryProblemSchema = z.object({
+  item_id: z.string(),
+  code: z.string(),
+  severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
+  title: opsTextSchema,
+  detail: opsTextSchema,
+  pages: z.array(z.number()),
+  reviewer: opsReviewReviewerSchema.nullable(),
+  reviewed_at: z.string().nullable(),
+  note: z.string().nullable(),
+});
+
+export const opsReviewHistoryFileSchema = z.object({
+  application_id: z.number(),
+  loan_id: z.string().nullable(),
+  applicant_name: z.string().nullable(),
+  application_status: z.string().nullable(),
+  reviewed_at: z.string().nullable(),
+  reviewers: z.array(opsReviewReviewerSchema),
+  problem_count: z.number(),
+  problems: z.array(opsReviewHistoryProblemSchema),
+});
+
+export const opsReviewHistorySchema = z.object({
+  files: z.array(opsReviewHistoryFileSchema),
+  count: z.number(),
+});
+
+export type OpsReviewHistory = z.infer<typeof opsReviewHistorySchema>;
+export type OpsReviewHistoryFile = z.infer<typeof opsReviewHistoryFileSchema>;
+
+export async function fetchOpsReviewHistory(limit = 50): Promise<OpsReviewHistory> {
+  return getJsonResponse(`/ops/review-history?limit=${limit}`, opsReviewHistorySchema);
+}

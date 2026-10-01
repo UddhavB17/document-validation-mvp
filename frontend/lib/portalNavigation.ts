@@ -11,6 +11,7 @@ export function portalApplicationHref(
   applicationId: number,
   currentSearch: string,
   next: { view: PortalView; selectedKey?: string | null },
+  basePath: "/ops" | "/review" = "/ops",
 ): string {
   const params = new URLSearchParams(currentSearch);
   params.delete("exception");
@@ -25,5 +26,5 @@ export function portalApplicationHref(
     params.delete("tab");
   }
   const query = params.toString();
-  return `/ops/applications/${applicationId}${query ? `?${query}` : ""}`;
+  return `${basePath}/applications/${applicationId}${query ? `?${query}` : ""}`;
 }

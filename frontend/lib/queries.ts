@@ -12,6 +12,8 @@ import {
   fetchApplicationStatus,
   fetchNdcState,
   fetchOpsApplication,
+  completeOpsReviewItems,
+  fetchOpsReviewHistory,
   fetchOpsReviewItems,
   fetchOpsWorklist,
   fetchPortalApplication,
@@ -148,8 +150,33 @@ export function useUpdateOpsReviewItem(applicationId: number) {
         queryClient.invalidateQueries({ queryKey: ["opsReviewItems", applicationId] }),
         queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
         queryClient.invalidateQueries({ queryKey: ["opsWorklist"] }),
+        queryClient.invalidateQueries({ queryKey: ["opsReviewHistory"] }),
       ]);
     },
+  });
+}
+
+export function useCompleteOpsReviewItems(applicationId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { note?: string } = {}) => completeOpsReviewItems(applicationId, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["opsReviewItems", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsWorklist"] }),
+        queryClient.invalidateQueries({ queryKey: ["opsReviewHistory"] }),
+      ]);
+    },
+  });
+}
+
+export function useOpsReviewHistory(limit = 50) {
+  return useQuery({
+    queryKey: ["opsReviewHistory", limit],
+    queryFn: () => fetchOpsReviewHistory(limit),
+    refetchInterval: false,
+    retry: false,
   });
 }
 

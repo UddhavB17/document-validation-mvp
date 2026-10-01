@@ -2,6 +2,9 @@ import type { en } from "./en";
 
 export const hi: { [K in keyof typeof en]: string } = {
   "nav.worklist": "कार्यसूची",
+  "nav.queue": "कतार",
+  "nav.savedReviews": "सहेजी समीक्षाएँ",
+  "nav.myFiles": "मेरी फ़ाइलें",
   "nav.portal": "मेरी ऋण फ़ाइल",
   "nav.signOut": "साइन आउट",
   "nav.language": "भाषा",
