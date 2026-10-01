@@ -10,7 +10,11 @@ import type { SessionStatus } from "./auth";
 
 /** Paths that render without an authenticated session. */
 export function isPublicPath(pathname: string): boolean {
-  return pathname === "/login";
+  return (
+    pathname === "/login" ||
+    pathname === "/portal" ||
+    pathname.startsWith("/portal/")
+  );
 }
 
 /**

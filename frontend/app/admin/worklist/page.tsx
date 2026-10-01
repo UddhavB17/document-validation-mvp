@@ -314,7 +314,10 @@ function ProcessingProgress({ item }: { item: WorklistItem }) {
 
 function WorklistResumeButton({ item }: { item: WorklistItem }) {
   const resume = useResumeApplication(item.id);
-  if (!item.pipeline_retryable) {
+  // Resumable covers crash-stuck jobs (stale running heartbeat) that are
+  // not "retryable"; fall back to retryable for older backends. A live
+  // worker still rejects the resume with a 409, surfaced below.
+  if (!(item.pipeline_resumable ?? item.pipeline_retryable)) {
     return null;
   }
   return (

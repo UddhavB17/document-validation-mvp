@@ -183,7 +183,10 @@ test("session GET returns the verified DB role for valid tokens", async () => {
   const response = await sessionGet(request("/api/session", "tok-user"));
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { token: "tok-user", role: "user" });
-  assert.equal(response.headers.get("set-cookie"), null);
+  // Sliding session: a valid check refreshes the cookie lifetime.
+  const setCookie = response.headers.get("set-cookie");
+  assert.ok(setCookie !== null && setCookie.includes("dmef_session=tok-user"));
+  assert.ok(setCookie !== null && setCookie.includes("Max-Age=2592000"));
   assert.equal(response.headers.get("Cache-Control"), NO_STORE);
 });
 

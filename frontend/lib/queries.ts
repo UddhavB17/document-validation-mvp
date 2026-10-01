@@ -10,8 +10,17 @@ import {
   adminUpdateUserRequest,
   api,
   fetchApplicationStatus,
+  fetchNdcState,
   fetchOpsApplication,
+  completeOpsReviewItems,
+  fetchOpsReviewHistory,
+  fetchOpsReviewItems,
   fetchOpsWorklist,
+  fetchPortalApplication,
+  fetchPortalStatus,
+  fetchPortalWorklist,
+  setNdcCheck,
+  updateOpsReviewItem,
 } from "./api";
 
 // These hooks are the frontend's cache and polling boundary. Components use
@@ -109,6 +118,65 @@ export function useOpsApplication(applicationId: number | null) {
     },
     enabled: applicationId !== null,
     refetchInterval: getApplicationReviewPollInterval(),
+  });
+}
+
+export function useOpsReviewItems(applicationId: number | null) {
+  return useQuery({
+    queryKey: ["opsReviewItems", applicationId],
+    queryFn: () => {
+      if (applicationId === null) {
+        throw new Error("Application ID is required");
+      }
+      return fetchOpsReviewItems(applicationId);
+    },
+    enabled: applicationId !== null,
+    refetchInterval: false,
+    retry: false,
+  });
+}
+
+export function useUpdateOpsReviewItem(applicationId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ itemId, ...payload }: {
+      itemId: string;
+      expected_revision: string;
+      disposition: "correct" | "reopen";
+      note?: string;
+    }) => updateOpsReviewItem(applicationId, itemId, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["opsReviewItems", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsWorklist"] }),
+        queryClient.invalidateQueries({ queryKey: ["opsReviewHistory"] }),
+      ]);
+    },
+  });
+}
+
+export function useCompleteOpsReviewItems(applicationId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { note?: string } = {}) => completeOpsReviewItems(applicationId, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["opsReviewItems", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsWorklist"] }),
+        queryClient.invalidateQueries({ queryKey: ["opsReviewHistory"] }),
+      ]);
+    },
+  });
+}
+
+export function useOpsReviewHistory(limit = 50) {
+  return useQuery({
+    queryKey: ["opsReviewHistory", limit],
+    queryFn: () => fetchOpsReviewHistory(limit),
+    refetchInterval: false,
+    retry: false,
   });
 }
 
@@ -248,6 +316,62 @@ export function useDeleteAdminUser() {
     mutationFn: (userId: number) => adminDeleteUserRequest(userId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+    },
+  });
+}
+
+// Borrower-portal hooks. Unlike the ops hooks above these use the silent
+// portal readers (no 401 -> /login redirect): failures resolve to the
+// in-app sample content. The worklist is fetched once (no 10 s poll) and
+// the payload once; only the lightweight /status poll repeats while
+// processing, per the polling diet (contracts §8).
+export function usePortalWorklist() {
+  return useQuery({ queryKey: ["portalWorklist"], queryFn: fetchPortalWorklist, retry: false });
+}
+
+export function usePortalApplication(applicationId: number) {
+  return useQuery({
+    queryKey: ["portalApplication", applicationId],
+    queryFn: () => fetchPortalApplication(applicationId),
+    refetchInterval: getApplicationReviewPollInterval(),
+    retry: false,
+  });
+}
+
+export function usePortalStatus(applicationId: number) {
+  return useQuery({
+    queryKey: ["portalStatus", applicationId],
+    queryFn: () => fetchPortalStatus(applicationId),
+    refetchInterval: (query) => getStatusPollInterval(query.state.data?.status),
+    retry: false,
+  });
+}
+
+// Staff NDC checklist: fetched once per application, refetched after each
+// tick or decision. Never polled (only /status polls, per contracts §8).
+export function useNdcState(applicationId: number | null) {
+  return useQuery({
+    queryKey: ["ndcState", applicationId],
+    queryFn: () => {
+      if (applicationId === null) {
+        throw new Error("Application ID is required");
+      }
+      return fetchNdcState(applicationId);
+    },
+    enabled: applicationId !== null,
+    refetchInterval: false,
+    retry: false,
+  });
+}
+
+export function useSetNdcCheck(applicationId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { s_no: number; role: string; checked: boolean }) =>
+      setNdcCheck(applicationId, payload),
+    onSuccess: async (data) => {
+      queryClient.setQueryData(["ndcState", applicationId], data);
+      await queryClient.invalidateQueries({ queryKey: ["ndcState", applicationId] });
     },
   });
 }

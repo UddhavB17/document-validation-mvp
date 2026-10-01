@@ -50,7 +50,11 @@ def _optional_float(value: object) -> float | None:
 @cached_settings()
 def build_worklist() -> WorklistResponse:
     """Assemble the reviewer worklist with issue counts and pipeline status."""
-    application_rows, anomaly_rows_by_application, progress_by_application = load_worklist_data()
+    from services.reprocessing import is_resumable
+
+    application_rows, anomaly_rows_by_application, progress_by_application, jobs_by_application = (
+        load_worklist_data()
+    )
 
     worklist_items: list[WorklistItem] = []
     for application_row in application_rows:
@@ -79,6 +83,12 @@ def build_worklist() -> WorklistResponse:
                 ),
                 "pipeline_retryable": bool(
                     pipeline_progress and pipeline_progress.get("retryable")
+                ),
+                "pipeline_resumable": is_resumable(
+                    jobs_by_application.get(application_id),
+                    str(pipeline_progress.get("operational_status"))
+                    if pipeline_progress
+                    else None,
                 ),
                 "pipeline_processed_pages": _optional_int(
                     pipeline_progress.get("processed_pages") if pipeline_progress else None

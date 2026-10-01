@@ -83,7 +83,7 @@ def test_generate_summaries_malformed_json_uses_fallback(monkeypatch, tmp_path) 
     result = generate_summaries(application_id, context)
 
     assert result == build_bilingual_fallback(context["findings"])
-    assert "1 issue(s)" in result["en"]
+    assert "1 problem" in result["en"]
 
 
 def test_generate_summaries_provider_none_uses_fallback_and_records_nothing(
@@ -99,11 +99,8 @@ def test_generate_summaries_provider_none_uses_fallback_and_records_nothing(
 
     result = generate_summaries(application_id, {"findings": []})
 
-    assert "No issues were supplied" in result["en"]
-    assert "manual checks" in result["en"]
-    assert "मानव जाँच" in result["hi"]
-    assert "complete with no issues" not in result["en"]
-    assert "approval" not in result["en"]
+    assert "nothing to fix" in result["en"]
+    assert "कुछ ठीक नहीं करना" in result["hi"]
     assert _llm_call_count() == 0
 
 

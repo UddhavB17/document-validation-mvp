@@ -157,6 +157,7 @@ export const worklistItemSchema = z.object({
   processing_warnings: z.number(),
   pipeline_status: z.string(),
   pipeline_retryable: z.boolean(),
+  pipeline_resumable: z.boolean().optional(),
   pipeline_processed_pages: z.number().nullable().optional(),
   pipeline_total_pages: z.number().nullable().optional(),
   pipeline_percentage: z.number().nullable().optional(),
@@ -990,4 +991,218 @@ export async function fetchOpsWorklist(): Promise<OpsWorklist> {
 
 export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {
   return getJsonResponse(`/review/applications/${applicationId}/status`, applicationStatusSchema);
+}
+
+// --- portal ---
+// Borrower-portal readers must never trigger the global 401 -> /login
+// redirect (handleUnauthorized above): unauthenticated visitors fall back
+// to the in-app sample content instead of leaving the page. Logged-in
+// visitors still send their bearer via authHeaders and get live data.
+async function getPortalJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+  return withReadTimeout(async (signal) => {
+    const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() }, signal });
+    const text = await response.text();
+    let payload: unknown = {};
+    try {
+      payload = text ? JSON.parse(text) : {};
+    } catch {
+      throw new ApiError(text || "Backend returned a non-JSON response", response.status);
+    }
+    if (!response.ok) {
+      const detail = typeof payload === "string" ? payload : JSON.stringify(payload);
+      throw new ApiError(detail || "Request failed", response.status);
+    }
+    return schema.parse(payload);
+  });
+}
+
+export async function fetchPortalWorklist(): Promise<OpsWorklist> {
+  return getPortalJsonResponse("/ops/worklist", opsWorklistSchema as z.ZodType<OpsWorklist>);
+}
+
+export async function fetchPortalApplication(applicationId: number): Promise<OpsApplication> {
+  return getPortalJsonResponse(
+    `/ops/applications/${applicationId}`,
+    opsApplicationSchema as z.ZodType<OpsApplication>,
+  );
+}
+
+export async function fetchPortalStatus(applicationId: number): Promise<ApplicationStatus> {
+  return getPortalJsonResponse(
+    `/review/applications/${applicationId}/status`,
+    applicationStatusSchema,
+  );
+}
+
+// --- ndc ---
+// Staff NDC checklist state. Unlike the portal readers above these use the
+// authenticated transport: the checklist lives behind staff login.
+const ndcCheckCellSchema = z.object({
+  checked: z.boolean(),
+  by: z.number().nullable(),
+  by_name: z.string(),
+  at: z.string().nullable(),
+});
+
+export const ndcRowSchema = z.object({
+  s_no: z.number(),
+  group: z.string(),
+  title: z.string(),
+  mode: z.string(),
+  hint: z.string(),
+  system_checked: z.boolean(),
+  system_only_manual: z.boolean(),
+  checks: z.object({ cso: ndcCheckCellSchema, cops: ndcCheckCellSchema }),
+  complete: z.boolean(),
+});
+
+export const ndcStateSchema = z.object({
+  version: z.string(),
+  application_id: z.number(),
+  loan_id: z.string().nullable().optional(),
+  applicant_name: z.string().nullable().optional(),
+  checked_at: z.string(),
+  total: z.number(),
+  complete_count: z.number(),
+  complete: z.boolean(),
+  verified: z.boolean(),
+  latest_decision: z.string().nullable(),
+  rows: z.array(ndcRowSchema),
+});
+
+export type NdcState = z.infer<typeof ndcStateSchema>;
+export type NdcRow = z.infer<typeof ndcRowSchema>;
+
+export async function fetchNdcState(applicationId: number): Promise<NdcState> {
+  return getJsonResponse(
+    `/ops/applications/${applicationId}/ndc`,
+    ndcStateSchema as z.ZodType<NdcState>,
+  );
+}
+
+export async function setNdcCheck(
+  applicationId: number,
+  payload: { s_no: number; role: string; checked: boolean },
+): Promise<NdcState> {
+  const response = await fetch(`${API_BASE_URL}/ops/applications/${applicationId}/ndc`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response, ndcStateSchema as z.ZodType<NdcState>);
+}
+
+// --- tmp/user-portal-ux persisted exception review ---
+const opsReviewReviewerSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+});
+
+export const opsReviewItemSchema = z.object({
+  item_id: z.string(),
+  application_id: z.number(),
+  validation_result_id: z.number(),
+  revision: z.string(),
+  code: z.string(),
+  severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
+  title: opsTextSchema,
+  detail: opsTextSchema,
+  pages: z.array(z.number()),
+  evidence: opsEvidenceSchema.nullable(),
+  status: z.enum(["pending", "reviewed"]),
+  disposition: z.enum(["correct", "reopen"]).nullable(),
+  reviewer: opsReviewReviewerSchema.nullable(),
+  reviewed_at: z.string().nullable(),
+  note: z.string().nullable(),
+});
+
+export const opsReviewItemsSchema = z.object({
+  application_id: z.number(),
+  items: z.array(opsReviewItemSchema),
+  counts: z.object({
+    total: z.number(),
+    pending: z.number(),
+    reviewed: z.number(),
+  }),
+});
+
+export type OpsReviewItem = z.infer<typeof opsReviewItemSchema>;
+export type OpsReviewItems = z.infer<typeof opsReviewItemsSchema>;
+
+export async function fetchOpsReviewItems(applicationId: number): Promise<OpsReviewItems> {
+  return getJsonResponse(
+    `/ops/applications/${applicationId}/review-items`,
+    opsReviewItemsSchema,
+  );
+}
+
+export async function updateOpsReviewItem(
+  applicationId: number,
+  itemId: string,
+  payload: { expected_revision: string; disposition: "correct" | "reopen"; note?: string },
+): Promise<OpsReviewItem> {
+  const response = await fetch(`${API_BASE_URL}/ops/applications/${applicationId}/review-items/${itemId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response, opsReviewItemSchema);
+}
+
+// --- friendlier reviewer: save-all + history ---
+export const opsReviewCompleteSchema = opsReviewItemsSchema.extend({
+  saved_count: z.number(),
+  loan_id: z.string().nullable().optional(),
+  applicant_name: z.string().nullable().optional(),
+});
+export type OpsReviewComplete = z.infer<typeof opsReviewCompleteSchema>;
+
+export async function completeOpsReviewItems(
+  applicationId: number,
+  payload: { note?: string } = {},
+): Promise<OpsReviewComplete> {
+  const response = await fetch(
+    `${API_BASE_URL}/ops/applications/${applicationId}/review-items/complete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(payload),
+    },
+  );
+  return parseApiResponse(response, opsReviewCompleteSchema);
+}
+
+const opsReviewHistoryProblemSchema = z.object({
+  item_id: z.string(),
+  code: z.string(),
+  severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
+  title: opsTextSchema,
+  detail: opsTextSchema,
+  pages: z.array(z.number()),
+  reviewer: opsReviewReviewerSchema.nullable(),
+  reviewed_at: z.string().nullable(),
+  note: z.string().nullable(),
+});
+
+export const opsReviewHistoryFileSchema = z.object({
+  application_id: z.number(),
+  loan_id: z.string().nullable(),
+  applicant_name: z.string().nullable(),
+  application_status: z.string().nullable(),
+  reviewed_at: z.string().nullable(),
+  reviewers: z.array(opsReviewReviewerSchema),
+  problem_count: z.number(),
+  problems: z.array(opsReviewHistoryProblemSchema),
+});
+
+export const opsReviewHistorySchema = z.object({
+  files: z.array(opsReviewHistoryFileSchema),
+  count: z.number(),
+});
+
+export type OpsReviewHistory = z.infer<typeof opsReviewHistorySchema>;
+export type OpsReviewHistoryFile = z.infer<typeof opsReviewHistoryFileSchema>;
+
+export async function fetchOpsReviewHistory(limit = 50): Promise<OpsReviewHistory> {
+  return getJsonResponse(`/ops/review-history?limit=${limit}`, opsReviewHistorySchema);
 }

@@ -135,9 +135,9 @@ def test_thinking_configuration_matches_model(monkeypatch, model, level, budget)
         assert thinking.thinking_budget == budget
 
 
-def test_default_is_38_but_explicit_model_still_wins(monkeypatch):
+def test_default_is_35_but_explicit_model_still_wins(monkeypatch):
     monkeypatch.setattr(llm_gemini, "_get_setting", lambda key, default=None: default)
-    assert llm_gemini.gemini_model() == "gemini-3.8-flash"
+    assert llm_gemini.gemini_model() == "gemini-3.5-flash"
     monkeypatch.setattr(
         llm_gemini, "_get_setting",
         lambda key, default=None: "gemini-2.5-flash" if key == "GEMINI_MODEL" else default,
