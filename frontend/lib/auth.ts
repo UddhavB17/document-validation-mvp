@@ -2,7 +2,7 @@
 
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import { loginRequest, setAuthTokenProvider } from "./api";
+import { fetchCurrentUser, loginRequest, setAuthTokenProvider } from "./api";
 import { createTokenStore } from "./tokenStore";
 
 export type SessionStatus = "loading" | "authenticated" | "unauthenticated";
@@ -11,6 +11,8 @@ export interface SessionValue {
   status: SessionStatus;
   token: string | null;
   role: string | null;
+  email: string | null;
+  displayName: string | null;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -25,6 +27,8 @@ const tokenStore = createTokenStore();
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const [status, setStatus] = useState<SessionStatus>("loading");
 
   useEffect(() => {
@@ -59,11 +63,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setToken(session.token);
         setRole(session.role);
         setStatus("authenticated");
+        try {
+          const me = await fetchCurrentUser();
+          if (!cancelled) {
+            setEmail(me.email);
+            setDisplayName(me.display_name);
+          }
+        } catch {
+          // Profile enrichment is best-effort; auth still stands.
+        }
       } catch {
         if (!cancelled) {
           tokenStore.clearToken();
           setToken(null);
           setRole(null);
+          setEmail(null);
+          setDisplayName(null);
           setStatus("unauthenticated");
         }
       }
@@ -74,8 +89,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const result = await loginRequest(email, password);
+  const login = useCallback(async (emailValue: string, password: string) => {
+    const result = await loginRequest(emailValue, password);
     const cookieResponse = await fetch("/api/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -88,6 +103,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     tokenStore.setToken(result.token);
     setToken(result.token);
     setRole(result.user.role);
+    setEmail(result.user.email);
+    setDisplayName(result.user.display_name);
     setStatus("authenticated");
   }, []);
 
@@ -98,14 +115,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       tokenStore.clearToken();
       setToken(null);
       setRole(null);
+      setEmail(null);
+      setDisplayName(null);
       setStatus("unauthenticated");
       window.location.assign("/login");
     }
   }, []);
 
   const value = useMemo(
-    () => ({ status, token, role, login, logout }),
-    [status, token, role, login, logout],
+    () => ({ status, token, role, email, displayName, login, logout }),
+    [status, token, role, email, displayName, login, logout],
   );
 
   return createElement(SessionContext.Provider, { value }, children);

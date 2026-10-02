@@ -18,6 +18,7 @@ const testFiles = [
   "tests/opsPolling.test.ts",
   "tests/opsStatusBar.test.ts",
   "tests/opsSourceHygiene.test.ts",
+  "tests/waiting.test.ts",
   "tests/sessionVerify.test.ts",
   "tests/sessionHydration.test.ts",
   "tests/evidenceProxy.test.ts",

@@ -4,7 +4,6 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { LanguageToggle } from "@/components/ops/LanguageToggle";
 import { StatusBadge } from "@/components/StatusBadge";
 import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
@@ -24,6 +23,8 @@ interface NavItem {
 
 const OPERATIONS_NAV: NavItem[] = [
   { href: "/ops", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "ops" },
+  { href: "/ops/activity", labelKey: "nav.activity", fallback: "My activity", icon: "activity", id: "ops-activity" },
+  { href: "/ops/settings", labelKey: "nav.preferences", fallback: "Preferences", icon: "settings", id: "ops-settings" },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -70,29 +71,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <ShellChrome pathname={pathname} role={session.role} onLogout={() => void session.logout()}>{children}</ShellChrome>;
+  return (
+    <ShellChrome
+      pathname={pathname}
+      role={session.role}
+      displayName={session.displayName}
+      email={session.email}
+      onLogout={() => void session.logout()}
+    >
+      {children}
+    </ShellChrome>
+  );
 }
 
 function ShellChrome({
   children,
   pathname,
   role,
+  displayName,
+  email,
   onLogout,
 }: {
   children: React.ReactNode;
   pathname: string;
   role: string | null;
+  displayName: string | null;
+  email: string | null;
   onLogout: () => void;
 }) {
   const { locale } = useLocale();
   const health = useHealth();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [nowLabel, setNowLabel] = useState("--:--");
   const applicationId = getApplicationIdFromPath(pathname);
   const healthStatus = health.data?.status === "ok" ? "ok" : "failed";
   const isAdmin = role === "admin";
   const primaryNav = isAdmin ? ADMIN_NAV : OPERATIONS_NAV;
   const homeHref = isAdmin ? "/admin/worklist" : "/ops";
+  const headerTitle = resolveHeaderTitle(pathname, applicationId, isAdmin);
+  const reviewerLabel = displayName?.trim() || email?.split("@")[0] || "Reviewer";
+  const avatarLetter = reviewerLabel.charAt(0).toUpperCase() || "R";
+
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      setNowLabel(
+        now.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }),
+      );
+    };
+    tick();
+    const id = window.setInterval(tick, 30000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const closeMobileNavigation = () => setIsMobileNavOpen(false);
 
@@ -113,7 +148,7 @@ function ShellChrome({
               <span className="app-shell__brand-mark" aria-hidden="true">D</span>
               <span className="app-shell__brand-copy">
                 <span className="app-shell__brand-name">DMEF</span>
-                <span className="app-shell__brand-subtitle">Operations review</span>
+                <span className="app-shell__brand-subtitle">{isAdmin ? "Admin console" : "Operations review"}</span>
               </span>
             </Link>
             <button
@@ -172,26 +207,27 @@ function ShellChrome({
 
         <div className="app-shell__sidebar-bottom">
           <nav className="app-shell__utility-nav" aria-label="Utilities">
-            <div className="app-shell__nav-label">Utilities</div>
-            {isAdmin ? ADMIN_UTILITY_NAV.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`app-shell__nav-link${active ? " is-active" : ""}`}
-                  aria-current={active ? "page" : undefined}
-                  aria-label={item.fallback}
-                  onClick={closeMobileNavigation}
-                >
-                  <Icon name={item.icon} />
-                  <span className="app-shell__nav-text">{t(locale, item.labelKey)}</span>
-                </Link>
-              );
-            }) : null}
-            <div className="app-shell__nav-row">
-              <LanguageToggle />
-            </div>
+            {isAdmin ? (
+              <>
+                <div className="app-shell__nav-label">Utilities</div>
+                {ADMIN_UTILITY_NAV.map((item) => {
+                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`app-shell__nav-link${active ? " is-active" : ""}`}
+                      aria-current={active ? "page" : undefined}
+                      aria-label={item.fallback}
+                      onClick={closeMobileNavigation}
+                    >
+                      <Icon name={item.icon} />
+                      <span className="app-shell__nav-text">{t(locale, item.labelKey)}</span>
+                    </Link>
+                  );
+                })}
+              </>
+            ) : null}
             <button
               type="button"
               onClick={onLogout}
@@ -203,18 +239,20 @@ function ShellChrome({
             </button>
           </nav>
 
-          <div className="app-shell__health" aria-label="API health">
-            <div className="app-shell__health-heading">
-              <span className="app-shell__nav-label">API health</span>
-              <Icon name="api" />
+          {isAdmin ? (
+            <div className="app-shell__health" aria-label="API health">
+              <div className="app-shell__health-heading">
+                <span className="app-shell__nav-label">API health</span>
+                <Icon name="api" />
+              </div>
+              {health.isLoading ? (
+                <span className="app-shell__health-checking">Checking</span>
+              ) : (
+                <StatusBadge status={healthStatus} />
+              )}
+              <code className="app-shell__endpoint">127.0.0.1:8000</code>
             </div>
-            {health.isLoading ? (
-              <span className="app-shell__health-checking">Checking</span>
-            ) : (
-              <StatusBadge status={healthStatus} />
-            )}
-            <code className="app-shell__endpoint">127.0.0.1:8000</code>
-          </div>
+          ) : null}
         </div>
       </aside>
 
@@ -246,13 +284,39 @@ function ShellChrome({
           </button>
           <div className="app-shell__header-copy">
             <span className="app-shell__header-kicker">DMEF</span>
-            <span className="app-shell__header-title">Document validation operations</span>
+            <span className="app-shell__header-title">{headerTitle}</span>
+          </div>
+          <div className="app-shell__header-meta">
+            <span className="app-shell__sync">Synced · {nowLabel}</span>
+            <span className="app-shell__user-chip">
+              <span className="app-shell__user-avatar" aria-hidden="true">{avatarLetter}</span>
+              <span className="hidden sm:inline">{reviewerLabel}</span>
+            </span>
           </div>
         </header>
         <main id="main-content" className="app-shell__main" tabIndex={-1}>{children}</main>
       </div>
     </div>
   );
+}
+
+function resolveHeaderTitle(pathname: string, applicationId: number | null, isAdmin: boolean): string {
+  if (pathname.startsWith("/ops/applications/") && applicationId !== null) {
+    return `Case review · APP-${String(applicationId).padStart(4, "0")}`;
+  }
+  if (pathname.startsWith("/ops/activity")) {
+    return "My activity · Reviewer";
+  }
+  if (pathname.startsWith("/ops/settings")) {
+    return "Preferences · Reviewer";
+  }
+  if (pathname === "/ops" || pathname.startsWith("/ops/")) {
+    return "Document validation · Reviewer";
+  }
+  if (isAdmin) {
+    return "Document validation · Admin";
+  }
+  return "Document validation operations";
 }
 
 function getApplicationIdFromPath(pathname: string): number | null {
@@ -264,8 +328,14 @@ function isNavItemActive(itemId: string, href: string, pathname: string, applica
   if (itemId === "worklist" && applicationId !== null && pathname.startsWith("/admin/applications/")) {
     return true;
   }
-  if (itemId === "ops" && applicationId !== null && pathname.startsWith("/ops/applications/")) {
+  if (itemId === "ops" && (pathname === "/ops" || pathname.startsWith("/ops/applications/"))) {
     return true;
+  }
+  if (itemId === "ops-activity") {
+    return pathname === "/ops/activity" || pathname.startsWith("/ops/activity/");
+  }
+  if (itemId === "ops-settings") {
+    return pathname === "/ops/settings" || pathname.startsWith("/ops/settings/");
   }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
