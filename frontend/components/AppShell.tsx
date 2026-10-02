@@ -11,7 +11,7 @@ import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sess
 import { useApplicationReview, useHealth } from "@/lib/queries";
 import type { FieldComparison } from "@/lib/api";
 
-type IconName = "worklist" | "intake" | "activity" | "settings" | "users" | "menu" | "close" | "collapse" | "expand" | "api" | "ops";
+type IconName = "worklist" | "intake" | "activity" | "settings" | "users" | "menu" | "close" | "collapse" | "expand" | "api" | "ops" | "signout";
 
 interface NavItem {
   href: string;
@@ -234,7 +234,7 @@ function ShellChrome({
               className="app-shell__nav-link app-shell__signout"
               aria-label={t(locale, "nav.signOut")}
             >
-              <Icon name="close" />
+              <Icon name="signout" />
               <span className="app-shell__nav-text">{t(locale, "nav.signOut")}</span>
             </button>
           </nav>
@@ -396,6 +396,7 @@ function Icon({ name }: { name: IconName }) {
     expand: <><path d="m9 6 6 6-6 6" /><path d="m3 6 6 6-6 6" /></>,
     api: <><path d="M7 5v14M17 5v14M5 7h4M15 17h4" /><path d="M9 9h6v6H9z" /></>,
     ops: <><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12.5 2.5 2.5 4.5-5.5" /></>,
+    signout: <><path d="M10 7V5a2 2 0 0 1 2-2h7v18h-7a2 2 0 0 1-2-2v-2" /><path d="M4 12h11" /><path d="m12 8 4 4-4 4" /></>,
   };
 
   return (
