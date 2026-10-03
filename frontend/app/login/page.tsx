@@ -58,24 +58,16 @@ export default function LoginPage() {
               <p className="text-xs text-[color:var(--sidebar-muted)]">Document validation</p>
             </div>
           </div>
-          <p className="ledger-kicker mt-12">{t(locale, "ops.login.kicker")}</p>
-          <h1 className="mt-3 max-w-md font-display text-[40px] font-semibold leading-[1.1] tracking-[-0.035em]">
+          <h1 className="mt-12 max-w-md font-display text-[40px] font-semibold leading-[1.1] tracking-[-0.035em]">
             {t(locale, "ops.login.brandTitle")}
           </h1>
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-[color:var(--sidebar-muted)]">
-            {t(locale, "ops.login.brandBody")}
-          </p>
         </div>
-        <div className="relative space-y-3">
+        <div className="relative">
           <div className="flex flex-wrap gap-2">
             <LedgerStamp tone="electric">Worklist</LedgerStamp>
             <LedgerStamp tone="electric">Case review</LedgerStamp>
             <LedgerStamp tone="electric">Evidence wizard</LedgerStamp>
           </div>
-          <p className="text-xs text-[color:var(--sidebar-muted)]">
-            After sign-in · users land on <span className="font-mono">/ops</span> · admins on{" "}
-            <span className="font-mono">/admin</span>
-          </p>
         </div>
         <div
           aria-hidden="true"
@@ -131,10 +123,6 @@ export default function LoginPage() {
               {isSubmitting ? t(locale, "ops.login.submitting") : t(locale, "ops.login.submit")}
             </button>
             <p className="mt-3 text-center text-xs italic text-desk-faint">{t(locale, "ops.login.ledgerHint")}</p>
-            <div className="mt-5 border-t border-[color:var(--border)] pt-4">
-              <LedgerStamp tone="electric">Reviewer</LedgerStamp>
-              <p className="mt-2 text-xs leading-relaxed text-desk-muted">{t(locale, "ops.login.routeNote")}</p>
-            </div>
           </form>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-between px-6 text-[11px] text-desk-faint sm:px-12">

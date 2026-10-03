@@ -157,18 +157,18 @@ export const en = {
   "ops.settings.cutList": "API health, worker controls, and LLM settings stay in Admin.",
   "ops.common.retry": "Try again",
   "ops.common.unknown": "—",
-  "ops.login.kicker": "Reviewer gate",
+  "ops.login.kicker": "",
   "ops.login.brandTitle": "Document verification for lending operations",
-  "ops.login.brandBody": "Clear exceptions, verify pages, and close cases from a calm ledger desk — not a generic admin console.",
+  "ops.login.brandBody": "Verify pages and close cases from a calm ledger desk.",
   "ops.login.accountKicker": "Account · Sign in",
   "ops.login.title": "Sign in",
-  "ops.login.hint": "Use your reviewer or admin account. Role routing happens after auth — no picker here.",
+  "ops.login.hint": "Use your admin or operations account.",
   "ops.login.email": "Email",
   "ops.login.password": "Password",
   "ops.login.submit": "Sign in →",
   "ops.login.submitting": "Signing in…",
   "ops.login.ledgerHint": "Warm paper desk · Ledger default after entry",
-  "ops.login.routeNote": "This account routes to the ops shell — Worklist, My activity, Preferences. Sign out lives in the sidebar footer.",
+  "ops.login.routeNote": "",
 } as const;
 
 export type OpsStrings = typeof en;
