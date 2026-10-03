@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { ErrorMessage } from "@/components/Message";
 import { api } from "@/lib/api";
@@ -10,14 +10,19 @@ import { SelectField } from "./UploadField";
 import { CASE_TYPE_OPTIONS, getCaseType, getFormError, getSanitizedManifest, isPdfFile } from "./uploadUtils";
 import { UploadFormProps } from "./types";
 
-export function MappedUploadForm({ onUploaded }: UploadFormProps) {
+export function MappedUploadForm({ onUploaded, onFlowStart, onBusyChange }: UploadFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setSubmitting] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    onBusyChange?.(isSubmitting);
+  }, [isSubmitting, onBusyChange]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    onFlowStart?.();
     setError(null);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
@@ -68,7 +73,11 @@ export function MappedUploadForm({ onUploaded }: UploadFormProps) {
             type="file"
             accept="application/pdf,.pdf,application/zip,.zip"
             required
-            onChange={(fileEvent) => setSelectedFile(fileEvent.target.files?.[0] ?? null)}
+            onChange={(fileEvent) => {
+              onFlowStart?.();
+              setError(null);
+              setSelectedFile(fileEvent.target.files?.[0] ?? null);
+            }}
           />
         </label>
       </div>

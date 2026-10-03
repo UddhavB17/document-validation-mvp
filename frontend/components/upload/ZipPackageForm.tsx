@@ -1,19 +1,18 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, RefObject, useEffect, useRef, useState } from "react";
 
 import { ErrorMessage } from "@/components/Message";
 import { Metric } from "@/components/Metric";
 import { api, UploadResponse, ZipPreparationProgress } from "@/lib/api";
 
-import { SelectField } from "./UploadField";
 import { ZipDocumentInventory } from "./ZipDocumentInventory";
 import { ZipPreparationProgress as ZipPreparationProgressPanel } from "./ZipPreparationProgress";
 import { CASE_TYPE_OPTIONS, getCaseType, getFormError, getSanitizedManifest } from "./uploadUtils";
 import { useZipPreparation } from "./useZipPreparation";
 import { CaseType, UploadFormProps } from "./types";
 
-export function ZipPackageForm({ onUploaded }: UploadFormProps) {
+export function ZipPackageForm({ onUploaded, onFlowStart, onBusyChange }: UploadFormProps) {
   const [file, setFile] = useState<File | null>(null);
   const [preparingPackageId, setPreparingPackageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +20,12 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
   const [isVerifying, setIsVerifying] = useState(false);
   const [manifestText, setManifestText] = useState("");
   const [caseType, setCaseType] = useState<CaseType>("Normal Case");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { progress, pollError } = useZipPreparation(preparingPackageId);
+
+  useEffect(() => {
+    onBusyChange?.(isPreparing || isVerifying);
+  }, [isPreparing, isVerifying, onBusyChange]);
 
   useEffect(() => {
     if (pollError) {
@@ -41,7 +45,6 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
     }
     if (progress.status === "prepared" && preparingPackageId) {
       setIsPreparing(false);
-      setManifestText((current) => current || "");
     }
   }, [preparingPackageId, progress]);
 
@@ -51,8 +54,11 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
       setError("Please select a ZIP file");
       return;
     }
+    onFlowStart?.();
     setError(null);
+    setPreparingPackageId(null);
     setIsPreparing(true);
+    setIsVerifying(false);
     try {
       const result = await api.prepareZipPackage(file);
       setPreparingPackageId(result.package_id);
@@ -65,10 +71,14 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
   async function handleVerify(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!preparingPackageId) return;
+    onFlowStart?.();
     setError(null);
     setIsVerifying(true);
     try {
       const manifest = getSanitizedManifest(manifestText);
+      if (!manifest) {
+        throw new Error("Trusted JSON or company database data is required");
+      }
       const result: UploadResponse = await api.verifyZipPackage(preparingPackageId, manifest, caseType);
       onUploaded(result);
     } catch (verificationError) {
@@ -79,8 +89,24 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
   }
 
   function resetPackage() {
+    onFlowStart?.();
     setPreparingPackageId(null);
     setFile(null);
+    setManifestText("");
+    setError(null);
+    setIsPreparing(false);
+    setIsVerifying(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function selectFile(nextFile: File | null) {
+    onFlowStart?.();
+    setPreparingPackageId(null);
+    setFile(nextFile);
+    setManifestText("");
+    setError(null);
+    setIsPreparing(false);
+    setIsVerifying(false);
   }
 
   return (
@@ -88,7 +114,14 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
       {error ? <ErrorMessage message={error} /> : null}
 
       {!progress || progress.status !== "prepared" ? (
-        <PrepareZipStep file={file} isPreparing={isPreparing} progress={progress} onFileChange={setFile} onSubmit={handlePrepare} />
+        <PrepareZipStep
+          file={file}
+          fileInputRef={fileInputRef}
+          isPreparing={isPreparing}
+          progress={progress}
+          onFileChange={selectFile}
+          onSubmit={handlePrepare}
+        />
       ) : (
         <VerifyZipStep
           caseType={caseType}
@@ -107,12 +140,14 @@ export function ZipPackageForm({ onUploaded }: UploadFormProps) {
 
 function PrepareZipStep({
   file,
+  fileInputRef,
   isPreparing,
   progress,
   onFileChange,
   onSubmit,
 }: {
   file: File | null;
+  fileInputRef: RefObject<HTMLInputElement>;
   isPreparing: boolean;
   progress: ZipPreparationProgress | null;
   onFileChange: (file: File | null) => void;
@@ -126,12 +161,15 @@ function PrepareZipStep({
           Upload the original ZIP package. Spreadsheets (.xlsx) are automatically rendered to readable PDF sheets, and images (.jpg/.png) are consolidated.
         </p>
       </div>
-      <label className="block">
+      <label className="block" htmlFor="zip-package-file">
         <span className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Intake ZIP Archive</span>
         <input
+          ref={fileInputRef as RefObject<HTMLInputElement>}
+          id="zip-package-file"
           className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-[#E1E5EB] bg-white file:text-xs file:font-semibold file:bg-[#F6F7FA] file:text-slate-700 hover:file:bg-slate-100 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none"
           type="file"
           accept=".zip,application/zip"
+          disabled={isPreparing}
           onChange={(fileEvent) => onFileChange(fileEvent.target.files?.[0] ?? null)}
         />
       </label>
@@ -143,7 +181,9 @@ function PrepareZipStep({
         {isPreparing ? "Preparing ZIP Archive..." : "Extract ZIP and Build Page Inventory"}
       </button>
 
-      {isPreparing && progress ? <ZipPreparationProgressPanel progress={progress} /> : null}
+      {isPreparing ? (
+        progress ? <ZipPreparationProgressPanel progress={progress} /> : <p className="text-sm font-medium text-[#5C6B7A]" role="status" aria-live="polite">Uploading ZIP package…</p>
+      ) : null}
     </form>
   );
 }
@@ -171,7 +211,7 @@ function VerifyZipStep({
     <form onSubmit={onSubmit} className="space-y-6">
       <div className="flex justify-between items-center border-b border-[#E1E5EB] pb-3">
         <h2 className="font-serif text-[16px] font-bold text-[#16202E]">Step 2: Review Inventory &amp; Mapped Verification</h2>
-        <button type="button" onClick={onReset} className="text-xs font-bold text-[#2B4C7E] hover:underline flex items-center gap-1 border-none bg-transparent cursor-pointer">
+        <button type="button" onClick={onReset} disabled={isVerifying} className="text-xs font-bold text-[#2B4C7E] hover:underline flex items-center gap-1 border-none bg-transparent cursor-pointer disabled:cursor-not-allowed disabled:text-slate-400">
           Upload another ZIP
         </button>
       </div>

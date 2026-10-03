@@ -9,4 +9,6 @@ export type UploadHandler = (result: UploadResponse) => void;
 
 export interface UploadFormProps {
   onUploaded: UploadHandler;
+  onFlowStart?: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }
