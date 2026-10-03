@@ -461,6 +461,7 @@ MIGRATION_STATEMENTS = [
     "ALTER TABLE pipeline_jobs ADD COLUMN heartbeat_at TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN control_requested_at TEXT",
     "ALTER TABLE pipeline_jobs ADD COLUMN last_completed_page INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE intake_packages ADD COLUMN error TEXT",
 ]
 
 INDEX_STATEMENTS = [

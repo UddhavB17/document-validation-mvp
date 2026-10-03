@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Overridable at runtime with GEMINI_PRICING_JSON, e.g.
 # GEMINI_PRICING_JSON='{"gemini-2.5-flash": [0.30, 2.50]}'.
 MODEL_PRICES_USD_PER_1M: dict[str, tuple[float, float]] = {
+    "gemini-3.1-pro": (2.00, 12.00),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-pro": (1.25, 10.00),
     "gemini-2.0-flash": (0.10, 0.40),
