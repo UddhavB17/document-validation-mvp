@@ -9,7 +9,28 @@ from typing import Any
 from database.db import get_connection
 
 
+def _strip_nuls(value: Any) -> Any:
+    """Remove NUL characters before values cross a PostgreSQL text boundary.
+
+    OCR providers and PDF text extractors can return embedded ``\\x00``
+    characters. SQLite accepts them, but PostgreSQL rejects them in every text
+    column, so sanitise recursively at the persistence boundary. The original
+    page remains available in memory for the current run; only the invalid
+    database character is replaced with a space in persisted text.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", " ")
+    if isinstance(value, dict):
+        return {_strip_nuls(key): _strip_nuls(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_strip_nuls(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_strip_nuls(item) for item in value)
+    return value
+
+
 def _save_ground_truth(application_id: int, ground_truth: dict[str, Any]) -> None:
+    ground_truth = _strip_nuls(ground_truth)
     with get_connection() as connection:
         connection.execute("DELETE FROM ground_truth WHERE application_id = ?", (application_id,))
         connection.execute(
@@ -42,11 +63,8 @@ def _save_ground_truth(application_id: int, ground_truth: dict[str, Any]) -> Non
 def _save_pages(application_id: int, pages: list[dict[str, Any]]) -> None:
     with get_connection() as connection:
         connection.execute("DELETE FROM pages WHERE application_id = ?", (application_id,))
-        connection.execute(
-            "DELETE FROM pages_meta WHERE application_id = ?", (application_id,)
-        )
-        for page in pages:
-            _insert_page(connection, application_id, page)
+        connection.execute("DELETE FROM pages_meta WHERE application_id = ?", (application_id,))
+        _insert_pages(connection, application_id, pages)
 
 
 def _save_page_checkpoint(application_id: int, page: dict[str, Any]) -> None:
@@ -63,7 +81,7 @@ def _save_page_checkpoint(application_id: int, page: dict[str, Any]) -> None:
             "DELETE FROM pages_meta WHERE application_id = ? AND page_number = ?",
             (application_id, page_number),
         )
-        _insert_page(connection, application_id, page)
+        _insert_pages(connection, application_id, [page])
 
 
 def _public_extracted_fields(page: dict[str, Any]) -> dict[str, Any]:
@@ -77,19 +95,22 @@ def _public_extracted_fields(page: dict[str, Any]) -> dict[str, Any]:
 def _page_meta(page: dict[str, Any]) -> dict[str, Any]:
     """Private per-page JSON (``_classification``, ``_triage``, …)."""
     meta = page.get("meta")
-    if isinstance(meta, dict) and meta:
-        return dict(meta)
+    result = dict(meta) if isinstance(meta, dict) else {}
     fields = page.get("extracted_fields")
     if isinstance(fields, dict):
-        return {
-            key: value for key, value in fields.items() if str(key).startswith("_")
-        }
-    return {}
+        # Ownership and document evidence are enriched after the OCR snapshot.
+        # Persist those final entries instead of dropping them behind stale meta.
+        result.update({key: value for key, value in fields.items() if str(key).startswith("_")})
+    return result
 
 
-def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> None:
+def _insert_pages(connection: Any, application_id: int, pages: list[dict[str, Any]]) -> None:
+    """Save page rows and private metadata in two batches within the transaction."""
+    if not pages:
+        return
     # Explicit column list: no structured_content / image_path blobs (diet).
     # Words and layout stay in memory only for the running pipeline.
+    safe_pages = [_strip_nuls(page) for page in pages]
     connection.execute(
         """
         INSERT INTO pages (
@@ -100,23 +121,26 @@ def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> 
             extracted_fields
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (
-            application_id,
-            page.get("page_number"),
-            page.get("page_type"),
-            page.get("is_readable") if page.get("is_readable") is not None else None,
-            page.get("ocr_text"),
-            page.get("ocr_confidence"),
-            page.get("ocr_status"),
-            page.get("ocr_route"),
-            bool(page.get("ocr_escalated", False)),
-            int(page.get("ocr_processing_time_ms") or 0),
-            page.get("document_type"),
-            page.get("classification_confidence"),
-            page.get("detection_method"),
-            page.get("detected_page_number"),
-            json.dumps(_public_extracted_fields(page), ensure_ascii=False),
-        ),
+        [
+            (
+                application_id,
+                page.get("page_number"),
+                page.get("page_type"),
+                page.get("is_readable") if page.get("is_readable") is not None else None,
+                page.get("ocr_text"),
+                page.get("ocr_confidence"),
+                page.get("ocr_status"),
+                page.get("ocr_route"),
+                bool(page.get("ocr_escalated", False)),
+                int(page.get("ocr_processing_time_ms") or 0),
+                page.get("document_type"),
+                page.get("classification_confidence"),
+                page.get("detection_method"),
+                page.get("detected_page_number"),
+                json.dumps(_public_extracted_fields(page), ensure_ascii=False),
+            )
+            for page in safe_pages
+        ],
     )
     connection.execute(
         """
@@ -125,11 +149,14 @@ def _insert_page(connection: Any, application_id: int, page: dict[str, Any]) -> 
         ON CONFLICT(application_id, page_number) DO UPDATE SET
             meta_json = excluded.meta_json
         """,
-        (
-            application_id,
-            page.get("page_number"),
-            json.dumps(_page_meta(page), ensure_ascii=False),
-        ),
+        [
+            (
+                application_id,
+                page.get("page_number"),
+                json.dumps(_page_meta(page), ensure_ascii=False),
+            )
+            for page in safe_pages
+        ],
     )
 
 
@@ -210,5 +237,5 @@ def _save_llm_summary(application_id: int, summary: str) -> None:
     with get_connection() as connection:
         connection.execute(
             "UPDATE applications SET llm_summary = ? WHERE id = ?",
-            (summary, application_id),
+            (_strip_nuls(summary), application_id),
         )

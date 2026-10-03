@@ -46,3 +46,12 @@ def test_docker_build_context_still_uses_copy_dot() -> None:
     # Hygiene matters precisely because the Dockerfile copies the context.
     dockerfile = (REPO_ROOT / "Dockerfile").read_text()
     assert "COPY . ." in dockerfile
+
+
+def test_runtime_rules_are_included_after_excluding_local_data() -> None:
+    lines = _dockerignore_lines()
+    assert "data/" not in lines
+    excluded_at = lines.index("data/*")
+    for filename in ("checklist.json", "document_type_registry.json", "stamp_duty_rules.json"):
+        assert lines.index(f"!data/{filename}") > excluded_at
+        assert (REPO_ROOT / "data" / filename).is_file()

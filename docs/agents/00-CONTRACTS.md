@@ -308,3 +308,67 @@ rule IDs and the EN/HI templates; `ws-e-ops-ui` renders them.
 Anything not in these families (unclassified pages, ownership heuristics,
 low-confidence classification) is admin-only and never appears in the
 operations payload.
+
+
+## 12. User-authorized operations review update (2026-09-10)
+
+NEEDS-COORDINATION: the user explicitly requested these cross-stream changes,
+superseding sections 5, 6 and 11 where they conflict. Operations summaries now
+cover every saved page and finding, including unknown pages. English is generated
+first and Hindi is translated from it; summary strings may be up to 6,000 characters.
+The additional REVIEW_REQUIRED vocabulary includes previously admin-only checks.
+The small payload keeps five top groups; full coverage and evidence recommendations
+are audited in the configured object store at applications/{id}/reports/ops-review.json.
+Authenticated operations users may access source-pdf as well as source-page.
+Checklist rows use current engine statuses, omit not-applicable items, and collapse
+verified items in the UI. LLM dismissals preserve original validation rows with status
+dismissed_by_llm. They require confidence >= 0.98 plus independently verified source
+text and exact normalized equivalence for a name/PAN/Aadhaar mismatch; other suspected
+false positives remain recommendations. This never accepts a loan or bypasses manual decisions.
+Files span operations UI/API, LLM service, pipeline finalization, review aggregation,
+and their behavioral tests. No credentials or environment files are changed.
+
+The user additionally requested a codebase-specific shared LLM system prompt.
+NEEDS-COORDINATION: services/review_prompts.py owns the common review policy and
+four stage instructions; the Gemini adapter sends system messages through the SDK's
+system_instruction field. Audit reports include the model, prompt version and prompt
+fingerprint, and checkpoint keys include that fingerprint. This prompt update does
+not regenerate existing reports or implement the separately requested shared human
+confirmation workflow, which follows completion of the earlier interface checks.
+
+The user authorized switching to Gemini 3.8 Flash and committing the changes.
+The non-secret runtime wrapper selects Gemini 3.8 Flash and the working global
+endpoint without modifying environment files. Gemini 3 calls use thinking_level=low;
+Gemini 2.5 Flash retains thinking_budget=0. Existing active workers retain their
+configuration until a normal restart; their document runs are not restarted here.
+
+## 13. User-authorized exception-focused AI review (2026-09-11)
+
+NEEDS-COORDINATION: the user explicitly superseded section 12's all-page AI review.
+During initial processing, LLM page classification remains restricted to unknown
+document types or OCR confidence below the configured threshold. Finalization
+does not run a second AI assessment of every page. It reviews every supplied
+exception in bounded, validated batches using relevant source excerpts, including
+candidate evidence for incorrectly labelled or apparently missing documents.
+Successful exception batches are checkpointed; invalid output retries only its
+batch. A missing or partial excerpt does not establish document absence.
+The report declares exceptions_only scope and evidence limits. File page counts
+must not be presented as AI page-review counts. The existing conservative dismissal
+gate remains in force. English summarizes exception assessments and remaining
+human work, then Hindi translates that English. Existing runs are not regenerated.
+This authorizes focused changes to review service/prompts, their caller and tests;
+the shared operations payload and authentication contracts do not change.
+
+## 14. User-authorized ZIP-first accuracy work (2026-09-12)
+
+NEEDS-COORDINATION: the user requested plans followed by delegated implementation
+of ZIP-first intake and the discussed accuracy/review improvements. Task file
+ownership and verification are specified in docs/ZIP_FIRST_ACCURACY_PLAN.md.
+ZIP Package Intake becomes the default; Mapped Verification remains secondary,
+and standalone PDF/Partner JSON tabs are removed from intake navigation. Low
+confidence and incomplete evidence must not be labelled definite document absence;
+existing manual_review and REVIEW_REQUIRED states preserve evidence and human
+review. AI exception audits distinguish completion, partial review and failure.
+Existing dismissal safeguards, source storage, auth and payload budgets remain.
+Existing local repairs are preserved. No deployment, push, saved-case reprocessing,
+credential change or blanket AI page review is authorized by this update.

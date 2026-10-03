@@ -85,26 +85,16 @@ def verify_date(extracted: str, db_value: str) -> FieldVerificationResult:
             method="exact",
             mismatch_reason="Date could not be parsed — OCR quality or unsupported format",
         )
-    from services.config import get_int
-
-    tolerance_days = get_int("VALIDATION_DATE_TOLERANCE_DAYS", 0, minimum=0, maximum=365)
-    if tolerance_days > 0:
-        is_match = abs((extracted_date - db_date).days) <= tolerance_days
-    else:
-        is_match = (extracted_date == db_date)
-    return _exact_result("date_of_birth", extracted, db_value, is_match)
+    return _exact_result("date_of_birth", extracted, db_value, extracted_date == db_date)
 
 
 def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
-    """Verify loan amounts numerically with a configurable tolerance."""
+    """Verify loan amounts numerically with a one percent tolerance."""
     extracted_amount = _parse_amount(extracted)
     db_amount = _parse_amount(db_value)
     if extracted_amount is None or db_amount is None:
         return _failed("loan_amount", extracted, db_value, "exact", "Amount missing or invalid")
-    from services.config import get_float
-
-    pct = get_float("VALIDATION_AMOUNT_TOLERANCE_PERCENT", 1.0, minimum=0.0, maximum=100.0)
-    tolerance = abs(db_amount) * (pct / 100.0)
+    tolerance = abs(db_amount) * 0.01
     matched = abs(extracted_amount - db_amount) <= tolerance
     confidence = (
         1.0
@@ -118,7 +108,7 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
         match=matched,
         confidence=round(confidence, 3),
         method="exact",
-        mismatch_reason=None if matched else f"Amount differs by more than {pct:g}%",
+        mismatch_reason=None if matched else "Amount differs by more than 1%",
     )
 
 
@@ -137,12 +127,7 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
             mismatch_reason="Name candidate is unreliable and requires manual review",
         )
     score = name_match_score(extracted, db_value)
-    from services.config import get_float
-
-    threshold = get_float(
-        "VALIDATION_NAME_FUZZY_THRESHOLD", float(NAME_MATCH_THRESHOLD), minimum=0.0, maximum=100.0
-    )
-    matched = score >= threshold
+    matched = score >= NAME_MATCH_THRESHOLD
     if matched and score >= 99:
         return _exact_result("applicant_name", extracted, db_value, True)
     return FieldVerificationResult(
@@ -346,13 +331,6 @@ def _normalize_pan(value: Any) -> str:
     return re.sub(r"\s+", "", str(value or "")).upper()
 
 
-def _normalize_name(value: Any) -> str:
-    """Normalize case, punctuation, and repeated whitespace before fuzzy matching."""
-    text = str(value or "").casefold()
-    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
-    return " ".join(text.split())
-
-
 def _valid_pan(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z]{5}[0-9]{4}[A-Z]", value))
 
@@ -458,5 +436,4 @@ def _relationship_prefix_matches(left: Any, right: Any) -> bool:
         short_name, long_name = right_relation[1], left_relation[1]
     compare_words = long_name[: max(1, len(short_name))]
     name_score = fuzz.ratio(" ".join(short_name), " ".join(compare_words))
-    shared = left_tokens & right_tokens
-    return name_score >= 75 and (min(len(left_tokens), len(right_tokens)) <= 3 or len(shared) >= 3)
+    return name_score >= 75 and min(len(left_tokens), len(right_tokens)) <= 3

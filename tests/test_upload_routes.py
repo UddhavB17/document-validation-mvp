@@ -57,7 +57,7 @@ def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch, auth_heade
     body = response.json()
     assert body["application_id"]
     assert body["pipeline_status"] == "completed"
-    assert body["status"] in {"CLEAN", "NEEDS_REVIEW", "CRITICAL"}
+    assert body["status"] in {"CLEAN", "LOW", "MEDIUM", "HIGH", "CRITICAL"}
     assert "PAN" in body["documents_found"]
 
     with db.get_connection() as connection:
@@ -129,6 +129,7 @@ def test_progress_poll_does_not_reinitialize_database(monkeypatch) -> None:
         lambda: (_ for _ in ()).throw(
             AssertionError("progress polling must not initialize the database")
         ),
+        raising=False,
     )
     monkeypatch.setattr(
         upload_route,
@@ -364,7 +365,7 @@ def test_zip_package_upload_returns_stable_inventory_and_persists_sources(
         files={"file": ("loan-documents.zip", package, "application/zip")},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     body = response.json()
     assert body["status"] == "prepared"
     assert body["total_files"] == 2
@@ -417,6 +418,40 @@ def test_background_zip_preparation_exposes_frontend_logs(tmp_path, monkeypatch,
     assert body["total_files"] == 1
     assert body["documents"][0]["original_filename"] == "Applicant/PAN.pdf"
     assert any(event["stage"] == "file_completed" for event in body["events"])
+
+
+def test_failed_zip_preparation_reports_reason_instead_of_404(
+    tmp_path, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setattr(upload_route, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(
+        upload_route,
+        "submit_job",
+        lambda function, *args, **kwargs: function(*args, **kwargs),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/upload/package?background=true",
+        headers=auth_headers,
+        files={
+            "file": (
+                "loan.zip",
+                _zip_bytes([("Applicant/Sign.Video.mp4", b"fake-video-bytes")]),
+                "application/zip",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    queued = response.json()
+    assert queued["status"] == "queued"
+    progress = client.get(queued["progress_url"], headers=auth_headers)
+    assert progress.status_code == 200
+    body = progress.json()
+    assert body["status"] == "failed"
+    assert "mp4" in str(body.get("error") or "").lower()
 
 
 def test_zip_progress_writer_retries_windows_replace_lock(tmp_path, monkeypatch) -> None:

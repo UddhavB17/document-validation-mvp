@@ -27,7 +27,7 @@ def test_rejects_obvious_non_person_name_candidates(value: str) -> None:
     assert canonicalize_person_name(value).valid is False
 
 
-@pytest.mark.parametrize("value", ["Peeru Lal", "Radha Bai", "राम लाल"])
+@pytest.mark.parametrize("value", ["Veeru Lal", "Sudha Bai", "राम लाल"])
 def test_accepts_indian_and_devanagari_person_names(value: str) -> None:
     result = canonicalize_person_name(value)
     assert result.valid is True

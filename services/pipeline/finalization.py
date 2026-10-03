@@ -9,7 +9,6 @@ from services.audit_service import log_action
 from services.exception_aggregator import aggregate
 from services.llm_service import generate_explanation, generate_summaries, summarize_exceptions
 from services.pipeline.persistence import (
-    _save_ground_truth,
     _save_llm_summary,
     _save_pages,
     _should_call_llm,
@@ -30,7 +29,6 @@ def _finalize_pipeline_result(
     partial_failure_count: int,
     generate_llm_summary: bool | None,
 ) -> dict[str, Any]:
-    _save_ground_truth(application_id, ground_truth)
     _save_pages(application_id, pages)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
     # ws-f accuracy: persist the ops payload (minus checklist) so
@@ -52,7 +50,7 @@ def _finalize_pipeline_result(
     if summary:
         _save_llm_summary(application_id, summary)
     # --- fx-schema: persist bilingual ops summaries ---
-    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth})
+    generate_summaries(application_id, {"findings": result["anomalies"], "ground_truth": ground_truth, "pages": pages})
 
     report_path = save_report_json(
         build_report(

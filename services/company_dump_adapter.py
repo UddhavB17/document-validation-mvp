@@ -37,7 +37,7 @@ def is_company_database_dump(value: Any) -> bool:
     if isinstance(value, dict):
         keys = {str(key).lower() for key in value}
         # Clean manifest guard: any clean-manifest key → definitely not a dump
-        if keys & _CLEAN_MANIFEST_KEYS or "schema_version" in keys:
+        if keys & _CLEAN_MANIFEST_KEYS:
             return False
         # DB view keys are unambiguous dump indicators
         if keys & _DB_VIEW_KEYS:
@@ -45,9 +45,7 @@ def is_company_database_dump(value: Any) -> bool:
         # loan_id / applicationid alone are NOT enough — they also appear in clean manifests.
         # Only treat them as dumps when NO clean-manifest keys are present AND the only
         # substantive keys are identifier-like (i.e. no documents/reference_data etc.)
-        if ("loanid" in keys or "applicationid" in keys or "application_id" in keys) and not (
-            keys & _CLEAN_MANIFEST_KEYS
-        ):
+        if keys & {"loanid", "applicationid", "application_id"}:
             return True
     elif isinstance(value, list):
         if value and isinstance(value[0], dict):
@@ -111,6 +109,9 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
     coapplicants = _collection_objects(text, "coapplicantdetails")
     coapplicant_kyc = _collection_objects(text, "coapplicantkyc")
     entity_addresses = _collection_objects(text, "entityaddressdetails")
+    guarantor_details = _collection_objects(text, "guarantordetails")
+    guarantor_kyc = _collection_objects(text, "guarantorkyc")
+    guarantor_addresses = _collection_objects(text, "guarantoraddressdetails")
     dbmaker = _first_object(text, "dbmaker")
 
     primary_name = (
@@ -205,6 +206,43 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
         _copy_known_person_fields(person, details, kyc, address)
         people[person_id] = person
 
+    guarantor_kyc_by_name = {
+        _name_key(_coapplicant_name(item)): item
+        for item in guarantor_kyc
+        if _coapplicant_name(item)
+    }
+    guarantor_details_by_name = {
+        _name_key(_coapplicant_name(item)): item
+        for item in guarantor_details
+        if _coapplicant_name(item)
+    }
+    ordered_guarantor_names: list[str] = []
+    seen_guarantor_keys: set[str] = set()
+    for item in [*guarantor_details, *guarantor_kyc]:
+        guarantor_name = _coapplicant_name(item)
+        guarantor_key = _name_key(guarantor_name)
+        if guarantor_name and guarantor_key not in seen_guarantor_keys:
+            ordered_guarantor_names.append(guarantor_name)
+            seen_guarantor_keys.add(guarantor_key)
+    for index, name in enumerate(ordered_guarantor_names, start=1):
+        name_key = _name_key(name)
+        details = guarantor_details_by_name.get(name_key, "")
+        kyc = guarantor_kyc_by_name.get(name_key, "")
+        address = _best_address(guarantor_addresses, name, "guarantor") or _best_address(
+            guarantor_addresses, name, ""
+        )
+        person_id = f"guarantor_{index}"
+        person = _person(
+            role="guarantor",
+            details=details,
+            kyc=kyc,
+            address=address,
+            warnings=warnings,
+        )
+        person["applicant_name"] = name
+        _copy_known_person_fields(person, details, kyc, address)
+        people[person_id] = person
+
     loan_id = _loan_id(text, applicant, cam)
     manifest: dict[str, Any] = {
         "schema_version": "1.0",
@@ -216,6 +254,15 @@ def convert_company_database_dump(value: Any) -> dict[str, Any]:
         "document_index": [],
     }
     _copy_known_loan_fields(manifest, cam, dbmaker, applicant)
+    if not manifest.get("application_date"):
+        _copy_if_present(
+            manifest,
+            "application_date",
+            _clean_text(
+                _value(_first_object(text, "loanclientdetails"), "loanApplicationSubmittedDate")
+                or _value(_first_object(text, "loanlogindetails"), "loginDate")
+            ),
+        )
     if warnings:
         manifest["conversion_warnings"] = sorted(set(warnings))
     return manifest
@@ -503,6 +550,12 @@ def _balanced_section(text: str, key: str, opening: str, closing: str) -> str | 
     if not match:
         return None
     start = text.find(opening, match.start())
+    try:
+        _, end = json.JSONDecoder().raw_decode(text[start:])
+        return text[start : start + end]
+    except json.JSONDecodeError:
+        # Pasted exports can contain broken quotes; retain their tolerant path.
+        pass
     depth = 0
     for index in range(start, len(text)):
         char = text[index]
@@ -516,6 +569,12 @@ def _balanced_section(text: str, key: str, opening: str, closing: str) -> str | 
 
 
 def _balanced_children(text: str, opening: str, closing: str) -> list[str]:
+    try:
+        records = json.loads(text)
+    except json.JSONDecodeError:
+        records = None
+    if isinstance(records, list):
+        return [json.dumps(item, ensure_ascii=False) for item in records if isinstance(item, dict)]
     children: list[str] = []
     depth = 0
     start: int | None = None
@@ -535,6 +594,16 @@ def _balanced_children(text: str, opening: str, closing: str) -> list[str]:
 def _value(section: str, key: str) -> str | None:
     if not section:
         return None
+    try:
+        record = json.loads(section)
+    except json.JSONDecodeError:
+        record = None
+    if isinstance(record, dict):
+        for field, value in record.items():
+            if field.lower() == key.lower() and not isinstance(value, (dict, list)):
+                if value is None:
+                    return None
+                return _clean_text(value if isinstance(value, str) else json.dumps(value))
     quoted = re.search(
         rf'"{re.escape(key)}"\s*:\s*"([^"\r\n]*)"',
         section,

@@ -70,6 +70,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     bootstrap_admin()
     log_effective_config()
     logger.info("CORS origins: %s", ", ".join(_cors_origins()))
+    from services.worker_watchdog import start_worker_watchdog
+
+    start_worker_watchdog()
     yield
 
 

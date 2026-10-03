@@ -14,7 +14,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-from database.db import init_db
 from services.auth.dependencies import get_current_user, require_role
 from services.checklist_service import (
     get_ai_checkable_items,
@@ -22,6 +21,7 @@ from services.checklist_service import (
     get_human_review_items,
 )
 from services.checklist_status import build_checklist_status
+from services.config import cached_settings
 from services.job_control import JobControlError, request_control
 from services.ocr_json_export import build_ocr_document_json
 from services.progress_tracker import get_progress
@@ -34,10 +34,10 @@ from services.reprocessing import (
 from services.review.comparison_matrix import build_comparison_matrix_and_relationships
 from services.review.document_summaries import build_document_summaries
 from services.review.repository import (
+    load_application_review_bundle,
     load_application_review_data,
     load_latest_decision,
     load_latest_uploaded_file,
-    load_saved_document_ocr_json,
     load_today_activity,
 )
 from services.review.worklist import build_worklist
@@ -103,14 +103,12 @@ def _application_source_bytes(application_id: int) -> tuple[bytes, str]:
 @router.get("/worklist")
 def get_worklist() -> dict[str, list[dict[str, Any]]]:
     """Return the reviewer worklist for the Next.js UI."""
-    init_db()
     return build_worklist()
 
 
 @router.get("/activity/today", dependencies=[Depends(require_role("admin"))])
 def get_today_activity() -> dict[str, Any]:
     """Return today's reviewer decision summary."""
-    init_db()
     decision_rows = load_today_activity()
     return {
         "total": len(decision_rows),
@@ -127,8 +125,14 @@ def get_today_activity() -> dict[str, Any]:
 )
 def get_application_review(application_id: int) -> dict[str, Any]:
     """Return the full reviewer detail payload for one application."""
-    init_db()
-    data = load_application_review_data(application_id)
+    # Public review rows are compact.  Comparison evidence is hydrated only
+    # for pages that carry fields expected by the saved ground truth; loading
+    # OCR/meta for every page makes large applications time out before the
+    # reviewer UI can render.
+    data, evidence_pages = load_application_review_bundle(
+        application_id,
+        sparse_evidence=True,
+    )
     if data is None:
         raise HTTPException(status_code=404, detail="Application not found")
 
@@ -138,18 +142,20 @@ def get_application_review(application_id: int) -> dict[str, Any]:
     summary = summarize_for_display(anomalies)
     reviewer_summary = load_reviewer_summary(application_id)
     checklist_items = get_all_checklist_items(product_type)
-    checklist_rows = build_checklist_status(checklist_items, data["pages"], anomalies)
+    # Confidence checks revisit the same settings for many pages/items. Keep
+    # one short-lived snapshot for this calculation, never across requests.
+    with cached_settings():
+        checklist_rows = build_checklist_status(checklist_items, data["pages"], anomalies)
     manual_items = get_human_review_items(product_type)
     ai_items = get_ai_checkable_items(product_type)
     failed_ai_snos = {
         anomaly.get("s_no") for anomaly in anomalies if anomaly.get("s_no") is not None
     }
 
-    ocr_data = load_saved_document_ocr_json(application_id)
     matrix_and_rels = build_comparison_matrix_and_relationships(
         application_id,
         data,
-        ocr_data=ocr_data,
+        evidence_pages=evidence_pages if data.get("ground_truth") else [],
     )
     documents = build_document_summaries(data.get("document_pages") or {}, anomalies)
 
@@ -190,10 +196,8 @@ def get_application_review(application_id: int) -> dict[str, Any]:
 @router.get(
     "/applications/{application_id}/source-pdf",
     summary="View the original PDF evidence",
-    dependencies=[Depends(require_role("admin"))],
 )
 def get_application_source_pdf(application_id: int) -> StreamingResponse:
-    init_db()
     pdf_bytes, filename = _application_source_bytes(application_id)
 
     def _stream() -> Any:
@@ -220,7 +224,6 @@ def get_application_source_page(
 
     if page_number < 1:
         raise HTTPException(status_code=422, detail="Page number must be one or greater")
-    init_db()
     pdf_bytes, _ = _application_source_bytes(application_id)
     digest = hashlib.sha256(pdf_bytes).hexdigest()
     cache_key = (application_id, page_number, dpi, highlight or "", digest)
@@ -257,7 +260,6 @@ def get_application_source_page(
     dependencies=[Depends(require_role("admin"))],
 )
 def reprocess_application(application_id: int) -> dict[str, Any]:
-    init_db()
     try:
         return queue_application_reprocess(application_id)
     except LookupError as exc:
@@ -369,7 +371,6 @@ def get_application_ocr_json(application_id: int) -> dict[str, Any]:
     from services.storage import get_store
     from services.storage.refs import record_ref
 
-    init_db()
     data = load_application_review_data(application_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Application not found")

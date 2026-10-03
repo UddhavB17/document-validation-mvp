@@ -14,7 +14,6 @@ import services.pipeline.finalization as finalization
 
 def test_finalize_stores_ops_payload(monkeypatch, tmp_path) -> None:
     calls: list[int] = []
-    monkeypatch.setattr(finalization, "_save_ground_truth", lambda *a, **k: None)
     monkeypatch.setattr(finalization, "_save_pages", lambda *a, **k: None)
     monkeypatch.setattr(
         finalization,
@@ -22,6 +21,7 @@ def test_finalize_stores_ops_payload(monkeypatch, tmp_path) -> None:
         lambda *a, **k: {"anomalies": [], "total_pages": 0, "final_status": "clean"},
     )
     monkeypatch.setattr(finalization, "summarize_exceptions", lambda *a, **k: "")
+    monkeypatch.setattr(finalization, "generate_summaries", lambda *a, **k: None)
     monkeypatch.setattr(finalization, "_should_call_llm", lambda *a, **k: False)
     monkeypatch.setattr(finalization, "build_report", lambda *a, **k: {})
     monkeypatch.setattr(

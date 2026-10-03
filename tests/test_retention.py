@@ -287,6 +287,29 @@ def test_retention_real_run_deletes_and_archives(
     assert not store.exists("applications/old/normalized/a.pdf")
 
 
+def test_retention_preserves_account_and_pipeline_control_history(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch, "audit-history.db")
+    actions = [
+        "pipeline_pause_requested", "pipeline_cancel_requested", "pipeline_resume_requested",
+        "pipeline_paused", "pipeline_resumed", "user_created", "password_changed",
+        "user_deactivated", "user_deleted", "pipeline_reprocess_queued",
+    ]
+    with get_connection() as connection:
+        for action in [*actions, "llm_summary_generated"]:
+            connection.execute(
+                "INSERT INTO audit_log (action, details, timestamp) VALUES (?, ?, ?)",
+                (action, "{}", OLD),
+            )
+
+    assert run_retention(now=NOW, dry_run=True)["audit_log_deleted"] == 1
+    assert run_retention(now=NOW, dry_run=False)["audit_log_deleted"] == 1
+    with get_connection() as connection:
+        remaining = {
+            row["action"] for row in connection.execute("SELECT action FROM audit_log").fetchall()
+        }
+    assert remaining == set(actions)
+
+
 def test_retention_parent_chain_does_not_raise(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

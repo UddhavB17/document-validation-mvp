@@ -37,7 +37,7 @@ def test_credit_approval_memo_is_not_split_into_embedded_kyc_types() -> None:
     text = (
         "CREDIT APPROVAL MEMO | Confidential\n"
         "KYC DOCUMENTS\nCustomer Type\nName\nAadhaar\nPAN\n"
-        "Applicant\nPeeru Lal\nXXXXXXXX0001\nTSTAA0001T"
+        "Applicant\nVeeru Lal\nXXXXXXXX0001\nTSTAA0001T"
     )
     assert _classify(text) == "CAM"
 
@@ -50,7 +50,7 @@ def test_bank_statement_classified() -> None:
 def test_application_bank_table_is_not_a_standalone_bank_statement() -> None:
     text = (
         "A/C HOLDER NAME A/C NUMBER BANK NAME IFSC CODE ACCOUNT TYPE\n"
-        "SECURITY & OFFERED PROPERTY\nCO-APPLICANT DETAILS\nUnkar Lal"
+        "SECURITY & OFFERED PROPERTY\nCO-APPLICANT DETAILS\nAmbar Lal"
     )
     assert _classify(text) != "Bank Statement"
 
@@ -93,7 +93,7 @@ def test_premium_calculator_is_unclassified_not_a_form_or_gst_certificate() -> N
 def test_hindi_notarised_identity_affidavit_is_classified_from_document_form() -> None:
     text = (
         "01 JUL 2026\nNOTARY\nGOVT OF RAJASTHAN\nIDENTIFIED BY\nशपथ-पत्र\n"
-        "मैं मोसमी मीना सशपथ बयान करती हूं कि आधार कार्ड में जन्म दिनांक और नाम "
+        "मैं रसमी दीना सशपथ बयान करती हूं कि आधार कार्ड में जन्म दिनांक और नाम "
         "सही एवं मान्य है तथा पेन कार्ड में नाम अलग है।\nसत्यापन\nहस्ताक्षर शपथग्रहिता"
     )
     assert _classify(text) == "Affidavit"
@@ -149,7 +149,7 @@ def test_optional_insurance_section_does_not_override_loan_application() -> None
     text = (
         "LOAN APPLICATION FORM\nApplicant Details Loan Amount Employment Details\n"
         "Optional insurance: name of insurance company, nominee, policy term, "
-        "sum insured and premium\nApplication No: GJ000030765"
+        "sum insured and premium\nApplication No: GJ900000002"
     )
 
     assert _classify(text) == "Application Form"
@@ -291,7 +291,7 @@ def test_account_aggregator_profile_cover_is_bank_statement() -> None:
         "Statement From : 27 Jul 2025\nStatement To : 27 Jul 2026\n"
         "Bank : BANK OF BARODA\nAccount Number : XXXX0605\nFI Type : DEPOSIT\n"
         "PROFILE\nName\nDoB\nMobile\nPAN\nCKYC\n"
-        "ANUPKUMAR CHETANBHAI\nSUTHAR\n2001-06-18\n"
+        "AJAYKUMAR KIRANBHAI\nSUTAR\n2001-06-18\n"
         "TRANSACTIONS\nTrxn ID\nValue Date\nType\nAmount\nCurrent Balance"
     )
 

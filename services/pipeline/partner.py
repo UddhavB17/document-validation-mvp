@@ -160,7 +160,10 @@ def _coerce_partner_doc(doc_key: str, value: Any) -> tuple[str, str | None, dict
         text = str(value.get("text") or value.get("ocr_text") or value.get("raw_text") or "")
         document_type = value.get("document_type") or _document_type_from_key(doc_key)
         extracted_fields = value.get("extracted_fields") or value.get("fields") or {}
-        confidence = float(value.get("confidence") or value.get("ocr_confidence") or 1.0)
+        confidence = value.get("confidence")
+        if confidence is None:
+            confidence = value.get("ocr_confidence")
+        confidence = float(confidence) if confidence is not None else 1.0
         return text, document_type, extracted_fields, confidence
     return str(value or ""), _document_type_from_key(doc_key), {}, 1.0
 

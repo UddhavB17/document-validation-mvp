@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import fitz
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "smoke_batch.py"
@@ -139,3 +140,44 @@ def test_pipeline_failure_policy() -> None:
     assert smoke.pipeline_failure_is_fatal(
         "completed", timed_out=False, require_clean=True
     ) is False
+
+
+@pytest.mark.parametrize("poll_items", [[], [{"application_id": 1, "status": "failed"}]])
+def test_live_smoke_does_not_forget_accepted_uploads(monkeypatch, capsys, poll_items):
+    import requests
+
+    smoke = _load_smoke_module()
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    class Session:
+        headers = {}
+
+        def post(self, url, **kwargs):
+            if url.endswith("/auth/login"):
+                return Response({"token": "synthetic"})
+            return Response({"batch_id": "test", "items": [
+                {"application_id": 1, "filename": "loan-a.pdf", "status": "queued"},
+                {"application_id": 2, "filename": "loan-b.pdf", "status": "queued"},
+            ]})
+
+        def get(self, url, **kwargs):
+            return Response({"items": poll_items})
+
+    clock = iter(range(100))
+    monkeypatch.setattr(requests, "Session", Session)
+    monkeypatch.setattr(smoke.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(smoke.time, "sleep", lambda _: None)
+    result = smoke.main([
+        "--api", "http://example.test", "--email", "a@b.c", "--password", "x",
+        "--files", str(SMOKE_FIXTURES), "--timeout", "2",
+    ])
+    assert result == 1
+    assert "timeout: loan-b.pdf still queued" in capsys.readouterr().out

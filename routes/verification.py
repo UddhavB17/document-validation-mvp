@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from database.db import get_connection, init_db
+from database.db import get_connection
 from database.models import ChecklistVerificationResponse
 from services.auth.dependencies import require_role
 from services.checklist_output import build_checklist_verification_response
@@ -24,7 +24,6 @@ router = APIRouter(
 @router.get("/summary/{application_id}")
 def get_reviewer_summary(application_id: int) -> dict[str, Any]:
     """Return the deterministic final summary and exact pages requiring review."""
-    init_db()
     summary = load_reviewer_summary(application_id)
     if summary is None:
         raise HTTPException(
@@ -40,7 +39,6 @@ def get_checklist_verification(
     include_narration: bool = False,
 ) -> ChecklistVerificationResponse:
     """Return the 44-item deterministic NDC checklist output for an application."""
-    init_db()
     stored = _load_application_checklist_inputs(application_id)
     if stored is None:
         raise HTTPException(status_code=404, detail=f"Application {application_id} not found")
@@ -57,7 +55,6 @@ def get_checklist_verification(
 @router.get("/{application_id}")
 def get_verification_report(application_id: int) -> dict[str, object]:
     """Return the stored document verification report for an application."""
-    init_db()
     report = load_verification_report(application_id)
     if report is None:
         raise HTTPException(

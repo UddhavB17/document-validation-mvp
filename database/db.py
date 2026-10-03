@@ -348,7 +348,7 @@ def seed_defaults(connection: _Connection) -> None:
     defaults = [
         (
             "llm_enabled",
-            "true",
+            "false",
             "bool",
             "llm",
             "Enable LLM Verification",
@@ -356,7 +356,7 @@ def seed_defaults(connection: _Connection) -> None:
         ),
         (
             "llm_provider",
-            "gemini",
+            "ollama",
             "str",
             "llm",
             "LLM Provider",
@@ -364,7 +364,7 @@ def seed_defaults(connection: _Connection) -> None:
         ),
         (
             "llm_model",
-            "gemini-3.1-pro",
+            "llama3.2",
             "str",
             "llm",
             "Model Name",
@@ -593,30 +593,6 @@ def seed_defaults(connection: _Connection) -> None:
             "fields",
             "Application Form Required Fields",
             "Fields required to validate an Application Form.",
-        ),
-        (
-            "validation.name_fuzzy_threshold",
-            "85.0",
-            "float",
-            "validation",
-            "Fuzzy Name Match Threshold",
-            "Minimum similarity percentage (0-100) for fuzzy person name matching.",
-        ),
-        (
-            "validation.amount_tolerance_percent",
-            "1.0",
-            "float",
-            "validation",
-            "Amount Tolerance Percentage",
-            "Allowable percentage difference when matching loan amounts.",
-        ),
-        (
-            "validation.date_tolerance_days",
-            "0",
-            "int",
-            "validation",
-            "Date Tolerance (Days)",
-            "Allowable date discrepancy in days between documents.",
         ),
     ]
     for key, val, val_type, cat, lbl, desc in defaults:

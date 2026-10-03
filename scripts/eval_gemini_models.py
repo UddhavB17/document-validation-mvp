@@ -30,32 +30,8 @@ import tempfile
 import time
 from pathlib import Path
 
-# Env must be fixed before any database/service import reads it.
-os.environ.setdefault("LLM_PROVIDER", "gemini")
-
-# Rule-id families -> contracts section 11 finding codes. This is an
-# approximation for scoring; ws-f-accuracy-ops-api owns the canonical mapping.
-_RULE_FAMILY_TO_CODE = (
-    (("APPLICANT_NAME_MISMATCH", "TRUSTED_", "NAME_MISMATCH", "APPLICATION_NAME_MISMATCH",
-      "CROSS_DOCUMENT_APPLICANT_NAME"), "NAME_MISMATCH"),
-    (("PAN_NUMBER_MISMATCH", "AADHAAR_NUMBER_MISMATCH", "TRUSTED_PAN", "TRUSTED_AADHAAR",
-      "DATE_OF_BIRTH_MISMATCH", "INVALID_PAN_FORMAT"), "ID_MISMATCH"),
-    (("ADDRESS_MISMATCH", "AADHAAR_ADDRESS_MISMATCH", "CROSS_DOCUMENT_ADDRESS"), "ADDRESS_MISMATCH"),
-    (("MISSING_DOC_S",), "MISSING_DOCUMENT"),
-    (("PERIOD_", "DATE_CHECK_S"), "BANK_STATEMENT_OLD"),
-    (("UNREADABLE_PAGE", "DOCUMENT_NOT_READABLE"), "PAGE_UNREADABLE"),
-    (("LOW_OCR_CONFIDENCE", "LOW_CONFIDENCE_PAGE", "OCR_BUDGET_PARTIAL_SCAN"), "OCR_FAILED"),
-    (("NOT_FOUND", "EXTRACTION_UNRELIABLE", "FIELD_VALUE_MISSING_S"), "DATA_MISSING"),
-    (("PAGE_PROCESSING_ERROR",), "PROCESSING_ERROR"),
-)
-
-
-def rule_to_code(rule_id: str) -> str | None:
-    needle = str(rule_id or "").upper()
-    for family, code in _RULE_FAMILY_TO_CODE:
-        if any(token in needle for token in family):
-            return code
-    return None
+# Support the documented direct invocation from the repository root.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def has_credentials() -> bool:
@@ -92,6 +68,7 @@ def run_case(model: str, case: dict, fixtures_dir: Path, work_root: Path) -> dic
     os.environ["GEMINI_MODEL"] = model
 
     from database.db import get_connection, init_db
+    from services.ops_presentation import rule_to_code
     from services.pipeline.orchestrator import run_pipeline
 
     init_db()
@@ -201,7 +178,13 @@ def main() -> int:
         return 0
 
     tmp_root = Path(tempfile.mkdtemp(prefix="gemini-eval-"))
+    # Never let an inherited production connection or object store receive fixtures.
+    os.environ["DATABASE_URL"] = ""
     os.environ["DATABASE_PATH"] = str(tmp_root / "eval.db")
+    os.environ["DMEF_STORAGE_BACKEND"] = "local"
+    os.environ["DMEF_LOCAL_STORE_DIR"] = str(tmp_root / "store")
+    os.environ["PAGE_OUTPUT_DIR"] = str(tmp_root / "processed")
+    os.environ["REPORT_OUTPUT_DIR"] = str(tmp_root / "reports")
     os.environ["DMEF_JOB_WORK_DIR"] = str(tmp_root / "jobs")
 
     rows = [run_case(model, case, fixtures_dir, tmp_root) for model in models for case in cases]

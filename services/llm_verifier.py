@@ -66,7 +66,7 @@ def verify_field_with_llm(
         parsed = _parse_verifier_response(response_text or "")
         if parsed is None:
             return fallback
-        result = FieldVerificationResult(
+        return FieldVerificationResult(
             field_name=field_name,
             extracted_value=extracted,
             db_value=db_value,
@@ -86,34 +86,6 @@ def verify_field_with_llm(
     ) as exc:
         logger.debug("LLM field verification failed: %s", exc)
         return fallback
-
-    try:
-        return FieldVerificationResult(
-            field_name=field_name,
-            extracted_value=extracted,
-            db_value=db_value,
-            match=bool(result.match),
-            confidence=float(result.confidence),
-            method="llm",
-            mismatch_reason=result.mismatch_reason,
-        )
-    except (TypeError, ValueError, ValidationError):
-        return fallback
-
-
-def batch_llm_verify(fields: list[dict]) -> list[FieldVerificationResult]:
-    """Verify multiple low-confidence fields sequentially with Ollama."""
-    results: list[FieldVerificationResult] = []
-    for field in fields:
-        results.append(
-            verify_field_with_llm(
-                field_name=str(field.get("field_name") or ""),
-                extracted=str(field.get("extracted") or ""),
-                db_value=str(field.get("db_value") or ""),
-            )
-        )
-    return results
-
 
 def llm_verify_field(
     *,
@@ -163,7 +135,11 @@ def _parse_verifier_response(response_text: str) -> dict[str, Any] | None:
         parsed = json.loads(cleaned)
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(parsed, dict) or "match" not in parsed or "confidence" not in parsed:
+    if (
+        not isinstance(parsed, dict)
+        or type(parsed.get("match")) is not bool
+        or type(parsed.get("confidence")) not in (int, float)
+    ):
         return None
     try:
         confidence = float(parsed["confidence"])

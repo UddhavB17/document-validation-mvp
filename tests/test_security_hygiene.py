@@ -171,7 +171,7 @@ def test_get_settings_never_contains_secret_plaintext(isolated_db, monkeypatch) 
     assert secret_row["config_value"] == SECRET_PLACEHOLDER
 
 
-def test_production_without_key_fails_startup_check(monkeypatch) -> None:
+def test_production_without_key_fails_startup_check(isolated_db, monkeypatch) -> None:
     monkeypatch.setenv("DMEF_ENV", "production")
     for var in (SECRETS_KEY_ENV, DEPRECATED_SECRETS_KEY_ENV, "DMEF_JOB_INPUT_KEY_FILE"):
         monkeypatch.delenv(var, raising=False)
@@ -179,7 +179,7 @@ def test_production_without_key_fails_startup_check(monkeypatch) -> None:
         ensure_secrets_key()
 
 
-def test_non_production_without_key_uses_ephemeral_key(monkeypatch) -> None:
+def test_non_production_without_key_uses_ephemeral_key(isolated_db, monkeypatch) -> None:
     monkeypatch.delenv("DMEF_ENV", raising=False)
     for var in (SECRETS_KEY_ENV, DEPRECATED_SECRETS_KEY_ENV, "DMEF_JOB_INPUT_KEY_FILE"):
         monkeypatch.delenv(var, raising=False)
