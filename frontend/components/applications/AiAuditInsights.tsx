@@ -1,4 +1,5 @@
 import { Anomaly, ApplicationReview } from "@/lib/api";
+import { buildAiExplanationBlock } from "@/components/applications/aiExplanationCopy";
 import { getSeverityBadgeColor } from "@/components/applications/reviewUtils";
 
 interface PageSummary {
@@ -67,8 +68,11 @@ export function getAiExplanation(
   if (!parsed) return rawSummary.trim().slice(0, 1600);
 
   const pageSummary = pageSummaryFor(parsed, anomaly, pageNumber);
+  if (pageSummary?.problem_description?.trim()) {
+    return pageSummary.problem_description.trim();
+  }
   const pageDetails = pageSummary
-    ? [pageSummary.problem_description, ...(pageSummary.summary_points ?? [])].filter(Boolean).join(" ")
+    ? (pageSummary.summary_points ?? []).filter(Boolean).join(" ")
     : "";
   return (pageDetails || parsed.overall_summary).trim() || null;
 }
@@ -82,17 +86,19 @@ export function AiExplanationDisclosure({
   anomaly?: Anomaly;
   pageNumber?: number;
 }) {
-  const explanation = getAiExplanation(data, anomaly, pageNumber);
-  if (!explanation) return null;
+  const block = buildAiExplanationBlock(data, anomaly, pageNumber);
+  if (!block) return null;
 
   return (
     <details className="rounded-xl border border-violet-200 bg-violet-50/40">
       <summary className="cursor-pointer list-none px-4 py-3 text-sm font-bold text-violet-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700">
-        AI explanation
+        Plain-language summary
       </summary>
       <div className="border-t border-violet-200 px-4 py-3 text-xs leading-relaxed text-violet-950">
-        <p>{explanation}</p>
-        <p className="mt-2 font-semibold text-violet-800">Rule checks and source evidence remain authoritative for decisions.</p>
+        <p>{block.body}</p>
+        {block.footnote ? (
+          <p className="mt-2 text-[11px] font-medium text-violet-800/90">{block.footnote}</p>
+        ) : null}
       </div>
     </details>
   );
@@ -133,7 +139,7 @@ export function AiAuditInsights({
                 <span className={`rounded border px-2 py-1 text-[10px] font-bold uppercase ${getSeverityBadgeColor(parsed.final_recommendation)}`}>
                   {parsed.final_recommendation}
                 </span>
-                <span className="font-semibold text-slate-500">Automated rule results are unchanged.</span>
+                <span className="font-semibold text-slate-500">Rule flags are listed separately in the queue.</span>
               </div>
               {pageSummaries.length > 0 ? (
                 <div className="space-y-2">
@@ -173,7 +179,9 @@ export function AiAuditInsights({
           ) : (
             <p className="whitespace-pre-line">{rawSummary.trim().slice(0, 1600)}</p>
           )}
-          <p className="font-semibold text-violet-800">Confirm against rule detail and source evidence before deciding.</p>
+          <p className="text-[11px] font-medium text-violet-800/90">
+            Use the source page and rule detail to confirm anything you are unsure about.
+          </p>
         </div>
       </details>
     </section>

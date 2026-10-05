@@ -3,6 +3,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { fetchCurrentUser, loginRequest, setAuthTokenProvider } from "./api";
+import { setEvidenceAuthHeaderProvider } from "./evidenceImage";
 import { createTokenStore } from "./tokenStore";
 
 export type SessionStatus = "loading" | "authenticated" | "unauthenticated";
@@ -36,8 +37,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // it is correct from the first paint even though child query effects
     // run before parent effects.
     setAuthTokenProvider(() => tokenStore.getToken());
+    setEvidenceAuthHeaderProvider(() => {
+      const token = tokenStore.getToken();
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+      return headers;
+    });
     return () => {
       setAuthTokenProvider(null);
+      setEvidenceAuthHeaderProvider(null);
     };
   }, []);
 

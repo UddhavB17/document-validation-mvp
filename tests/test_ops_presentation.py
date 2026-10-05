@@ -12,7 +12,12 @@ from pydantic import BaseModel, ConfigDict
 import database.db as db
 from database.db import get_connection, init_db
 from services.checklist_engine import is_bank_statement_old
-from services.ops_presentation import build_ops_payload, rule_to_code
+from services.ops_presentation import (
+    AI_DISPLAY_CONFIDENCE_THRESHOLD,
+    _plain_ai_explanation,
+    build_ops_payload,
+    rule_to_code,
+)
 
 
 class _Text(BaseModel):
@@ -139,6 +144,18 @@ def ops_db(tmp_path, monkeypatch):
                 ),
             )
     return int(app_id)
+
+
+def test_plain_ai_explanation_high_confidence_false_positive() -> None:
+    text = _plain_ai_explanation(
+        {
+            "verdict": "possible_false_positive",
+            "confidence": AI_DISPLAY_CONFIDENCE_THRESHOLD,
+            "reason": "PAN on page 1 matches the application.",
+        }
+    )
+    assert "probably wrong" in text.lower()
+    assert "PAN on page 1" in text
 
 
 def test_payload_validates_and_stays_small(ops_db) -> None:

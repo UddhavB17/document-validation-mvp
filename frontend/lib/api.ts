@@ -830,6 +830,9 @@ export const opsFindingSchema = z.object({
   title: opsTextSchema,
   detail: opsTextSchema,
   ai_detail: opsTextSchema.optional(),
+  ai_confidence: z.number().min(0).max(1).optional(),
+  ai_verdict: z.enum(["supported", "possible_false_positive", "unresolved"]).optional(),
+  ai_primary: z.boolean().optional(),
   pages: z.array(z.number()),
   evidence: opsEvidenceSchema.nullable(),
 });

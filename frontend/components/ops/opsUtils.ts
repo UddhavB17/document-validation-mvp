@@ -13,6 +13,25 @@ export function pickText(text: { en: string; hi: string }, locale: Locale): stri
   return locale === "hi" ? text.hi : text.en;
 }
 
+/** Primary explanation for an ops finding (AI-led when confidence threshold met). */
+export function opsFindingExplanation(finding: OpsFinding, locale: Locale): string {
+  if (finding.ai_primary && finding.ai_detail) {
+    return pickText(finding.ai_detail, locale);
+  }
+  return pickText(finding.ai_detail ?? finding.detail, locale);
+}
+
+/** Rule template text kept for audit when AI leads the headline explanation. */
+export function opsFindingRuleDetail(finding: OpsFinding, locale: Locale): string | null {
+  if (!finding.ai_detail) {
+    return null;
+  }
+  if (finding.ai_primary) {
+    return pickText(finding.detail, locale);
+  }
+  return null;
+}
+
 /** "1, 2, 3" for page lists, em dash when empty. */
 export function formatPageList(pages: number[]): string {
   return pages.length > 0 ? pages.join(", ") : "—";

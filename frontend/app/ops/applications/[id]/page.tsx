@@ -9,7 +9,7 @@ import { EvidenceWizard, type WizardMode } from "@/components/ops/EvidenceWizard
 import { FindingsList, PagesToVerifyChips } from "@/components/ops/FindingsList";
 import { LedgerStamp } from "@/components/ops/LedgerStamp";
 import { OpsChecklist } from "@/components/ops/OpsChecklist";
-import { clampPercentage, pickText, statusProgressPercentage, takeTopFindings } from "@/components/ops/opsUtils";
+import { clampPercentage, opsFindingExplanation, pickText, statusProgressPercentage, takeTopFindings } from "@/components/ops/opsUtils";
 import { normalizeOpsStatus } from "@/components/ops/StatusPill";
 import type { OpsFinding } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
@@ -223,7 +223,7 @@ export default function OpsApplicationPage() {
               <p className="mt-2 text-sm text-[color:var(--hero-muted)]">
                 {activeFinding.severity} · {t(locale, "ops.evidence.pageOf")}{" "}
                 {activeFinding.pages[0] ?? activeFinding.evidence?.page ?? "—"} ·{" "}
-                {pickText(activeFinding.ai_detail ?? activeFinding.detail, locale)}
+                {opsFindingExplanation(activeFinding, locale)}
               </p>
             </div>
             <div className="flex flex-wrap items-end gap-3">
