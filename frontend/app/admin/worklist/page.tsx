@@ -307,8 +307,17 @@ function ProcessingProgress({ item }: { item: WorklistItem }) {
 
 function WorklistResumeButton({ item }: { item: WorklistItem }) {
   const resume = useResumeApplication(item.id);
-  if (!item.pipeline_retryable) {
+  const processingState = String(item.pipeline_status ?? "").toLowerCase();
+  const recoveryHint = ["stale", "failed", "cancelled", "paused", "completed_with_warnings"].includes(processingState);
+  if (!item.pipeline_retryable && !recoveryHint) {
     return null;
+  }
+  if (!item.pipeline_retryable) {
+    return (
+      <p className="mt-1.5 text-[11px] font-semibold text-amber-800" role="status">
+        Recovery may require opening the case processing tab.
+      </p>
+    );
   }
   return (
     <div className="mt-1.5">
@@ -320,9 +329,9 @@ function WorklistResumeButton({ item }: { item: WorklistItem }) {
           event.stopPropagation();
           resume.mutate();
         }}
-        className="rounded-md border border-blue-700 bg-white px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+        className="rounded-md bg-blue-700 px-2.5 py-1.5 text-[11px] font-bold text-white shadow-sm hover:bg-blue-600 disabled:opacity-50"
       >
-        {resume.isPending ? "Resuming…" : "Resume"}
+        {resume.isPending ? "Resuming…" : "Resume from checkpoint"}
       </button>
       {resume.isError ? (
         <p className="mt-1 text-[11px] font-semibold text-red-700" role="alert">

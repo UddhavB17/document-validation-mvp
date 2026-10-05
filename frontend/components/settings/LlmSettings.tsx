@@ -13,9 +13,11 @@ const PROVIDER_LABELS: Record<string, string> = {
   none: "None (disabled)",
 };
 
-export function LlmSettings({ getValue, draftValues, setDraftValue, updateSetting }: SettingsComponentProps) {
+export function LlmSettings({ getValue, getSetting, draftValues, setDraftValue, updateSetting }: SettingsComponentProps) {
   const isLlmEnabled = getValue("llm_enabled") === "true";
-  const provider = getValue("llm_provider");
+  const providerSetting = getSetting("llm_provider");
+  const modelSetting = getSetting("llm_model");
+  const provider = draftValues["llm_provider"] ?? getValue("llm_provider");
   const model = draftValues["llm_model"] ?? getValue("llm_model");
   const [providersData, setProvidersData] = useState<LlmProviders | null>(null);
 
@@ -37,10 +39,12 @@ export function LlmSettings({ getValue, draftValues, setDraftValue, updateSettin
   const geminiModels = providersData?.gemini_models ?? [];
   const costs = providersData?.costs ?? [];
   const isGemini = provider === "gemini";
+  const runtimeProvider = providersData?.current_provider ?? providerSetting?.effective_value ?? provider;
+  const runtimeModel = providersData?.current_model ?? modelSetting?.effective_value ?? model;
 
   return (
     <div className="rounded-xl border border-[#E1E5EB] bg-white p-6 shadow-2xs">
-      <h2 className="mb-4 text-base font-bold font-serif text-[#16202E] flex items-center gap-2 border-b border-slate-50 pb-2">🤖 LLM Verification Settings</h2>
+      <h2 className="mb-4 text-base font-bold font-serif text-[#16202E] flex items-center gap-2 border-b border-slate-50 pb-2">LLM verification settings</h2>
       <div className="space-y-6">
         <div className="flex items-start justify-between">
           <div>
@@ -50,6 +54,15 @@ export function LlmSettings({ getValue, draftValues, setDraftValue, updateSettin
           <button type="button" onClick={() => updateSetting("llm_enabled", isLlmEnabled ? "false" : "true")} className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${isLlmEnabled ? "bg-[#2B4C7E]" : "bg-slate-200"}`}>
             <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${isLlmEnabled ? "translate-x-5" : "translate-x-0"}`} />
           </button>
+        </div>
+
+        <div className="rounded-lg border border-slate-100 bg-[#F6F7FA]/60 px-4 py-3 text-xs font-medium text-[#5C6B7A]">
+          <span className="font-bold text-[#16202E]">Effective runtime:</span> {runtimeProvider} / {runtimeModel || "—"}
+          {providerSetting?.env_override_active || modelSetting?.env_override_active ? (
+            <span className="block mt-1">Non-empty values in <code className="font-mono text-[11px]">.env</code> still win until you save here (this updates <code className="font-mono text-[11px]">.env</code> for LLM keys). API and in-process jobs pick up changes immediately; restart the worker container if it runs separately.</span>
+          ) : (
+            <span className="block mt-1">Saving provider or model updates the database and local <code className="font-mono text-[11px]">.env</code> (or <code className="font-mono text-[11px]">DMEF_ENV_FILE</code>).</span>
+          )}
         </div>
 
         {isLlmEnabled ? (

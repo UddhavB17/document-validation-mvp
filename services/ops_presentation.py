@@ -174,7 +174,46 @@ def _evidence_shape(evidence: Any) -> dict | None:
     }
 
 
-def _finding_from_group(code: str, items: list[dict]) -> dict:
+def _load_ops_ai_reasons(application_id: int) -> dict[tuple[str, int | None], str]:
+    """Map (rule_id, page_number) to AI exception-review reason text when saved."""
+    from services.storage import get_store
+
+    try:
+        store = get_store()
+        key = f"applications/{application_id}/reports/ops-review.json"
+        if not store.exists(key):
+            return {}
+        report = json.loads(store.get(key))
+    except Exception:
+        return {}
+
+    finding_map: dict[int, dict[str, Any]] = {}
+    for item in report.get("finding_map") or []:
+        if isinstance(item, dict) and isinstance(item.get("ref"), int):
+            finding_map[int(item["ref"])] = item
+
+    reasons: dict[tuple[str, int | None], str] = {}
+    for assessment in report.get("findings") or []:
+        if not isinstance(assessment, dict):
+            continue
+        reason = assessment.get("reason")
+        ref = assessment.get("ref")
+        if not isinstance(reason, str) or not reason.strip() or not isinstance(ref, int):
+            continue
+        meta = finding_map.get(ref)
+        if not meta:
+            continue
+        page_raw = meta.get("page_number")
+        page_num = int(page_raw) if page_raw is not None else None
+        reasons[(str(meta.get("rule_id") or ""), page_num)] = reason.strip()
+    return reasons
+
+
+def _finding_from_group(
+    code: str,
+    items: list[dict],
+    ai_reasons: dict[tuple[str, int | None], str] | None = None,
+) -> dict:
     ordered = sorted(items, key=lambda item: (_severity_key(item.get("severity")),))
     primary = ordered[0]
     pages = sorted({page for item in items for page in _anomaly_pages(item)})
@@ -201,7 +240,15 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         "document": document_label(document_type, "hi"),
         "pages": _pages_phrase(pages, "hi") if pages else "फ़ाइल",
     }
-    return {
+    primary_pages = _anomaly_pages(primary)
+    primary_page = int(primary_pages[0]) if primary_pages else None
+    ai_reason = None
+    if ai_reasons:
+        ai_reason = ai_reasons.get((str(primary.get("rule_id") or ""), primary_page))
+        if not ai_reason and primary_page is not None:
+            ai_reason = ai_reasons.get((str(primary.get("rule_id") or ""), None))
+
+    finding = {
         "code": code,
         "severity": severity,
         "title": {"en": render(code, "title", "en"), "hi": render(code, "title", "hi")},
@@ -212,6 +259,9 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         "pages": pages,
         "evidence": evidence,
     }
+    if ai_reason:
+        finding["ai_detail"] = {"en": ai_reason, "hi": ai_reason}
+    return finding
 
 
 def _summary_part(code: str, pages: list[int], lang: str) -> str:
@@ -432,7 +482,10 @@ def _checklist_section(
 # ---------------------------------------------------------------------------
 
 
-def compute_findings(anomalies: list[dict]) -> list[dict]:
+def compute_findings(
+    anomalies: list[dict],
+    ai_reasons: dict[tuple[str, int | None], str] | None = None,
+) -> list[dict]:
     """Map anomalies to deduped, severity-ordered finding dicts (all codes)."""
     groups: dict[str, list[dict]] = {}
     for anomaly in anomalies:
@@ -444,7 +497,7 @@ def compute_findings(anomalies: list[dict]) -> list[dict]:
         if code is None:
             continue
         groups.setdefault(code, []).append(anomaly)
-    findings = [_finding_from_group(code, items) for code, items in groups.items()]
+    findings = [_finding_from_group(code, items, ai_reasons) for code, items in groups.items()]
     findings.sort(
         key=lambda f: (
             _severity_key(f["severity"]),
@@ -466,7 +519,8 @@ def build_ops_payload(application_id: int) -> dict:
 
     # Recompute inexpensive groups so newly supported categories are included
     # for existing applications without reprocessing their documents.
-    all_findings = compute_findings(anomalies)
+    ai_reasons = _load_ops_ai_reasons(application_id)
+    all_findings = compute_findings(anomalies, ai_reasons)
     findings = all_findings[:5]
     overflow = _overflow_pages(all_findings[5:], anomalies)
     if application.get("ops_summary_en") and application.get("ops_summary_hi"):

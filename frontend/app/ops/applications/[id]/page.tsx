@@ -222,7 +222,8 @@ export default function OpsApplicationPage() {
               </h2>
               <p className="mt-2 text-sm text-[color:var(--hero-muted)]">
                 {activeFinding.severity} · {t(locale, "ops.evidence.pageOf")}{" "}
-                {activeFinding.pages[0] ?? activeFinding.evidence?.page ?? "—"} · {pickText(activeFinding.detail, locale)}
+                {activeFinding.pages[0] ?? activeFinding.evidence?.page ?? "—"} ·{" "}
+                {pickText(activeFinding.ai_detail ?? activeFinding.detail, locale)}
               </p>
             </div>
             <div className="flex flex-wrap items-end gap-3">

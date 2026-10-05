@@ -62,7 +62,14 @@ export function FindingsList({
                 <h3 className="font-display text-[18px] font-semibold text-desk-ink">
                   {pickText(finding.title, locale)}
                 </h3>
-                <p className="mt-1 text-sm leading-relaxed text-desk-muted">{pickText(finding.detail, locale)}</p>
+                <p className="mt-1 text-sm leading-relaxed text-desk-muted">
+                  {pickText(finding.ai_detail ?? finding.detail, locale)}
+                </p>
+                {finding.ai_detail ? (
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-desk-faint">
+                    AI summary (rule checks unchanged)
+                  </p>
+                ) : null}
               </div>
               <button
                 type="button"

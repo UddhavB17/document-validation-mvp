@@ -203,6 +203,8 @@ const settingSchemaShape = {
   description: nullableString,
   is_secret: z.boolean().optional(),
   has_value: z.boolean().optional(),
+  effective_value: z.string().optional(),
+  env_override_active: z.boolean().optional(),
 };
 
 export const settingSchema = z.object(settingSchemaShape);
@@ -827,6 +829,7 @@ export const opsFindingSchema = z.object({
   severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
   title: opsTextSchema,
   detail: opsTextSchema,
+  ai_detail: opsTextSchema.optional(),
   pages: z.array(z.number()),
   evidence: opsEvidenceSchema.nullable(),
 });

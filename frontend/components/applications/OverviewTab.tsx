@@ -1,3 +1,4 @@
+import { AiAuditInsights } from "@/components/applications/AiAuditInsights";
 import { ProgressPanel } from "@/components/ProgressPanel";
 import { ManualReviewAndDecision } from "@/components/applications/ManualReviewAndDecision";
 import { ReviewerSummary } from "@/components/applications/ReviewerSummary";
@@ -103,6 +104,7 @@ export function OverviewTab({
       ) : null}
 
       <div className="pt-6 border-t border-[#E1E5EB] space-y-6">
+        <AiAuditInsights data={data} onSelectEvidence={(anomaly, pageNumber) => onSelectPage(pageNumber ?? 1, "AI note", anomaly.reason ?? "AI page note")} />
         <ReviewerSummary
           data={data}
           onSelectPage={(pageNo) => onSelectPage(pageNo, "Manual Review Page", "Requested check by reviewer")}

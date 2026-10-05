@@ -88,12 +88,11 @@ export function AiExplanationDisclosure({
   return (
     <details className="rounded-xl border border-violet-200 bg-violet-50/40">
       <summary className="cursor-pointer list-none px-4 py-3 text-sm font-bold text-violet-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700">
-        <span className="mr-2" aria-hidden="true">＋</span>
-        AI explanation <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider text-violet-700">Secondary context</span>
+        AI explanation
       </summary>
       <div className="border-t border-violet-200 px-4 py-3 text-xs leading-relaxed text-violet-950">
         <p>{explanation}</p>
-        <p className="mt-2 font-semibold text-violet-800">Deterministic rule output remains the primary review basis.</p>
+        <p className="mt-2 font-semibold text-violet-800">Rule checks and source evidence remain authoritative for decisions.</p>
       </div>
     </details>
   );
@@ -118,10 +117,9 @@ export function AiAuditInsights({
       <details>
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-bold text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-700">
           <span id="ai-audit-insights-heading">
-            <span className="mr-2 text-violet-700" aria-hidden="true">✦</span>
-            AI Audit Insights
+            AI review summary
           </span>
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">Secondary context</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">Generated narrative</span>
         </summary>
 
         <div className="space-y-4 border-t border-violet-200 px-5 py-4 text-xs leading-relaxed text-slate-700">
@@ -135,7 +133,7 @@ export function AiAuditInsights({
                 <span className={`rounded border px-2 py-1 text-[10px] font-bold uppercase ${getSeverityBadgeColor(parsed.final_recommendation)}`}>
                   {parsed.final_recommendation}
                 </span>
-                <span className="font-semibold text-slate-500">AI output does not change deterministic findings.</span>
+                <span className="font-semibold text-slate-500">Automated rule results are unchanged.</span>
               </div>
               {pageSummaries.length > 0 ? (
                 <div className="space-y-2">
@@ -175,7 +173,7 @@ export function AiAuditInsights({
           ) : (
             <p className="whitespace-pre-line">{rawSummary.trim().slice(0, 1600)}</p>
           )}
-          <p className="font-semibold text-violet-800">Use deterministic rule detail and source evidence for the review decision.</p>
+          <p className="font-semibold text-violet-800">Confirm against rule detail and source evidence before deciding.</p>
         </div>
       </details>
     </section>

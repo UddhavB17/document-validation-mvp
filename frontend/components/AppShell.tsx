@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { StatusBadge } from "@/components/StatusBadge";
+import { ThemePickerCompact } from "@/components/ThemePickerCompact";
 import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
 import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
@@ -238,6 +239,8 @@ function ShellChrome({
               <span className="app-shell__nav-text">{t(locale, "nav.signOut")}</span>
             </button>
           </nav>
+
+          {isAdmin ? <ThemePickerCompact label="Desk theme" /> : null}
 
           {isAdmin ? (
             <div className="app-shell__health" aria-label="API health">
