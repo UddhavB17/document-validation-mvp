@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   extractOverallSummaryFromJsonString,
   parseLlmSummary,
+  reviewerOverallSummaryText,
   reviewerSummaryText,
   unwrapSummaryPayload,
 } from "../lib/llmSummaryParse";
@@ -37,4 +38,20 @@ test("parses TOON-style overall_summary lines", () => {
 final_recommendation: MANUAL REVIEW`;
   const parsed = parseLlmSummary(raw);
   assert.equal(parsed?.overall_summary, "Verification found one PAN mismatch.");
+});
+
+test("reviewerOverallSummaryText recovers from truncated JSON blobs", () => {
+  const raw = '{"overall_summary": "The loan file contains high-severity PAN mismatches for';
+  const text = reviewerOverallSummaryText(raw);
+  assert.equal(text, "The loan file contains high-severity PAN mismatches for");
+  assert.ok(!text?.includes("{"));
+});
+
+test("unwraps overall_summary stored as nested JSON string", () => {
+  const inner = JSON.stringify({
+    overall_summary: "Plain English executive summary.",
+    page_summaries: [],
+  });
+  const raw = JSON.stringify({ overall_summary: inner, final_recommendation: "MANUAL REVIEW" });
+  assert.equal(reviewerOverallSummaryText(raw), "Plain English executive summary.");
 });

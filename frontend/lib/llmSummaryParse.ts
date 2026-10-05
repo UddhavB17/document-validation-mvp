@@ -50,9 +50,42 @@ function normalizePageSummaries(value: unknown): PageSummary[] | undefined {
   return pages.length > 0 ? pages : undefined;
 }
 
+function plainReviewerText(text: string | null | undefined, depth = 0): string | null {
+  if (!text?.trim() || depth > 4) {
+    return null;
+  }
+  let candidate = text.trim();
+  if (looksLikeJsonSummaryDump(candidate)) {
+    const extracted = extractOverallSummaryFromJsonString(candidate);
+    if (extracted && extracted !== candidate) {
+      return plainReviewerText(extracted, depth + 1);
+    }
+    return extracted;
+  }
+  if (candidate.startsWith("{") || candidate.startsWith("[")) {
+    const extracted = extractOverallSummaryFromJsonString(candidate);
+    if (extracted) {
+      return plainReviewerText(extracted, depth + 1);
+    }
+    return null;
+  }
+  if (candidate.includes("\"overall_summary\"")) {
+    const extracted = extractOverallSummaryFromJsonString(candidate);
+    if (extracted) {
+      return plainReviewerText(extracted, depth + 1);
+    }
+    return null;
+  }
+  return candidate;
+}
+
 function normalizeFromRecord(record: Record<string, unknown>): LlmSummary | null {
   const overall = record.overall_summary;
   if (typeof overall !== "string" || !overall.trim()) {
+    return null;
+  }
+  const overallText = plainReviewerText(overall.trim());
+  if (!overallText) {
     return null;
   }
   const recommendation = record.final_recommendation;
@@ -61,7 +94,7 @@ function normalizeFromRecord(record: Record<string, unknown>): LlmSummary | null
       ? recommendation.trim()
       : "MANUAL REVIEW";
   return {
-    overall_summary: overall.trim(),
+    overall_summary: overallText,
     final_recommendation: finalRecommendation,
     page_summaries: normalizePageSummaries(record.page_summaries),
   };
@@ -103,7 +136,8 @@ export function extractOverallSummaryFromJsonString(raw: string | null | undefin
   if (!trimmed.startsWith("{")) {
     return null;
   }
-  const match = trimmed.match(/"overall_summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const closed = trimmed.match(/"overall_summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const match = closed ?? trimmed.match(/"overall_summary"\s*:\s*"((?:[^"\\]|\\.)*)/);
   if (!match) {
     return null;
   }
@@ -152,6 +186,26 @@ export function looksLikeJsonSummaryDump(text: string): boolean {
   return trimmed.startsWith("{") && trimmed.includes("\"overall_summary\"");
 }
 
+/** File-level overall summary only — for overview and evidence modal AI boxes. */
+export function reviewerOverallSummaryText(rawSummary: string | null | undefined): string | null {
+  if (!rawSummary?.trim()) {
+    return null;
+  }
+  const parsed = parseLlmSummary(rawSummary);
+  if (parsed?.overall_summary) {
+    return plainReviewerText(parsed.overall_summary);
+  }
+  const extracted = extractOverallSummaryFromJsonString(rawSummary);
+  if (extracted) {
+    return plainReviewerText(extracted);
+  }
+  const trimmed = rawSummary.trim();
+  if (looksLikeJsonSummaryDump(trimmed) || trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return null;
+  }
+  return plainReviewerText(trimmed);
+}
+
 export function reviewerSummaryText(
   rawSummary: string | null | undefined,
   options?: { pageNumber?: number; ruleId?: string | null },
@@ -169,28 +223,20 @@ export function reviewerSummaryText(
       return pageMatches && ruleMatches;
     });
     if (pageSummary?.problem_description?.trim()) {
-      return pageSummary.problem_description.trim();
+      return plainReviewerText(pageSummary.problem_description.trim());
     }
     const pageDetails = pageSummary
       ? (pageSummary.summary_points ?? []).filter(Boolean).join(" ")
       : "";
     if (pageDetails.trim()) {
-      return pageDetails.trim();
+      return plainReviewerText(pageDetails.trim());
     }
-    return parsed.overall_summary.trim() || null;
+    return plainReviewerText(parsed.overall_summary);
   }
 
-  const extracted = extractOverallSummaryFromJsonString(rawSummary);
-  if (extracted) {
-    return extracted;
-  }
-
-  const trimmed = rawSummary.trim();
-  if (looksLikeJsonSummaryDump(trimmed)) {
-    return null;
-  }
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-    return trimmed.slice(0, 1600);
+  const overall = reviewerOverallSummaryText(rawSummary);
+  if (overall) {
+    return overall;
   }
   return null;
 }

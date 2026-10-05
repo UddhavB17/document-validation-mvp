@@ -1,14 +1,7 @@
-import type { Anomaly, ApplicationReview } from "@/lib/api";
-import { reviewerSummaryText } from "@/lib/llmSummaryParse";
+import type { ApplicationReview } from "@/lib/api";
+import { reviewerOverallSummaryText } from "@/lib/llmSummaryParse";
 
-export function buildAiExplanationBlock(
-  data: ApplicationReview,
-  anomaly?: Anomaly,
-  pageNumber?: number,
-): { body: string } | null {
-  const body = reviewerSummaryText(data.application.llm_summary, {
-    pageNumber,
-    ruleId: anomaly?.rule_id ?? null,
-  });
+export function buildAiExplanationBlock(data: ApplicationReview): { body: string } | null {
+  const body = reviewerOverallSummaryText(data.application.llm_summary);
   return body ? { body } : null;
 }

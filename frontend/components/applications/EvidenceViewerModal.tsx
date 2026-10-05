@@ -382,9 +382,9 @@ export function EvidenceViewerModal({
               ) : null}
             </div> : <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs font-medium leading-relaxed text-blue-900">This issue is file-level and has no explicit source page. Review the metadata and rule details above; page and PDF controls are unavailable.</div>}
 
-            {hasPageEvidence && renderedPage !== null ? <div className="mt-5">
-              <AiExplanationDisclosure data={data} anomaly={selectedEvidence.anomaly} pageNumber={renderedPage} />
-            </div> : null}
+            <div className="mt-5">
+              <AiExplanationDisclosure data={data} />
+            </div>
           </aside>
         </div>
 

@@ -3,6 +3,7 @@ import { buildAiExplanationBlock } from "@/components/applications/aiExplanation
 import { getSeverityBadgeColor } from "@/components/applications/reviewUtils";
 import {
   parseLlmSummary,
+  reviewerOverallSummaryText,
   reviewerSummaryText,
   type LlmSummary,
   type PageSummary,
@@ -24,14 +25,12 @@ export function getAiExplanation(
 
 export function AiExplanationDisclosure({
   data,
-  anomaly,
-  pageNumber,
 }: {
   data: ApplicationReview;
   anomaly?: Anomaly;
   pageNumber?: number;
 }) {
-  const block = buildAiExplanationBlock(data, anomaly, pageNumber);
+  const block = buildAiExplanationBlock(data);
   if (!block) return null;
 
   return (
@@ -57,7 +56,7 @@ export function AiAuditInsights({
   if (!rawSummary || !rawSummary.trim()) return null;
 
   const parsed = parseLlmSummary(rawSummary);
-  const overallText = parsed?.overall_summary ?? reviewerSummaryText(rawSummary);
+  const overallText = reviewerOverallSummaryText(rawSummary);
   if (!overallText) return null;
 
   const pageSummaries = parsed?.page_summaries?.slice(0, 3) ?? [];
