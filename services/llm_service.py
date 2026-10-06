@@ -17,6 +17,7 @@ from services.llm_client import (
     extract_response_text as _extract_response_text,  # noqa: F401 - compatibility export
 )
 from services.ops_templates_en_hi import TEMPLATES
+from services.review_prompts import get_review_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -193,10 +194,8 @@ def generate_summaries(application_id: int, context: dict) -> dict[str, str]:
                 [
                     {
                         "role": "system",
-                        "content": (
-                            "You write short loan-file summaries for non-technical "
-                            "operations staff in India. Use plain words only."
-                        ),
+                        "content": get_review_system_prompt()
+                        + "\nFor this task, write a short report for non-technical operations staff in India.",
                     },
                     {"role": "user", "content": prompt},
                 ],

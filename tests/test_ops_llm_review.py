@@ -14,6 +14,7 @@ from services.review_prompts import (
     REVIEW_PROMPT_VERSION,
     REVIEW_STAGE_PROMPTS,
     REVIEW_SYSTEM_PROMPT,
+    get_review_system_prompt,
 )
 
 
@@ -103,6 +104,17 @@ def test_review_only_exceptions_with_source_evidence_then_translates(monkeypatch
     )
     assert calls[0][0] == "ops_findings_review"
     assert calls[0][1]["trusted_context"]["people"]["primary"]["applicant_name"] == "Test Person"
+
+
+def test_admin_report_prompt_is_added_without_removing_safety_policy(monkeypatch):
+    monkeypatch.setattr(
+        "services.review_prompts.get_setting",
+        lambda key, default=None: "Use very simple words." if key == "llm.review_system_prompt" else default,
+    )
+    prompt = get_review_system_prompt()
+    assert "EVIDENCE AND SCOPE" in prompt
+    assert "Use very simple words." in prompt
+    assert "built-in DMEF policy above always takes priority" in prompt
 
 
 def test_no_exceptions_does_not_trigger_page_or_finding_review(monkeypatch, review_store):
