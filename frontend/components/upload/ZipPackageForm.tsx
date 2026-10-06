@@ -109,15 +109,11 @@ export function ZipPackageForm({ onUploaded, onFlowStart, onBusyChange }: Upload
     setIsVerifying(false);
   }
 
-  const readyToVerify = Boolean(
-    preparingPackageId && progress && progress.status === "prepared" && !isPreparing,
-  );
-
   return (
     <div className="space-y-6">
       {error ? <ErrorMessage message={error} /> : null}
 
-      {!readyToVerify || !progress ? (
+      {!progress || progress.status !== "prepared" ? (
         <PrepareZipStep
           file={file}
           fileInputRef={fileInputRef}
@@ -160,15 +156,15 @@ function PrepareZipStep({
   return (
     <form onSubmit={onSubmit} className="space-y-5 max-w-xl">
       <div className="space-y-2">
-        <h2 className="font-serif text-[16px] font-bold text-[#16202E] border-b border-slate-100 pb-2 mb-2">Step 1: Prepare the original ZIP package</h2>
+        <h2 className="font-serif text-[16px] font-bold text-[#16202E] border-b border-slate-100 pb-2 mb-2">Step 1: Upload and Prepare ZIP Folder</h2>
         <p className="text-xs text-[#5C6B7A] font-medium leading-relaxed">
-          Upload the original ZIP package. The system keeps each source file boundary while preparing a page inventory. Spreadsheets (.xlsx) are rendered to readable PDF sheets, and images (.jpg/.png) are consolidated.
+          Upload the original ZIP package. Spreadsheets (.xlsx) are automatically rendered to readable PDF sheets, and images (.jpg/.png) are consolidated.
         </p>
       </div>
       <label className="block" htmlFor="zip-package-file">
         <span className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Intake ZIP Archive</span>
         <input
-          ref={fileInputRef}
+          ref={fileInputRef as RefObject<HTMLInputElement>}
           id="zip-package-file"
           className="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border border-[#E1E5EB] bg-white file:text-xs file:font-semibold file:bg-[#F6F7FA] file:text-slate-700 hover:file:bg-slate-100 file:cursor-pointer rounded-lg px-4 py-2.5 focus:outline-none"
           type="file"
@@ -214,7 +210,7 @@ function VerifyZipStep({
   return (
     <form onSubmit={onSubmit} className="space-y-6">
       <div className="flex justify-between items-center border-b border-[#E1E5EB] pb-3">
-        <h2 className="font-serif text-[16px] font-bold text-[#16202E]">Step 2: Inspect the original-file inventory</h2>
+        <h2 className="font-serif text-[16px] font-bold text-[#16202E]">Step 2: Review Inventory &amp; Mapped Verification</h2>
         <button type="button" onClick={onReset} disabled={isVerifying} className="text-xs font-bold text-[#2B4C7E] hover:underline flex items-center gap-1 border-none bg-transparent cursor-pointer disabled:cursor-not-allowed disabled:text-slate-400">
           Upload another ZIP
         </button>
@@ -228,20 +224,16 @@ function VerifyZipStep({
 
       {progress.documents ? <ZipDocumentInventory documents={progress.documents} /> : null}
 
-      <div className="space-y-2 border-t border-slate-100 pt-5">
-        <h3 className="text-sm font-bold text-[#16202E]">Step 3: Verify trusted data</h3>
-        <label className="block text-sm font-bold text-[#16202E]" htmlFor="zip-trusted-manifest">
-          Trusted JSON or company database data for this ZIP
-          <span id="zip-trusted-manifest-help" className="block font-normal text-xs text-[#5C6B7A] mt-1">Supply the JSON manifest or paste the raw text output from the trusted database application.</span>
+      <div className="space-y-2">
+        <label className="block text-sm font-bold text-[#16202E]">
+          Trusted JSON or Raw Company Database Dump for this ZIP
+          <span className="block font-normal text-xs text-[#5C6B7A] mt-1">Supply the JSON manifest or paste the raw text output from the database application.</span>
         </label>
         <textarea
-          id="zip-trusted-manifest"
           value={manifestText}
           onChange={(event) => onManifestChange(event.target.value)}
-          aria-describedby="zip-trusted-manifest-help"
-          aria-required="true"
           className="h-80 w-full rounded-lg border border-[#E1E5EB] bg-white px-4 py-3 font-mono text-sm text-[#16202E] placeholder-slate-400 focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs"
-          placeholder="Paste the trusted manifest or database dump here..."
+          placeholder="Paste manifest or database dump here..."
         />
       </div>
 

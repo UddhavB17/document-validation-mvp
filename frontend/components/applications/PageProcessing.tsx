@@ -11,7 +11,7 @@ import { formatSeconds } from "@/lib/format";
 
 const PAGE_SIZE = 50;
 
-export function PageProcessing({ data, onSelectPage }: { data: Pick<ApplicationReview, "page_events">; onSelectPage?: (pageNo: number, docType?: string) => void }) {
+export function PageProcessing({ data, onSelectPage }: { data: ApplicationReview; onSelectPage?: (pageNo: number, docType?: string) => void }) {
   const events = data.page_events;
   const [view, setView] = useState<"issues" | "all">("issues");
   const [search, setSearch] = useState("");
@@ -57,7 +57,7 @@ export function PageProcessing({ data, onSelectPage }: { data: Pick<ApplicationR
         <span className="rounded-lg border border-[#E1E5EB] bg-[#F6F7FA] px-3 py-1.5 text-xs font-bold text-[#5C6B7A]">50 rows per page</span>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Metric label="Page events recorded" value={events.length} />
+        <Metric label="Pages Processed" value={events.length} />
         <Metric label="Avg. processing speed" value={`${avgSeconds.toFixed(1)}s / page`} />
         <Metric label="Warnings / errors" value={issueCount} />
       </div>
@@ -75,7 +75,7 @@ export function PageProcessing({ data, onSelectPage }: { data: Pick<ApplicationR
         </label>
         <div className="flex gap-2" role="group" aria-label="Processing event filter">
           <button type="button" onClick={() => { setView("issues"); setPage(1); }} className={`rounded-lg border px-3 py-2 text-xs font-bold ${view === "issues" ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E]" : "border-[#E1E5EB] bg-white text-[#5C6B7A]"}`}>Warnings &amp; errors ({issueCount})</button>
-          <button type="button" onClick={() => { setView("all"); setPage(1); }} className={`rounded-lg border px-3 py-2 text-xs font-bold ${view === "all" ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E]" : "border-[#E1E5EB] bg-white text-[#5C6B7A]"}`}>All events ({events.length})</button>
+          <button type="button" onClick={() => { setView("all"); setPage(1); }} className={`rounded-lg border px-3 py-2 text-xs font-bold ${view === "all" ? "border-[#2B4C7E] bg-[#EAF0F8] text-[#2B4C7E]" : "border-[#E1E5EB] bg-white text-[#5C6B7A]"}`}>All pages ({events.length})</button>
         </div>
       </div>
 
@@ -104,7 +104,7 @@ export function PageProcessing({ data, onSelectPage }: { data: Pick<ApplicationR
                   <tr key={`${pageNo ?? "unknown"}-${index}`} className="align-top hover:bg-slate-50/60">
                     <td className="px-3.5 py-3">
                       {typeof pageNo === "number" ? (
-                        <button type="button" disabled={!onSelectPage} onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)} className="rounded-md bg-[#EAF0F8] px-2.5 py-1 font-mono text-xs font-bold text-[#2B4C7E] transition-colors hover:bg-[#2B4C7E] hover:text-white disabled:cursor-wait disabled:opacity-60">Page {pageNo}</button>
+                        <button type="button" onClick={() => onSelectPage?.(pageNo, row.document_type || undefined)} className="rounded-md bg-[#EAF0F8] px-2.5 py-1 font-mono text-xs font-bold text-[#2B4C7E] transition-colors hover:bg-[#2B4C7E] hover:text-white">Page {pageNo}</button>
                       ) : "-"}
                     </td>
                     <td className="px-3.5 py-3"><StatusBadge status={row.status ?? "unknown"} /></td>

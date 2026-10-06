@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from database.db import get_connection
 from services.auth.dependencies import require_role
 from services.config import is_secret_setting
+from services.env_sync import effective_setting_metadata, sync_llm_setting_to_env
 from services.job_control import encrypt_secret
 
 router = APIRouter(
@@ -38,6 +39,9 @@ def _serialize_setting(row) -> dict:
     data["has_value"] = has_value if is_secret else True
     if is_secret:
         data["config_value"] = SECRET_PLACEHOLDER if has_value else ""
+    meta = effective_setting_metadata(str(data.get("config_key") or ""))
+    if meta:
+        data.update(meta)
     return data
 
 
@@ -94,4 +98,34 @@ def update_setting(config_key: str, payload: SettingUpdatePayload):
             "SELECT config_key, config_value, value_type, category, label, description FROM system_settings WHERE config_key = ?",
             (config_key,),
         ).fetchone()
+    if not is_secret and config_key in {"llm_provider", "llm_model"}:
+        provider_row = None
+        model_row = None
+        if config_key == "llm_provider":
+            provider_hint = str(new_value)
+            with get_connection() as conn:
+                model_row = conn.execute(
+                    "SELECT config_value FROM system_settings WHERE config_key = ?",
+                    ("llm_model",),
+                ).fetchone()
+            model_hint = str(model_row["config_value"] or "") if model_row else None
+            sync_llm_setting_to_env(
+                config_key,
+                str(new_value),
+                provider_hint=provider_hint,
+                model_hint=model_hint,
+            )
+        else:
+            with get_connection() as conn:
+                provider_row = conn.execute(
+                    "SELECT config_value FROM system_settings WHERE config_key = ?",
+                    ("llm_provider",),
+                ).fetchone()
+            provider_hint = str(provider_row["config_value"] or "") if provider_row else None
+            sync_llm_setting_to_env(
+                config_key,
+                str(new_value),
+                provider_hint=provider_hint,
+                model_hint=str(new_value),
+            )
     return {"status": "success", **_serialize_setting(updated)}

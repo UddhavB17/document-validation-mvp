@@ -4,15 +4,24 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { ErrorMessage } from "@/components/Message";
+import { LedgerStamp } from "@/components/ops/LedgerStamp";
 import { useSession } from "@/lib/auth";
+import { t, useLocale } from "@/lib/i18n";
 
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useSession();
+  const { locale } = useLocale();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const dateLabel = new Date().toLocaleDateString(locale === "hi" ? "hi-IN" : "en-GB", {
+    weekday: "long",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -29,44 +38,98 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center px-4 py-12">
-      <div className="rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">DMEF</p>
-        <h1 className="mt-1 text-2xl font-semibold text-slate-900">Sign in</h1>
-        <p className="mt-1 text-sm text-slate-600">Use your user or admin account.</p>
-        <form className="mt-6 flex flex-col gap-4" onSubmit={handleSubmit}>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Email
-            <input
-              type="email"
-              autoComplete="username"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="rounded-md border border-slate-300 px-3 py-2 text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-slate-700">
-            Password
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="rounded-md border border-slate-300 px-3 py-2 text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none"
-            />
-          </label>
-          {error ? <ErrorMessage message={error} /> : null}
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
+    <main className="grid min-h-screen lg:grid-cols-[minmax(320px,.9fr)_minmax(0,1.1fr)]">
+      <section className="relative flex flex-col justify-between overflow-hidden bg-[color:var(--sidebar-bg)] px-8 py-10 text-[color:var(--sidebar-text)] sm:px-12">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 opacity-40"
+          style={{
+            background:
+              "radial-gradient(circle at 20% 15%, rgba(54,72,240,.35), transparent 40%), radial-gradient(circle at 85% 85%, rgba(54,72,240,.2), transparent 35%)",
+          }}
+        />
+        <div className="relative">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-md bg-[color:var(--electric)] font-mono text-lg font-bold text-white">
+              D
+            </span>
+            <div>
+              <p className="text-base font-extrabold tracking-wide">DMEF</p>
+              <p className="text-xs text-[color:var(--sidebar-muted)]">Document validation</p>
+            </div>
+          </div>
+          <h1 className="mt-12 max-w-md font-display text-[40px] font-semibold leading-[1.1] tracking-[-0.035em]">
+            {t(locale, "ops.login.brandTitle")}
+          </h1>
+        </div>
+        <div className="relative">
+          <div className="flex flex-wrap gap-2">
+            <LedgerStamp tone="electric">Worklist</LedgerStamp>
+            <LedgerStamp tone="electric">Case review</LedgerStamp>
+            <LedgerStamp tone="electric">Evidence wizard</LedgerStamp>
+          </div>
+        </div>
+        <div
+          aria-hidden="true"
+          className="absolute inset-y-0 left-0 w-[5px] bg-[color:var(--electric)]"
+        />
+      </section>
+
+      <section className="relative flex flex-col justify-center bg-[color:var(--paper)] px-6 py-12 sm:px-12">
+        <div className="mx-auto w-full max-w-md">
+          <form
+            onSubmit={handleSubmit}
+            className="ledger-surface relative overflow-hidden px-6 py-7 shadow-lift"
           >
-            {isSubmitting ? "Signing in…" : "Sign in"}
-          </button>
-        </form>
-      </div>
+            <div aria-hidden="true" className="absolute inset-y-0 left-0 w-1 bg-[color:var(--electric)]" />
+            <p className="ledger-kicker">{t(locale, "ops.login.accountKicker")}</p>
+            <h2 className="mt-2 font-display text-[34px] font-semibold tracking-[-0.03em] text-desk-ink">
+              {t(locale, "ops.login.title")}
+            </h2>
+            <p className="mt-2 text-sm text-desk-muted">{t(locale, "ops.login.hint")}</p>
+
+            <label className="mt-6 flex flex-col gap-1.5 text-sm font-bold text-desk-ink">
+              {t(locale, "ops.login.email")}
+              <input
+                type="email"
+                autoComplete="username"
+                required
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                disabled={isSubmitting}
+                className="ledger-input font-mono"
+              />
+            </label>
+            <label className="mt-4 flex flex-col gap-1.5 text-sm font-bold text-desk-ink">
+              {t(locale, "ops.login.password")}
+              <input
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                disabled={isSubmitting}
+                className="ledger-input"
+              />
+            </label>
+
+            {error ? (
+              <div className="mt-4">
+                <ErrorMessage message={error} />
+              </div>
+            ) : null}
+
+            <button type="submit" disabled={isSubmitting} className="ledger-btn ledger-btn--electric mt-6 w-full">
+              {isSubmitting ? t(locale, "ops.login.submitting") : t(locale, "ops.login.submit")}
+            </button>
+            <p className="mt-3 text-center text-xs italic text-desk-faint">{t(locale, "ops.login.ledgerHint")}</p>
+          </form>
+        </div>
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-between px-6 text-[11px] text-desk-faint sm:px-12">
+          <span>DMEF · Document Matching Early Finder</span>
+          <span className="font-mono uppercase tracking-[0.08em]">{dateLabel}</span>
+        </div>
+      </section>
     </main>
   );
 }

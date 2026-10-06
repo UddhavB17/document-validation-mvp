@@ -1,7 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
-import type { Progress } from "@/lib/api";
 import { useProgress, useReprocessApplication, useRestartApplication, useResumeApplication } from "@/lib/queries";
 import { formatSeconds } from "@/lib/format";
 import { summarizePublicFields } from "@/components/applications/reviewUtils";
@@ -11,10 +9,7 @@ import { SortableTable } from "./SortableTable";
 
 // Shows live processing state for an uploaded application and exposes the
 // existing recovery action when the backend marks that job retryable.
-export function ProgressPanel({ applicationId, children }: {
-  applicationId: number;
-  children?: (progress: Progress) => ReactNode;
-}) {
+export function ProgressPanel({ applicationId }: { applicationId: number }) {
   const progress = useProgress(applicationId);
   const reprocess = useReprocessApplication(applicationId);
   const resume = useResumeApplication(applicationId);
@@ -77,22 +72,26 @@ export function ProgressPanel({ applicationId, children }: {
         <InfoMessage message="Processing completed with page-level warnings. Review the quality warnings below or run the file again." />
       ) : null}
       {progressData.retryable ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-4 space-y-3">
+          <p className="text-sm font-semibold text-amber-950">
+            Processing can continue from the last completed page checkpoint, or you can queue a full recovery run.
+          </p>
         <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={reprocess.isPending}
-            onClick={() => void reprocess.mutate()}
-            className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-600 disabled:bg-slate-300"
-          >
-            {reprocess.isPending ? "Queuing recovery..." : "Retry processing"}
-          </button>
           <button
             type="button"
             disabled={resume.isPending}
             onClick={() => void resume.mutate()}
-            className="rounded-lg border border-blue-700 bg-white px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50 disabled:opacity-50"
+            className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-600 disabled:opacity-50"
           >
             {resume.isPending ? "Resuming..." : "Resume from checkpoint"}
+          </button>
+          <button
+            type="button"
+            disabled={reprocess.isPending}
+            onClick={() => void reprocess.mutate()}
+            className="rounded-lg border border-blue-700 bg-white px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-50 disabled:opacity-50"
+          >
+            {reprocess.isPending ? "Queuing recovery..." : "Retry processing"}
           </button>
           <button
             type="button"
@@ -102,7 +101,8 @@ export function ProgressPanel({ applicationId, children }: {
           >
             {restart.isPending ? "Restarting..." : "Restart from beginning"}
           </button>
-          <span className="text-xs font-medium text-slate-500">Resume continues from the last completed page; restart reprocesses every page. A new audit event is recorded.</span>
+          <span className="text-xs font-medium text-slate-600">Resume continues from the last completed page; restart reprocesses every page. A new audit event is recorded.</span>
+        </div>
         </div>
       ) : null}
       {reprocess.isError ? <ErrorMessage message={reprocess.error.message} /> : null}
@@ -135,7 +135,6 @@ export function ProgressPanel({ applicationId, children }: {
       {completedPages.length > visibleCompletedPages.length ? (
         <p className="text-xs font-medium text-slate-500">Showing the first 50 completed pages. Open the Processing tab to search the full page event history.</p>
       ) : null}
-      {children?.(progressData)}
     </section>
   );
 }

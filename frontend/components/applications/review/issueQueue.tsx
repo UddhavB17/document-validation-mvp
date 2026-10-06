@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { getAiExplanation } from "@/components/applications/AiAuditInsights";
 import { InfoMessage } from "@/components/Message";
 import { Anomaly, ApplicationReview, normalizeDocumentType } from "@/lib/api";
 import { buildExceptionTaskId, buildManualTaskId } from "@/lib/decisionPolicy";
@@ -302,6 +303,7 @@ export function IssueQueue({
                   const pageText = issue.pages.length > 0
                     ? `${issue.pages.length} affected page${issue.pages.length === 1 ? "" : "s"}`
                     : "File-level evidence";
+                  const aiLine = getAiExplanation(data, issue.anomaly, issue.pages[0]);
                   return (
                     <button
                       key={issue.key}
@@ -319,6 +321,9 @@ export function IssueQueue({
                             <span className="truncate text-sm font-bold text-slate-900">{conciseReason(issue.anomaly)}</span>
                           </div>
                           <p className="mt-2 text-xs font-medium leading-relaxed text-slate-600">{asText(issue.anomaly.rule_id)}</p>
+                          {aiLine ? (
+                            <p className="mt-2 text-xs leading-relaxed text-violet-900">{aiLine}</p>
+                          ) : null}
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3 lg:grid-cols-1">

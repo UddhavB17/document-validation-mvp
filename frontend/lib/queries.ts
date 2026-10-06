@@ -93,7 +93,6 @@ export function useApplicationReview(applicationId: number | null) {
     },
     enabled: applicationId !== null,
     refetchInterval: getApplicationReviewPollInterval(),
-    retry: false,
   });
 }
 
@@ -129,7 +128,19 @@ export function useProgress(applicationId: number | null) {
 }
 
 export function useReprocessApplication(applicationId: number) {
-  return useRecoveryMutation<void>(applicationId, () => api.reprocessApplication(applicationId));
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.reprocessApplication(applicationId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["progress", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["applicationStatus", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["applicationReview", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsApplication", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["worklist"] }),
+      ]);
+    },
+  });
 }
 
 function useRecoveryMutation<TVariables>(

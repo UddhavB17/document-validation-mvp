@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { withReadTimeout } from "./requestTimeout";
 import { evidenceProxyOcrJsonUrl, evidenceProxyPageImageUrl, evidenceProxyPdfUrl } from "./evidenceProxy";
 export { normalizeDocumentType } from "./documentType";
 
@@ -204,6 +203,8 @@ const settingSchemaShape = {
   description: nullableString,
   is_secret: z.boolean().optional(),
   has_value: z.boolean().optional(),
+  effective_value: z.string().optional(),
+  env_override_active: z.boolean().optional(),
 };
 
 export const settingSchema = z.object(settingSchemaShape);
@@ -522,10 +523,8 @@ async function parseApiResponse<T>(response: Response, schema: z.ZodType<T>): Pr
 }
 
 async function getJsonResponse<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-  return withReadTimeout(async (signal) => {
-    const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() }, signal });
-    return parseApiResponse(response, schema);
-  });
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: { ...authHeaders() } });
+  return parseApiResponse(response, schema);
 }
 
 async function postJsonResponse<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
@@ -831,6 +830,10 @@ export const opsFindingSchema = z.object({
   severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
   title: opsTextSchema,
   detail: opsTextSchema,
+  ai_detail: opsTextSchema.optional(),
+  ai_confidence: z.number().min(0).max(1).optional(),
+  ai_verdict: z.enum(["supported", "possible_false_positive", "unresolved"]).optional(),
+  ai_primary: z.boolean().optional(),
   pages: z.array(z.number()),
   evidence: opsEvidenceSchema.nullable(),
 });
@@ -964,10 +967,6 @@ export async function adminResetPasswordRequest(userId: number, newPassword: str
 
 export async function adminDeleteUserRequest(userId: number): Promise<void> {
   await deleteJsonResponse(`/admin/users/${userId}`, z.object({}));
-}
-
-export async function adminStartWorkerRequest(): Promise<Record<string, unknown>> {
-  return postJsonResponse("/admin/worker/start", {}, z.object({}).passthrough());
 }
 
 export async function fetchOpsApplication(applicationId: number): Promise<OpsApplication> {

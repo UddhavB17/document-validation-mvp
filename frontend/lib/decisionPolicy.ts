@@ -122,10 +122,6 @@ export function buildChecklistTaskId(sNo: unknown, description?: unknown, index 
   return `checklist:${serial || slug(description) || index + 1}`;
 }
 
-export function checklistRequiresReview(status: unknown): boolean {
-  return ["manual_review", "not_evaluated_by_engine", "not_checked"].includes(normalize(status));
-}
-
 export function buildExceptionTaskId(exception: DecisionBusinessException, index = 0): string {
   const serial = nonEmpty(exception.s_no);
   const stablePart = nonEmpty(exception.id) || [serial, exception.rule_id, exception.page_number, slug(exception.reason)].filter(Boolean).join(":") || index + 1;
@@ -188,7 +184,7 @@ export function buildDecisionTasks({
   });
 
   checklistRows.forEach((row, index) => {
-    if (!checklistRequiresReview(row.status)) return;
+    if (normalize(row.status) !== "not_checked") return;
     addOrMergeTask(tasks, {
       id: buildChecklistTaskId(row.s_no, row.description, index),
       kind: "checklist",
@@ -223,6 +219,10 @@ export function getDecisionProcessingState(status: unknown, isStale = false): De
   if (COMPLETED_PROCESSING_STATUSES.has(normalized)) return "completed";
   if (!normalized) return "unknown";
   return "incomplete";
+}
+
+export function isDecisionProcessingBlocked(status: unknown, isStale = false): boolean {
+  return getDecisionProcessingState(status, isStale) === "blocked";
 }
 
 function checkedSet(value: ReadonlySet<string> | readonly string[] | undefined): ReadonlySet<string> {

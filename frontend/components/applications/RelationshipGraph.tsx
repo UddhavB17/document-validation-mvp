@@ -8,6 +8,13 @@ interface RelationshipGraphProps {
   relationships?: RelationshipNode[] | null;
 }
 
+const statusColors = {
+  match: "var(--match)",
+  mismatch: "var(--mismatch)",
+  attention: "var(--attention)",
+  "n/a": "transparent",
+};
+
 const stampText = {
   match: "Match",
   mismatch: "Mismatch",

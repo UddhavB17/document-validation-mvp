@@ -83,7 +83,7 @@ correctness, and approval evidence from fulfillment of the approved conditions.
 The search is bounded; omitted candidates and partial excerpts are not evidence of
 absence. If a required fact cannot be established, keep the finding unresolved. Return
 {"findings":[{"ref":1,"verdict":"supported|possible_false_positive|unresolved",
-"confidence":0.0,"reason":"short evidence-based explanation and next action",
+"confidence":0.0,"reason":"one or two short sentences in plain English for a non-technical reviewer; say what to check next",
 "pages":[1],"quote":"exact source quote supporting a suspected false positive, or empty"}]}.
 Select one verdict enum and use a numeric confidence from 0 to 1. Preserve each ref
 exactly once. Cite only supplied pages. For possible_false_positive, quote affirmative

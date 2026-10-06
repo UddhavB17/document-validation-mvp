@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { api } from "@/lib/api";
+import { EvidencePageImage } from "@/components/evidence/EvidencePageImage";
 import { useLocale, t } from "@/lib/i18n";
 
 import { Bbox, bboxToStyle, severityBoxClass } from "./bbox";
@@ -10,12 +10,11 @@ import { Bbox, bboxToStyle, severityBoxClass } from "./bbox";
 export interface EvidenceSelection {
   page: number;
   pages: number[];
-  /** Page the box or text highlight belongs to; null for a plain page preview. */
+  /** Page the bbox belongs to; null when the selection has no box. */
   evidencePage: number | null;
   bbox: Bbox | null;
   severity: string | null | undefined;
   title: string;
-  highlight?: string;
 }
 
 export function EvidenceViewer({
@@ -48,7 +47,7 @@ export function EvidenceViewer({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const boxStyle = selection.bbox && selection.page === selection.evidencePage ? bboxToStyle(selection.bbox) : null;
+  const boxStyle = selection.bbox ? bboxToStyle(selection.bbox) : null;
 
   return (
     <div
@@ -78,8 +77,6 @@ export function EvidenceViewer({
           </button>
         </header>
 
-        <a className="border-b px-4 py-2 text-sm font-semibold" href={api.sourcePdfUrl(applicationId, selection.page)} target="_blank" rel="noreferrer">{t(locale, "ops.evidence.fullPdf")}</a>
-
         {boxStyle === null ? (
           <p role="note" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-900">
             {t(locale, "ops.evidence.noBox")}
@@ -93,10 +90,10 @@ export function EvidenceViewer({
             </p>
           ) : (
             <div className="relative mx-auto w-fit max-w-full">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <EvidencePageImage
                 key={`${applicationId}-${selection.page}`}
-                src={api.sourcePageImageUrl(applicationId, selection.page, selection.page === selection.evidencePage ? selection.highlight : undefined)}
+                applicationId={applicationId}
+                pageNumber={selection.page}
                 alt={`${t(locale, "ops.evidence.pageOf")} ${selection.page}`}
                 onError={() => setImageError(true)}
                 className="h-auto max-w-full rounded-sm border border-slate-200 bg-white shadow"

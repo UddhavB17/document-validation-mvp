@@ -5,19 +5,43 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // ws-e ops ui: named tokens for the three most-used hex values plus
-        // the severity scale, so new screens stop inlining hex.
         brand: {
-          primary: "#2B4C7E",
-          accent: "#5C6B7A",
-          surface: "#F6F7FA",
-          border: "#E1E5EB",
+          primary: "var(--electric)",
+          accent: "var(--indigo)",
+          surface: "var(--surface-muted)",
+          border: "var(--border)",
+        },
+        desk: {
+          paper: "var(--paper)",
+          surface: "var(--surface)",
+          ink: "var(--ink)",
+          muted: "var(--text-muted)",
+          faint: "var(--text-subtle)",
+          line: "var(--border)",
+          electric: "var(--electric)",
+          indigo: "var(--indigo)",
+          ok: "var(--success)",
+          warn: "var(--warning)",
+          danger: "var(--danger)",
+          hero: "var(--hero-bg)",
         },
         severity: {
-          high: "#AF3B2E",
-          medium: "#A0701C",
-          low: "#1F7A5C",
+          high: "var(--danger)",
+          medium: "var(--warning)",
+          low: "var(--success)",
         },
+      },
+      fontFamily: {
+        sans: ["var(--font-sans)", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "Fraunces", "Georgia", "serif"],
+        mono: ["var(--font-mono)", "IBM Plex Mono", "ui-monospace", "monospace"],
+      },
+      boxShadow: {
+        soft: "var(--shadow-subtle)",
+        lift: "var(--shadow-raised)",
+      },
+      borderRadius: {
+        desk: "var(--radius-md)",
       },
     },
   },
