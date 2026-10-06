@@ -37,6 +37,7 @@ export const revalidate = 0;
  */
 
 const NO_STORE = "private, no-store";
+const PRIVATE_EVIDENCE_CACHE = "private, max-age=300, must-revalidate";
 
 /** Content headers safe to pass through from the backend response. */
 const FORWARDED_CONTENT_HEADERS = ["content-type", "content-disposition"] as const;
@@ -92,7 +93,7 @@ export async function GET(
       headers.set(name, value);
     }
   }
-  headers.set("Cache-Control", NO_STORE);
+  headers.set("Cache-Control", PRIVATE_EVIDENCE_CACHE);
   headers.set("X-Content-Type-Options", "nosniff");
   // Stream the backend body straight through; the token stays in the
   // server-to-server request header and never enters a URL.

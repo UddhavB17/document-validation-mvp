@@ -8,9 +8,18 @@ method raises ``NotImplementedError``.
 from __future__ import annotations
 
 from datetime import timedelta
+from functools import lru_cache
 from typing import BinaryIO
 
 from services.storage._keys import check_key, check_prefix
+
+
+@lru_cache(maxsize=1)
+def _storage_client():  # type: ignore[no-untyped-def]
+    """Reuse one GCS client and its HTTP transport per backend process."""
+    from google.cloud import storage
+
+    return storage.Client()
 
 
 class GcsObjectStore:
@@ -28,9 +37,7 @@ class GcsObjectStore:
         return self.bucket
 
     def _client(self):  # type: ignore[no-untyped-def]
-        from google.cloud import storage
-
-        return storage.Client()
+        return _storage_client()
 
     def _blob(self, key: str):  # type: ignore[no-untyped-def]
         check_key(key)

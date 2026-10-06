@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import database.db as db
+import routes.review as review
 import services.reprocessing as reprocessing
 from database.db import get_connection, init_db
 from main import app
@@ -79,6 +80,40 @@ def test_source_pdf_endpoint_returns_inline_evidence(tmp_path, monkeypatch, auth
     assert response.content == pdf_path.read_bytes()
     assert response.headers["content-type"] == "application/pdf"
     assert response.headers["content-disposition"].startswith("inline")
+
+
+def test_source_pdf_cache_avoids_repeated_object_store_download(monkeypatch) -> None:
+    source = b"cached-pdf"
+    calls = 0
+
+    class _Store:
+        def get(self, key: str) -> bytes:
+            nonlocal calls
+            calls += 1
+            assert key == "applications/9/source/source.pdf"
+            return source
+
+    monkeypatch.setattr(
+        "services.storage.refs.get_ref",
+        lambda owner_table, owner_id, purpose: {
+            "storage_key": "applications/9/source/source.pdf",
+            "created_at": "2026-10-07T00:00:00+00:00",
+            "size_bytes": len(source),
+        },
+    )
+    monkeypatch.setattr("services.storage.get_store", lambda: _Store())
+    monkeypatch.setattr(
+        review,
+        "load_latest_uploaded_file",
+        lambda application_id: {"original_filename": "source.pdf"},
+    )
+    review._SOURCE_CACHE.clear()
+
+    first = review._application_source_bytes(9)
+    second = review._application_source_bytes(9)
+
+    assert first == second == (source, "source.pdf", "2026-10-07T00:00:00+00:00")
+    assert calls == 1
 
 
 def test_source_page_endpoint_renders_exact_page_image(tmp_path, monkeypatch, auth_headers) -> None:

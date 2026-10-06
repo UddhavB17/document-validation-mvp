@@ -30,7 +30,7 @@ export async function fetchEvidenceImageBlob(
   highlight?: string,
 ): Promise<string> {
   const proxyUrl = evidenceProxyPageImageUrl(applicationId, pageNumber, highlight);
-  let response = await fetch(proxyUrl, { credentials: "same-origin", cache: "no-store" });
+  let response = await fetch(proxyUrl, { credentials: "same-origin" });
   if (response.status === 401 && authHeaderProvider) {
     const backendUrl = `${API_BASE_URL.replace(/\/+$/, "")}${backendPageImagePath(
       applicationId,
@@ -39,7 +39,6 @@ export async function fetchEvidenceImageBlob(
     )}`;
     response = await fetch(backendUrl, {
       headers: { ...authHeaderProvider() },
-      cache: "no-store",
     });
   }
   if (!response.ok) {
