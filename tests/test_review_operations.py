@@ -116,6 +116,25 @@ def test_source_pdf_cache_avoids_repeated_object_store_download(monkeypatch) -> 
     assert calls == 1
 
 
+def test_source_page_serves_persisted_preview_without_loading_source_pdf(monkeypatch) -> None:
+    class _Store:
+        def get(self, key: str) -> bytes:
+            assert key == "preview-key"
+            return b"\x89PNG persisted-preview"
+
+    monkeypatch.setattr("services.evidence_previews.source_version", lambda application_id: "v1")
+    monkeypatch.setattr(
+        "services.evidence_previews.preview_key",
+        lambda application_id, version, page_number: "preview-key",
+    )
+    monkeypatch.setattr("services.storage.get_store", lambda: _Store())
+
+    response = review.get_application_source_page(9, 1, dpi=150)
+
+    assert response.body == b"\x89PNG persisted-preview"
+    assert response.headers["cache-control"] == "private, max-age=3600"
+
+
 def test_source_page_endpoint_renders_exact_page_image(tmp_path, monkeypatch, auth_headers) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
     application_id, _ = _seed_pdf_application(tmp_path)

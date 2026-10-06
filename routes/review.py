@@ -264,12 +264,27 @@ def get_application_source_page(
     highlight: str | None = None,
     dpi: int = Query(default=150, ge=72, le=288),
 ) -> Response:
+    from services.evidence_previews import preview_key
+    from services.evidence_previews import source_version as get_source_version
     from services.pdf_processor import render_source_page
+    from services.storage import get_store
 
     if page_number < 1:
         raise HTTPException(status_code=422, detail="Page number must be one or greater")
-    pdf_bytes, _, source_version = _application_source_bytes(application_id)
-    cache_key = (application_id, page_number, dpi, highlight or "", source_version)
+    if highlight is None and dpi == 150:
+        version = get_source_version(application_id)
+        if version is not None:
+            try:
+                image_bytes = get_store().get(preview_key(application_id, version, page_number))
+                return Response(
+                    content=image_bytes,
+                    media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=3600"},
+                )
+            except FileNotFoundError:
+                pass
+    pdf_bytes, _, source_ref_version = _application_source_bytes(application_id)
+    cache_key = (application_id, page_number, dpi, highlight or "", source_ref_version)
     cached = _page_cache_get(cache_key)
     if cached is not None:
         return Response(

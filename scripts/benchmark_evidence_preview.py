@@ -1,8 +1,9 @@
 """Benchmark the source-page preview path before and after the cache changes.
 
 This uses a local in-memory object-store double, so it measures application
-work and cache behavior without requiring production GCS credentials. Set
-``DMEF_BENCH_GCS_DELAY_MS`` to approximate the observed GCS download latency.
+work and page-object behavior without requiring production GCS credentials.
+Set ``DMEF_BENCH_GCS_DELAY_MS`` and ``DMEF_BENCH_PAGE_DELAY_MS`` to model
+source-PDF and page-object download latency.
 """
 
 from __future__ import annotations
@@ -15,6 +16,8 @@ from statistics import mean
 import fitz
 
 import routes.review as review
+import services.evidence_previews as previews
+from services.evidence_previews import preview_key
 from services.pdf_processor import render_source_page
 
 APPLICATION_ID = 9
@@ -23,17 +26,24 @@ SOURCE_VERSION = "2026-10-07T00:00:00+00:00"
 
 
 class FakeStore:
-    def __init__(self, payload: bytes, delay_seconds: float) -> None:
+    def __init__(self, payload: bytes, source_delay_seconds: float, page_delay_seconds: float) -> None:
         self.payload = payload
-        self.delay_seconds = delay_seconds
+        self.source_delay_seconds = source_delay_seconds
+        self.page_delay_seconds = page_delay_seconds
+        self.objects: dict[str, bytes] = {}
         self.downloads = 0
+        self.page_downloads = 0
 
     def get(self, key: str) -> bytes:
-        assert key == STORAGE_KEY
-        self.downloads += 1
-        if self.delay_seconds:
-            time.sleep(self.delay_seconds)
-        return self.payload
+        if key == STORAGE_KEY:
+            self.downloads += 1
+            if self.source_delay_seconds:
+                time.sleep(self.source_delay_seconds)
+            return self.payload
+        self.page_downloads += 1
+        if self.page_delay_seconds:
+            time.sleep(self.page_delay_seconds)
+        return self.objects[key]
 
 
 def _pdf_bytes() -> bytes:
@@ -65,21 +75,27 @@ def _new_request() -> None:
 
 def main() -> None:
     payload = _pdf_bytes()
-    delay_seconds = float(os.getenv("DMEF_BENCH_GCS_DELAY_MS", "0")) / 1000
-    store = FakeStore(payload, delay_seconds)
+    source_delay_seconds = float(os.getenv("DMEF_BENCH_GCS_DELAY_MS", "50")) / 1000
+    page_delay_seconds = float(os.getenv("DMEF_BENCH_PAGE_DELAY_MS", "5")) / 1000
+    store = FakeStore(payload, source_delay_seconds, page_delay_seconds)
 
     import services.storage
     import services.storage.refs
 
     services.storage.get_store = lambda: store  # type: ignore[assignment]
-    services.storage.refs.get_ref = lambda owner_table, owner_id, purpose: {  # type: ignore[assignment]
+    source_ref = {
         "storage_key": STORAGE_KEY,
         "created_at": SOURCE_VERSION,
         "size_bytes": len(payload),
     }
+    services.storage.refs.get_ref = lambda owner_table, owner_id, purpose: source_ref  # type: ignore[assignment]
+    previews.get_ref = lambda owner_table, owner_id, purpose: source_ref  # type: ignore[assignment]
     review.load_latest_uploaded_file = lambda application_id: {  # type: ignore[assignment]
         "original_filename": "benchmark.pdf"
     }
+
+    previews_key = preview_key(APPLICATION_ID, SOURCE_VERSION, 1)
+    store.objects[previews_key] = render_source_page(payload, 1, dpi=150)
 
     samples = 5
     old_times: list[float] = []
@@ -92,6 +108,7 @@ def main() -> None:
 
     _reset_caches()
     store.downloads = 0
+    store.page_downloads = 0
     new_times: list[float] = []
     for _ in range(samples):
         started = time.perf_counter()
@@ -100,9 +117,14 @@ def main() -> None:
     new_downloads = store.downloads
 
     print(f"PDF bytes: {len(payload):,}")
-    print(f"Simulated GCS delay per download: {delay_seconds * 1000:.1f} ms")
+    print(f"Page preview bytes: {len(store.objects[previews_key]):,}")
+    print(f"Simulated source download: {source_delay_seconds * 1000:.1f} ms")
+    print(f"Simulated page download: {page_delay_seconds * 1000:.1f} ms")
     print(f"Before: mean={mean(old_times) * 1000:.1f} ms, downloads={old_downloads}")
-    print(f"After:  mean={mean(new_times) * 1000:.1f} ms, downloads={new_downloads}")
+    print(
+        f"After:  mean={mean(new_times) * 1000:.1f} ms, "
+        f"source_downloads={new_downloads}, page_downloads={store.page_downloads}"
+    )
     print(f"After first request: {new_times[0] * 1000:.1f} ms")
     print(f"After warm request:  {mean(new_times[1:]) * 1000:.1f} ms")
 
