@@ -42,6 +42,9 @@ class GcsObjectStore:
     def put(self, key: str, data: bytes | BinaryIO, content_type: str) -> str:
         blob = self._blob(key)
         payload = data.read() if hasattr(data, "read") else data
+        # Small resumable chunks: a stalled uplink only re-sends the current
+        # 5 MiB instead of restarting a hundreds-of-MB object (multiple of 256 KiB, as required).
+        blob.chunk_size = 5 * 1024 * 1024
         blob.upload_from_string(
             bytes(payload), content_type=content_type or "application/octet-stream"
         )

@@ -24,6 +24,7 @@ from services.review_prompts import (
     REVIEW_PROMPT_VERSION,
     REVIEW_STAGE_PROMPTS,
     REVIEW_SYSTEM_PROMPT,
+    get_review_system_prompt,
 )
 from services.storage import get_store
 
@@ -39,6 +40,18 @@ class ReviewValidationError(ValueError):
     def __init__(self, category: str):
         self.category = category
         super().__init__(category)
+
+
+def _active_prompt_fingerprint() -> str:
+    """Keep checkpoints separate when an admin changes report instructions."""
+    system_prompt = get_review_system_prompt()
+    if system_prompt == REVIEW_SYSTEM_PROMPT:
+        return REVIEW_PROMPT_FINGERPRINT
+    return hashlib.sha256(
+        json.dumps(
+            {"base": REVIEW_PROMPT_FINGERPRINT, "system": system_prompt}, sort_keys=True
+        ).encode()
+    ).hexdigest()
 
 
 def _safe_category(exc: BaseException, default: str) -> str:
@@ -87,7 +100,7 @@ def _call(application_id: int, purpose: str, instruction: str, data: Any, tokens
             [
                 {
                     "role": "system",
-                    "content": REVIEW_SYSTEM_PROMPT,
+                    "content": get_review_system_prompt(),
                 },
                 {"role": "user", "content": instruction + "\nInput (TOON):\n" + encode(data)},
             ],
@@ -423,7 +436,7 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
     digest = hashlib.sha256(
         json.dumps(
             {
-                "prompt_fingerprint": REVIEW_PROMPT_FINGERPRINT,
+                "prompt_fingerprint": _active_prompt_fingerprint(),
                 "model": model,
                 "pages": pages,
                 "findings": findings,
@@ -568,7 +581,7 @@ def generate_exception_review(application_id: int, context: dict) -> dict[str, s
     )
     report = {
         "prompt_version": REVIEW_PROMPT_VERSION,
-        "prompt_fingerprint": REVIEW_PROMPT_FINGERPRINT,
+        "prompt_fingerprint": _active_prompt_fingerprint(),
         "model": model,
         "review_status": provisional_status,
         "review_scope": "exceptions_only",

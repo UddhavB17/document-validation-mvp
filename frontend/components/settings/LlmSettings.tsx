@@ -17,6 +17,7 @@ export function LlmSettings({ getValue, draftValues, setDraftValue, updateSettin
   const isLlmEnabled = getValue("llm_enabled") === "true";
   const provider = getValue("llm_provider");
   const model = draftValues["llm_model"] ?? getValue("llm_model");
+  const reviewPrompt = draftValues["llm.review_system_prompt"] ?? getValue("llm.review_system_prompt");
   const [providersData, setProvidersData] = useState<LlmProviders | null>(null);
 
   useEffect(() => {
@@ -78,6 +79,28 @@ export function LlmSettings({ getValue, draftValues, setDraftValue, updateSettin
             </div>
           </div>
         ) : null}
+
+        <div className="border-t border-slate-100 pt-4">
+          <label htmlFor="llm-review-system-prompt" className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A]">
+            Report system prompt additions
+          </label>
+          <p className="mt-1 text-xs font-semibold leading-relaxed text-[#5C6B7A]">
+            Add tone or wording guidance for report text. The built-in evidence and safety rules always stay active.
+          </p>
+          <textarea
+            id="llm-review-system-prompt"
+            value={reviewPrompt}
+            maxLength={8000}
+            onChange={(event) => setDraftValue("llm.review_system_prompt", event.target.value)}
+            onBlur={() => updateSetting("llm.review_system_prompt", reviewPrompt)}
+            placeholder="Example: Use short sentences and explain banking terms in simple Hindi."
+            rows={6}
+            className="mt-2 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs"
+          />
+          <span className="mt-1 block text-[10px] font-semibold text-[#5C6B7A]">
+            Saved when you click outside · {reviewPrompt.length}/8000 characters
+          </span>
+        </div>
 
         {costs.length > 0 ? (
           <div className="pt-4 border-t border-slate-100">

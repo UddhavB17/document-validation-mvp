@@ -56,6 +56,11 @@ def get_all_settings():
 
 @router.patch("/{config_key}")
 def update_setting(config_key: str, payload: SettingUpdatePayload):
+    if config_key == "llm.review_system_prompt" and len(payload.config_value) > 8000:
+        raise HTTPException(
+            status_code=422,
+            detail="The report system prompt additions must be 8,000 characters or fewer",
+        )
     with get_connection() as conn:
         row = conn.execute(
             "SELECT config_key, config_value, value_type, category, label, description FROM system_settings WHERE config_key = ?",

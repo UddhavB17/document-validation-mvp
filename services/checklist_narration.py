@@ -15,7 +15,8 @@ CHECKLIST_NARRATION_SYSTEM_PROMPT = (
     "Use only the provided deterministic status, confidence detail, extracted fields, "
     "and flagged reason. Write 1-2 factual sentences. Do not hedge with phrases like "
     "'appears to', 'might be', or 'possibly'. If fields are missing, state that they "
-    "were not extracted. The status word in your answer must be exactly the status "
+    "were not extracted. Use simple everyday words, short sentences, and no legal or "
+    "academic language. The status word in your answer must be exactly the status "
     "provided by the caller."
 )
 
