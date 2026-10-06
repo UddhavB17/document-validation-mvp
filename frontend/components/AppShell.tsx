@@ -106,7 +106,7 @@ function ShellChrome({
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [nowLabel, setNowLabel] = useState("--:--");
   const applicationId = getApplicationIdFromPath(pathname);
-  const healthStatus = health.data?.status === "ok" ? "ok" : "failed";
+  const healthStatus = health.data?.status ?? "failed";
   const isAdmin = role === "admin";
   const primaryNav = isAdmin ? ADMIN_NAV : OPERATIONS_NAV;
   const homeHref = isAdmin ? "/admin/worklist" : "/ops";

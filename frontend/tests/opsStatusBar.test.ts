@@ -68,6 +68,15 @@ test("ops schema rejects an unknown severity or finding code", () => {
   assert.throws(() => opsApplicationSchema.parse(badCode));
 });
 
+test("ops schema accepts the contract's review-required finding code", () => {
+  const raw = loadOpsPayload();
+  const findings = raw["top_findings"] as Array<{ code: string }>;
+  const first = findings[0];
+  assert.ok(first);
+  first.code = "REVIEW_REQUIRED";
+  assert.equal(opsApplicationSchema.parse(raw).top_findings[0]?.code, "REVIEW_REQUIRED");
+});
+
 test("legacy reviewer statuses map to the ops vocabulary and null names become empty", () => {
   const raw = loadOpsPayload();
   const parsed = opsApplicationSchema.parse({ ...raw, status: "CRITICAL", loan_id: null, applicant_name: null });

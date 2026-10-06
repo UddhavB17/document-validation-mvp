@@ -472,8 +472,8 @@ a {
 .app-shell__theme-chip {
   border: 1px solid var(--sidebar-border);
   border-radius: 6px;
-  background: var(--sidebar-surface, var(--surface));
-  color: var(--sidebar-text, var(--text));
+  background: var(--sidebar-bg-end);
+  color: var(--sidebar-muted);
   cursor: pointer;
   font-size: 10px;
   font-weight: 700;
@@ -485,7 +485,7 @@ a {
 .app-shell__theme-chip.is-active {
   border-color: var(--electric);
   background: var(--action-muted);
-  color: var(--electric);
+  color: var(--sidebar-text);
 }
 
 .app-shell__health {

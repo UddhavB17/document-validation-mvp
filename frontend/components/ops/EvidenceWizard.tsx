@@ -9,7 +9,7 @@ import { t, useLocale } from "@/lib/i18n";
 
 import { bboxToStyle, severityBoxClass } from "./bbox";
 import { LedgerStamp } from "./LedgerStamp";
-import { opsFindingExplanation, opsFindingRuleDetail, pickText } from "./opsUtils";
+import { opsFindingExplanation, pickText } from "./opsUtils";
 
 export type WizardMode =
   | { kind: "finding"; index: number }
@@ -126,7 +126,6 @@ export function EvidenceWizard({
               <LedgerStamp tone="ink">
                 {t(locale, "ops.evidence.pageOf")} {page}
               </LedgerStamp>
-              {finding ? <LedgerStamp tone="warn">{finding.code.replace(/_/g, " ")}</LedgerStamp> : null}
             </div>
           </div>
           <h2 className="mt-3 font-display text-[30px] font-semibold tracking-[-0.03em] text-desk-ink">
@@ -137,11 +136,6 @@ export function EvidenceWizard({
           <p className="mt-2 text-sm text-desk-muted">
             {finding ? opsFindingExplanation(finding, locale) : t(locale, "ops.review.pagesToVerify")}
           </p>
-          {finding && opsFindingRuleDetail(finding, locale) ? (
-            <p className="mt-2 text-xs text-desk-faint">
-              Rule check: {opsFindingRuleDetail(finding, locale)}
-            </p>
-          ) : null}
           <a
             className="ledger-link mt-3 inline-flex text-sm"
             href={api.sourcePdfUrl(application.application_id, page)}

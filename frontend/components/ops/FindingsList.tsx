@@ -4,7 +4,7 @@ import { OpsFinding, OpsPageToVerify } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
 
 import { LedgerStamp } from "./LedgerStamp";
-import { opsFindingExplanation, opsFindingRuleDetail, pickText, takeTopFindings } from "./opsUtils";
+import { opsFindingExplanation, pickText, takeTopFindings } from "./opsUtils";
 
 function severityTone(severity: string): "danger" | "warn" | "muted" {
   if (severity === "HIGH") return "danger";
@@ -65,20 +65,6 @@ export function FindingsList({
                 <p className="mt-1 text-sm leading-relaxed text-desk-muted">
                   {opsFindingExplanation(finding, locale)}
                 </p>
-                {finding.ai_primary ? (
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--electric)]">
-                    AI review (high confidence)
-                  </p>
-                ) : finding.ai_detail ? (
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-desk-faint">
-                    AI note — also see automatic rule text
-                  </p>
-                ) : null}
-                {opsFindingRuleDetail(finding, locale) ? (
-                  <p className="mt-1 text-xs leading-relaxed text-desk-faint">
-                    Rule check: {opsFindingRuleDetail(finding, locale)}
-                  </p>
-                ) : null}
               </div>
               <button
                 type="button"

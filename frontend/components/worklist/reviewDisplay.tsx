@@ -83,7 +83,7 @@ export function ExceptionSummary({ businessIssues, processingWarnings }: { busin
   const summary = formatExceptionSummary(businessIssues, processingWarnings);
   const hasBusinessIssues = businessIssues > 0;
   const hasProcessingWarnings = processingWarnings > 0;
-  const tone = hasBusinessIssues ? "text-[#AF3B2E]" : hasProcessingWarnings ? "text-[#A0701C]" : "text-[#1F7A5C]";
+  const tone = hasBusinessIssues ? "text-desk-danger" : hasProcessingWarnings ? "text-desk-warn" : "text-desk-ok";
 
   return (
     <span className={`text-[12px] font-semibold leading-5 ${tone}`}>
@@ -94,9 +94,9 @@ export function ExceptionSummary({ businessIssues, processingWarnings }: { busin
 
 export function InlineCount({ label, value, children }: { label: string; value: number; children?: ReactNode }) {
   return (
-    <div className="flex items-baseline gap-2 border-l border-[#E1E5EB] pl-4 first:border-l-0 first:pl-0">
-      <dt className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#5C6B7A]">{label}</dt>
-      <dd className="font-mono text-lg font-semibold text-[#16202E]">{value}</dd>
+    <div className="flex items-baseline gap-2 border-l border-desk-line pl-4 first:border-l-0 first:pl-0">
+      <dt className="text-[11px] font-bold uppercase tracking-[0.08em] text-desk-muted">{label}</dt>
+      <dd className="font-mono text-lg font-semibold text-desk-ink">{value}</dd>
       {children}
     </div>
   );

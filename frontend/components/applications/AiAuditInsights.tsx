@@ -93,7 +93,10 @@ export function AiAuditInsights({
                   reason: item.problem_description ?? item.summary_points?.[0] ?? "AI page note",
                 };
                 return (
-                  <div key={`${item.rule_id ?? "page"}-${item.page_number ?? index}`} className="rounded-lg border border-violet-100 bg-white/70 p-3">
+                  <div
+                    key={`${item.rule_id ?? "page"}-${item.page_number ?? "unknown"}-${index}`}
+                    className="rounded-lg border border-violet-100 bg-white/70 p-3"
+                  >
                     <div className="flex items-center justify-between gap-3 font-semibold text-slate-800">
                       <span>
                         {pageNumber ? `Page ${pageNumber}` : "General note"}
