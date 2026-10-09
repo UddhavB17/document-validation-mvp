@@ -164,9 +164,8 @@ def test_payload_validates_and_stays_small(ops_db) -> None:
     assert len(json.dumps(payload, ensure_ascii=False)) <= 50 * 1024
 
 
-def test_top_findings_capped_and_hindi_present(ops_db) -> None:
+def test_all_findings_are_visible_and_hindi_is_present(ops_db) -> None:
     payload = build_ops_payload(ops_db)
-    assert len(payload["top_findings"]) <= 5
     assert payload["top_findings"], "fixture anomalies must map to findings"
     codes = [finding["code"] for finding in payload["top_findings"]]
     assert "NAME_MISMATCH" in codes

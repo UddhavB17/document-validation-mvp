@@ -12,7 +12,7 @@ test("ops payload schema parses the section-5 fixture", () => {
   const parsed = opsApplicationSchema.parse(raw);
   assert.equal(parsed.application_id, 12);
   assert.equal(parsed.status, "needs_review");
-  assert.ok(parsed.top_findings.length <= 5);
+  assert.ok(parsed.top_findings.length > 0);
   assert.equal(parsed.summary.en.length > 0, true);
   assert.equal(parsed.summary.hi.length > 0, true);
   assert.equal(parsed.pages_to_verify[0]?.page, 7);

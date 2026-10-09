@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import secrets
@@ -52,6 +51,15 @@ _PAGE_CACHE: OrderedDict[tuple[int, int, int, str, str], bytes] = OrderedDict()
 _PAGE_CACHE_LOCK = threading.Lock()
 _PAGE_CACHE_SIZE = 64
 
+# Source PDFs are immutable for the lifetime of an object reference. Keep a
+# bounded ephemeral copy so each page preview does not redownload the entire
+# PDF from GCS. The object reference timestamp is the application-managed
+# version and changes whenever an upload refreshes the reference.
+_SOURCE_CACHE: OrderedDict[tuple[str, str, int], bytes] = OrderedDict()
+_SOURCE_CACHE_LOCK = threading.Lock()
+_SOURCE_CACHE_BYTES = 0
+_SOURCE_CACHE_MAX_BYTES = 256 * 1024 * 1024
+
 
 def _page_cache_get(key: tuple[int, int, int, str, str]) -> bytes | None:
     with _PAGE_CACHE_LOCK:
@@ -69,8 +77,31 @@ def _page_cache_put(key: tuple[int, int, int, str, str], image: bytes) -> None:
             _PAGE_CACHE.popitem(last=False)
 
 
-def _application_source_bytes(application_id: int) -> tuple[bytes, str]:
-    """Return ``(pdf_bytes, filename)`` for an application, store first.
+def _source_cache_get(key: tuple[str, str, int]) -> bytes | None:
+    with _SOURCE_CACHE_LOCK:
+        hit = _SOURCE_CACHE.get(key)
+        if hit is not None:
+            _SOURCE_CACHE.move_to_end(key)
+        return hit
+
+
+def _source_cache_put(key: tuple[str, str, int], source: bytes) -> None:
+    global _SOURCE_CACHE_BYTES
+    if len(source) > _SOURCE_CACHE_MAX_BYTES:
+        return
+    with _SOURCE_CACHE_LOCK:
+        previous = _SOURCE_CACHE.pop(key, None)
+        if previous is not None:
+            _SOURCE_CACHE_BYTES -= len(previous)
+        _SOURCE_CACHE[key] = source
+        _SOURCE_CACHE_BYTES += len(source)
+        while _SOURCE_CACHE_BYTES > _SOURCE_CACHE_MAX_BYTES:
+            _, evicted = _SOURCE_CACHE.popitem(last=False)
+            _SOURCE_CACHE_BYTES -= len(evicted)
+
+
+def _application_source_bytes(application_id: int) -> tuple[bytes, str, str]:
+    """Return ``(pdf_bytes, filename, source_version)`` for an application.
 
     New uploads are served from the object store via ``object_refs``
     (``source``, falling back to ``normalized_pdf``). Legacy rows that still
@@ -84,20 +115,33 @@ def _application_source_bytes(application_id: int) -> tuple[bytes, str]:
         "applications", application_id, "normalized_pdf"
     )
     if ref is not None:
+        storage_key = str(ref["storage_key"])
+        source_version = str(ref.get("created_at") or "")
+        cache_key = (storage_key, source_version, int(ref.get("size_bytes") or -1))
+        cached = _source_cache_get(cache_key)
+        if cached is not None:
+            row = load_latest_uploaded_file(application_id) or {}
+            return cached, str(row.get("original_filename") or Path(storage_key).name), source_version
         try:
-            pdf_bytes = get_store().get(str(ref["storage_key"]))
+            pdf_bytes = get_store().get(storage_key)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Source PDF not found") from exc
-        filename = Path(str(ref["storage_key"])).name
+        _source_cache_put(cache_key, pdf_bytes)
+        filename = Path(storage_key).name
         row = load_latest_uploaded_file(application_id) or {}
-        return pdf_bytes, str(row.get("original_filename") or filename)
+        return pdf_bytes, str(row.get("original_filename") or filename), source_version
     row = load_latest_uploaded_file(application_id)
     if row is None or not row.get("file_path"):
         raise HTTPException(status_code=404, detail="Source PDF not found")
     file_path = Path(str(row["file_path"]))
     if not file_path.is_file() or file_path.suffix.lower() != ".pdf":
         raise HTTPException(status_code=404, detail="Source PDF not found")
-    return file_path.read_bytes(), str(row.get("original_filename") or file_path.name)
+    stat = file_path.stat()
+    return (
+        file_path.read_bytes(),
+        str(row.get("original_filename") or file_path.name),
+        f"legacy:{stat.st_mtime_ns}:{stat.st_size}",
+    )
 
 
 @router.get("/worklist")
@@ -198,7 +242,7 @@ def get_application_review(application_id: int) -> dict[str, Any]:
     summary="View the original PDF evidence",
 )
 def get_application_source_pdf(application_id: int) -> StreamingResponse:
-    pdf_bytes, filename = _application_source_bytes(application_id)
+    pdf_bytes, filename, _ = _application_source_bytes(application_id)
 
     def _stream() -> Any:
         yield pdf_bytes
@@ -220,13 +264,27 @@ def get_application_source_page(
     highlight: str | None = None,
     dpi: int = Query(default=150, ge=72, le=288),
 ) -> Response:
+    from services.evidence_previews import preview_key
+    from services.evidence_previews import source_version as get_source_version
     from services.pdf_processor import render_source_page
+    from services.storage import get_store
 
     if page_number < 1:
         raise HTTPException(status_code=422, detail="Page number must be one or greater")
-    pdf_bytes, _ = _application_source_bytes(application_id)
-    digest = hashlib.sha256(pdf_bytes).hexdigest()
-    cache_key = (application_id, page_number, dpi, highlight or "", digest)
+    if highlight is None and dpi == 150:
+        version = get_source_version(application_id)
+        if version is not None:
+            try:
+                image_bytes = get_store().get(preview_key(application_id, version, page_number))
+                return Response(
+                    content=image_bytes,
+                    media_type="image/png",
+                    headers={"Cache-Control": "private, max-age=3600"},
+                )
+            except FileNotFoundError:
+                pass
+    pdf_bytes, _, source_ref_version = _application_source_bytes(application_id)
+    cache_key = (application_id, page_number, dpi, highlight or "", source_ref_version)
     cached = _page_cache_get(cache_key)
     if cached is not None:
         return Response(

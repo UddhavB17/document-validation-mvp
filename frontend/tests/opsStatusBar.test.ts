@@ -33,14 +33,14 @@ test("missing status progress yields no bar value so the page keeps its fallback
   assert.equal(statusProgressPercentage(undefined), null);
 });
 
-test("ops schema rejects a sixth finding", () => {
+test("ops schema accepts every returned finding", () => {
   const raw = loadOpsPayload();
   const findings = raw["top_findings"] as unknown[];
   const first = findings[0];
   assert.ok(first);
   findings.push(first, first, first);
   assert.equal(findings.length, 6);
-  assert.throws(() => opsApplicationSchema.parse(raw));
+  assert.equal(opsApplicationSchema.parse(raw).top_findings.length, 6);
 });
 
 test("ops schema rejects an unknown checklist status", () => {

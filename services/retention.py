@@ -61,7 +61,7 @@ TERMINAL_JOB_STATUSES = ("completed", "failed")
 #: (and no non-terminal job still needs them). ``ocr_export`` rows expire on
 #: their own age (``DMEF_RETENTION_EXPORT_DAYS``); ``report`` rows are
 #: reviewer data and are never deleted here.
-SOURCE_PURPOSES = ("source", "manifest", "normalized_pdf")
+SOURCE_PURPOSES = ("source", "manifest", "normalized_pdf", "page_preview")
 
 # --- fx-schema: stale-job subquery (terminal only, newest N kept per app) ---
 _STALE_JOBS_SUBQUERY = (

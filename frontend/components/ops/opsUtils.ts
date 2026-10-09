@@ -1,11 +1,9 @@
 import type { ApplicationStatus, OpsFinding } from "@/lib/api";
 import type { Locale } from "@/lib/i18n";
 
-export const MAX_FINDINGS = 5;
-
-/** Keep at most the first 5 findings; the backend already caps, this is a guard. */
+/** Preserve every finding returned by the operations API. */
 export function takeTopFindings(findings: OpsFinding[]): OpsFinding[] {
-  return findings.slice(0, MAX_FINDINGS);
+  return findings;
 }
 
 /** Localized text picker for bilingual payload strings. */
