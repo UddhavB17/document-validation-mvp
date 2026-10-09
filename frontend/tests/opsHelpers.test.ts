@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { bboxToStyle, normalizeSeverity } from "../components/ops/bbox";
-import { formatPageList, MAX_FINDINGS, pickText, takeTopFindings } from "../components/ops/opsUtils";
+import { formatPageList, pickText, takeTopFindings } from "../components/ops/opsUtils";
 import type { OpsFinding } from "../lib/api";
 import { parseAnomalyEvidence } from "../lib/api";
 import { t } from "../lib/i18n";
@@ -38,13 +38,12 @@ test("unknown severities fall back to low", () => {
   assert.equal(normalizeSeverity(null), "LOW");
 });
 
-test("findings are capped at five", () => {
+test("all findings remain visible", () => {
   const many = ["A", "B", "C", "D", "E", "F", "G"].map(finding);
-  assert.equal(takeTopFindings(many).length, 5);
-  assert.equal(MAX_FINDINGS, 5);
+  assert.equal(takeTopFindings(many).length, 7);
   assert.deepEqual(
     takeTopFindings(many).map((item) => item.code),
-    ["A", "B", "C", "D", "E"],
+    ["A", "B", "C", "D", "E", "F", "G"],
   );
 });
 

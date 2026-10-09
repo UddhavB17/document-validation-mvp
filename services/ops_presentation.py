@@ -2,8 +2,8 @@
 
 Owned by ``ws-f-accuracy-ops-api`` per contracts §5. Everything a
 non-technical user sees comes from this endpoint: finding codes only (never
-rule IDs), EN/HI strings from :mod:`services.ops_templates_en_hi`, at most
-five top findings, no OCR text or JSON dumps.
+rule IDs), EN/HI strings from :mod:`services.ops_templates_en_hi`, every
+mapped finding, no OCR text or JSON dumps.
 """
 
 from __future__ import annotations
@@ -568,8 +568,8 @@ def build_ops_payload(application_id: int) -> dict:
     # for existing applications without reprocessing their documents.
     ai_assessments = _load_ops_ai_assessments(application_id)
     all_findings = compute_findings(anomalies, ai_assessments)
-    findings = all_findings[:5]
-    overflow = _overflow_pages(all_findings[5:], anomalies)
+    findings = all_findings
+    overflow: list[dict] = []
     if application.get("ops_summary_en") and application.get("ops_summary_hi"):
         summary = {"en": str(application["ops_summary_en"]), "hi": str(application["ops_summary_hi"])}
     else:
@@ -659,8 +659,8 @@ def store_ops_payload(application_id: int) -> dict | None:
     try:
         anomalies = _load_anomalies(application_id)
         all_findings = compute_findings(anomalies)
-        findings = all_findings[:5]
-        overflow = _overflow_pages(all_findings[5:], anomalies)
+        findings = all_findings
+        overflow: list[dict] = []
         stored = {
             "top_findings": findings,
             "pages_to_verify": overflow,

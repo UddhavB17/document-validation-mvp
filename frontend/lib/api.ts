@@ -780,7 +780,7 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
 
 // --- ws-e ops ui ---
 // Operations payload (contracts §5). Everything a non-technical user sees
-// comes from GET /ops/applications/{id}: at most 5 findings, bilingual
+// comes from GET /ops/applications/{id}: every mapped finding, bilingual
 // strings, normalized bboxes. No rule ids, no OCR text, no JSON dumps.
 const opsTextSchema = z.object({
   en: z.string(),
@@ -873,7 +873,7 @@ export const opsApplicationSchema = z.object({
   status: opsStatusSchema,
   processing: opsProcessingSchema,
   summary: opsTextSchema,
-  top_findings: z.array(opsFindingSchema).max(5),
+  top_findings: z.array(opsFindingSchema),
   pages_to_verify: z.array(opsPageToVerifySchema),
   checklist: opsChecklistSchema,
 });
