@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { StatusBadge } from "@/components/StatusBadge";
+import { ThemePickerCompact } from "@/components/ThemePickerCompact";
 import { useSession } from "@/lib/auth";
 import { t, useLocale } from "@/lib/i18n";
 import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
@@ -105,7 +106,7 @@ function ShellChrome({
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [nowLabel, setNowLabel] = useState("--:--");
   const applicationId = getApplicationIdFromPath(pathname);
-  const healthStatus = health.data?.status === "ok" ? "ok" : "failed";
+  const healthStatus = health.data?.status ?? "failed";
   const isAdmin = role === "admin";
   const primaryNav = isAdmin ? ADMIN_NAV : OPERATIONS_NAV;
   const homeHref = isAdmin ? "/admin/worklist" : "/ops";
@@ -238,6 +239,8 @@ function ShellChrome({
               <span className="app-shell__nav-text">{t(locale, "nav.signOut")}</span>
             </button>
           </nav>
+
+          {isAdmin ? <ThemePickerCompact label="Desk theme" /> : null}
 
           {isAdmin ? (
             <div className="app-shell__health" aria-label="API health">

@@ -88,6 +88,19 @@ def _do_pipeline_work(
         resume=resume,
         refresh_cached_ocr=refresh_cached_ocr,
     )
+    if result.get("pipeline_status") != "failed":
+        try:
+            from services.evidence_previews import generate_application_page_previews
+
+            generate_application_page_previews(file_path, application_id)
+        except Exception:  # noqa: BLE001 - previews must not fail validation jobs
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Could not generate page previews for application %s",
+                application_id,
+                exc_info=True,
+            )
     if result.get("pipeline_status") == "failed":
         mark_job_failed(job_id, "Pipeline completed with failed outcome")
         mark_failed(application_id, "Pipeline completed with failed outcome")

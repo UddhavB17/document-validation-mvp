@@ -2,8 +2,8 @@
 
 Owned by ``ws-f-accuracy-ops-api`` per contracts §5. Everything a
 non-technical user sees comes from this endpoint: finding codes only (never
-rule IDs), EN/HI strings from :mod:`services.ops_templates_en_hi`, at most
-five top findings, no OCR text or JSON dumps.
+rule IDs), EN/HI strings from :mod:`services.ops_templates_en_hi`, every
+mapped finding, no OCR text or JSON dumps.
 """
 
 from __future__ import annotations
@@ -27,6 +27,9 @@ LOGGER = logging.getLogger(__name__)
 
 TERMINAL_JOB_STATUSES = frozenset({"completed", "failed", "cancelled", "stale"})
 FAILED_JOB_STATUSES = frozenset({"failed"})
+# When exception-review confidence meets this threshold, the operations UI may
+# lead with the AI explanation (rule template text stays in detail for audit).
+AI_DISPLAY_CONFIDENCE_THRESHOLD = 0.85
 
 # Rule-ID families per contracts §11, in code priority order. First match wins;
 # remaining rules become REVIEW_REQUIRED under contracts §12.
@@ -174,7 +177,83 @@ def _evidence_shape(evidence: Any) -> dict | None:
     }
 
 
-def _finding_from_group(code: str, items: list[dict]) -> dict:
+def _plain_ai_explanation(assessment: dict[str, Any]) -> str:
+    """Turn a saved exception-review assessment into short reviewer-facing text."""
+    reason = str(assessment.get("reason") or "").strip()
+    if not reason:
+        return ""
+    verdict = str(assessment.get("verdict") or "unresolved")
+    confidence = assessment.get("confidence")
+    high_confidence = (
+        isinstance(confidence, (int, float))
+        and AI_DISPLAY_CONFIDENCE_THRESHOLD <= float(confidence) <= 1
+    )
+    if high_confidence and verdict == "possible_false_positive":
+        return (
+            "The automatic check is probably wrong. The document may be fine. "
+            f"{reason}"
+        )
+    if high_confidence and verdict == "supported":
+        return f"This looks like a real problem. {reason}"
+    if verdict == "unresolved":
+        return f"We could not confirm this automatically. Please check the page. {reason}"
+    return reason
+
+
+def _load_ops_ai_assessments(application_id: int) -> dict[tuple[str, int | None], dict[str, Any]]:
+    """Map (rule_id, page_number) to saved exception-review assessments."""
+    from services.storage import get_store
+
+    try:
+        store = get_store()
+        key = f"applications/{application_id}/reports/ops-review.json"
+        if not store.exists(key):
+            return {}
+        report = json.loads(store.get(key))
+    except Exception:
+        return {}
+
+    finding_map: dict[int, dict[str, Any]] = {}
+    for item in report.get("finding_map") or []:
+        if isinstance(item, dict) and isinstance(item.get("ref"), int):
+            finding_map[int(item["ref"])] = item
+
+    assessments: dict[tuple[str, int | None], dict[str, Any]] = {}
+    for assessment in report.get("findings") or []:
+        if not isinstance(assessment, dict):
+            continue
+        reason = assessment.get("reason")
+        ref = assessment.get("ref")
+        if not isinstance(reason, str) or not reason.strip() or not isinstance(ref, int):
+            continue
+        meta = finding_map.get(ref)
+        if not meta:
+            continue
+        page_raw = meta.get("page_number")
+        page_num = int(page_raw) if page_raw is not None else None
+        confidence = assessment.get("confidence")
+        verdict = str(assessment.get("verdict") or "unresolved")
+        plain = _plain_ai_explanation(assessment)
+        ai_primary = (
+            isinstance(confidence, (int, float))
+            and float(confidence) >= AI_DISPLAY_CONFIDENCE_THRESHOLD
+            and verdict in {"supported", "possible_false_positive"}
+            and bool(plain)
+        )
+        assessments[(str(meta.get("rule_id") or ""), page_num)] = {
+            "plain_en": plain,
+            "confidence": float(confidence) if isinstance(confidence, (int, float)) else None,
+            "verdict": verdict,
+            "ai_primary": ai_primary,
+        }
+    return assessments
+
+
+def _finding_from_group(
+    code: str,
+    items: list[dict],
+    ai_assessments: dict[tuple[str, int | None], dict[str, Any]] | None = None,
+) -> dict:
     ordered = sorted(items, key=lambda item: (_severity_key(item.get("severity")),))
     primary = ordered[0]
     pages = sorted({page for item in items for page in _anomaly_pages(item)})
@@ -201,7 +280,15 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         "document": document_label(document_type, "hi"),
         "pages": _pages_phrase(pages, "hi") if pages else "फ़ाइल",
     }
-    return {
+    primary_pages = _anomaly_pages(primary)
+    primary_page = int(primary_pages[0]) if primary_pages else None
+    assessment = None
+    if ai_assessments:
+        assessment = ai_assessments.get((str(primary.get("rule_id") or ""), primary_page))
+        if assessment is None and primary_page is not None:
+            assessment = ai_assessments.get((str(primary.get("rule_id") or ""), None))
+
+    finding = {
         "code": code,
         "severity": severity,
         "title": {"en": render(code, "title", "en"), "hi": render(code, "title", "hi")},
@@ -212,6 +299,16 @@ def _finding_from_group(code: str, items: list[dict]) -> dict:
         "pages": pages,
         "evidence": evidence,
     }
+    if assessment and assessment.get("plain_en"):
+        plain = str(assessment["plain_en"])
+        finding["ai_detail"] = {"en": plain, "hi": plain}
+        if assessment.get("confidence") is not None:
+            finding["ai_confidence"] = assessment["confidence"]
+        if assessment.get("verdict"):
+            finding["ai_verdict"] = assessment["verdict"]
+        if assessment.get("ai_primary"):
+            finding["ai_primary"] = True
+    return finding
 
 
 def _summary_part(code: str, pages: list[int], lang: str) -> str:
@@ -432,7 +529,10 @@ def _checklist_section(
 # ---------------------------------------------------------------------------
 
 
-def compute_findings(anomalies: list[dict]) -> list[dict]:
+def compute_findings(
+    anomalies: list[dict],
+    ai_assessments: dict[tuple[str, int | None], dict[str, Any]] | None = None,
+) -> list[dict]:
     """Map anomalies to deduped, severity-ordered finding dicts (all codes)."""
     groups: dict[str, list[dict]] = {}
     for anomaly in anomalies:
@@ -444,7 +544,7 @@ def compute_findings(anomalies: list[dict]) -> list[dict]:
         if code is None:
             continue
         groups.setdefault(code, []).append(anomaly)
-    findings = [_finding_from_group(code, items) for code, items in groups.items()]
+    findings = [_finding_from_group(code, items, ai_assessments) for code, items in groups.items()]
     findings.sort(
         key=lambda f: (
             _severity_key(f["severity"]),
@@ -466,9 +566,10 @@ def build_ops_payload(application_id: int) -> dict:
 
     # Recompute inexpensive groups so newly supported categories are included
     # for existing applications without reprocessing their documents.
-    all_findings = compute_findings(anomalies)
-    findings = all_findings[:5]
-    overflow = _overflow_pages(all_findings[5:], anomalies)
+    ai_assessments = _load_ops_ai_assessments(application_id)
+    all_findings = compute_findings(anomalies, ai_assessments)
+    findings = all_findings
+    overflow: list[dict] = []
     if application.get("ops_summary_en") and application.get("ops_summary_hi"):
         summary = {"en": str(application["ops_summary_en"]), "hi": str(application["ops_summary_hi"])}
     else:
@@ -558,8 +659,8 @@ def store_ops_payload(application_id: int) -> dict | None:
     try:
         anomalies = _load_anomalies(application_id)
         all_findings = compute_findings(anomalies)
-        findings = all_findings[:5]
-        overflow = _overflow_pages(all_findings[5:], anomalies)
+        findings = all_findings
+        overflow: list[dict] = []
         stored = {
             "top_findings": findings,
             "pages_to_verify": overflow,

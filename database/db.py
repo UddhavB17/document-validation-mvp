@@ -371,6 +371,14 @@ def seed_defaults(connection: _Connection) -> None:
             "Name of the LLM model to run queries against.",
         ),
         (
+            "llm.review_system_prompt",
+            "",
+            "str",
+            "llm",
+            "Report system prompt additions",
+            "Optional extra instructions for report language and tone. The built-in safety policy is always kept.",
+        ),
+        (
             "min_confidence",
             "0.70",
             "float",

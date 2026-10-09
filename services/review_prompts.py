@@ -3,6 +3,8 @@
 import hashlib
 import json
 
+from services.config import get_setting
+
 REVIEW_PROMPT_VERSION = "dmef-review-2026-09-12-v4-coverage"
 
 REVIEW_SYSTEM_PROMPT = """You are DMEF's evidence-based loan-file review assistant.
@@ -53,6 +55,14 @@ Only an explicit saved human confirmation supplied by the application establishe
 that a person checked an item. Never invent a reviewer, confirmation or timestamp.
 Missing, not applicable, not evaluated and manual review are different states.
 
+PLAIN LANGUAGE
+Write for busy branch and operations staff. Use common, everyday words and short
+sentences. Prefer "check" over "verify", "problem" over "exception", "shown" over
+"indicated", and "not enough information" over "insufficient evidence" when the
+meaning stays the same. Explain any necessary technical term the first time. Do not
+use legal, academic or complex words when a simpler word works. Keep Hindi natural,
+clear and suitable for a reader who is comfortable with everyday Hindi.
+
 OUTPUT
 Return only valid JSON matching the current stage's schema; no Markdown fences or
 extra keys. Provide concise evidence-based reasons, not hidden reasoning. Minimize
@@ -73,7 +83,7 @@ correctness, and approval evidence from fulfillment of the approved conditions.
 The search is bounded; omitted candidates and partial excerpts are not evidence of
 absence. If a required fact cannot be established, keep the finding unresolved. Return
 {"findings":[{"ref":1,"verdict":"supported|possible_false_positive|unresolved",
-"confidence":0.0,"reason":"short evidence-based explanation and next action",
+"confidence":0.0,"reason":"one or two short sentences in plain English for a non-technical reviewer; say what to check next",
 "pages":[1],"quote":"exact source quote supporting a suspected false positive, or empty"}]}.
 Select one verdict enum and use a numeric confidence from 0 to 1. Preserve each ref
 exactly once. Cite only supplied pages. For possible_false_positive, quote affirmative
@@ -81,7 +91,8 @@ contradicting source evidence verbatim, not an interpretation or paraphrase. Pre
 the original finding's source page when it supplies that proof. Without sufficient
 source evidence, use unresolved. A possible_false_positive remains a recommendation
 until the backend checks it; do not assert that it is already dismissed.""",
-    "ops_summary_en": """Write a moderately detailed English review. Return
+    "ops_summary_en": """Write a moderately detailed English review in plain,
+everyday language. Use short sentences and familiar words. Return
 {"en":"..."}. Use short paragraphs in this order: exception-review scope and evidence limitations;
 supported exceptions and affected pages; suspected false positives and their reasons,
 stating which are actually marked dismissed=true; unresolved or unknown-page concerns;
@@ -98,14 +109,29 @@ no findings, say no exceptions were supplied; do not claim the file is verified.
 Do not claim that evidence pages equal verified documents, infer
 checklist completion, expose internal rule codes, or approve the file.
 Maximum 4500 characters.""",
-    "ops_summary_hi": """Translate the complete supplied English review into natural
-Hindi in Devanagari. Return {"hi":"..."}. Translate, do not reassess the file.
+    "ops_summary_hi": """Translate the complete supplied English review into clear,
+easy-to-read Hindi in Devanagari. Use everyday Hindi, short sentences and familiar
+words; avoid formal, literary or difficult Hindi when a simpler word works. Return
+{"hi":"..."}. Translate, do not reassess the file.
 Preserve every finding, qualification, negation, dismissal status, page reference,
 count and requested human action. Keep all numbers in their original ASCII digits,
 and retain necessary identifiers and acronyms such as PAN and Aadhaar. Preserve
 paragraph order and breaks. Do not add findings, resolve uncertainties, or omit
 content merely to shorten the translation. Maximum 5500 characters.""",
 }
+
+
+def get_review_system_prompt() -> str:
+    """Return the safe built-in policy plus admin-configured language guidance."""
+    custom = str(get_setting("llm.review_system_prompt", "") or "").strip()
+    if not custom:
+        return REVIEW_SYSTEM_PROMPT
+    return (
+        REVIEW_SYSTEM_PROMPT
+        + "\n\nADMIN-CONFIGURED REPORT GUIDANCE\n"
+        + custom
+        + "\n\nThe built-in DMEF policy above always takes priority."
+    )
 
 # Hash the actual policy and stage text: edits cannot accidentally reuse an old
 # batch checkpoint even if the human-readable version was not bumped.

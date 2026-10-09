@@ -4,7 +4,7 @@ import { OpsFinding, OpsPageToVerify } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
 
 import { LedgerStamp } from "./LedgerStamp";
-import { pickText, takeTopFindings } from "./opsUtils";
+import { opsFindingExplanation, pickText, takeTopFindings } from "./opsUtils";
 
 function severityTone(severity: string): "danger" | "warn" | "muted" {
   if (severity === "HIGH") return "danger";
@@ -62,7 +62,9 @@ export function FindingsList({
                 <h3 className="font-display text-[18px] font-semibold text-desk-ink">
                   {pickText(finding.title, locale)}
                 </h3>
-                <p className="mt-1 text-sm leading-relaxed text-desk-muted">{pickText(finding.detail, locale)}</p>
+                <p className="mt-1 text-sm leading-relaxed text-desk-muted">
+                  {opsFindingExplanation(finding, locale)}
+                </p>
               </div>
               <button
                 type="button"

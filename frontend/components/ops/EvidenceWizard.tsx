@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { EvidencePageImage } from "@/components/evidence/EvidencePageImage";
 import { api, type OpsApplication, type OpsFinding } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
 
 import { bboxToStyle, severityBoxClass } from "./bbox";
 import { LedgerStamp } from "./LedgerStamp";
-import { pickText } from "./opsUtils";
+import { opsFindingExplanation, pickText } from "./opsUtils";
 
 export type WizardMode =
   | { kind: "finding"; index: number }
@@ -125,7 +126,6 @@ export function EvidenceWizard({
               <LedgerStamp tone="ink">
                 {t(locale, "ops.evidence.pageOf")} {page}
               </LedgerStamp>
-              {finding ? <LedgerStamp tone="warn">{finding.code.replace(/_/g, " ")}</LedgerStamp> : null}
             </div>
           </div>
           <h2 className="mt-3 font-display text-[30px] font-semibold tracking-[-0.03em] text-desk-ink">
@@ -134,7 +134,7 @@ export function EvidenceWizard({
               : `${t(locale, "ops.evidence.pageOf")} ${page}`}
           </h2>
           <p className="mt-2 text-sm text-desk-muted">
-            {finding ? pickText(finding.detail, locale) : t(locale, "ops.review.pagesToVerify")}
+            {finding ? opsFindingExplanation(finding, locale) : t(locale, "ops.review.pagesToVerify")}
           </p>
           <a
             className="ledger-link mt-3 inline-flex text-sm"
@@ -158,10 +158,10 @@ export function EvidenceWizard({
             </p>
           ) : (
             <div className="relative mx-auto w-fit max-w-full">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <EvidencePageImage
                 key={`${application.application_id}-${page}`}
-                src={api.sourcePageImageUrl(application.application_id, page)}
+                applicationId={application.application_id}
+                pageNumber={page}
                 alt={`${t(locale, "ops.evidence.pageOf")} ${page}`}
                 onError={() => setImageError(true)}
                 className="h-auto max-w-full rounded-sm border border-[color:var(--border)] bg-white shadow-lift"

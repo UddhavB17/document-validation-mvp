@@ -33,14 +33,14 @@ test("missing status progress yields no bar value so the page keeps its fallback
   assert.equal(statusProgressPercentage(undefined), null);
 });
 
-test("ops schema rejects a sixth finding", () => {
+test("ops schema accepts every returned finding", () => {
   const raw = loadOpsPayload();
   const findings = raw["top_findings"] as unknown[];
   const first = findings[0];
   assert.ok(first);
   findings.push(first, first, first);
   assert.equal(findings.length, 6);
-  assert.throws(() => opsApplicationSchema.parse(raw));
+  assert.equal(opsApplicationSchema.parse(raw).top_findings.length, 6);
 });
 
 test("ops schema rejects an unknown checklist status", () => {
@@ -66,6 +66,15 @@ test("ops schema rejects an unknown severity or finding code", () => {
   assert.ok(badCodeFirst);
   badCodeFirst.code = "NOT_A_CODE";
   assert.throws(() => opsApplicationSchema.parse(badCode));
+});
+
+test("ops schema accepts the contract's review-required finding code", () => {
+  const raw = loadOpsPayload();
+  const findings = raw["top_findings"] as Array<{ code: string }>;
+  const first = findings[0];
+  assert.ok(first);
+  first.code = "REVIEW_REQUIRED";
+  assert.equal(opsApplicationSchema.parse(raw).top_findings[0]?.code, "REVIEW_REQUIRED");
 });
 
 test("legacy reviewer statuses map to the ops vocabulary and null names become empty", () => {

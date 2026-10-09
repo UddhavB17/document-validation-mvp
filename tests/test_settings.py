@@ -29,6 +29,36 @@ def test_ocr_settings_are_seeded_and_google_api_key_is_masked(tmp_path, monkeypa
     assert settings["google.vision.timeout.seconds"]["config_value"] == "60"
 
 
+def test_report_prompt_additions_are_seeded_and_persisted(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "settings.db")
+    init_db()
+
+    settings = _settings_by_key()
+    assert settings["llm.review_system_prompt"]["config_value"] == ""
+
+    response = update_setting(
+        "llm.review_system_prompt",
+        SettingUpdatePayload(config_value="Use short sentences and simple Hindi."),
+    )
+    assert response["config_value"] == "Use short sentences and simple Hindi."
+
+    from services.review_prompts import get_review_system_prompt
+
+    assert "Use short sentences and simple Hindi." in get_review_system_prompt()
+
+
+def test_report_prompt_additions_have_a_safe_size_limit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "settings.db")
+    init_db()
+
+    import pytest
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_setting("llm.review_system_prompt", SettingUpdatePayload(config_value="x" * 8001))
+    assert exc_info.value.status_code == 422
+
+
 def test_secret_update_stores_google_api_key_without_returning_it(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "settings.db")
     init_db()

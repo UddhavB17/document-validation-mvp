@@ -203,6 +203,8 @@ const settingSchemaShape = {
   description: nullableString,
   is_secret: z.boolean().optional(),
   has_value: z.boolean().optional(),
+  effective_value: z.string().optional(),
+  env_override_active: z.boolean().optional(),
 };
 
 export const settingSchema = z.object(settingSchemaShape);
@@ -778,7 +780,7 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
 
 // --- ws-e ops ui ---
 // Operations payload (contracts §5). Everything a non-technical user sees
-// comes from GET /ops/applications/{id}: at most 5 findings, bilingual
+// comes from GET /ops/applications/{id}: every mapped finding, bilingual
 // strings, normalized bboxes. No rule ids, no OCR text, no JSON dumps.
 const opsTextSchema = z.object({
   en: z.string(),
@@ -807,6 +809,7 @@ const OPS_FINDING_CODES = [
   "OCR_FAILED",
   "DATA_MISSING",
   "PROCESSING_ERROR",
+  "REVIEW_REQUIRED",
 ] as const;
 
 // Display strings stay lenient: null/missing becomes "" so one empty field cannot fail the whole parse.
@@ -827,6 +830,10 @@ export const opsFindingSchema = z.object({
   severity: z.enum(["HIGH", "MEDIUM", "LOW"]),
   title: opsTextSchema,
   detail: opsTextSchema,
+  ai_detail: opsTextSchema.optional(),
+  ai_confidence: z.number().min(0).max(1).optional(),
+  ai_verdict: z.enum(["supported", "possible_false_positive", "unresolved"]).optional(),
+  ai_primary: z.boolean().optional(),
   pages: z.array(z.number()),
   evidence: opsEvidenceSchema.nullable(),
 });
@@ -866,7 +873,7 @@ export const opsApplicationSchema = z.object({
   status: opsStatusSchema,
   processing: opsProcessingSchema,
   summary: opsTextSchema,
-  top_findings: z.array(opsFindingSchema).max(5),
+  top_findings: z.array(opsFindingSchema),
   pages_to_verify: z.array(opsPageToVerifySchema),
   checklist: opsChecklistSchema,
 });

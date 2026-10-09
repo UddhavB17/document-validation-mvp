@@ -1,14 +1,15 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import { AiExplanationDisclosure } from "@/components/applications/AiAuditInsights";
+import { EvidencePageImage } from "@/components/evidence/EvidencePageImage";
 import { HighlightedEvidenceText } from "@/components/applications/EvidenceHighlight";
 import { EvidenceValue } from "@/components/applications/EvidenceValue";
 import { bboxToStyle, severityBoxClass } from "@/components/ops/bbox";
-import { getAffectedPages, getReviewIssueKey } from "@/components/applications/review/issueQueue";import {
+import { getReviewIssueKey } from "@/components/applications/review/issueQueue";
+import {
   getReviewIssueState,
   markReviewIssueCheckedWithTasks,
   markReviewIssueViewed,
@@ -78,9 +79,6 @@ export function EvidenceViewerModal({
   const visibleOcrText = showFullOcr ? ocrText : ocrText.slice(0, MAX_OCR_PREVIEW);
   const adjacentPage = renderedPage !== null && pages.length > 1 ? pages[activeIndex + 1] ?? pages[activeIndex - 1] : undefined;
   const imageHighlight = String(selectedEvidence.anomaly.found_value || selectedEvidence.anomaly.expected_value || "").slice(0, 160);
-  const adjacentImageUrl = adjacentPage
-    ? api.sourcePageImageUrl(applicationId, adjacentPage, imageHighlight)
-    : null;
   const evidenceReady = hasPageEvidence ? imageReady : fileLevelDetailsReady;
   // ws-e: bbox overlay from evidence_json when present (PDF text search stays
   // as the fallback highlight via the `highlight` query param above).
@@ -173,7 +171,6 @@ export function EvidenceViewerModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      {adjacentImageUrl ? <link rel="prefetch" as="image" href={adjacentImageUrl} /> : null}
       <div
         ref={dialogRef}
         role="dialog"
@@ -308,18 +305,13 @@ export function EvidenceViewerModal({
                   <div className="relative flex min-h-48 min-w-48 items-center justify-center" style={{ transform: `scale(${zoom}) rotate(${rotation}deg)`, transformOrigin: "top center" }}>
                     {!imageReady ? <span role="status" className="absolute z-10 rounded bg-slate-900/80 px-3 py-2 text-xs font-semibold text-white">Loading page image…</span> : null}
                     <div className="relative inline-block leading-none">
-                      <Image
+                      <EvidencePageImage
                         key={renderedPage}
-                        src={api.sourcePageImageUrl(
-                          applicationId,
-                          renderedPage!,
-                          imageHighlight,
-                        )}
+                        applicationId={applicationId}
+                        pageNumber={renderedPage!}
+                        highlight={imageHighlight || undefined}
                         alt={`Original source PDF page ${renderedPage}`}
-                        width={720}
-                        height={1020}
-                        unoptimized
-                        onLoad={() => {
+                        onReady={() => {
                           setImageReady(true);
                           markReviewIssueViewed(issueKey);
                         }}
@@ -390,9 +382,9 @@ export function EvidenceViewerModal({
               ) : null}
             </div> : <div className="mt-5 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs font-medium leading-relaxed text-blue-900">This issue is file-level and has no explicit source page. Review the metadata and rule details above; page and PDF controls are unavailable.</div>}
 
-            {hasPageEvidence && renderedPage !== null ? <div className="mt-5">
-              <AiExplanationDisclosure data={data} anomaly={selectedEvidence.anomaly} pageNumber={renderedPage} />
-            </div> : null}
+            <div className="mt-5">
+              <AiExplanationDisclosure data={data} />
+            </div>
           </aside>
         </div>
 

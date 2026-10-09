@@ -39,6 +39,37 @@ function CheckBox({
   );
 }
 
+function simpleSummary(
+  summary: string | undefined,
+  counts: { found: number; missing: number; not_checked: number },
+  locale: "en" | "hi",
+): string {
+  const coverage = summary?.match(/assessed\s+(\d+)\s+of\s+(\d+)\s+supplied exceptions/i);
+  const unassessed = summary?.match(/(\d+)\s+exceptions?\s+(?:were|are)\s+not assessed/i);
+  const assessments = summary?.match(
+    /Assessments:\s*(\d+)\s+supported,\s*(\d+)\s+possible false positives,\s*(\d+)\s+unresolved/i,
+  );
+
+  if (coverage) {
+    const reviewedCount = Number(coverage[1]);
+    const totalCount = Number(coverage[2]);
+    const remainingCount = unassessed ? Number(unassessed[1]) : Math.max(0, totalCount - reviewedCount);
+    if (assessments) {
+      const [supported, possibleFalsePositives, unresolved] = assessments.slice(1).map(Number);
+      return locale === "hi"
+        ? `प्रणाली ने ${totalCount} में से ${reviewedCount} मामलों की जाँच की। हर पेज नहीं जाँचा गया। ${supported} में समस्या दिखी। ${possibleFalsePositives} नतीजे गलत हो सकते हैं और ${unresolved} की और जाँच चाहिए। बाकी ${remainingCount} मामलों की जाँच भी करनी होगी।`
+        : `The system checked ${reviewedCount} of ${totalCount} issues. It did not check every page. ${supported} look like real problems. ${possibleFalsePositives} may be wrong, and ${unresolved} need more checking. A person must check the other ${remainingCount}.`;
+    }
+    return locale === "hi"
+      ? `प्रणाली ने ${totalCount} में से ${reviewedCount} मामलों की जाँच की। ${remainingCount} मामलों की जाँच बाकी है। हर पेज की जाँच नहीं हुई।`
+      : `The system checked ${reviewedCount} of ${totalCount} issues. A person still needs to check ${remainingCount}. The system did not check every page.`;
+  }
+
+  return locale === "hi"
+    ? `${counts.found} दस्तावेज़ मिले। ${counts.missing} नहीं मिले। ${counts.not_checked} की जाँच आपको करनी है।`
+    : `${counts.found} items found. ${counts.missing} are missing. Please check ${counts.not_checked} items yourself.`;
+}
+
 export function OpsChecklist({
   rows,
   applicationId,
@@ -54,6 +85,7 @@ export function OpsChecklist({
 }) {
   const { locale } = useLocale();
   const [manualAck, setManualAck] = useState<Record<number, boolean>>({});
+  const summaryText = simpleSummary(summary, counts, locale);
 
   const { actionRows, foundRows } = useMemo(() => {
     const action: OpsChecklistRow[] = [];
@@ -166,11 +198,9 @@ export function OpsChecklist({
 
       <p className="mt-4 text-[11px] leading-relaxed text-desk-faint">{t(locale, "ops.review.checklistLegend")}</p>
 
-      {summary ? (
-        <p className="mt-3 line-clamp-3 text-xs text-desk-muted" title={summary}>
-          {summary}
-        </p>
-      ) : null}
+      <p className="mt-3 text-xs leading-relaxed text-desk-muted">
+        {summaryText}
+      </p>
 
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-[color:var(--border)] pt-3 text-xs font-semibold text-desk-muted">
         <span>{t(locale, "ops.review.summaryTucked")}</span>

@@ -8,9 +8,18 @@ method raises ``NotImplementedError``.
 from __future__ import annotations
 
 from datetime import timedelta
+from functools import lru_cache
 from typing import BinaryIO
 
 from services.storage._keys import check_key, check_prefix
+
+
+@lru_cache(maxsize=1)
+def _storage_client():  # type: ignore[no-untyped-def]
+    """Reuse one GCS client and its HTTP transport per backend process."""
+    from google.cloud import storage
+
+    return storage.Client()
 
 
 class GcsObjectStore:
@@ -28,9 +37,7 @@ class GcsObjectStore:
         return self.bucket
 
     def _client(self):  # type: ignore[no-untyped-def]
-        from google.cloud import storage
-
-        return storage.Client()
+        return _storage_client()
 
     def _blob(self, key: str):  # type: ignore[no-untyped-def]
         check_key(key)
@@ -42,6 +49,9 @@ class GcsObjectStore:
     def put(self, key: str, data: bytes | BinaryIO, content_type: str) -> str:
         blob = self._blob(key)
         payload = data.read() if hasattr(data, "read") else data
+        # Small resumable chunks: a stalled uplink only re-sends the current
+        # 5 MiB instead of restarting a hundreds-of-MB object (multiple of 256 KiB, as required).
+        blob.chunk_size = 5 * 1024 * 1024
         blob.upload_from_string(
             bytes(payload), content_type=content_type or "application/octet-stream"
         )

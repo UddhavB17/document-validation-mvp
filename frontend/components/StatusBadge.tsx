@@ -37,6 +37,7 @@ export function StatusBadge({ status, uppercase = true }: { status: string; uppe
     overridden: "Overridden",
     override: "Override",
     ok: "Online",
+    degraded: "Degraded",
     info: "Info",
   };
   const label = labelMap[norm] ?? (status ? status.replace(/_/g, " ") : "Unknown");
@@ -57,7 +58,7 @@ function getTone(status: string): "success" | "warning" | "danger" | "info" | "n
   if (["critical", "pipeline_failed", "incomplete", "missing", "failed", "mismatch", "stale", "flagged", "request_docs", "sent_back", "required_and_missing"].includes(status)) {
     return "danger";
   }
-  if (["needs_review", "processing", "ocr_completed", "queued", "preparing", "attention", "review", "overridden", "override", "manual_review", "unknown", "not_evaluated_by_engine", "no_text_extracted"].includes(status)) {
+  if (["needs_review", "processing", "ocr_completed", "queued", "preparing", "attention", "review", "overridden", "override", "manual_review", "unknown", "not_evaluated_by_engine", "no_text_extracted", "degraded"].includes(status)) {
     return "warning";
   }
   if (["info", "pending", "running"].includes(status)) {

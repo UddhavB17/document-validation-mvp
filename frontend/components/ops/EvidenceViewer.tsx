@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { api } from "@/lib/api";
+import { EvidencePageImage } from "@/components/evidence/EvidencePageImage";
 import { useLocale, t } from "@/lib/i18n";
 
 import { Bbox, bboxToStyle, severityBoxClass } from "./bbox";
@@ -90,10 +90,10 @@ export function EvidenceViewer({
             </p>
           ) : (
             <div className="relative mx-auto w-fit max-w-full">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <EvidencePageImage
                 key={`${applicationId}-${selection.page}`}
-                src={api.sourcePageImageUrl(applicationId, selection.page)}
+                applicationId={applicationId}
+                pageNumber={selection.page}
                 alt={`${t(locale, "ops.evidence.pageOf")} ${selection.page}`}
                 onError={() => setImageError(true)}
                 className="h-auto max-w-full rounded-sm border border-slate-200 bg-white shadow"

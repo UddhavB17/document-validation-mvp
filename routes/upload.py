@@ -84,9 +84,29 @@ def _intake_source_key(package_id: str, filename: str) -> str:
 
 
 def _store_bytes(key: str, data: bytes, content_type: str) -> None:
-    store = get_store()
+    """Upload bytes, retrying transient stalls (office uplinks often stall mid-upload)."""
     stream = BytesIO(data)
-    store.put(key, stream, content_type or "application/octet-stream")
+    attempts = 3
+    backoff_seconds = (2.0, 6.0)
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            stream.seek(0)
+            get_store().put(key, stream, content_type or "application/octet-stream")
+            return
+        except Exception as exc:  # noqa: BLE001 - network/store blips; retried, then raised
+            last_error = exc
+            LOGGER.warning(
+                "Object-store upload failed for %s (attempt %d/%d): %s",
+                key,
+                attempt + 1,
+                attempts,
+                exc,
+            )
+            if attempt + 1 < attempts:
+                time.sleep(backoff_seconds[attempt] if attempt < len(backoff_seconds) else 6.0)
+    assert last_error is not None
+    raise last_error
 
 
 class PartnerPayload(BaseModel):
@@ -949,6 +969,28 @@ async def _read_upload_bytes(file: UploadFile) -> bytes:
     return b"".join(chunks)
 
 
+def _persist_intake_failure(
+    package_id: str,
+    source_filename: str,
+    error: Exception,
+    *,
+    total_files: int = 0,
+    total_pages: int = 0,
+) -> None:
+    """Record a failed preparation so polls report failure instead of 404."""
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO intake_packages (
+                package_id, source_filename, source_zip_path, normalized_pdf_path,
+                total_files, total_pages, status, error
+            ) VALUES (?, ?, ?, ?, ?, ?, 'failed', ?)
+            ON CONFLICT(package_id) DO UPDATE SET status = 'failed', error = excluded.error
+            """,
+            (package_id, source_filename, "", "", total_files, total_pages, str(error)[:2000]),
+        )
+
+
 def _persist_intake_package(
     package_id: str,
     source_filename: str,
@@ -1015,6 +1057,7 @@ def _prepare_zip_package_task(
         )
 
     try:
+        normalized: dict[str, object] = {}
         publish(
             {
                 "stage": "scanning_archive",
@@ -1060,6 +1103,16 @@ def _prepare_zip_package_task(
         )
     except Exception as exc:  # noqa: BLE001
         LOGGER.exception("ZIP preparation failed for package %s", package_id)
+        try:
+            _persist_intake_failure(
+                package_id,
+                source_filename,
+                exc,
+                total_files=int(normalized.get("total_files") or 0),
+                total_pages=int(normalized.get("total_pages") or 0),
+            )
+        except Exception:  # noqa: BLE001 - persisting must not mask the original error
+            LOGGER.exception("Could not persist failure row for package %s", package_id)
         _write_package_preparation_progress(
             package_dir,
             {
