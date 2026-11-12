@@ -248,10 +248,11 @@ def _finding_context(finding: dict, pages: list[dict]) -> dict:
         direct.add(finding["page_number"])
     terms = set(re.findall(r"[a-z0-9]+", str(finding.get("document_type") or "").casefold()))
     terms -= {"document", "documents", "report", "form", "letter", "and", "or"}
+    term_patterns = [re.compile(r"\b" + re.escape(term) + r"\b") for term in terms]
     candidates = []
     for page in pages:
         text = page["text"].casefold()
-        matches = [term for term in terms if re.search(r"\b" + re.escape(term) + r"\b", text)]
+        matches = [term for term, pattern in zip(terms, term_patterns, strict=True) if pattern.search(text)]
         same_type = bool(finding.get("document_type")) and (
             str(page["document"]).casefold() == str(finding["document_type"]).casefold()
         )

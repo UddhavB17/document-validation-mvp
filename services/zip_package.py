@@ -15,7 +15,7 @@ from zipfile import BadZipFile, ZipFile, ZipInfo
 import fitz
 from openpyxl import load_workbook
 
-from services.config import get_int
+from services.config import get_int, with_cached_settings
 
 ALLOWED_PACKAGE_EXTENSIONS = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".xlsx"})
 MACOS_METADATA_NAMES = frozenset({".DS_Store"})
@@ -46,6 +46,7 @@ def max_xlsx_columns() -> int:
     return get_int("MAX_XLSX_COLUMNS_PER_SHEET", 50, minimum=1, maximum=500)
 
 
+@with_cached_settings
 def normalize_zip_package(
     zip_path: str | Path,
     package_dir: str | Path,
@@ -65,6 +66,7 @@ def normalize_zip_package(
     normalized_pdf = package_dir / "normalized.pdf"
 
     output = fitz.open()
+    maximum_pages = max_package_pages()
     inventory: list[dict[str, Any]] = []
     first_source_by_hash: dict[str, str] = {}
     try:
@@ -99,9 +101,9 @@ def normalize_zip_package(
                 first_page = output.page_count + 1
                 page_count, source_metadata = _append_source(output, stored_path, suffix)
                 last_page = output.page_count
-                if output.page_count > max_package_pages():
+                if output.page_count > maximum_pages:
                     raise PackageValidationError(
-                        f"ZIP contains more than {max_package_pages()} normalized pages"
+                        f"ZIP contains more than {maximum_pages} normalized pages"
                     )
                 inventory.append(
                     {
@@ -178,6 +180,8 @@ def _validated_members(archive: ZipFile) -> list[ZipInfo]:
     accepted: list[ZipInfo] = []
     unsupported: list[str] = []
     total_size = 0
+    maximum_extracted_bytes = max_extracted_bytes()
+    maximum_files = max_package_files()
     for info in archive.infolist():
         if info.is_dir() or _is_macos_metadata(info.filename):
             continue
@@ -197,9 +201,9 @@ def _validated_members(archive: ZipFile) -> list[ZipInfo]:
             continue
 
         total_size += int(info.file_size)
-        if total_size > max_extracted_bytes():
+        if total_size > maximum_extracted_bytes:
             raise PackageValidationError(
-                f"Expanded ZIP is too large; maximum is {max_extracted_bytes() // (1024 * 1024)}MB"
+                f"Expanded ZIP is too large; maximum is {maximum_extracted_bytes // (1024 * 1024)}MB"
             )
         if info.file_size and (not info.compress_size or info.file_size / info.compress_size > 200):
             raise PackageValidationError(
@@ -215,8 +219,8 @@ def _validated_members(archive: ZipFile) -> list[ZipInfo]:
         )
     if not accepted:
         raise PackageValidationError("ZIP contains no PDF or image documents")
-    if len(accepted) > max_package_files():
-        raise PackageValidationError(f"ZIP contains more than {max_package_files()} files")
+    if len(accepted) > maximum_files:
+        raise PackageValidationError(f"ZIP contains more than {maximum_files} files")
     return accepted
 
 

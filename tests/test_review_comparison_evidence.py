@@ -6,6 +6,7 @@ from copy import deepcopy
 import pytest
 
 from services.review.comparison_matrix import build_comparison_matrix_and_relationships
+from services.reviewer import load_reviewer_comparison, save_reviewer_comparison
 
 
 def page(number, document_type, fields, **extra):
@@ -171,3 +172,24 @@ def test_person_record_aliases_are_extracted_without_copying_expected():
         assert all(
             row["status"] == "match" and row["source_pages"] == [1] for row in person["fields"]
         )
+
+
+def test_reviewer_comparison_round_trips_as_json(tmp_path, monkeypatch):
+    import database.db as db
+    from database.db import init_db
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "reviewer-comparison.db")
+    init_db()
+    with db.get_connection() as connection:
+        connection.execute("INSERT INTO applications (loan_id) VALUES (?)", ("CACHE-001",))
+    expected_matrix = {"core_parameters": [{"field_name": "loan_amount"}], "applicants": []}
+    expected_relationships = [{"source": 1, "target": 2}]
+
+    save_reviewer_comparison(
+        1, expected_matrix, expected_relationships, pipeline_job_id=42
+    )
+    assert load_reviewer_comparison(1) == {
+        "pipeline_job_id": 42,
+        "comparison_matrix": expected_matrix,
+        "relationships": expected_relationships,
+    }

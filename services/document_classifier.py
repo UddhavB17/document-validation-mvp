@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from services.config import get_setting
 from services.validation_gates import has_intrinsic_aadhaar_evidence
 
 fuzz: Any
@@ -223,7 +224,28 @@ def classify_page(text: str) -> dict[str, Any]:
 
 def classify_page_with_candidates(text: str) -> dict[str, Any]:
     registry = load_document_type_registry()
-    candidates = [_score_rule(text or "", rule) for rule in registry["document_types"]]
+    # Normalize the page once for the whole registry scan: scoring used to
+    # re-run the full-text normalization (plus the 24-line heading area and
+    # the opening-line list) for every rule.
+    page_text = text or ""
+    normalized = _normalize_text(page_text)
+    # Combined loan packets can end one short letter and begin the next logical
+    # document halfway down a page. Twenty-four lines remains header-biased but
+    # still catches those embedded document boundaries.
+    heading_area = _normalize_text("\n".join(page_text.splitlines()[:24])) or normalized[:2000]
+    normalized_opening_lines = [
+        kept for line in page_text.splitlines() if (kept := _normalize_text(line))
+    ]
+    candidates = [
+        _score_rule(
+            page_text,
+            rule,
+            normalized=normalized,
+            heading_area=heading_area,
+            normalized_opening_lines=normalized_opening_lines,
+        )
+        for rule in registry["document_types"]
+    ]
     if is_kyc_checklist_context(text or ""):
         for candidate in candidates:
             if candidate["document_type"] in IDENTITY_CARD_TYPES and candidate["confidence"]:
@@ -271,7 +293,14 @@ def classify_page_with_candidates(text: str) -> dict[str, Any]:
     )
 
     best = candidates[0] if candidates else _unknown_result([])
-    threshold = float(registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
+    configured_threshold = get_setting(
+        "min_confidence", registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE)
+    )
+    try:
+        threshold = float(configured_threshold)
+    except (TypeError, ValueError):
+        threshold = float(registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
+    threshold = min(1.0, max(0.0, threshold))
     if best["confidence"] < threshold:
         return _unknown_result(candidates)
 
@@ -329,12 +358,30 @@ def registry_document_types(include_unknown: bool = True) -> list[str]:
     return types
 
 
-def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
-    normalized = _normalize_text(text)
-    # Combined loan packets can end one short letter and begin the next logical
-    # document halfway down a page. Twenty-four lines remains header-biased but
-    # still catches those embedded document boundaries.
-    heading_area = _normalize_text("\n".join((text or "").splitlines()[:24])) or normalized[:2000]
+def _score_rule(
+    text: str,
+    rule: dict[str, Any],
+    *,
+    normalized: str | None = None,
+    heading_area: str | None = None,
+    normalized_opening_lines: list[str] | None = None,
+) -> dict[str, Any]:
+    """Score one registry rule against one page.
+
+    ``normalized``, ``heading_area`` and ``normalized_opening_lines`` are
+    per-page values; callers that score many rules against the same page pass
+    them in so the text is not re-normalized per rule. They are computed here
+    when omitted (single-rule callers and tests).
+    """
+    if normalized is None:
+        normalized = _normalize_text(text)
+    if heading_area is None:
+        # Combined loan packets can end one short letter and begin the next
+        # logical document halfway down a page. Twenty-four lines remains
+        # header-biased but still catches those embedded document boundaries.
+        heading_area = (
+            _normalize_text("\n".join((text or "").splitlines()[:24])) or normalized[:2000]
+        )
     matched: list[dict[str, Any]] = []
     score = 0.0
 
@@ -342,6 +389,7 @@ def _score_rule(text: str, rule: dict[str, Any]) -> dict[str, Any]:
         text,
         rule.get("headings", []),
         max_lines=int(rule.get("opening_heading_lines") or 4),
+        normalized_lines=normalized_opening_lines,
     )
     if rule.get("boundary_evidence_required"):
         # Some words name both a document and an obligation mentioned inside
@@ -427,16 +475,21 @@ def _has_explicit_opening_heading(
     headings: list[str],
     *,
     max_lines: int = 4,
+    normalized_lines: list[str] | None = None,
 ) -> bool:
     """Return True when a configured title opens the first few non-empty lines.
 
     Negative terms are useful for clause references, but legal documents often
     mention the underlying loan agreement immediately after their own title.
     An explicit opening title is stronger evidence than such body references.
+    ``normalized_lines`` may be passed by callers that already normalized the
+    page's lines (once per page instead of once per rule).
     """
-    opening_lines = [
-        _normalize_text(line) for line in str(text or "").splitlines() if _normalize_text(line)
-    ][: max(1, max_lines)]
+    if normalized_lines is None:
+        normalized_lines = [
+            kept for line in str(text or "").splitlines() if (kept := _normalize_text(line))
+        ]
+    opening_lines = normalized_lines[: max(1, max_lines)]
     for line in opening_lines:
         for heading in headings:
             normalized_heading = _normalize_text(heading)
@@ -550,7 +603,7 @@ def _public_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
-def _normalize_text(value: str) -> str:
+def _normalize_text_impl(value: str) -> str:
     lowered = unicodedata.normalize("NFKC", str(value or "")).casefold()
     lowered = lowered.replace("\u2013", "-").replace("\u2014", "-")
     normalized = "".join(
@@ -558,6 +611,24 @@ def _normalize_text(value: str) -> str:
         for character in lowered
     )
     return re.sub(r"\s+", " ", normalized).strip()
+
+
+@lru_cache(maxsize=8192)
+def _normalize_text_short(value: str) -> str:
+    return _normalize_text_impl(value)
+
+
+def _normalize_text(value: str) -> str:
+    """Normalize text for matching.
+
+    Short strings (headings, keywords, single OCR lines) repeat across every
+    page and every registry rule, so they are served from a small LRU cache.
+    Full page texts are large and unique per page and normalize uncached, so
+    the cache stays small.
+    """
+    if len(value) <= 256:
+        return _normalize_text_short(value)
+    return _normalize_text_impl(value)
 
 
 def _contains(text: str, term: str) -> bool:

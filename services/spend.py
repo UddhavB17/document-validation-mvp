@@ -15,6 +15,9 @@ per unit and are excluded. Empty tables yield $0.
 
 from __future__ import annotations
 
+import threading
+import time
+from copy import deepcopy
 from typing import Any
 
 from database.db import get_connection
@@ -28,12 +31,16 @@ DEFAULT_VISION_PRICE_PER_1K_USD = 1.50
 #: pages each month are excluded from spend. Overridable with
 #: DMEF_VISION_FREE_UNITS_MONTHLY.
 DEFAULT_VISION_FREE_UNITS_MONTHLY = 1000
+_SPEND_CACHE_TTL_SECONDS = 30.0
+_spend_cache_lock = threading.Lock()
+_spend_cache_at = 0.0
+_spend_cache_value: dict[str, Any] | None = None
+_spend_cache_database_key: str | None = None
 
 
 def _table_exists(connection: Any, table: str) -> bool:
     try:
-        with get_connection() as probe:
-            probe.execute(f"SELECT 1 FROM {table} WHERE 1 = 0").fetchall()
+        connection.execute(f"SELECT 1 FROM {table} WHERE 1 = 0").fetchall()
     except Exception:  # noqa: BLE001 - legacy databases predate the table
         return False
     return True
@@ -56,43 +63,65 @@ def vision_units_by_month() -> list[dict[str, Any]]:
     page sent to the API. Months with no usage are absent, never zero-filled.
     """
     with get_connection() as connection:
-        if not _table_exists(connection, "ocr_route_events"):
-            return []
-        try:
-            rows = connection.execute(
-                "SELECT SUBSTR(created_at, 1, 7) AS month, COUNT(*) AS units "
-                "FROM ocr_route_events "
-                "WHERE event_type = 'processing' AND route_used = 'google_vision' "
-                "GROUP BY month ORDER BY month"
-            ).fetchall()
-        except Exception:  # noqa: BLE001 - unexpected shape; report no usage
-            return []
+        return _vision_units_by_month(connection)
+
+
+def _vision_units_by_month(connection: Any) -> list[dict[str, Any]]:
+    if not _table_exists(connection, "ocr_route_events"):
+        return []
+    try:
+        rows = connection.execute(
+            "SELECT SUBSTR(created_at, 1, 7) AS month, COUNT(*) AS units "
+            "FROM ocr_route_events "
+            "WHERE event_type = 'processing' AND route_used = 'google_vision' "
+            "GROUP BY month ORDER BY month"
+        ).fetchall()
+    except Exception:  # noqa: BLE001 - unexpected shape; report no usage
+        return []
     return [{"month": str(row["month"]), "units": int(row["units"])} for row in rows]
 
 
 def llm_totals() -> dict[str, Any]:
     """Total LLM calls and estimated USD across all models."""
     with get_connection() as connection:
-        if not _table_exists(connection, "llm_calls"):
-            return {"calls": 0, "usd": 0.0}
-        try:
-            row = connection.execute(
-                "SELECT COUNT(*) AS calls, COALESCE(SUM(est_cost_usd), 0) AS usd FROM llm_calls"
-            ).fetchone()
-        except Exception:  # noqa: BLE001 - unexpected shape; report zeros
-            return {"calls": 0, "usd": 0.0}
+        return _llm_totals(connection)
+
+
+def _llm_totals(connection: Any) -> dict[str, Any]:
+    if not _table_exists(connection, "llm_calls"):
+        return {"calls": 0, "usd": 0.0}
+    try:
+        row = connection.execute(
+            "SELECT COUNT(*) AS calls, COALESCE(SUM(est_cost_usd), 0) AS usd FROM llm_calls"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 - unexpected shape; report zeros
+        return {"calls": 0, "usd": 0.0}
     return {"calls": int(row["calls"]), "usd": round(float(row["usd"]), 6)}
 
 
 def spend_summary() -> dict[str, Any]:
     """Total spend so far: LLM + billable Vision, free tiers excluded."""
+    global _spend_cache_at, _spend_cache_value, _spend_cache_database_key
+    from database import db as database_module
+
+    database_key = str(database_module._engine_key())
+    now = time.monotonic()
+    with _spend_cache_lock:
+        if (
+            _spend_cache_value is not None
+            and _spend_cache_database_key == database_key
+            and now - _spend_cache_at < _SPEND_CACHE_TTL_SECONDS
+        ):
+            return deepcopy(_spend_cache_value)
     price_per_1k = vision_price_per_1k_usd()
     free_monthly = vision_free_units_monthly()
-    llm = llm_totals()
     months: list[dict[str, Any]] = []
     units_total = 0
     billable_total = 0
-    for entry in vision_units_by_month():
+    with get_connection() as connection:
+        llm = _llm_totals(connection)
+        vision_units = _vision_units_by_month(connection)
+    for entry in vision_units:
         units = int(entry["units"])
         billable = max(0, units - free_monthly)
         usd = round(billable * price_per_1k / 1000, 6)
@@ -109,7 +138,7 @@ def spend_summary() -> dict[str, Any]:
         billable_total += billable
     vision_usd = round(billable_total * price_per_1k / 1000, 6)
     total_usd = round(float(llm["usd"]) + vision_usd, 6)
-    return {
+    result = {
         "currency": "USD",
         "llm": llm,
         "vision": {
@@ -123,3 +152,8 @@ def spend_summary() -> dict[str, Any]:
         },
         "total_usd": total_usd,
     }
+    with _spend_cache_lock:
+        _spend_cache_at = time.monotonic()
+        _spend_cache_value = result
+        _spend_cache_database_key = database_key
+    return deepcopy(result)

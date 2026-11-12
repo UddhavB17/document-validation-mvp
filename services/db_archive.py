@@ -43,6 +43,7 @@ _ARCHIVE_TABLES: tuple[tuple[str, str], ...] = (
     ("validation_results", "application_id"),
     ("reviewer_decisions", "application_id"),
     ("reviewer_summaries", "application_id"),
+    ("reviewer_comparisons", "application_id"),
     ("document_verification_reports", "application_id"),
     ("pipeline_jobs", "application_id"),
     ("pipeline_job_inputs", "application_id"),

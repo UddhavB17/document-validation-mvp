@@ -11,12 +11,12 @@ export function setEvidenceAuthHeaderProvider(provider: AuthHeaderProvider | nul
   authHeaderProvider = provider;
 }
 
-function backendPageImagePath(applicationId: number, pageNumber: number, highlight?: string): string {
+function backendPageImagePath(applicationId: number, pageNumber: number, highlight?: string, dpi?: number): string {
   const base = `/review/applications/${applicationId}/source-page/${pageNumber}`;
-  if (!highlight) {
-    return base;
-  }
-  return `${base}?highlight=${encodeURIComponent(highlight)}`;
+  const params = new URLSearchParams();
+  if (highlight) params.set("highlight", highlight);
+  if (dpi !== undefined) params.set("dpi", String(dpi));
+  return params.size ? `${base}?${params.toString()}` : base;
 }
 
 /**
@@ -28,17 +28,21 @@ export async function fetchEvidenceImageBlob(
   applicationId: number,
   pageNumber: number,
   highlight?: string,
+  dpi?: number,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const proxyUrl = evidenceProxyPageImageUrl(applicationId, pageNumber, highlight);
-  let response = await fetch(proxyUrl, { credentials: "same-origin" });
+  const proxyUrl = evidenceProxyPageImageUrl(applicationId, pageNumber, highlight, dpi);
+  let response = await fetch(proxyUrl, { credentials: "same-origin", signal });
   if (response.status === 401 && authHeaderProvider) {
     const backendUrl = `${API_BASE_URL.replace(/\/+$/, "")}${backendPageImagePath(
       applicationId,
       pageNumber,
       highlight,
+      dpi,
     )}`;
     response = await fetch(backendUrl, {
       headers: { ...authHeaderProvider() },
+      signal,
     });
   }
   if (!response.ok) {

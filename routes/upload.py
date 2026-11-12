@@ -21,6 +21,7 @@ from services.company_dump_adapter import (
     convert_company_database_dump,
     is_company_database_dump,
 )
+from services.config import with_cached_settings
 from services.file_validator import (
     max_file_size_bytes,
     validate_file,
@@ -29,6 +30,7 @@ from services.file_validator import (
 )
 from services.job_control import PipelineCancelled
 from services.job_runner import enqueue, submit_job
+from services.mapped_zip import MappedZipContent, extract_mapped_zip
 from services.paths import job_work_dir, upload_dir
 from services.pipeline import run_pipeline
 from services.pipeline.input_preparation import cleanup_job_source
@@ -127,13 +129,13 @@ def _safe_name(value: str) -> str:
     return cleaned.strip("_") or "loan"
 
 
-async def _save_upload_stream(file: UploadFile, file_path: Path) -> int:
+def _save_upload_stream(file: UploadFile, file_path: Path) -> int:
     """Stream an upload to disk with a running size limit."""
     bytes_written = 0
     limit = max_file_size_bytes()
     try:
         with file_path.open("wb") as output:
-            while chunk := await file.read(1024 * 1024):
+            while chunk := file.file.read(1024 * 1024):
                 bytes_written += len(chunk)
                 if bytes_written > limit:
                     raise HTTPException(
@@ -148,7 +150,8 @@ async def _save_upload_stream(file: UploadFile, file_path: Path) -> int:
 
 
 @router.post("/json", summary="Ingest partner OCR JSON payload")
-async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
+@with_cached_settings
+def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
     from services.pipeline import run_partner_json_pipeline
 
     with get_connection() as connection:
@@ -218,7 +221,8 @@ async def ingest_partner_json(payload: PartnerPayload) -> dict[str, object]:
 
 
 @router.post("/file", summary="Validate raw PDF file only")
-async def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
+@with_cached_settings
+def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
     validation = validate_upload(file.filename or "", file_size_bytes=file.size or 0)
     if not validation["is_valid"]:
         raise HTTPException(status_code=422, detail=validation["errors"])
@@ -226,7 +230,8 @@ async def validate_uploaded_file(file: UploadFile) -> dict[str, object]:
 
 
 @router.post("/mapped", summary="Verify mapped PDF pages against trusted company JSON")
-async def upload_mapped_file(
+@with_cached_settings
+def upload_mapped_file(
     manifest: str | None = Form(None),
     case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
     file: UploadFile = File(...),
@@ -240,7 +245,7 @@ async def upload_mapped_file(
 
     if Path(uploaded_name).suffix.lower() == ".zip":
         try:
-            file_path, manifest_text, original_filename = await _save_mapped_zip_package(
+            file_path, manifest_text, original_filename = _save_mapped_zip_package(
                 file, manifest, timestamp
             )
         except Exception:
@@ -254,7 +259,7 @@ async def upload_mapped_file(
             )
         file_path = work_dir / f"mapped_{timestamp}.pdf"
         try:
-            await _save_upload_stream(file, file_path)
+            _save_upload_stream(file, file_path)
         except Exception:
             _cleanup_work_dir(work_dir)
             raise
@@ -295,7 +300,8 @@ async def upload_mapped_file(
 
 
 @router.post("/package", summary="Prepare an unordered ZIP package for page mapping")
-async def upload_zip_package(
+@with_cached_settings
+def upload_zip_package(
     file: UploadFile = File(...),
     background: bool = False,
 ) -> dict[str, object]:
@@ -310,7 +316,7 @@ async def upload_zip_package(
     package_dir.mkdir(parents=True, exist_ok=False)
     zip_path = package_dir / "source.zip"
     try:
-        await _save_upload_stream(file, zip_path)
+        _save_upload_stream(file, zip_path)
         if background:
             _write_package_preparation_progress(
                 package_dir,
@@ -572,7 +578,8 @@ def get_zip_package(package_id: str) -> dict[str, object]:
 
 
 @router.post("/package/{package_id}/verify", summary="Verify a prepared ZIP package")
-async def verify_zip_package(
+@with_cached_settings
+def verify_zip_package(
     package_id: str,
     manifest: str = Form(...),
     case_type: Literal["Normal Case", "BT Case"] = Form("Normal Case"),
@@ -818,50 +825,36 @@ def _queue_mapped_verification(
     }
 
 
-async def _save_mapped_zip_package(
+def _save_mapped_zip_package(
     file: UploadFile,
     manifest_override: str | None,
     timestamp: str,
 ) -> tuple[Path, str, str]:
-    package_bytes = await _read_upload_bytes(file)
-    try:
-        archive = zipfile.ZipFile(BytesIO(package_bytes))
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
-
-    with archive:
-        members = [
-            member
-            for member in archive.infolist()
-            if not member.is_dir()
-            and not PurePosixPath(member.filename).name.startswith(".")
-            and "__MACOSX" not in PurePosixPath(member.filename).parts
-        ]
-        pdf_members = [
-            member for member in members if PurePosixPath(member.filename).suffix.lower() == ".pdf"
-        ]
-        json_members = [
-            member for member in members if PurePosixPath(member.filename).suffix.lower() == ".json"
-        ]
-
-        if not manifest_override and len(json_members) != 1:
-            raise HTTPException(
-                status_code=422,
-                detail="Mapped ZIP must contain exactly one JSON manifest file, or paste manifest JSON in the form",
-            )
-        manifest_text = manifest_override or _read_zip_member(archive, json_members[0]).decode("utf-8")
-        manifest_payload = _decode_manifest_payload(manifest_text)
-        pdf_member = _select_pdf_member(pdf_members, manifest_payload)
-
-        original_filename = PurePosixPath(pdf_member.filename).name
-        pdf_bytes = _read_zip_member(archive, pdf_member)
-        if not pdf_bytes:
-            raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
+    package_bytes = _read_upload_bytes(file)
+    content = _extract_mapped_zip_content(package_bytes, manifest_override)
 
     file_path = job_work_dir() / f"mapped-{timestamp}-{uuid4().hex}" / "source.pdf"
     file_path.parent.mkdir(parents=True, exist_ok=False)
-    file_path.write_bytes(pdf_bytes)
-    return file_path, manifest_text, original_filename
+    file_path.write_bytes(content.pdf_bytes)
+    return file_path, content.manifest_text, content.original_filename
+
+
+def _extract_mapped_zip_content(
+    package_bytes: bytes, manifest_override: str | None
+) -> MappedZipContent:
+    try:
+        return extract_mapped_zip(
+            package_bytes,
+            manifest_override=manifest_override,
+            read_member=_read_zip_member,
+            decode_manifest=_decode_manifest_payload,
+            select_pdf=_select_pdf_member,
+        )
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
+    except ValueError as exc:
+        status_code = 400 if str(exc) == "Mapped ZIP PDF file is empty" else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 def _read_zip_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo) -> bytes:
@@ -955,11 +948,11 @@ def _manifest_pdf_selector(manifest_payload: dict[str, object]) -> str | None:
     return None
 
 
-async def _read_upload_bytes(file: UploadFile) -> bytes:
+def _read_upload_bytes(file: UploadFile) -> bytes:
     chunks: list[bytes] = []
     bytes_read = 0
     limit = max_file_size_bytes()
-    while chunk := await file.read(1024 * 1024):
+    while chunk := file.file.read(1024 * 1024):
         bytes_read += len(chunk)
         if bytes_read > limit:
             raise HTTPException(
@@ -1016,14 +1009,14 @@ def _persist_intake_package(
                 normalized["total_pages"],
             ),
         )
-        for document in normalized["documents"]:
-            connection.execute(
-                """
+        connection.executemany(
+            """
                 INSERT INTO intake_documents (
                     package_id, source_document_id, original_filename, file_type,
                     source_size_bytes, page_count, internal_page_start, internal_page_end
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
+            [
                 (
                     package_id,
                     document["source_document_id"],
@@ -1033,8 +1026,10 @@ def _persist_intake_package(
                     document["page_count"],
                     document["internal_page_start"],
                     document["internal_page_end"],
-                ),
-            )
+                )
+                for document in normalized["documents"]
+            ],
+        )
 
 
 def _prepare_zip_package_task(
@@ -1280,7 +1275,8 @@ def _first_coapplicant_name(manifest: VerificationManifest) -> str | None:
 
 
 @router.post("")
-async def upload_file(
+@with_cached_settings
+def upload_file(
     loan_id: str = Form(...),
     applicant_name: str = Form(...),
     coapplicant_name: str | None = Form(None),
@@ -1294,7 +1290,7 @@ async def upload_file(
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     file_path = work_dir / f"{_safe_name(loan_id)}_{timestamp}.pdf"
     try:
-        file_size_bytes = await _save_upload_stream(file, file_path)
+        file_size_bytes = _save_upload_stream(file, file_path)
     except Exception:
         _cleanup_work_dir(work_dir)
         raise
@@ -1534,7 +1530,8 @@ def _record_batch_rejection(batch_id: str, filename: str, reason: str) -> None:
 
 
 @router.post("/batch", summary="Upload up to ten files as one batch")
-async def upload_batch(
+@with_cached_settings
+def upload_batch(
     files: list[UploadFile] = File(...),
     product_type: str = Form("LAP"),
     branch: str = Form(""),
@@ -1552,7 +1549,7 @@ async def upload_batch(
         name = (item.filename or "").lower()
         if name.endswith(".manifest.json"):
             stem = Path(item.filename or "").name[: -len(".manifest.json")]
-            manifests[stem.lower()] = await _read_upload_bytes(item)
+            manifests[stem.lower()] = _read_upload_bytes(item)
 
     items: list[dict[str, object]] = []
     for item in files:
@@ -1601,7 +1598,7 @@ async def upload_batch(
             continue
         try:
             if lowered.endswith(".zip"):
-                result_item = await _batch_single_mapped_zip(
+                result_item = _batch_single_mapped_zip(
                     item, batch_id, timestamp, case_type
                 )
                 items.append(result_item)
@@ -1609,7 +1606,7 @@ async def upload_batch(
             stem = Path(filename).stem
             sidecar = manifests.get(stem.lower())
             if sidecar is not None:
-                result_item = await _batch_single_pdf_with_manifest(
+                result_item = _batch_single_pdf_with_manifest(
                     item,
                     sidecar,
                     filename,
@@ -1619,7 +1616,7 @@ async def upload_batch(
                 )
                 items.append(result_item)
                 continue
-            result_item = await _batch_single_plain_pdf(
+            result_item = _batch_single_plain_pdf(
                 item,
                 filename,
                 batch_id,
@@ -1676,11 +1673,16 @@ def get_batch_status(batch_id: str) -> dict[str, object]:
     with get_connection() as connection:
         jobs = connection.execute(
             """
-            SELECT id, application_id, status, attempt, max_attempts,
-                   failure_reason, error
-            FROM pipeline_jobs
-            WHERE batch_id = ?
-            ORDER BY id
+            SELECT j.id, j.application_id, j.status, j.attempt, j.max_attempts,
+                   j.failure_reason, j.error,
+                   (SELECT uf.original_filename FROM uploaded_files AS uf
+                    WHERE uf.application_id = j.application_id
+                    ORDER BY uf.id DESC LIMIT 1) AS original_filename,
+                   pp.percentage AS progress_percentage
+            FROM pipeline_jobs AS j
+            LEFT JOIN pipeline_progress AS pp ON pp.application_id = j.application_id
+            WHERE j.batch_id = ?
+            ORDER BY j.id
             """,
             (batch_id,),
         ).fetchall()
@@ -1693,31 +1695,19 @@ def get_batch_status(batch_id: str) -> dict[str, object]:
         items: list[dict[str, object]] = []
         for job in jobs:
             app_id = int(job["application_id"])
-            uploaded = connection.execute(
-                """
-                SELECT original_filename FROM uploaded_files
-                WHERE application_id = ?
-                ORDER BY id DESC LIMIT 1
-                """,
-                (app_id,),
-            ).fetchone()
-            progress = connection.execute(
-                "SELECT percentage, status FROM pipeline_progress WHERE application_id = ?",
-                (app_id,),
-            ).fetchone()
             status = str(job["status"])
             items.append(
                 {
                     "application_id": app_id,
-                    "filename": str(uploaded["original_filename"])
-                    if uploaded and uploaded["original_filename"]
+                    "filename": str(job["original_filename"])
+                    if job["original_filename"]
                     else f"application_{app_id}.pdf",
                     "status": status,
                     "attempt": int(job["attempt"] or 0),
                     "max_attempts": int(job["max_attempts"] or 3),
                     "failure_reason": job["failure_reason"] if job["failure_reason"] else None,
-                    "progress_percentage": float(progress["percentage"])
-                    if progress and progress["percentage"] is not None
+                    "progress_percentage": float(job["progress_percentage"])
+                    if job["progress_percentage"] is not None
                     else 0.0,
                     "review_ready": status == "completed",
                 }
@@ -1741,7 +1731,7 @@ def get_batch_status(batch_id: str) -> dict[str, object]:
     return {"batch_id": batch_id, "items": items}
 
 
-async def _batch_single_plain_pdf(
+def _batch_single_plain_pdf(
     item: UploadFile,
     filename: str,
     batch_id: str,
@@ -1756,7 +1746,7 @@ async def _batch_single_plain_pdf(
     work_dir = _new_upload_work_dir("batch")
     file_path = work_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
     try:
-        file_size_bytes = await _save_upload_stream(item, file_path)
+        file_size_bytes = _save_upload_stream(item, file_path)
     except Exception:
         _cleanup_work_dir(work_dir)
         raise
@@ -1873,7 +1863,7 @@ async def _batch_single_plain_pdf(
     }
 
 
-async def _batch_single_pdf_with_manifest(
+def _batch_single_pdf_with_manifest(
     item: UploadFile,
     manifest_bytes: bytes,
     filename: str,
@@ -1884,7 +1874,7 @@ async def _batch_single_pdf_with_manifest(
     work_dir = _new_upload_work_dir("batch")
     file_path = work_dir / f"{_safe_name(Path(filename).stem)}_{timestamp}.pdf"
     try:
-        await _save_upload_stream(item, file_path)
+        _save_upload_stream(item, file_path)
     except Exception:
         _cleanup_work_dir(work_dir)
         raise
@@ -1934,47 +1924,29 @@ async def _batch_single_pdf_with_manifest(
     }
 
 
-async def _batch_single_mapped_zip(
+def _batch_single_mapped_zip(
     item: UploadFile,
     batch_id: str,
     timestamp: str,
     case_type: str,
 ) -> dict[str, object]:
     filename = item.filename or "package.zip"
-    package_bytes = await _read_upload_bytes(item)
+    package_bytes = _read_upload_bytes(item)
     try:
-        archive = zipfile.ZipFile(BytesIO(package_bytes))
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
-    with archive:
-        members = [
-            m
-            for m in archive.infolist()
-            if not m.is_dir()
-            and not PurePosixPath(m.filename).name.startswith(".")
-            and "__MACOSX" not in PurePosixPath(m.filename).parts
-        ]
-        pdf_members = [
-            m for m in members if PurePosixPath(m.filename).suffix.lower() == ".pdf"
-        ]
-        json_members = [
-            m for m in members if PurePosixPath(m.filename).suffix.lower() == ".json"
-        ]
-        if len(json_members) != 1 or not pdf_members:
+        content = _extract_mapped_zip_content(package_bytes, None)
+    except HTTPException as exc:
+        if exc.status_code == 422 and "exactly one JSON manifest" in str(exc.detail):
             raise HTTPException(
                 status_code=422,
                 detail="Mapped ZIP must contain one PDF and one JSON manifest",
-            )
-        manifest_text = _read_zip_member(archive, json_members[0]).decode("utf-8")
-        manifest_payload = _decode_manifest_payload(manifest_text)
-        pdf_member = _select_pdf_member(pdf_members, manifest_payload)
-        pdf_bytes = _read_zip_member(archive, pdf_member)
-        if not pdf_bytes:
-            raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
+            ) from exc
+        raise
+    manifest_text = content.manifest_text
+    pdf_bytes = content.pdf_bytes
     work_dir = _new_upload_work_dir("batch")
     file_path = work_dir / f"mapped_package_{timestamp}.pdf"
     file_path.write_bytes(pdf_bytes)
-    original_filename = PurePosixPath(pdf_member.filename).name
+    original_filename = content.original_filename
     try:
         parsed = _parse_manifest(manifest_text)
         parsed.case_type = case_type  # type: ignore[assignment]

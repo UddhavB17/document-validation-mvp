@@ -3,6 +3,7 @@ from services.validation_gates import (
     attach_field_provenance,
     compatible_field_for_document,
     field_reliable_for_validation,
+    field_validation_cache_scope,
     has_bank_statement_anchor,
 )
 
@@ -22,6 +23,27 @@ def test_account_identifier_can_anchor_a_bank_statement() -> None:
         "Bank Statement Account No. 123456789012",
         {},
     )
+
+
+def test_field_validation_cache_reuses_results_within_scope(monkeypatch) -> None:
+    import services.validation_gates as validation_gates
+
+    page = {"document_type": "PAN", "ocr_text": "ABCDE1234F", "extracted_fields": {}}
+    calls = []
+    original = validation_gates._field_reliable_for_validation_uncached
+
+    def count_calls(*args, **kwargs):
+        calls.append((args[1], args[2]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(validation_gates, "_field_reliable_for_validation_uncached", count_calls)
+    with field_validation_cache_scope():
+        assert field_reliable_for_validation(page, "pan_number", "ABCDE1234F")
+        assert field_reliable_for_validation(page, "pan_number", "ABCDE1234F")
+
+    assert len(calls) == 1
+    assert field_reliable_for_validation(page, "pan_number", "ABCDE1234F")
+    assert len(calls) == 2
 
 
 def test_transaction_column_signature_can_anchor_a_bank_statement() -> None:

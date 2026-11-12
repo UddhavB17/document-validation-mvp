@@ -577,6 +577,34 @@ def test_present_legal_report_with_pending_status_needs_review() -> None:
     assert any(anomaly["rule_id"] == "STATUS_CHECK_S37" for anomaly in anomalies)
 
 
+def test_required_status_normalizes_each_document_page_once(monkeypatch) -> None:
+    import services.checklist_engine as checklist_engine
+
+    pages = [
+        _confident_page(1, "Legal Clearance Report", ocr_text="title search pending"),
+        _confident_page(2, "Legal Clearance Report", ocr_text="encumbrance check pending"),
+    ]
+    item = {
+        "s_no": 37,
+        "check_type": "required_status",
+        "document_type": "Legal Clearance Report",
+        "accepted_statuses": ["clear", "approved"],
+        "rejected_statuses": ["pending", "rejected"],
+        "status_fields": ["clearance_status"],
+    }
+    calls = []
+    original_page_status = checklist_engine._page_status
+
+    def count_page_status(page, fields):
+        calls.append(id(page))
+        return original_page_status(page, fields)
+
+    monkeypatch.setattr(checklist_engine, "_page_status", count_page_status)
+    checklist_engine._run_accuracy_checks(pages, {}, {}, [item])
+
+    assert calls == [id(page) for page in pages]
+
+
 def test_amount_condition_boundaries_from_printed_checklist() -> None:
     pages = [
         _confident_page(1, "Application Form"),

@@ -17,6 +17,7 @@ writes through to the database; it never overrides a non-empty env value.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import time
@@ -24,9 +25,17 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import wraps
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+SETTING_ENV_ALIASES = {"min_confidence": "MIN_CLASSIFICATION_CONFIDENCE"}
+
+
+def environment_key_for_setting(key: str) -> str:
+    """Map a database setting key to its supported environment variable."""
+    return SETTING_ENV_ALIASES.get(key, key.upper().replace(".", "_"))
 
 
 _PROFILE_DEFAULTS = {
@@ -236,28 +245,57 @@ def cached_settings() -> Iterator[None]:
         _settings_snapshot.reset(token)
 
 
+def with_cached_settings(function):
+    """Run a sync or async operation inside a request-scoped settings snapshot."""
+    if inspect.iscoroutinefunction(function):
+        @wraps(function)
+        async def async_wrapped(*args, **kwargs):
+            with cached_settings():
+                return await function(*args, **kwargs)
+
+        return async_wrapped
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with cached_settings():
+            return function(*args, **kwargs)
+
+    return wrapped
+
+
 def _database_setting(key: str) -> tuple[Any, str | None] | None:
     from database.db import get_connection
 
     snapshot = _settings_snapshot.get()
     if snapshot is not None:
-        if snapshot.rows is None or time.monotonic() >= snapshot.expires_at:
-            with get_connection() as conn:
-                rows = conn.execute(
-                    "SELECT config_key, config_value, value_type FROM system_settings"
-                ).fetchall()
-            snapshot.rows = {
-                str(row["config_key"]): (row["config_value"], row["value_type"])
-                for row in rows
-            }
-            snapshot.expires_at = time.monotonic() + 5.0
-        return snapshot.rows.get(key)
+        return get_settings_rows_snapshot().get(key)
     with get_connection() as conn:
         row = conn.execute(
             "SELECT config_value, value_type FROM system_settings WHERE config_key = ?",
             (key,),
         ).fetchone()
     return (row["config_value"], row["value_type"]) if row is not None else None
+
+
+def get_settings_rows_snapshot() -> dict[str, tuple[Any, str | None]]:
+    """Read all setting rows once inside the current snapshot scope."""
+    snapshot = _settings_snapshot.get()
+    if snapshot is None:
+        with cached_settings():
+            return get_settings_rows_snapshot()
+    if snapshot.rows is None or time.monotonic() >= snapshot.expires_at:
+        from database.db import get_connection
+
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT config_key, config_value, value_type FROM system_settings"
+            ).fetchall()
+        snapshot.rows = {
+            str(row["config_key"]): (row["config_value"], row["value_type"])
+            for row in rows
+        }
+        snapshot.expires_at = time.monotonic() + 5.0
+    return dict(snapshot.rows)
 
 
 def is_secret_setting(config_key: str, value_type: str | None) -> bool:
@@ -292,7 +330,7 @@ def get_setting(key: str, default: Any = None) -> Any:
     """
     import json
 
-    env_key = key.upper().replace(".", "_")
+    env_key = environment_key_for_setting(key)
     raw_env = os.getenv(env_key)
     env_val = raw_env.strip() if isinstance(raw_env, str) and raw_env.strip() != "" else None
 

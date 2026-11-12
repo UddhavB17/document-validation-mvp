@@ -19,6 +19,11 @@ test("parses JSON llm_summary with missing final_recommendation", () => {
   assert.equal(parsed?.final_recommendation, "MANUAL REVIEW");
 });
 
+test("reuses parsed llm_summary objects for repeated issue rows", () => {
+  const raw = JSON.stringify({ overall_summary: "Shared issue summary." });
+  assert.strictEqual(parseLlmSummary(raw), parseLlmSummary(raw));
+});
+
 test("unwraps double-encoded JSON", () => {
   const inner = JSON.stringify({ overall_summary: "Ready for manual review." });
   const raw = JSON.stringify(inner);

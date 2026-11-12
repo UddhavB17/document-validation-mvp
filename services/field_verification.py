@@ -10,6 +10,7 @@ from typing import Any, Literal
 from rapidfuzz import fuzz
 
 from database.models import DocumentVerificationReport, FieldVerificationResult, GravitonRecord
+from services.config import get_setting
 from services.llm_verifier import llm_verify_field
 from services.person_names import (
     NAME_MATCH_THRESHOLD,
@@ -85,7 +86,22 @@ def verify_date(extracted: str, db_value: str) -> FieldVerificationResult:
             method="exact",
             mismatch_reason="Date could not be parsed — OCR quality or unsupported format",
         )
-    return _exact_result("date_of_birth", extracted, db_value, extracted_date == db_date)
+    tolerance_days = _validation_setting_number("validation.date_tolerance_days", 0)
+    difference_days = abs((extracted_date - db_date).days)
+    matched = difference_days <= tolerance_days
+    return (
+        _exact_result("date_of_birth", extracted, db_value, matched)
+        if matched
+        else FieldVerificationResult(
+            field_name="date_of_birth",
+            extracted_value=extracted,
+            db_value=db_value,
+            match=False,
+            confidence=0.0,
+            method="exact",
+            mismatch_reason=f"Date differs by more than {tolerance_days} day(s)",
+        )
+    )
 
 
 def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
@@ -94,7 +110,8 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
     db_amount = _parse_amount(db_value)
     if extracted_amount is None or db_amount is None:
         return _failed("loan_amount", extracted, db_value, "exact", "Amount missing or invalid")
-    tolerance = abs(db_amount) * 0.01
+    tolerance_percent = _validation_setting_number("validation.amount_tolerance_percent", 1.0)
+    tolerance = abs(db_amount) * tolerance_percent / 100.0
     matched = abs(extracted_amount - db_amount) <= tolerance
     confidence = (
         1.0
@@ -108,7 +125,7 @@ def verify_amount(extracted: str, db_value: str) -> FieldVerificationResult:
         match=matched,
         confidence=round(confidence, 3),
         method="exact",
-        mismatch_reason=None if matched else "Amount differs by more than 1%",
+        mismatch_reason=None if matched else f"Amount differs by more than {tolerance_percent:g}%",
     )
 
 
@@ -127,7 +144,10 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
             mismatch_reason="Name candidate is unreliable and requires manual review",
         )
     score = name_match_score(extracted, db_value)
-    matched = score >= NAME_MATCH_THRESHOLD
+    name_threshold = _validation_setting_number(
+        "validation.name_fuzzy_threshold", NAME_MATCH_THRESHOLD
+    )
+    matched = score >= name_threshold
     if matched and score >= 99:
         return _exact_result("applicant_name", extracted, db_value, True)
     return FieldVerificationResult(
@@ -139,6 +159,13 @@ def verify_name(extracted: str, db_value: str) -> FieldVerificationResult:
         method="fuzzy",
         mismatch_reason=None if matched else "Name similarity below threshold",
     )
+
+
+def _validation_setting_number(key: str, default: float) -> float:
+    try:
+        return float(get_setting(key, default))
+    except (TypeError, ValueError):
+        return default
 
 
 def address_with_relationship(address: Any, fields: dict[str, Any] | None) -> str:

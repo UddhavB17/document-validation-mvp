@@ -92,7 +92,7 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
           y2={p2.y}
           stroke={isHovered ? "var(--ledger)" : "#C7CDD6"}
           strokeWidth={isHovered ? "2" : "1.2"}
-          className="flowing-connector-dashed"
+          className={isHovered ? "flowing-connector-dashed" : undefined}
           style={{
             strokeDasharray: "6, 4",
             transition: "stroke 0.2s ease, stroke-width 0.2s ease",
@@ -258,17 +258,6 @@ export default function RelationshipGraph({ relationships }: RelationshipGraphPr
 
   return (
     <div className="graph-wrap select-none bg-white p-1">
-      {/* Dynamic flow offset keyframe stylesheet */}
-      <style dangerouslySetInnerHTML={{ __html: `
-        @keyframes pulseFlowDashed {
-          from { stroke-dashoffset: 20; }
-          to { stroke-dashoffset: 0; }
-        }
-        .flowing-connector-dashed {
-          animation: pulseFlowDashed 1.2s linear infinite;
-        }
-      `}} />
-
       <svg id="relGraph" width="100%" height="260" viewBox="0 0 960 260" className="mx-auto block min-w-[680px]">
         {edges}
         {nodeCards}

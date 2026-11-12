@@ -8,6 +8,7 @@ HS256 with ``DMEF_AUTH_SECRET`` and a 12 h expiry. Env is read through
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from typing import Any
 
 import jwt
@@ -18,6 +19,7 @@ TOKEN_TTL = timedelta(hours=12)
 ALGORITHM = "HS256"
 
 
+@lru_cache(maxsize=1)
 def auth_secret() -> str:
     """Return the configured JWT secret or raise with a clear message."""
     secret = get_setting("dmef.auth_secret", "")

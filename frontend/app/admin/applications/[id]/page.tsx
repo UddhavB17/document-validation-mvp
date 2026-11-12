@@ -1,12 +1,16 @@
 "use client";
 
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
 import { ApplicationMetricsHeader } from "@/components/applications/ApplicationMetricsHeader";
 import { Checklist } from "@/components/applications/Checklist";
 import { Downloads } from "@/components/applications/Downloads";
-import { EvidenceViewerModal } from "@/components/applications/EvidenceViewerModal";
+const EvidenceViewerModal = dynamic(
+  () => import("@/components/applications/EvidenceViewerModal").then((module) => module.EvidenceViewerModal),
+  { ssr: false },
+);
 import { ExtractedDataTab } from "@/components/applications/ExtractedDataTab";
 import { CaseNavigation } from "@/components/applications/case/CaseNavigation";
 import { ProcessingTab } from "@/components/applications/case/ProcessingTab";

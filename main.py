@@ -13,6 +13,7 @@ require_python_311()
 
 import logging
 import os
+import time
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Response
@@ -111,8 +112,21 @@ app.include_router(spend.router)
 
 
 # ── Health ────────────────────────────────────
+_HEALTH_CACHE_TTL_SECONDS = 5.0
+_health_cache_expires_at = 0.0
+_health_cache_payload: dict[str, object] | None = None
+_health_cache_status_code = 200
+
+
 @app.get("/health", tags=["meta"])
 def health_check(response: Response) -> dict[str, object]:
+    global _health_cache_expires_at, _health_cache_payload, _health_cache_status_code
+
+    now = time.monotonic()
+    if _health_cache_payload is not None and now < _health_cache_expires_at:
+        response.status_code = _health_cache_status_code
+        return {**_health_cache_payload, "worker": dict(_health_cache_payload["worker"])}
+
     # --- fx-schema: flat database contract (string + dialect) ---
     from database.db import dialect
 
@@ -145,7 +159,7 @@ def health_check(response: Response) -> dict[str, object]:
         status = "degraded"
     else:
         status = "ok"
-    return {
+    payload = {
         "status": status,
         "version": app.version,
         "database": database,
@@ -153,3 +167,7 @@ def health_check(response: Response) -> dict[str, object]:
         "storage": storage,
         "worker": worker,
     }
+    _health_cache_payload = payload
+    _health_cache_status_code = response.status_code
+    _health_cache_expires_at = now + _HEALTH_CACHE_TTL_SECONDS
+    return payload

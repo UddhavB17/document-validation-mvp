@@ -161,7 +161,10 @@ def test_end_use_letter_beats_generic_application_form_terms() -> None:
     assert result["document_type"] == "End-Use Letter"
 
 
-def test_acceptance_profile_panel_is_not_unknown() -> None:
+def test_acceptance_profile_panel_is_not_unknown(monkeypatch) -> None:
+    # Exercise the registry's 0.50 root cutoff independently from the
+    # administrator-configured global threshold (seeded at 0.70).
+    monkeypatch.setenv("MIN_CLASSIFICATION_CONFIDENCE", "0.50")
     result = classify_page(
         "Applicant Entity Name Profile Image\nCo-Applicant Entity Name Profile Image\n"
         "Guarantor Entity Name Profile Image\nThanks & Regards\nMS Fincap Pvt Ltd"

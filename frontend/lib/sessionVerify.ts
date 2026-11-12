@@ -35,6 +35,18 @@ export interface VerifyOptions {
   timeoutMs?: number;
 }
 
+const VERIFY_CACHE_TTL_MS = 60_000;
+const verifyCache = new Map<string, { expiresAt: number; result: Promise<VerifyOutcome> }>();
+
+export function clearVerifySessionCache(): void {
+  verifyCache.clear();
+}
+
+async function tokenCacheKey(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /**
  * Base URL for server-to-backend calls. `BACKEND_API_BASE_URL` wins when
  * set (server-only, never inlined into the client bundle); `API_BASE_URL`
@@ -94,6 +106,29 @@ export async function verifySessionToken(
   if (typeof token !== "string" || token.trim() === "") {
     return { status: "invalid", user: null };
   }
+  if (!options.fetchFn && !options.apiBaseUrl && options.timeoutMs === undefined) {
+    const key = await tokenCacheKey(token);
+    const now = Date.now();
+    const cached = verifyCache.get(key);
+    if (cached && cached.expiresAt > now) return cached.result;
+    if (verifyCache.size >= 2048) {
+      for (const [entryKey, entry] of verifyCache) {
+        if (entry.expiresAt <= now || verifyCache.size >= 1536) verifyCache.delete(entryKey);
+      }
+    }
+    const result = verifySessionTokenUncached(token, options);
+    verifyCache.set(key, { expiresAt: now + VERIFY_CACHE_TTL_MS, result });
+    const settled = await result;
+    if (settled.status === "unavailable") verifyCache.delete(key);
+    return settled;
+  }
+  return verifySessionTokenUncached(token, options);
+}
+
+async function verifySessionTokenUncached(
+  token: string,
+  options: VerifyOptions,
+): Promise<VerifyOutcome> {
   const fetchFn = options.fetchFn ?? fetch;
   const url = `${resolveApiBaseUrl(options.apiBaseUrl)}/auth/me`;
   // Free-tier Postgres (Neon) suspends when idle: the first verification

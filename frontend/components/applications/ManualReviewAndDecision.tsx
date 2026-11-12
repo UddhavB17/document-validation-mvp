@@ -25,8 +25,8 @@ import {
   setReviewTaskChecked,
 } from "@/components/applications/review/sessionState";
 import { getReviewQueueNeighbors, readReviewQueue, updateReviewQueuePosition } from "@/lib/reviewQueue";
+import { useUndoRemainingSeconds } from "@/lib/useUndoRemainingSeconds";
 
-const UNDO_WINDOW_SECONDS = 10 * 60;
 const reasonLabels = Object.keys(rejectionReasons) as Array<keyof typeof rejectionReasons>;
 
 function decisionId(decision: Decision | null | undefined): number | null {
@@ -42,21 +42,6 @@ function decisionResultingState(decision: string | null | undefined): string {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "Unable to record the reviewer decision. Please try again.";
-}
-
-function useUndoRemainingSeconds(decidedAt: string | null | undefined): number | null {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!decidedAt) return undefined;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [decidedAt]);
-
-  if (!decidedAt) return null;
-  const decidedAtMs = Date.parse(decidedAt);
-  if (!Number.isFinite(decidedAtMs)) return null;
-  return Math.max(0, Math.min(UNDO_WINDOW_SECONDS, UNDO_WINDOW_SECONDS - Math.floor((now - decidedAtMs) / 1000)));
 }
 
 function formatCountdown(seconds: number): string {

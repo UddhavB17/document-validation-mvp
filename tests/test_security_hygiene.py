@@ -12,6 +12,7 @@ import importlib
 
 import pytest
 from cryptography.fernet import Fernet
+from fastapi import Response
 from fastapi.testclient import TestClient
 
 import database.db as db
@@ -37,6 +38,19 @@ def isolated_db(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     init_db()
     return tmp_path
+
+
+def _clear_health_cache(monkeypatch) -> None:
+    import main
+
+    monkeypatch.setattr(main, "_health_cache_payload", None)
+    monkeypatch.setattr(main, "_health_cache_expires_at", 0.0)
+    monkeypatch.setattr(main, "_health_cache_status_code", 200)
+
+
+class _HealthyStore:
+    def exists(self, _key: str) -> bool:
+        return True
 
 
 def test_shutdown_route_is_gone() -> None:
@@ -69,6 +83,8 @@ def test_health_reports_database_and_storage(isolated_db, monkeypatch) -> None:
     import main
     from database import worker_heartbeat
 
+    _clear_health_cache(monkeypatch)
+    monkeypatch.setattr(main, "get_store", _HealthyStore)
     monkeypatch.setattr(
         worker_heartbeat,
         "get_heartbeat",
@@ -77,9 +93,8 @@ def test_health_reports_database_and_storage(isolated_db, monkeypatch) -> None:
             "status": "ok",
         },
     )
-    client = TestClient(main.app)
-    response = client.get("/health")
-    payload = response.json()
+    response = Response()
+    payload = main.health_check(response)
     assert response.status_code == 200
     assert payload["status"] == "ok"
     assert payload["version"] == main.app.version
@@ -96,44 +111,94 @@ def test_health_is_degraded_when_worker_is_stale(isolated_db, monkeypatch) -> No
     import main
     from database import worker_heartbeat
 
+    _clear_health_cache(monkeypatch)
+    monkeypatch.setattr(main, "get_store", _HealthyStore)
     monkeypatch.setattr(
         worker_heartbeat,
         "get_heartbeat",
         lambda: {"last_heartbeat": None, "status": "stale"},
     )
-    response = TestClient(main.app).get("/health")
+    response = Response()
+    payload = main.health_check(response)
 
     assert response.status_code == 200
-    assert response.json()["status"] == "degraded"
+    assert payload["status"] == "degraded"
 
 
 def test_health_fails_when_database_is_unreachable(isolated_db, monkeypatch) -> None:
     import main
 
+    _clear_health_cache(monkeypatch)
+    monkeypatch.setattr(main, "get_store", _HealthyStore)
     def broken_connection():
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(main, "get_connection", broken_connection)
-    response = TestClient(main.app).get("/health")
+    response = Response()
+    payload = main.health_check(response)
 
     assert response.status_code == 503
-    assert response.json()["status"] == "error"
-    assert response.json()["database"] == "error"
+    assert payload["status"] == "error"
+    assert payload["database"] == "error"
 
 
 def test_health_fails_when_storage_is_unreachable(isolated_db, monkeypatch) -> None:
     import main
 
+    _clear_health_cache(monkeypatch)
     class BrokenStore:
         def exists(self, _key: str) -> bool:
             raise RuntimeError("storage unavailable")
 
     monkeypatch.setattr(main, "get_store", lambda: BrokenStore())
-    response = TestClient(main.app).get("/health")
+    response = Response()
+    payload = main.health_check(response)
 
     assert response.status_code == 503
-    assert response.json()["status"] == "error"
-    assert response.json()["storage"] == "error"
+    assert payload["status"] == "error"
+    assert payload["storage"] == "error"
+
+
+def test_health_reuses_cached_probe_and_preserves_cache_expiry(isolated_db, monkeypatch) -> None:
+    import main
+    from database import worker_heartbeat
+
+    _clear_health_cache(monkeypatch)
+    clock = [100.0]
+    monkeypatch.setattr(main, "time", type("Clock", (), {"monotonic": staticmethod(lambda: clock[0])}))
+    counters = {"database": 0, "storage": 0, "worker": 0}
+    original_connection = main.get_connection
+
+    def counted_connection():
+        counters["database"] += 1
+        return original_connection()
+
+    class Store:
+        def exists(self, _key: str) -> bool:
+            counters["storage"] += 1
+            return True
+
+    def heartbeat():
+        counters["worker"] += 1
+        return {"last_heartbeat": "now", "status": "ok"}
+
+    monkeypatch.setattr(main, "get_connection", counted_connection)
+    monkeypatch.setattr(main, "get_store", lambda: Store())
+    monkeypatch.setattr(worker_heartbeat, "get_heartbeat", heartbeat)
+    from fastapi import Response
+
+    first_response = Response()
+    second_response = Response()
+    assert main.health_check(first_response)["status"] == "ok"
+    assert main.health_check(second_response)["status"] == "ok"
+    assert first_response.status_code == second_response.status_code == 200
+    assert counters == {"database": 1, "storage": 1, "worker": 1}
+
+    clock[0] += 5.1
+    expired_response = Response()
+    assert main.health_check(expired_response)["status"] == "ok"
+    assert expired_response.status_code == 200
+    assert counters == {"database": 2, "storage": 2, "worker": 2}
 
 
 def test_secret_setting_round_trips_encrypted(isolated_db, monkeypatch) -> None:

@@ -9,6 +9,7 @@ export function OcrSettings({
   savingKey,
   setDraftValue,
   updateSetting,
+  scheduleSettingUpdate,
 }: SettingsComponentProps) {
   const ocrProvider = getValue("ocr.provider") || "google_vision";
   const googleAuth = getValue("google.vision.auth") || "auto";
@@ -26,14 +27,14 @@ export function OcrSettings({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">OCR Provider</label>
-            <select value={ocrProvider} onChange={(event) => updateSetting("ocr.provider", event.target.value)} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium">
+            <select value={ocrProvider} onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("ocr.provider", event.target.value)} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium">
               <option value="google_vision">Google Vision API only</option>
             </select>
             <p className="mt-2 text-xs text-[#5C6B7A] font-semibold leading-relaxed">Scanned pages use Google Vision API. Digital PDF text still uses embedded text and incurs no OCR call.</p>
           </div>
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Google Vision Feature</label>
-            <select value={googleFeature} onChange={(event) => updateSetting("google.vision.feature", event.target.value)} disabled={!googleControlsVisible} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium disabled:bg-[#F6F7FA] disabled:text-[#5C6B7A]">
+            <select value={googleFeature} onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("google.vision.feature", event.target.value)} disabled={!googleControlsVisible} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium disabled:bg-[#F6F7FA] disabled:text-[#5C6B7A]">
               <option value="DOCUMENT_TEXT_DETECTION">Document text detection</option>
               <option value="TEXT_DETECTION">Text detection</option>
             </select>
@@ -44,7 +45,7 @@ export function OcrSettings({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-slate-100 pt-4">
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Google Vision Auth Mode</label>
-              <select value={googleAuth} onChange={(event) => updateSetting("google.vision.auth", event.target.value)} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium">
+              <select value={googleAuth} onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("google.vision.auth", event.target.value)} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs cursor-pointer font-medium">
                 <option value="auto">Auto</option>
                 <option value="api_key">API key</option>
                 <option value="adc">Application Default Credentials</option>
@@ -52,7 +53,7 @@ export function OcrSettings({
             </div>
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-[#5C6B7A] mb-2">Google Vision Timeout</label>
-              <input type="number" min="5" max="300" value={googleTimeout} onChange={(event) => updateSetting("google.vision.timeout.seconds", event.target.value)} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm font-mono text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs font-medium" />
+              <input type="number" min="5" max="300" value={googleTimeout} onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("google.vision.timeout.seconds", event.target.value)} className="mt-1 block w-full rounded-lg border border-[#E1E5EB] bg-white px-3.5 py-2.5 text-sm font-mono text-[#16202E] focus:border-[#2B4C7E] focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]/10 shadow-3xs font-medium" />
             </div>
             <DraftTextField
               label="Optional language hints"

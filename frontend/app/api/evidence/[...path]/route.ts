@@ -37,7 +37,7 @@ export const revalidate = 0;
  */
 
 const NO_STORE = "private, no-store";
-const PRIVATE_EVIDENCE_CACHE = "private, max-age=300, must-revalidate";
+const PRIVATE_EVIDENCE_CACHE = "private, max-age=3600, must-revalidate";
 
 /** Content headers safe to pass through from the backend response. */
 const FORWARDED_CONTENT_HEADERS = ["content-type", "content-disposition"] as const;
@@ -65,7 +65,12 @@ export async function GET(
   let backendRes: Response;
   try {
     backendRes = await fetch(backendUrl, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(request.headers.get("if-none-match")
+          ? { "If-None-Match": request.headers.get("if-none-match") as string }
+          : {}),
+      },
       cache: "no-store",
       // The backend must not redirect evidence fetches; fail closed instead.
       redirect: "error",
@@ -84,6 +89,24 @@ export async function GET(
     }
     const status = mapEvidenceBackendErrorStatus(backendRes.status);
     return errorResponse(status, evidenceProxyErrorDetail(status));
+  }
+
+  if (parsed.value.kind === "source-page") {
+    const body = await backendRes.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", body);
+    const etag = `"${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}"`;
+    if (request.headers.get("if-none-match") === etag) {
+      return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": PRIVATE_EVIDENCE_CACHE } });
+    }
+    const headers = new Headers();
+    for (const name of FORWARDED_CONTENT_HEADERS) {
+      const value = backendRes.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+    headers.set("ETag", etag);
+    headers.set("Cache-Control", PRIVATE_EVIDENCE_CACHE);
+    headers.set("X-Content-Type-Options", "nosniff");
+    return new NextResponse(body, { status: 200, headers });
   }
 
   const headers = new Headers();

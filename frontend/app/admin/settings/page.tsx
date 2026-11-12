@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 
-import { ClassificationSettings } from "@/components/settings/ClassificationSettings";
-import { GeneralSettings } from "@/components/settings/GeneralSettings";
-import { LlmSettings } from "@/components/settings/LlmSettings";
-import { OcrSettings } from "@/components/settings/OcrSettings";
-import { RequiredFieldsMatrix } from "@/components/settings/RequiredFieldsMatrix";
+const ClassificationSettings = dynamic(() => import("@/components/settings/ClassificationSettings").then((module) => module.ClassificationSettings));
+const GeneralSettings = dynamic(() => import("@/components/settings/GeneralSettings").then((module) => module.GeneralSettings));
+const LlmSettings = dynamic(() => import("@/components/settings/LlmSettings").then((module) => module.LlmSettings));
+const OcrSettings = dynamic(() => import("@/components/settings/OcrSettings").then((module) => module.OcrSettings));
+const RequiredFieldsMatrix = dynamic(() => import("@/components/settings/RequiredFieldsMatrix").then((module) => module.RequiredFieldsMatrix));
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
+import { EnvironmentOverrideNotice } from "@/components/settings/EnvironmentOverrideNotice";
 import { useSettings } from "@/components/settings/useSettings";
 import { SettingsTab } from "@/components/settings/types";
 
@@ -24,8 +26,14 @@ export default function SettingsPage() {
         </div>
         {settings.successMessage ? <div className="stamp match select-none rotate-0 py-1.5 px-3">{settings.successMessage}</div> : null}
       </div>
+      {settings.errorMessage ? (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+          {settings.errorMessage}
+        </div>
+      ) : null}
 
       <SettingsTabs activeTab={activeTab} onChange={setActiveTab} />
+      <EnvironmentOverrideNotice settings={settings.settings} />
 
       {settings.loading ? (
         <div className="text-center py-12 text-[#5C6B7A] font-semibold italic">Loading settings...</div>
@@ -36,6 +44,7 @@ export default function SettingsPage() {
           draftValues={settings.draftValues}
           savingKey={settings.savingKey}
           setDraftValue={settings.setDraftValue}
+          scheduleSettingUpdate={settings.scheduleSettingUpdate}
           updateSetting={settings.updateSetting}
         />
       ) : activeTab === "classification" ? (
@@ -45,6 +54,7 @@ export default function SettingsPage() {
           draftValues={settings.draftValues}
           savingKey={settings.savingKey}
           setDraftValue={settings.setDraftValue}
+          scheduleSettingUpdate={settings.scheduleSettingUpdate}
           updateSetting={settings.updateSetting}
         />
       ) : activeTab === "ocr" ? (

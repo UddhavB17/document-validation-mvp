@@ -40,7 +40,11 @@ from services.review.repository import (
     load_today_activity,
 )
 from services.review.worklist import build_worklist
-from services.reviewer import load_reviewer_summary, summarize_for_display
+from services.reviewer import (
+    load_reviewer_comparison,
+    load_reviewer_summary,
+    summarize_for_display,
+)
 
 router = APIRouter(prefix="/review", tags=["review"], dependencies=[Depends(get_current_user)])
 LOGGER = logging.getLogger(__name__)
@@ -196,11 +200,23 @@ def get_application_review(application_id: int) -> dict[str, Any]:
         anomaly.get("s_no") for anomaly in anomalies if anomaly.get("s_no") is not None
     }
 
-    matrix_and_rels = build_comparison_matrix_and_relationships(
-        application_id,
-        data,
-        evidence_pages=evidence_pages if data.get("ground_truth") else [],
+    application_status = str(application.get("status") or "").casefold()
+    stored_comparison = (
+        load_reviewer_comparison(application_id)
+        if application_status not in {"processing", "uploaded", "queued", "running"}
+        else None
     )
+    if stored_comparison is not None:
+        matrix_and_rels = {
+            "comparison_matrix": stored_comparison["comparison_matrix"],
+            "relationships": stored_comparison["relationships"],
+        }
+    else:
+        matrix_and_rels = build_comparison_matrix_and_relationships(
+            application_id,
+            data,
+            evidence_pages=evidence_pages if data.get("ground_truth") else [],
+        )
     documents = build_document_summaries(data.get("document_pages") or {}, anomalies)
 
     return {

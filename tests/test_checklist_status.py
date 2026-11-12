@@ -1,5 +1,7 @@
+import json
+
 from services.checklist_engine import check_presence_min_count, run_checks
-from services.checklist_service import get_all_checklist_items
+from services.checklist_service import _read_checklist, get_all_checklist_items
 from services.checklist_status import build_checklist_status
 
 
@@ -11,6 +13,22 @@ def test_presence_min_count_requires_two_pages() -> None:
     pages.append({"document_type": "Technical Report", "page_number": 11})
     result = check_presence_min_count(pages, "Technical Report", 2)
     assert result["passed"] is True
+
+
+def test_checklist_cache_invalidates_on_file_change_and_returns_independent_data(tmp_path) -> None:
+    path = tmp_path / "checklist.json"
+    path.write_text(json.dumps({"product_type": "LAP", "items": ["first"]}), encoding="utf-8")
+
+    first = _read_checklist(path)
+    first["items"].append("caller mutation")
+    assert _read_checklist(path)["items"] == ["first"]
+
+    path.write_text(
+        json.dumps({"product_type": "LAP", "items": ["updated", "second"]}),
+        encoding="utf-8",
+    )
+    path.touch()
+    assert _read_checklist(path)["items"] == ["updated", "second"]
 
 
 def test_run_checks_flags_missing_pan_presence_only() -> None:

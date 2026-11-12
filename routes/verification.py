@@ -73,11 +73,15 @@ def _load_application_checklist_inputs(application_id: int) -> dict[str, Any] | 
         if application is None:
             return None
         pages = connection.execute(
-            "SELECT * FROM pages WHERE application_id = ? ORDER BY page_number",
+            "SELECT id, application_id, page_number, document_type, ocr_status, "
+            "classification_confidence, extracted_fields FROM pages "
+            "WHERE application_id = ? ORDER BY page_number",
             (application_id,),
         ).fetchall()
         anomalies = connection.execute(
-            "SELECT * FROM validation_results WHERE application_id = ?",
+            "SELECT id, application_id, rule_id, severity, status, page_number, "
+            "reason, expected_value, found_value, evidence_json "
+            "FROM validation_results WHERE application_id = ?",
             (application_id,),
         ).fetchall()
         ground_truth = connection.execute(

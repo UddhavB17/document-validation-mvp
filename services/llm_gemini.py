@@ -9,10 +9,14 @@ through ``services.config.get_setting`` — no new ``os.getenv`` here.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_MODEL_LIST_TTL_SECONDS = 600.0
+_model_list_cache: tuple[float, list[str]] | None = None
+_model_list_lock = threading.Lock()
 
 # Retry-policy exceptions live in the client so every provider shares them.
 from services.llm_client import LLMPermanentError, LLMTransientError  # noqa: E402
@@ -186,6 +190,11 @@ def generate(
 
 def list_models() -> list[str]:
     """Return usable Gemini model ids for the settings dropdown and eval script."""
+    global _model_list_cache
+    now = time.monotonic()
+    with _model_list_lock:
+        if _model_list_cache is not None and now - _model_list_cache[0] < _MODEL_LIST_TTL_SECONDS:
+            return list(_model_list_cache[1])
     try:
         client = _build_client()
         names: list[str] = []
@@ -195,7 +204,13 @@ def list_models() -> list[str]:
             if short.startswith("gemini-"):
                 names.append(short)
         if names:
-            return sorted(set(names))
+            result = sorted(set(names))
+            with _model_list_lock:
+                _model_list_cache = (time.monotonic(), result)
+            return list(result)
     except Exception as exc:  # noqa: BLE001 - offline / no credentials
         logger.debug("Gemini list_models unavailable: %s", exc)
-    return list(KNOWN_GEMINI_MODELS)
+    result = list(KNOWN_GEMINI_MODELS)
+    with _model_list_lock:
+        _model_list_cache = (time.monotonic(), result)
+    return list(result)

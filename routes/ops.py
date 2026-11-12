@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from database.db import get_connection
 from services.auth.dependencies import get_current_user
@@ -26,17 +26,23 @@ def get_ops_application(application_id: int) -> dict[str, Any]:
 
 
 @router.get("/worklist")
-def get_ops_worklist() -> dict[str, list[dict[str, Any]]]:
+def get_ops_worklist(
+    limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)
+) -> dict[str, Any]:
     """Return operations worklist rows (no technical fields)."""
     # TODO(ws-d): scope this listing to the caller's role/ownership.
     with get_connection() as connection:
         try:
             rows = connection.execute(
-                "SELECT * FROM applications ORDER BY id DESC"
+                "SELECT id, loan_id, applicant_name, status, updated_at FROM applications "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
             ).fetchall()
         except Exception:
             return {"applications": []}
         applications = [dict(row) for row in rows]
+        total_row = connection.execute("SELECT COUNT(*) AS total FROM applications").fetchone()
+        total = int(total_row["total"] or 0)
         counts: dict[int, int] = {}
         try:
             for row in connection.execute(
@@ -64,4 +70,4 @@ def get_ops_worklist() -> dict[str, list[dict[str, Any]]]:
                 "updated_at": application.get("updated_at"),
             }
         )
-    return {"applications": items}
+    return {"applications": items, "total": total, "limit": limit, "offset": offset}
