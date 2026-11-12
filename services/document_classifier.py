@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from services.config import get_setting
 from services.validation_gates import has_intrinsic_aadhaar_evidence
 
 fuzz: Any
@@ -292,7 +293,14 @@ def classify_page_with_candidates(text: str) -> dict[str, Any]:
     )
 
     best = candidates[0] if candidates else _unknown_result([])
-    threshold = float(registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
+    configured_threshold = get_setting(
+        "min_confidence", registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE)
+    )
+    try:
+        threshold = float(configured_threshold)
+    except (TypeError, ValueError):
+        threshold = float(registry.get("min_confidence", DEFAULT_MIN_CONFIDENCE))
+    threshold = min(1.0, max(0.0, threshold))
     if best["confidence"] < threshold:
         return _unknown_result(candidates)
 
@@ -371,7 +379,9 @@ def _score_rule(
         # Combined loan packets can end one short letter and begin the next
         # logical document halfway down a page. Twenty-four lines remains
         # header-biased but still catches those embedded document boundaries.
-        heading_area = _normalize_text("\n".join((text or "").splitlines()[:24])) or normalized[:2000]
+        heading_area = (
+            _normalize_text("\n".join((text or "").splitlines()[:24])) or normalized[:2000]
+        )
     matched: list[dict[str, Any]] = []
     score = 0.0
 

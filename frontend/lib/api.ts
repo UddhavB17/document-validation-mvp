@@ -186,6 +186,9 @@ const settingSchemaShape = {
   has_value: z.boolean().optional(),
   effective_value: z.string().optional(),
   env_override_active: z.boolean().optional(),
+  minimum: z.number().nullable().optional(),
+  maximum: z.number().nullable().optional(),
+  allowed_values: z.array(z.string()).optional(),
 };
 
 export const settingSchema = z.object(settingSchemaShape);

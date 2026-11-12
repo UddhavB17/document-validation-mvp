@@ -2,11 +2,15 @@
 
 import { SettingsComponentProps } from "./types";
 
-export function ClassificationSettings({ getValue, updateSetting, scheduleSettingUpdate }: SettingsComponentProps) {
+export function ClassificationSettings({ getValue, getSetting, updateSetting, scheduleSettingUpdate }: SettingsComponentProps) {
   const minConfidence = parseFloat(getValue("min_confidence") || "0.70");
   const nameFuzzyThreshold = parseFloat(getValue("validation.name_fuzzy_threshold") || "85.0");
   const amountTolerance = parseFloat(getValue("validation.amount_tolerance_percent") || "1.0");
   const dateTolerance = parseInt(getValue("validation.date_tolerance_days") || "0", 10);
+  const minConfidenceRule = getSetting("min_confidence");
+  const nameThresholdRule = getSetting("validation.name_fuzzy_threshold");
+  const amountToleranceRule = getSetting("validation.amount_tolerance_percent");
+  const dateToleranceRule = getSetting("validation.date_tolerance_days");
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -24,9 +28,9 @@ export function ClassificationSettings({ getValue, updateSetting, scheduleSettin
           <div className="flex items-center gap-4">
             <input
               type="range"
-              min="0.4"
-              max="0.95"
-              step="0.05"
+              min={minConfidenceRule?.minimum ?? 0.4}
+              max={minConfidenceRule?.maximum ?? 0.95}
+              step="0.01"
               value={minConfidence}
               onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("min_confidence", event.target.value)}
               className="h-2 w-64 cursor-pointer appearance-none rounded-lg bg-slate-200 accent-[#2B4C7E]"
@@ -51,8 +55,8 @@ export function ClassificationSettings({ getValue, updateSetting, scheduleSettin
             <div className="flex items-center gap-4">
               <input
                 type="range"
-                min="50"
-                max="100"
+                min={nameThresholdRule?.minimum ?? 50}
+                max={nameThresholdRule?.maximum ?? 100}
                 step="1"
                 value={nameFuzzyThreshold}
                 onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("validation.name_fuzzy_threshold", event.target.value)}
@@ -73,8 +77,8 @@ export function ClassificationSettings({ getValue, updateSetting, scheduleSettin
               <div className="flex items-center gap-3">
                 <input
                   type="number"
-                  min="0"
-                  max="10"
+                  min={amountToleranceRule?.minimum ?? 0}
+                  max={amountToleranceRule?.maximum ?? 10}
                   step="0.1"
                   value={amountTolerance}
                   onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("validation.amount_tolerance_percent", event.target.value)}
@@ -94,8 +98,8 @@ export function ClassificationSettings({ getValue, updateSetting, scheduleSettin
               <div className="flex items-center gap-3">
                 <input
                   type="number"
-                  min="0"
-                  max="30"
+                  min={dateToleranceRule?.minimum ?? 0}
+                  max={dateToleranceRule?.maximum ?? 30}
                   step="1"
                   value={dateTolerance}
                   onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("validation.date_tolerance_days", event.target.value)}

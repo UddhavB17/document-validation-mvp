@@ -118,11 +118,18 @@ def sync_llm_setting_to_env(
     return updated_keys
 
 
-def effective_setting_metadata(config_key: str) -> dict[str, str | bool] | None:
-    """Return effective runtime value metadata for display in the settings API."""
-    if config_key not in _LLM_SETTING_TO_ENV:
+def effective_setting_metadata(
+    config_key: str, value_type: str = "str", stored_value: str | None = None
+) -> dict[str, str | bool] | None:
+    """Return a safe effective value and env-override marker for admin display."""
+    if str(value_type).lower() == "secret" or config_key.lower().endswith(("api_key", "token")):
         return None
-    env_key = _LLM_SETTING_TO_ENV[config_key]
+    if config_key in _LLM_SETTING_TO_ENV:
+        env_key = _LLM_SETTING_TO_ENV[config_key]
+    else:
+        from services.config import environment_key_for_setting
+
+        env_key = environment_key_for_setting(config_key)
     raw_env = os.getenv(env_key)
     env_active = isinstance(raw_env, str) and raw_env.strip() != ""
     try:
@@ -134,8 +141,12 @@ def effective_setting_metadata(config_key: str) -> dict[str, str | bool] | None:
             from services.llm_client import llm_model
 
             effective = llm_model()
+        elif env_active:
+            from services.config import get_setting
+
+            effective = get_setting(config_key, raw_env)
         else:
-            return None
+            effective = stored_value if stored_value is not None else ""
     except Exception:
         effective = ""
     return {

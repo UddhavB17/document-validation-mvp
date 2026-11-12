@@ -9,6 +9,7 @@ export function useSettings() {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
   const [optimisticValues, setOptimisticValues] = useState<Record<string, string>>({});
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -62,6 +63,8 @@ export function useSettings() {
   async function updateSetting(key: string, value: string, clearSecret = false) {
     try {
       setSavingKey(key);
+      setErrorMessage(null);
+      setSuccessMessage(null);
       const updated = await api.updateSetting(key, value, clearSecret);
       setSettings((current) => current.map((setting) => (
         setting.config_key === key
@@ -82,7 +85,7 @@ export function useSettings() {
       if (toastTimer.current) clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: unknown) {
-      console.error("Failed to update setting:", error);
+      setErrorMessage(error instanceof Error ? error.message : "Could not update this setting.");
     } finally {
       setSavingKey(null);
     }
@@ -93,6 +96,7 @@ export function useSettings() {
     loading,
     savingKey,
     successMessage,
+    errorMessage,
     draftValues,
     getSetting,
     getValue,

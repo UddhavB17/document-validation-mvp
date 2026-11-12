@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from database.db import get_connection
+from services.admin_setting_schema import setting_metadata, validate_setting_value
 from services.auth.dependencies import require_role
 from services.config import is_secret_setting
 from services.env_sync import effective_setting_metadata, sync_llm_setting_to_env
@@ -39,8 +40,14 @@ def _serialize_setting(row) -> dict:
     data["has_value"] = has_value if is_secret else True
     if is_secret:
         data["config_value"] = SECRET_PLACEHOLDER if has_value else ""
-    meta = effective_setting_metadata(str(data.get("config_key") or ""))
-    if meta:
+    config_key = str(data.get("config_key") or "")
+    data.update(setting_metadata(config_key, str(data.get("value_type") or "str")))
+    meta = effective_setting_metadata(
+        config_key,
+        str(data.get("value_type") or "str"),
+        str(data.get("config_value") or ""),
+    )
+    if meta and not is_secret:
         data.update(meta)
     return data
 
@@ -84,9 +91,20 @@ def update_setting(config_key: str, payload: SettingUpdatePayload):
             new_value = row_data.get("config_value") or ""
         elif is_secret and incoming.strip():
             # Secrets are encrypted at rest; the API never sees plaintext back.
+            try:
+                incoming = validate_setting_value(
+                    config_key, str(row_data.get("value_type") or "secret"), incoming
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             new_value = encrypt_secret(incoming)
         else:
-            new_value = incoming
+            try:
+                new_value = validate_setting_value(
+                    config_key, str(row_data.get("value_type") or "str"), incoming
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         conn.execute(
             "UPDATE system_settings SET config_value = ?, updated_at = ? WHERE config_key = ?",

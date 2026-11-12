@@ -30,6 +30,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+SETTING_ENV_ALIASES = {"min_confidence": "MIN_CLASSIFICATION_CONFIDENCE"}
+
+
+def environment_key_for_setting(key: str) -> str:
+    """Map a database setting key to its supported environment variable."""
+    return SETTING_ENV_ALIASES.get(key, key.upper().replace(".", "_"))
+
 
 _PROFILE_DEFAULTS = {
     "fast": {
@@ -323,7 +330,7 @@ def get_setting(key: str, default: Any = None) -> Any:
     """
     import json
 
-    env_key = key.upper().replace(".", "_")
+    env_key = environment_key_for_setting(key)
     raw_env = os.getenv(env_key)
     env_val = raw_env.strip() if isinstance(raw_env, str) and raw_env.strip() != "" else None
 
