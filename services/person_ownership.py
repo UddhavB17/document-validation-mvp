@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
-from datetime import datetime
 from typing import Any
 
 from services.cersai import (
@@ -29,6 +28,7 @@ from services.cersai import (
     search_type as detect_cersai_search_type,
 )
 from services.identifiers import plausible_aadhaar_digits
+from services.identity_matching import _digits, first_value, identity_matches
 from services.person_names import is_person_name_candidate, name_similarity
 from services.validation_gates import (
     bank_statement_header,
@@ -1473,84 +1473,3 @@ def _explicit_bank_account_observations(text: str, document_type: str) -> list[s
         if 8 <= len(digits) <= 20:
             values.append(digits)
     return list(dict.fromkeys(values))
-
-
-def first_value(values: dict[str, Any], aliases: tuple[str, ...]) -> Any:
-    for alias in aliases:
-        value = values.get(alias)
-        if value not in (None, ""):
-            return value
-    return None
-
-
-def identity_matches(field: str, found: Any, expected: Any) -> bool:
-    left = str(found or "").strip()
-    right = str(expected or "").strip()
-    if not left or not right:
-        return False
-    if field == "applicant_name":
-        left_tokens = re.findall(r"[a-z0-9]+", left.lower())
-        right_tokens = re.findall(r"[a-z0-9]+", right.lower())
-        is_haystack = len(left_tokens) >= max(4, len(right_tokens) + 2)
-        if not is_haystack and (
-            not is_person_name_candidate(left) or not is_person_name_candidate(right)
-        ):
-            return False
-        if not is_haystack and name_similarity(left, right) >= 0.85:
-            return True
-        # OCR haystack (passbook/statement pages) — look for the trusted name inside.
-        if len(left_tokens) >= max(4, len(right_tokens) + 2) and right_tokens:
-            compact_right = "".join(right_tokens)
-            compact_left = "".join(left_tokens)
-            if len(compact_right) >= 4 and compact_right in compact_left:
-                return True
-            if len(right_tokens) >= 2:
-                pattern = r"\b" + r"\s+".join(re.escape(tok) for tok in right_tokens) + r"\b"
-                if re.search(pattern, left.lower()):
-                    return True
-        return False
-    if field == "address":
-        return fuzz.token_set_ratio(_words(left), _words(right)) >= 75
-    if field == "date_of_birth":
-        return _date_key(left) == _date_key(right)
-    if field in {"aadhaar_number", "phone_number", "pin_code"}:
-        left_digits = _digits(left)
-        right_digits = _digits(right)
-        if field == "aadhaar_number" and len(left_digits) >= 4 and len(right_digits) >= 4:
-            return left_digits[-4:] == right_digits[-4:]
-        return left_digits == right_digits and bool(left_digits)
-    if field == "pan_number":
-        return re.sub(r"\s+", "", left).upper() == re.sub(r"\s+", "", right).upper()
-    if field == "account_number":
-        left_digits = _digits(left)
-        right_digits = _digits(right)
-        # Masked suffixes are useful for field review but are not unique enough
-        # to establish person ownership.
-        return len(left_digits) >= 8 and len(right_digits) >= 8 and left_digits == right_digits
-    return _words(left) == _words(right)
-
-
-def _words(value: str) -> str:
-    return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
-
-
-def _digits(value: str) -> str:
-    return "".join(character for character in value if character.isdigit())
-
-
-def _date_key(value: str) -> str:
-    normalized = str(value or "").strip()
-    for format_string in (
-        "%d-%B-%Y",
-        "%d-%b-%Y",
-        "%d/%m/%Y",
-        "%d-%m-%Y",
-        "%Y-%m-%d",
-        "%d %B %Y",
-        "%d %b %Y",
-    ):
-        try:
-            return datetime.strptime(normalized, format_string).date().isoformat()
-        except ValueError:
-            continue
-    return _words(normalized).replace(" ", "")

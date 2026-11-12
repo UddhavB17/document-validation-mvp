@@ -18,6 +18,7 @@ from typing import Any
 
 from database.db import get_connection
 from services.config import cached_settings
+from services.ops_repository import load_ops_snapshot
 from services.ops_templates_en_hi import (
     CODE_ORDER,
     SEVERITY_ORDER,
@@ -99,7 +100,10 @@ SUMMARY_PHRASES: dict[str, dict[str, str]] = {
     "OCR_FAILED": {"en": "page could not be read", "hi": "पृष्ठ पढ़ा नहीं जा सका"},
     "DATA_MISSING": {"en": "information missing", "hi": "जानकारी नहीं मिली"},
     "PROCESSING_ERROR": {"en": "processing error", "hi": "प्रसंस्करण त्रुटि"},
-    "REVIEW_REQUIRED": {"en": "additional evidence needs review", "hi": "अतिरिक्त प्रमाण की जाँच आवश्यक है"},
+    "REVIEW_REQUIRED": {
+        "en": "additional evidence needs review",
+        "hi": "अतिरिक्त प्रमाण की जाँच आवश्यक है",
+    },
 }
 
 
@@ -191,10 +195,7 @@ def _plain_ai_explanation(assessment: dict[str, Any]) -> str:
         and AI_DISPLAY_CONFIDENCE_THRESHOLD <= float(confidence) <= 1
     )
     if high_confidence and verdict == "possible_false_positive":
-        return (
-            "The automatic check is probably wrong. The document may be fine. "
-            f"{reason}"
-        )
+        return f"The automatic check is probably wrong. The document may be fine. {reason}"
     if high_confidence and verdict == "supported":
         return f"This looks like a real problem. {reason}"
     if verdict == "unresolved":
@@ -348,115 +349,6 @@ def _summaries(findings: list[dict]) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _load_application(application_id: int) -> dict | None:
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT * FROM applications WHERE id = ?", (application_id,)
-        ).fetchone()
-        return dict(row) if row is not None else None
-
-
-def _load_anomalies(application_id: int) -> list[dict]:
-    with get_connection() as connection:
-        try:
-            rows = connection.execute(
-                "SELECT * FROM validation_results WHERE application_id = ? "
-                "AND COALESCE(status, '') != 'dismissed_by_llm' ORDER BY id",
-                (application_id,),
-            ).fetchall()
-        except Exception:
-            return []
-    anomalies: list[dict] = []
-    for row in rows:
-        item = dict(row)
-        evidence = item.get("evidence_json")
-        if isinstance(evidence, str) and evidence:
-            try:
-                item["evidence_json"] = json.loads(evidence)
-            except (TypeError, ValueError):
-                item["evidence_json"] = None
-        anomalies.append(item)
-    return anomalies
-
-
-def _load_job(application_id: int) -> dict | None:
-    with get_connection() as connection:
-        try:
-            row = connection.execute(
-                "SELECT * FROM pipeline_jobs WHERE application_id = ? ORDER BY id DESC LIMIT 1",
-                (application_id,),
-            ).fetchone()
-        except Exception:
-            return None
-        return dict(row) if row is not None else None
-
-
-def _load_progress(application_id: int) -> dict | None:
-    with get_connection() as connection:
-        try:
-            row = connection.execute(
-                "SELECT * FROM pipeline_progress WHERE application_id = ?",
-                (application_id,),
-            ).fetchone()
-        except Exception:
-            return None
-        return dict(row) if row is not None else None
-
-
-def _load_pages(application_id: int) -> list[dict]:
-    with get_connection() as connection:
-        try:
-            rows = connection.execute(
-                "SELECT p.id, p.application_id, p.page_number, p.document_type, "
-                "p.page_type, p.classification_confidence, p.ocr_status, "
-                "p.extracted_fields, m.meta_json FROM pages p LEFT JOIN pages_meta m "
-                "ON m.application_id = p.application_id AND m.page_number = p.page_number "
-                "WHERE p.application_id = ? ORDER BY p.page_number",
-                (application_id,),
-            ).fetchall()
-        except Exception:
-            return []
-    pages: list[dict] = []
-    for row in rows:
-        page = dict(row)
-        extracted = page.get("extracted_fields")
-        if isinstance(extracted, str) and extracted:
-            try:
-                page["extracted_fields"] = json.loads(extracted)
-            except (TypeError, ValueError):
-                page["extracted_fields"] = {}
-        fields = page.get("extracted_fields")
-        if not isinstance(fields, dict):
-            fields = {}
-        try:
-            meta = json.loads(page.pop("meta_json", None) or "{}")
-        except (TypeError, ValueError):
-            meta = {}
-        if isinstance(meta, dict):
-            fields.update({key: value for key, value in meta.items() if key.startswith("_")})
-        page["extracted_fields"] = fields
-        owner = fields.get("_ownership")
-        if isinstance(owner, dict) and owner.get("person_id"):
-            page["person_id"] = owner["person_id"]
-        pages.append(page)
-    return pages
-
-
-def _load_checklist_context(application_id: int) -> dict:
-    """Use the saved trusted inputs when rebuilding scoped/applicable rows."""
-    with get_connection() as connection:
-        row = connection.execute(
-            "SELECT raw_json FROM ground_truth WHERE application_id = ? "
-            "ORDER BY extracted_at DESC LIMIT 1",
-            (application_id,),
-        ).fetchone()
-    try:
-        context = json.loads(row["raw_json"] or "{}") if row else {}
-    except (TypeError, ValueError):
-        return {}
-    return context if isinstance(context, dict) else {}
-
-
 # ---------------------------------------------------------------------------
 # Checklist
 # ---------------------------------------------------------------------------
@@ -506,16 +398,23 @@ def _checklist_section(
     from services.document_presence import assess_document_presence
     from services.page_quality import confident_pages_for_types
 
-    definitions = {int(i["s_no"]): i for i in get_all_checklist_items(str(application.get("product_type") or "LAP"))}
+    definitions = {
+        int(i["s_no"]): i
+        for i in get_all_checklist_items(str(application.get("product_type") or "LAP"))
+    }
     counts = {"FOUND": 0, "MISSING": 0, "NOT_CHECKED": 0}
     for item in response.items:
         if item.status == "not_applicable":
             continue
         status = _CHECKLIST_STATUS_MAP.get(str(item.status), "NOT_CHECKED")
-        for page in confident_pages_for_types(pages, _document_types(definitions.get(item.item_number, {}))):
+        for page in confident_pages_for_types(
+            pages, _document_types(definitions.get(item.item_number, {}))
+        ):
             pages_by_sno.setdefault(item.item_number, set()).add(int(page["page_number"]))
         if status == "NOT_CHECKED":
-            assessment = assess_document_presence(pages, _document_types(definitions.get(item.item_number, {})))
+            assessment = assess_document_presence(
+                pages, _document_types(definitions.get(item.item_number, {}))
+            )
             pages_by_sno.setdefault(item.item_number, set()).update(assessment.review_pages)
         counts[status] += 1
         rows.append(
@@ -568,21 +467,25 @@ def compute_findings(
 @cached_settings()
 def build_ops_payload(application_id: int) -> dict:
     """Build the operator-facing payload for one application (§5)."""
-    application = _load_application(application_id)
-    if application is None:
+    snapshot = load_ops_snapshot(application_id)
+    if snapshot is None:
         raise KeyError(f"application {application_id} not found")
-    anomalies = _load_anomalies(application_id)
-    job = _load_job(application_id) or {}
-    progress = _load_progress(application_id) or {}
+    application = snapshot["application"]
+    anomalies = snapshot["anomalies"]
+    job = snapshot["job"]
+    progress = snapshot["progress"]
 
     # Recompute inexpensive groups so newly supported categories are included
     # for existing applications without reprocessing their documents.
-    ai_assessments = _load_ops_ai_assessments(application_id)
+    ai_assessments = _load_ops_ai_assessments(application_id) if anomalies else {}
     all_findings = compute_findings(anomalies, ai_assessments)
     findings = all_findings
     overflow: list[dict] = []
     if application.get("ops_summary_en") and application.get("ops_summary_hi"):
-        summary = {"en": str(application["ops_summary_en"]), "hi": str(application["ops_summary_hi"])}
+        summary = {
+            "en": str(application["ops_summary_en"]),
+            "hi": str(application["ops_summary_hi"]),
+        }
     else:
         summary = _summaries(findings)
 
@@ -609,7 +512,7 @@ def build_ops_payload(application_id: int) -> dict:
     except (TypeError, ValueError):
         attempt = 1
 
-    pages = _load_pages(application_id)
+    pages = snapshot["pages"]
     # contracts §5: the ops payload never leaks internal job_type / pipeline
     # stage names. Operations vocabulary is just ``processing`` here; the
     # numeric progress, attempt, and failure reason carry the detail.
@@ -628,7 +531,7 @@ def build_ops_payload(application_id: int) -> dict:
         "top_findings": findings,
         "pages_to_verify": overflow,
         "checklist": _checklist_section(
-            application, pages, anomalies, _load_checklist_context(application_id)
+            application, pages, anomalies, snapshot["checklist_context"]
         ),
     }
 
@@ -668,7 +571,10 @@ def _overflow_pages(all_overflow: list[dict], anomalies: list[dict]) -> list[dic
 def store_ops_payload(application_id: int) -> dict | None:
     """Compute findings (minus checklist) and persist to ops_findings_json."""
     try:
-        anomalies = _load_anomalies(application_id)
+        snapshot = load_ops_snapshot(application_id, include_pages=False)
+        if snapshot is None:
+            return None
+        anomalies = snapshot["anomalies"]
         all_findings = compute_findings(anomalies)
         findings = all_findings
         overflow: list[dict] = []

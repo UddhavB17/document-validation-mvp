@@ -30,6 +30,7 @@ from services.file_validator import (
 )
 from services.job_control import PipelineCancelled
 from services.job_runner import enqueue, submit_job
+from services.mapped_zip import MappedZipContent, extract_mapped_zip
 from services.paths import job_work_dir, upload_dir
 from services.pipeline import run_pipeline
 from services.pipeline.input_preparation import cleanup_job_source
@@ -830,44 +831,30 @@ def _save_mapped_zip_package(
     timestamp: str,
 ) -> tuple[Path, str, str]:
     package_bytes = _read_upload_bytes(file)
-    try:
-        archive = zipfile.ZipFile(BytesIO(package_bytes))
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
-
-    with archive:
-        members = [
-            member
-            for member in archive.infolist()
-            if not member.is_dir()
-            and not PurePosixPath(member.filename).name.startswith(".")
-            and "__MACOSX" not in PurePosixPath(member.filename).parts
-        ]
-        pdf_members = [
-            member for member in members if PurePosixPath(member.filename).suffix.lower() == ".pdf"
-        ]
-        json_members = [
-            member for member in members if PurePosixPath(member.filename).suffix.lower() == ".json"
-        ]
-
-        if not manifest_override and len(json_members) != 1:
-            raise HTTPException(
-                status_code=422,
-                detail="Mapped ZIP must contain exactly one JSON manifest file, or paste manifest JSON in the form",
-            )
-        manifest_text = manifest_override or _read_zip_member(archive, json_members[0]).decode("utf-8")
-        manifest_payload = _decode_manifest_payload(manifest_text)
-        pdf_member = _select_pdf_member(pdf_members, manifest_payload)
-
-        original_filename = PurePosixPath(pdf_member.filename).name
-        pdf_bytes = _read_zip_member(archive, pdf_member)
-        if not pdf_bytes:
-            raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
+    content = _extract_mapped_zip_content(package_bytes, manifest_override)
 
     file_path = job_work_dir() / f"mapped-{timestamp}-{uuid4().hex}" / "source.pdf"
     file_path.parent.mkdir(parents=True, exist_ok=False)
-    file_path.write_bytes(pdf_bytes)
-    return file_path, manifest_text, original_filename
+    file_path.write_bytes(content.pdf_bytes)
+    return file_path, content.manifest_text, content.original_filename
+
+
+def _extract_mapped_zip_content(
+    package_bytes: bytes, manifest_override: str | None
+) -> MappedZipContent:
+    try:
+        return extract_mapped_zip(
+            package_bytes,
+            manifest_override=manifest_override,
+            read_member=_read_zip_member,
+            decode_manifest=_decode_manifest_payload,
+            select_pdf=_select_pdf_member,
+        )
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
+    except ValueError as exc:
+        status_code = 400 if str(exc) == "Mapped ZIP PDF file is empty" else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 def _read_zip_member(archive: zipfile.ZipFile, member: zipfile.ZipInfo) -> bytes:
@@ -1946,38 +1933,20 @@ def _batch_single_mapped_zip(
     filename = item.filename or "package.zip"
     package_bytes = _read_upload_bytes(item)
     try:
-        archive = zipfile.ZipFile(BytesIO(package_bytes))
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="ZIP file is corrupted or unreadable") from exc
-    with archive:
-        members = [
-            m
-            for m in archive.infolist()
-            if not m.is_dir()
-            and not PurePosixPath(m.filename).name.startswith(".")
-            and "__MACOSX" not in PurePosixPath(m.filename).parts
-        ]
-        pdf_members = [
-            m for m in members if PurePosixPath(m.filename).suffix.lower() == ".pdf"
-        ]
-        json_members = [
-            m for m in members if PurePosixPath(m.filename).suffix.lower() == ".json"
-        ]
-        if len(json_members) != 1 or not pdf_members:
+        content = _extract_mapped_zip_content(package_bytes, None)
+    except HTTPException as exc:
+        if exc.status_code == 422 and "exactly one JSON manifest" in str(exc.detail):
             raise HTTPException(
                 status_code=422,
                 detail="Mapped ZIP must contain one PDF and one JSON manifest",
-            )
-        manifest_text = _read_zip_member(archive, json_members[0]).decode("utf-8")
-        manifest_payload = _decode_manifest_payload(manifest_text)
-        pdf_member = _select_pdf_member(pdf_members, manifest_payload)
-        pdf_bytes = _read_zip_member(archive, pdf_member)
-        if not pdf_bytes:
-            raise HTTPException(status_code=400, detail="Mapped ZIP PDF file is empty")
+            ) from exc
+        raise
+    manifest_text = content.manifest_text
+    pdf_bytes = content.pdf_bytes
     work_dir = _new_upload_work_dir("batch")
     file_path = work_dir / f"mapped_package_{timestamp}.pdf"
     file_path.write_bytes(pdf_bytes)
-    original_filename = PurePosixPath(pdf_member.filename).name
+    original_filename = content.original_filename
     try:
         parsed = _parse_manifest(manifest_text)
         parsed.case_type = case_type  # type: ignore[assignment]

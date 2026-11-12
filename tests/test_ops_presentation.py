@@ -18,6 +18,7 @@ from services.ops_presentation import (
     build_ops_payload,
     rule_to_code,
 )
+from services.ops_repository import load_ops_snapshot
 
 
 class _Text(BaseModel):
@@ -110,9 +111,7 @@ def _walk_keys(value: object, found: set[str]) -> None:
 def ops_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ops.db")
     init_db()
-    anomalies = json.loads(
-        Path("tests/fixtures/ops/anomalies.json").read_text()
-    )
+    anomalies = json.loads(Path("tests/fixtures/ops/anomalies.json").read_text())
     with get_connection() as connection:
         connection.execute(
             "INSERT INTO applications (loan_id, applicant_name, product_type, status)"
@@ -247,7 +246,12 @@ def test_generated_summary_takes_priority_over_cached_templates(ops_db):
     with get_connection() as connection:
         connection.execute(
             "UPDATE applications SET ops_summary_en = ?, ops_summary_hi = ?, ops_findings_json = ? WHERE id = ?",
-            ("Evidence review", "प्रमाण की समीक्षा", json.dumps({"top_findings": [], "summary": {"en": "old", "hi": "पुराना"}}), ops_db),
+            (
+                "Evidence review",
+                "प्रमाण की समीक्षा",
+                json.dumps({"top_findings": [], "summary": {"en": "old", "hi": "पुराना"}}),
+                ops_db,
+            ),
         )
     payload = build_ops_payload(ops_db)
     assert payload["summary"] == {"en": "Evidence review", "hi": "प्रमाण की समीक्षा"}
@@ -258,14 +262,43 @@ def test_current_checklist_statuses_and_evidence_pages(monkeypatch):
     from types import SimpleNamespace
 
     from services.ops_presentation import _checklist_section
-    monkeypatch.setattr("services.checklist_output.build_checklist_verification_response", lambda **kw: SimpleNamespace(items=[
-        SimpleNamespace(item_number=1, document_name="PAN", status="required_and_present"),
-        SimpleNamespace(item_number=2, document_name="Manual", status="manual_review"),
-        SimpleNamespace(item_number=3, document_name="Missing", status="required_and_missing"),
-        SimpleNamespace(item_number=4, document_name="Not applicable", status="not_applicable"),
-    ]))
-    monkeypatch.setattr("services.checklist_service.get_all_checklist_items", lambda *_: [{"s_no": 1, "document_type": "PAN Card"}])
-    monkeypatch.setattr("services.page_quality.confident_pages_for_types", lambda pages, types: pages if types else [])
+
+    monkeypatch.setattr(
+        "services.checklist_output.build_checklist_verification_response",
+        lambda **kw: SimpleNamespace(
+            items=[
+                SimpleNamespace(item_number=1, document_name="PAN", status="required_and_present"),
+                SimpleNamespace(item_number=2, document_name="Manual", status="manual_review"),
+                SimpleNamespace(
+                    item_number=3, document_name="Missing", status="required_and_missing"
+                ),
+                SimpleNamespace(
+                    item_number=4, document_name="Not applicable", status="not_applicable"
+                ),
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "services.checklist_service.get_all_checklist_items",
+        lambda *_: [{"s_no": 1, "document_type": "PAN Card"}],
+    )
+    monkeypatch.setattr(
+        "services.page_quality.confident_pages_for_types",
+        lambda pages, types: pages if types else [],
+    )
     checklist = _checklist_section({"id": 1}, [{"page_number": 12}], [])
-    assert (checklist["total"], checklist["found"], checklist["missing"], checklist["not_checked"]) == (3, 1, 1, 1)
+    assert (
+        checklist["total"],
+        checklist["found"],
+        checklist["missing"],
+        checklist["not_checked"],
+    ) == (3, 1, 1, 1)
     assert checklist["rows"][0]["pages"] == [12]
+
+
+def test_ops_repository_returns_one_scoped_snapshot_without_ocr_text(ops_db):
+    snapshot = load_ops_snapshot(ops_db)
+    assert snapshot is not None
+    assert snapshot["application"]["loan_id"] == "LN-001"
+    assert snapshot["anomalies"]
+    assert all("ocr_text" not in page for page in snapshot["pages"])

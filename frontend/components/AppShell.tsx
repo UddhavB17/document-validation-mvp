@@ -11,34 +11,15 @@ import { t, useLocale } from "@/lib/i18n";
 import { sessionRedirectTarget, shouldRenderProtectedChildren } from "@/lib/sessionGate";
 import { useApplicationReview, useHealth } from "@/lib/queries";
 import type { FieldComparison } from "@/lib/api";
-
-type IconName = "worklist" | "intake" | "activity" | "settings" | "users" | "menu" | "close" | "collapse" | "expand" | "api" | "ops" | "signout";
-
-interface NavItem {
-  href: string;
-  labelKey: Parameters<typeof t>[1];
-  fallback: string;
-  icon: IconName;
-  id: string;
-}
-
-const OPERATIONS_NAV: NavItem[] = [
-  { href: "/ops", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "ops" },
-  { href: "/ops/activity", labelKey: "nav.activity", fallback: "My activity", icon: "activity", id: "ops-activity" },
-  { href: "/ops/settings", labelKey: "nav.preferences", fallback: "Preferences", icon: "settings", id: "ops-settings" },
-];
-
-const ADMIN_NAV: NavItem[] = [
-  { href: "/admin/worklist", labelKey: "nav.worklist", fallback: "Worklist", icon: "worklist", id: "worklist" },
-  { href: "/admin/upload", labelKey: "nav.intake", fallback: "Intake", icon: "intake", id: "intake" },
-  { href: "/admin/activity", labelKey: "nav.activity", fallback: "My Activity", icon: "activity", id: "activity" },
-];
-
-const ADMIN_UTILITY_NAV: NavItem[] = [
-  { href: "/admin/settings", labelKey: "nav.settings", fallback: "Settings", icon: "settings", id: "settings" },
-  { href: "/admin/users", labelKey: "nav.users", fallback: "Users", icon: "users", id: "users" },
-  { href: "/admin/llm", labelKey: "nav.llm", fallback: "LLM", icon: "api", id: "llm" },
-];
+import {
+  ADMIN_NAV,
+  ADMIN_UTILITY_NAV,
+  getApplicationIdFromPath,
+  isNavItemActive,
+  OPERATIONS_NAV,
+  resolveHeaderTitle,
+} from "@/lib/appNavigation";
+import type { IconName } from "@/lib/appNavigation";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -184,7 +165,7 @@ function ShellChrome({
             <div className="app-shell__nav-label">Workspace</div>
             <ul className="app-shell__nav-list">
               {primaryNav.map((item) => {
-                const active = isNavItemActive(item.id, item.href, pathname, applicationId);
+                const active = isNavItemActive(item, pathname);
                 const showSubmenu = isAdmin && item.id === "worklist" && applicationId !== null;
 
                 return (
@@ -306,46 +287,6 @@ function ShellChrome({
       </div>
     </div>
   );
-}
-
-function resolveHeaderTitle(pathname: string, applicationId: number | null, isAdmin: boolean): string {
-  if (pathname.startsWith("/ops/applications/") && applicationId !== null) {
-    return `Case review · APP-${String(applicationId).padStart(4, "0")}`;
-  }
-  if (pathname.startsWith("/ops/activity")) {
-    return "My activity · Reviewer";
-  }
-  if (pathname.startsWith("/ops/settings")) {
-    return "Preferences · Reviewer";
-  }
-  if (pathname === "/ops" || pathname.startsWith("/ops/")) {
-    return "Document validation · Reviewer";
-  }
-  if (isAdmin) {
-    return "Document validation · Admin";
-  }
-  return "Document validation operations";
-}
-
-function getApplicationIdFromPath(pathname: string): number | null {
-  const applicationPathMatch = pathname.match(/^\/(?:admin\/applications|ops\/applications|applications)\/(\d+)/);
-  return applicationPathMatch ? Number(applicationPathMatch[1]) : null;
-}
-
-function isNavItemActive(itemId: string, href: string, pathname: string, applicationId: number | null) {
-  if (itemId === "worklist" && applicationId !== null && pathname.startsWith("/admin/applications/")) {
-    return true;
-  }
-  if (itemId === "ops" && (pathname === "/ops" || pathname.startsWith("/ops/applications/"))) {
-    return true;
-  }
-  if (itemId === "ops-activity") {
-    return pathname === "/ops/activity" || pathname.startsWith("/ops/activity/");
-  }
-  if (itemId === "ops-settings") {
-    return pathname === "/ops/settings" || pathname.startsWith("/ops/settings/");
-  }
-  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 function AppSidebarSubmenu({ applicationId }: { applicationId: number }) {
