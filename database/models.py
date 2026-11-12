@@ -425,6 +425,15 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS reviewer_comparisons (
+        application_id INTEGER PRIMARY KEY REFERENCES applications(id),
+        pipeline_job_id INTEGER,
+        comparison_matrix_json TEXT NOT NULL,
+        relationships_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS system_settings (
         config_key TEXT PRIMARY KEY,
         config_value TEXT NOT NULL,
@@ -474,6 +483,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_pages_meta_application_page ON pages_meta(application_id, page_number)",
     "CREATE INDEX IF NOT EXISTS idx_validation_results_application_id ON validation_results(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_applications_created_at ON applications(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_applications_loan_id ON applications(loan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_validation_results_status ON validation_results(status)",
     "CREATE INDEX IF NOT EXISTS idx_reviewer_decisions_application_id ON reviewer_decisions(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_reviewer_decisions_decided_at ON reviewer_decisions(decided_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_log_application_id ON audit_log(application_id)",
@@ -489,6 +500,10 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_classification_review_log_application_id ON classification_review_log(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_ocr_route_events_document_id ON ocr_route_events(document_id)",
     "CREATE INDEX IF NOT EXISTS idx_ocr_route_events_route_used ON ocr_route_events(route_used)",
+    "CREATE INDEX IF NOT EXISTS idx_ocr_route_events_created_at ON ocr_route_events(created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_ocr_route_events_event_type ON ocr_route_events(event_type)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_pipeline_jobs_heartbeat_at ON pipeline_jobs(heartbeat_at)",
     "CREATE INDEX IF NOT EXISTS idx_document_verification_reports_application_id ON document_verification_reports(application_id)",
     "CREATE INDEX IF NOT EXISTS idx_reviewer_summaries_application_id ON reviewer_summaries(application_id)",
 ]

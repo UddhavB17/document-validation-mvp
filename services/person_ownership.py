@@ -32,6 +32,7 @@ from services.identifiers import plausible_aadhaar_digits
 from services.person_names import is_person_name_candidate, name_similarity
 from services.validation_gates import (
     bank_statement_header,
+    cache_field_validation_calls,
     field_reliable_for_validation,
     has_labeled_aadhaar_value,
 )
@@ -563,6 +564,7 @@ def resolve_person_owner(
     return {"person_id": None, "confidence": 0.0, "evidence": []}
 
 
+@cache_field_validation_calls
 def assign_page_owners(
     pages: list[dict[str, Any]],
     trusted: dict[str, Any] | None,

@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 
-import { ClassificationSettings } from "@/components/settings/ClassificationSettings";
-import { GeneralSettings } from "@/components/settings/GeneralSettings";
-import { LlmSettings } from "@/components/settings/LlmSettings";
-import { OcrSettings } from "@/components/settings/OcrSettings";
-import { RequiredFieldsMatrix } from "@/components/settings/RequiredFieldsMatrix";
+const ClassificationSettings = dynamic(() => import("@/components/settings/ClassificationSettings").then((module) => module.ClassificationSettings));
+const GeneralSettings = dynamic(() => import("@/components/settings/GeneralSettings").then((module) => module.GeneralSettings));
+const LlmSettings = dynamic(() => import("@/components/settings/LlmSettings").then((module) => module.LlmSettings));
+const OcrSettings = dynamic(() => import("@/components/settings/OcrSettings").then((module) => module.OcrSettings));
+const RequiredFieldsMatrix = dynamic(() => import("@/components/settings/RequiredFieldsMatrix").then((module) => module.RequiredFieldsMatrix));
 import { SettingsTabs } from "@/components/settings/SettingsTabs";
 import { useSettings } from "@/components/settings/useSettings";
 import { SettingsTab } from "@/components/settings/types";
@@ -36,6 +37,7 @@ export default function SettingsPage() {
           draftValues={settings.draftValues}
           savingKey={settings.savingKey}
           setDraftValue={settings.setDraftValue}
+          scheduleSettingUpdate={settings.scheduleSettingUpdate}
           updateSetting={settings.updateSetting}
         />
       ) : activeTab === "classification" ? (
@@ -45,6 +47,7 @@ export default function SettingsPage() {
           draftValues={settings.draftValues}
           savingKey={settings.savingKey}
           setDraftValue={settings.setDraftValue}
+          scheduleSettingUpdate={settings.scheduleSettingUpdate}
           updateSetting={settings.updateSetting}
         />
       ) : activeTab === "ocr" ? (

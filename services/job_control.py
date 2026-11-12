@@ -204,17 +204,15 @@ def _source_checksum(source_path: Path) -> str:
 
 def safe_settings_snapshot() -> dict[str, Any]:
     """Capture reproducibility settings while excluding all secret values."""
-    with get_connection() as connection:
-        rows = connection.execute(
-            """
-            SELECT config_key, config_value
-            FROM system_settings
-            WHERE value_type != 'secret'
-            ORDER BY config_key
-            """
-        ).fetchall()
+    from services.config import get_settings_rows_snapshot
+
+    rows = get_settings_rows_snapshot()
     return {
-        "system_settings": {str(row["config_key"]): row["config_value"] for row in rows},
+        "system_settings": {
+            key: value
+            for key, (value, value_type) in sorted(rows.items())
+            if value_type is not None and str(value_type).lower() != "secret"
+        },
         "environment": {
             key: os.environ[key] for key in _SAFE_ENVIRONMENT_KEYS if key in os.environ
         },
@@ -251,7 +249,6 @@ def persist_job_input(
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     encrypted = secrets_fernet().encrypt(encoded).decode("ascii")
-    checksum = _source_checksum(source)
     with get_connection() as connection:
         connection.execute(
             """
@@ -263,7 +260,7 @@ def persist_job_input(
                 source_sha256 = excluded.source_sha256,
                 created_at = excluded.created_at
             """,
-            (job_id, application_id, encrypted, checksum, _utc_now_iso()),
+            (job_id, application_id, encrypted, "", _utc_now_iso()),
         )
 
 
@@ -352,8 +349,33 @@ def load_job_input(application_id: int, job_id: int | None = None) -> dict[str, 
         payload = json.loads(plaintext)
     except (InvalidToken, UnicodeEncodeError, json.JSONDecodeError) as exc:
         raise JobInputUnavailableError("Recovery payload failed decryption") from exc
-    expected = str(row["source_sha256"])
+    expected = str(row["source_sha256"] or "")
     hint = Path(str(payload.get("source_path") or ""))
+    if not expected:
+        # The API persists a placeholder so enqueue never rereads the full
+        # PDF. The worker records the durable source checksum on first use.
+        source = hint if hint.is_file() else None
+        if source is None:
+            effective_job_id = job_id if job_id is not None else int(row["job_id"])
+            try:
+                from services.pipeline.input_preparation import prepare_job_source
+
+                source = prepare_job_source(application_id, effective_job_id)
+            except Exception:
+                package_id = payload.get("package_id")
+                if not package_id:
+                    raise
+                from services.pipeline.input_preparation import prepare_intake_source
+
+                source = prepare_intake_source(str(package_id), effective_job_id)
+            payload["source_path"] = str(source)
+        checksum = _source_checksum(source)
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE pipeline_job_inputs SET source_sha256 = ? WHERE job_id = ?",
+                (checksum, int(row["job_id"])),
+            )
+        return payload
     if hint.name and _checksum_matches(hint, expected):
         return payload
     # Original upload work dir is gone (API deletes it after enqueue).

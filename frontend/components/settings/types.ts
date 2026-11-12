@@ -14,4 +14,5 @@ export interface SettingsComponentProps {
   savingKey: string | null;
   setDraftValue: (key: string, value: string) => void;
   updateSetting: (key: string, value: string, clearSecret?: boolean) => Promise<void>;
+  scheduleSettingUpdate?: (key: string, value: string) => void;
 }

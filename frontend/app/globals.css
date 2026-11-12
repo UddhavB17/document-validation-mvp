@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes pulseFlowDashed {
+  from { stroke-dashoffset: 20; }
+  to { stroke-dashoffset: 0; }
+}
+
+.flowing-connector-dashed {
+  animation: pulseFlowDashed 1.2s linear infinite;
+}
+
 /* Ledger is the locked default desk theme. Slate/Ink switch via data-theme. */
 :root,
 html[data-theme="ledger"] {
@@ -177,7 +186,6 @@ body {
   font-family: var(--font-sans), sans-serif;
   background-color: var(--canvas);
   background-image: var(--paper-grain);
-  background-blend-mode: multiply;
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
@@ -684,7 +692,7 @@ a {
   padding: var(--space-2) var(--space-8);
   border-bottom: 1.5px solid var(--border);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(4px);
   box-shadow: var(--shadow-subtle);
 }
 

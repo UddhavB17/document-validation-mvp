@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
   if (outcome.status === "valid" && outcome.user) {
     // The bearer is returned so page code can call the backend directly
     // (existing bearer-call architecture; see lib/sessionVerify.ts note).
-    return jsonResponse({ token, role: outcome.user.role }, 200, request);
+    return jsonResponse({ token, ...outcome.user }, 200, request);
   }
   if (outcome.status === "invalid") {
     return jsonResponse({ detail: "Invalid session" }, 401, request, true);

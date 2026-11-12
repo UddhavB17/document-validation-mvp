@@ -17,6 +17,9 @@ export interface LlmSummary {
   page_summaries?: PageSummary[];
 }
 
+const PARSED_SUMMARY_CACHE_LIMIT = 64;
+const parsedSummaryCache = new Map<string, LlmSummary | null>();
+
 function isPageSummary(value: unknown): value is PageSummary {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   return (
@@ -171,14 +174,25 @@ export function parseLlmSummary(rawSummary: string | null | undefined): LlmSumma
     return null;
   }
   const trimmed = rawSummary.trim();
-  const unwrapped = unwrapSummaryPayload(trimmed);
-  if (typeof unwrapped === "object" && unwrapped !== null && !Array.isArray(unwrapped)) {
-    const normalized = normalizeFromRecord(unwrapped as Record<string, unknown>);
-    if (normalized) {
-      return normalized;
-    }
+  if (parsedSummaryCache.has(trimmed)) {
+    const cached = parsedSummaryCache.get(trimmed) ?? null;
+    parsedSummaryCache.delete(trimmed);
+    parsedSummaryCache.set(trimmed, cached);
+    return cached;
   }
-  return parseToonStyleSummary(trimmed);
+
+  const unwrapped = unwrapSummaryPayload(trimmed);
+  let parsed: LlmSummary | null = null;
+  if (typeof unwrapped === "object" && unwrapped !== null && !Array.isArray(unwrapped)) {
+    parsed = normalizeFromRecord(unwrapped as Record<string, unknown>);
+  }
+  parsed ??= parseToonStyleSummary(trimmed);
+  parsedSummaryCache.set(trimmed, parsed);
+  if (parsedSummaryCache.size > PARSED_SUMMARY_CACHE_LIMIT) {
+    const oldest = parsedSummaryCache.keys().next().value;
+    if (oldest !== undefined) parsedSummaryCache.delete(oldest);
+  }
+  return parsed;
 }
 
 export function looksLikeJsonSummaryDump(text: string): boolean {

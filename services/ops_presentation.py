@@ -12,6 +12,8 @@ import fnmatch
 import json
 import logging
 import re
+import time
+from functools import lru_cache
 from typing import Any
 
 from database.db import get_connection
@@ -200,7 +202,10 @@ def _plain_ai_explanation(assessment: dict[str, Any]) -> str:
     return reason
 
 
-def _load_ops_ai_assessments(application_id: int) -> dict[tuple[str, int | None], dict[str, Any]]:
+@lru_cache(maxsize=512)
+def _load_ops_ai_assessments_cached(
+    application_id: int, cache_generation: int
+) -> tuple[tuple[tuple[str, int | None], dict[str, Any]], ...]:
     """Map (rule_id, page_number) to saved exception-review assessments."""
     from services.storage import get_store
 
@@ -208,10 +213,10 @@ def _load_ops_ai_assessments(application_id: int) -> dict[tuple[str, int | None]
         store = get_store()
         key = f"applications/{application_id}/reports/ops-review.json"
         if not store.exists(key):
-            return {}
+            return ()
         report = json.loads(store.get(key))
     except Exception:
-        return {}
+        return ()
 
     finding_map: dict[int, dict[str, Any]] = {}
     for item in report.get("finding_map") or []:
@@ -246,7 +251,11 @@ def _load_ops_ai_assessments(application_id: int) -> dict[tuple[str, int | None]
             "verdict": verdict,
             "ai_primary": ai_primary,
         }
-    return assessments
+    return tuple(assessments.items())
+
+
+def _load_ops_ai_assessments(application_id: int) -> dict[tuple[str, int | None], dict[str, Any]]:
+    return dict(_load_ops_ai_assessments_cached(application_id, int(time.time() // 30)))
 
 
 def _finding_from_group(
@@ -398,7 +407,9 @@ def _load_pages(application_id: int) -> list[dict]:
     with get_connection() as connection:
         try:
             rows = connection.execute(
-                "SELECT p.*, m.meta_json FROM pages p LEFT JOIN pages_meta m "
+                "SELECT p.id, p.application_id, p.page_number, p.document_type, "
+                "p.page_type, p.classification_confidence, p.ocr_status, "
+                "p.extracted_fields, m.meta_json FROM pages p LEFT JOIN pages_meta m "
                 "ON m.application_id = p.application_id AND m.page_number = p.page_number "
                 "WHERE p.application_id = ? ORDER BY p.page_number",
                 (application_id,),

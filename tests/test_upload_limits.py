@@ -1,6 +1,5 @@
 """Compressed inputs and sidecars obey the same byte budget as plain PDFs."""
 
-import asyncio
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -33,13 +32,11 @@ def test_mapped_zip_rejects_oversized_members_before_decompression(
     monkeypatch.setattr(upload, "max_file_size_bytes", lambda: limit)
     monkeypatch.setattr(ZipFile, "open", guarded_open)
     item = UploadFile(file=BytesIO(buffer.getvalue()), filename="mapped.zip")
-    operation = (
-        upload._batch_single_mapped_zip(item, "batch-id", "timestamp", "Normal Case")
-        if batch
-        else upload._save_mapped_zip_package(item, None, "timestamp")
-    )
     with pytest.raises(HTTPException, match="File too large") as error:
-        asyncio.run(operation)
+        if batch:
+            upload._batch_single_mapped_zip(item, "batch-id", "timestamp", "Normal Case")
+        else:
+            upload._save_mapped_zip_package(item, None, "timestamp")
     assert error.value.status_code == 400
 
 
@@ -54,5 +51,5 @@ def test_batch_sidecar_read_is_bounded_and_rejects_oversized_input(monkeypatch):
         file=BoundedInput(b"x" * 1025), filename="source.manifest.json"
     )
     with pytest.raises(HTTPException, match="File too large") as error:
-        asyncio.run(upload.upload_batch(files=[sidecar]))
+        upload.upload_batch(files=[sidecar])
     assert error.value.status_code == 400

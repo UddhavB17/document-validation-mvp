@@ -2,7 +2,7 @@
 
 import { SettingsComponentProps } from "./types";
 
-export function ClassificationSettings({ getValue, updateSetting }: SettingsComponentProps) {
+export function ClassificationSettings({ getValue, updateSetting, scheduleSettingUpdate }: SettingsComponentProps) {
   const minConfidence = parseFloat(getValue("min_confidence") || "0.70");
   const nameFuzzyThreshold = parseFloat(getValue("validation.name_fuzzy_threshold") || "85.0");
   const amountTolerance = parseFloat(getValue("validation.amount_tolerance_percent") || "1.0");
@@ -28,7 +28,7 @@ export function ClassificationSettings({ getValue, updateSetting }: SettingsComp
               max="0.95"
               step="0.05"
               value={minConfidence}
-              onChange={(event) => updateSetting("min_confidence", event.target.value)}
+              onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("min_confidence", event.target.value)}
               className="h-2 w-64 cursor-pointer appearance-none rounded-lg bg-slate-200 accent-[#2B4C7E]"
             />
             <span className="text-sm font-bold font-mono text-[#16202E]">{minConfidence.toFixed(2)}</span>
@@ -55,7 +55,7 @@ export function ClassificationSettings({ getValue, updateSetting }: SettingsComp
                 max="100"
                 step="1"
                 value={nameFuzzyThreshold}
-                onChange={(event) => updateSetting("validation.name_fuzzy_threshold", event.target.value)}
+                onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("validation.name_fuzzy_threshold", event.target.value)}
                 className="h-2 w-64 cursor-pointer appearance-none rounded-lg bg-slate-200 accent-[#2B4C7E]"
               />
               <span className="text-sm font-bold font-mono text-[#16202E]">{nameFuzzyThreshold}%</span>
@@ -77,7 +77,7 @@ export function ClassificationSettings({ getValue, updateSetting }: SettingsComp
                   max="10"
                   step="0.1"
                   value={amountTolerance}
-                  onChange={(event) => updateSetting("validation.amount_tolerance_percent", event.target.value)}
+                  onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("validation.amount_tolerance_percent", event.target.value)}
                   className="block w-32 rounded-lg border border-[#E1E5EB] bg-white px-3 py-2 text-sm font-mono text-[#16202E] focus:border-[#2B4C7E] focus:outline-none"
                 />
                 <span className="text-xs text-[#5C6B7A] font-semibold">% variance</span>
@@ -98,7 +98,7 @@ export function ClassificationSettings({ getValue, updateSetting }: SettingsComp
                   max="30"
                   step="1"
                   value={dateTolerance}
-                  onChange={(event) => updateSetting("validation.date_tolerance_days", event.target.value)}
+                  onChange={(event) => (scheduleSettingUpdate ?? updateSetting)("validation.date_tolerance_days", event.target.value)}
                   className="block w-32 rounded-lg border border-[#E1E5EB] bg-white px-3 py-2 text-sm font-mono text-[#16202E] focus:border-[#2B4C7E] focus:outline-none"
                 />
                 <span className="text-xs text-[#5C6B7A] font-semibold">days</span>

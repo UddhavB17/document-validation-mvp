@@ -188,9 +188,13 @@ export function evidenceProxyPageImageUrl(
   applicationId: number,
   pageNumber: number,
   highlight?: string,
+  dpi?: number,
 ): string {
   const base = `${EVIDENCE_PROXY_PREFIX}/review/applications/${applicationId}/source-page/${pageNumber}`;
-  return highlight ? `${base}?highlight=${encodeURIComponent(highlight)}` : base;
+  const params: string[] = [];
+  if (highlight) params.push(`highlight=${encodeURIComponent(highlight)}`);
+  if (dpi !== undefined) params.push(`dpi=${dpi}`);
+  return params.length ? `${base}?${params.join("&")}` : base;
 }
 
 export function evidenceProxyOcrJsonUrl(applicationId: number): string {

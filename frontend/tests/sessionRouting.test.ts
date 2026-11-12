@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 
 import { NextRequest } from "next/server";
 
 import { DELETE as sessionDelete, GET as sessionGet, POST as sessionPost } from "../app/api/session/route";
 import { middleware } from "../middleware";
+import { clearVerifySessionCache } from "../lib/sessionVerify";
+
+beforeEach(() => clearVerifySessionCache());
 
 const NO_STORE = "private, no-store";
 // Well-formed JWT shape, admin role claim, forged signature: proves routing
@@ -182,7 +185,13 @@ test("session GET rejects invented tokens and clears the cookie", async () => {
 test("session GET returns the verified DB role for valid tokens", async () => {
   const response = await sessionGet(request("/api/session", "tok-user"));
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { token: "tok-user", role: "user" });
+  assert.deepEqual(await response.json(), {
+    token: "tok-user",
+    id: 2,
+    email: "o@example.com",
+    display_name: "O",
+    role: "user",
+  });
   assert.equal(response.headers.get("set-cookie"), null);
   assert.equal(response.headers.get("Cache-Control"), NO_STORE);
 });

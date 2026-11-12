@@ -17,24 +17,54 @@ export function useZipPreparation(packageId: string | null) {
     }
 
     let isMounted = true;
-    const interval = setInterval(async () => {
+    let inFlight = false;
+    let finished = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = () => {
+      if (!isMounted || finished) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void poll(), 2000);
+    };
+
+    const poll = async () => {
+      if (!isMounted || finished || inFlight) return;
+      if (document.hidden) {
+        scheduleNext();
+        return;
+      }
+      inFlight = true;
       try {
         const updatedProgress = await api.getZipPreparationProgress(packageId);
         if (!isMounted) return;
         setProgress(updatedProgress);
         if (updatedProgress.status === "prepared" || updatedProgress.status === "failed") {
-          clearInterval(interval);
+          finished = true;
         }
       } catch (error) {
         if (!isMounted) return;
-        clearInterval(interval);
+        finished = true;
         setPollError(error instanceof Error ? error.message : "Failed to get preparation progress");
+      } finally {
+        inFlight = false;
+        scheduleNext();
       }
-    }, 2000);
+    };
+
+    const onVisibilityChange = () => {
+      if (!document.hidden && !finished) {
+        if (timer) clearTimeout(timer);
+        void poll();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    void poll();
 
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [packageId]);
 

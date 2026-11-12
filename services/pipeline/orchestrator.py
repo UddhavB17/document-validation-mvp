@@ -174,6 +174,7 @@ def _run_pipeline_impl(
             pipeline_status="unsupported_input",
             partial_failure_count=0,
             generate_llm_summary=generate_llm_summary,
+            job_id=job_id,
         )
         _update_uploaded_file_counts(application_id, structure)
         log_action(application_id, "input_classified_unsupported", input_classification)
@@ -460,6 +461,22 @@ def _run_pipeline_impl(
                 "unclassified_pages": mapped_result.get("unclassified_pages", []),
                 "evidence_resolution": mapped_result.get("evidence_resolution", {}),
             }
+        )
+    try:
+        from services.reviewer import build_and_save_reviewer_comparison
+
+        build_and_save_reviewer_comparison(
+            application_id,
+            pages,
+            ground_truth,
+            result["anomalies"],
+            pipeline_job_id=job_id,
+        )
+    except Exception:  # noqa: BLE001 - cached review output can be rebuilt on demand
+        logging.getLogger(__name__).warning(
+            "Could not persist reviewer comparison for application %s",
+            application_id,
+            exc_info=True,
         )
     mark_completed(application_id, result["final_status"], pipeline_status)
     from services.reviewer import collapse_for_reviewer

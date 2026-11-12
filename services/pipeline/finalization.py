@@ -28,9 +28,26 @@ def _finalize_pipeline_result(
     pipeline_status: str,
     partial_failure_count: int,
     generate_llm_summary: bool | None,
+    job_id: int | None = None,
 ) -> dict[str, Any]:
     _save_pages(application_id, pages)
     result = aggregate(pages, anomalies, ground_truth, application_id=application_id)
+    try:
+        from services.reviewer import build_and_save_reviewer_comparison
+
+        build_and_save_reviewer_comparison(
+            application_id,
+            pages,
+            ground_truth,
+            result["anomalies"],
+            pipeline_job_id=job_id,
+        )
+    except Exception:  # noqa: BLE001 - cached review output can be rebuilt on demand
+        logger.warning(
+            "Could not persist reviewer comparison for application %s",
+            application_id,
+            exc_info=True,
+        )
     # ws-f accuracy: persist the ops payload (minus checklist) so
     # ``applications.ops_findings_json`` is non-null after a successful run.
     # The endpoint recomputes when needed; a store failure must never fail

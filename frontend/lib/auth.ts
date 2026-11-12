@@ -2,7 +2,7 @@
 
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import { fetchCurrentUser, loginRequest, setAuthTokenProvider } from "./api";
+import { loginRequest, setAuthTokenProvider } from "./api";
 import { setEvidenceAuthHeaderProvider } from "./evidenceImage";
 import { createTokenStore } from "./tokenStore";
 
@@ -62,7 +62,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         if (!response.ok) {
           throw new Error("No session");
         }
-        const session = (await response.json()) as { token: string; role: string };
+        const session = (await response.json()) as {
+          token: string;
+          role: string;
+          email: string;
+          display_name: string;
+        };
         if (cancelled) {
           return;
         }
@@ -72,16 +77,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         tokenStore.setToken(session.token);
         setToken(session.token);
         setRole(session.role);
+        setEmail(session.email);
+        setDisplayName(session.display_name);
         setStatus("authenticated");
-        try {
-          const me = await fetchCurrentUser();
-          if (!cancelled) {
-            setEmail(me.email);
-            setDisplayName(me.display_name);
-          }
-        } catch {
-          // Profile enrichment is best-effort; auth still stands.
-        }
       } catch {
         if (!cancelled) {
           tokenStore.clearToken();

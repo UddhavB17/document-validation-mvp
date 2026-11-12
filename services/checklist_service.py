@@ -1,6 +1,8 @@
 """Checklist loader for system-supplied MSFC checklist JSON."""
 
 import json
+from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 
 from services.paths import checklist_json_path
@@ -8,13 +10,20 @@ from services.paths import checklist_json_path
 CHECKLIST_PATH = checklist_json_path()
 
 
+@lru_cache(maxsize=16)
+def _read_checklist_cached(path: str, modified_ns: int, size: int) -> dict:
+    del modified_ns, size  # Values participate in the cache key for file-change invalidation.
+    with Path(path).open("r", encoding="utf-8") as file:
+        return json.load(file)
+
+
 def _read_checklist(path: str | Path = CHECKLIST_PATH) -> dict:
     checklist_path = Path(path)
     if not checklist_path.exists():
         raise FileNotFoundError(f"Checklist JSON not found at {checklist_path}")
-
-    with checklist_path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+    stat = checklist_path.stat()
+    cached = _read_checklist_cached(str(checklist_path.resolve()), stat.st_mtime_ns, stat.st_size)
+    return deepcopy(cached)
 
 
 def load_checklist(product_type: str = "LAP", path: str | Path = CHECKLIST_PATH) -> dict:

@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ErrorMessage, LoadingMessage } from "@/components/Message";
-import { EvidenceWizard, type WizardMode } from "@/components/ops/EvidenceWizard";
+const EvidenceWizard = dynamic(
+  () => import("@/components/ops/EvidenceWizard").then((module) => module.EvidenceWizard),
+  { ssr: false },
+);
+import type { WizardMode } from "@/components/ops/EvidenceWizard";
 import { FindingsList, PagesToVerifyChips } from "@/components/ops/FindingsList";
 import { LedgerStamp } from "@/components/ops/LedgerStamp";
 import { OpsChecklist } from "@/components/ops/OpsChecklist";

@@ -558,10 +558,6 @@ def _build_page_records(
                     ocr_metadata = _ocr_result_dict(routed_ocr.to_legacy_dict())
                     if routed_ocr.error:
                         extracted_fields["_processing_error"] = routed_ocr.error
-                    if page_number % 5 == 0:
-                        import gc
-
-                        gc.collect()
                 if detection_method == "detected":
                     current_type = document_type
                     current_confidence = float(assigned["confidence"] or 0.0)

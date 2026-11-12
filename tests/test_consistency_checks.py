@@ -1,7 +1,7 @@
 import pytest
 
 from services.checklist_engine import run_checks
-from services.consistency_checks import _matches, run_consistency_checks
+from services.consistency_checks import _matches, _page_text_supports_value, run_consistency_checks
 from services.field_extractor import extract_fields
 from services.field_verification import verify_address
 from services.page_quality import is_confident_document_match
@@ -9,6 +9,27 @@ from services.page_quality import is_confident_document_match
 
 def _anomaly_text(anomalies: list[dict]) -> str:
     return repr(anomalies)
+
+
+def test_page_text_support_uses_precompacted_page_text(monkeypatch):
+    import services.consistency_checks as consistency_checks
+
+    original_compact = consistency_checks._compact
+    compacted_values = []
+
+    def track_compact(value):
+        compacted_values.append(value)
+        return original_compact(value)
+
+    monkeypatch.setattr(consistency_checks, "_compact", track_compact)
+    page_text = "A long page of OCR text with an expected account holder value"
+
+    assert _page_text_supports_value(
+        page_text,
+        "account holder",
+        compacted_page_text="alongpageofocrtextwithanexpectedaccountholdervalue",
+    )
+    assert page_text not in compacted_values
 
 
 @pytest.mark.parametrize("field", ["aadhaar_number", "account_number"])

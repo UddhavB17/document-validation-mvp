@@ -10,6 +10,8 @@ export function useSettings() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+  const [optimisticValues, setOptimisticValues] = useState<Record<string, string>>({});
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -33,6 +35,7 @@ export function useSettings() {
 
   useEffect(() => () => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
+    Object.values(saveTimers.current).forEach(clearTimeout);
   }, []);
 
   function getSetting(key: string) {
@@ -40,7 +43,16 @@ export function useSettings() {
   }
 
   function getValue(key: string): string {
-    return getSetting(key)?.config_value ?? "";
+    return optimisticValues[key] ?? getSetting(key)?.config_value ?? "";
+  }
+
+  function scheduleSettingUpdate(key: string, value: string) {
+    setOptimisticValues((current) => ({ ...current, [key]: value }));
+    clearTimeout(saveTimers.current[key]);
+    saveTimers.current[key] = setTimeout(() => {
+      delete saveTimers.current[key];
+      void updateSetting(key, value);
+    }, 300);
   }
 
   function setDraftValue(key: string, value: string) {
@@ -56,6 +68,11 @@ export function useSettings() {
           ? { ...setting, ...updated, config_value: updated.config_value }
           : setting
       )));
+      setOptimisticValues((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
       setDraftValues((current) => {
         const next = { ...current };
         delete next[key];
@@ -80,6 +97,7 @@ export function useSettings() {
     getSetting,
     getValue,
     setDraftValue,
+    scheduleSettingUpdate,
     updateSetting,
   };
 }

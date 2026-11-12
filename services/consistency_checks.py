@@ -24,7 +24,7 @@ from services.person_names import (
     is_person_name_candidate,
     name_similarity,
 )
-from services.validation_gates import field_reliable_for_validation
+from services.validation_gates import cache_field_validation_calls, field_reliable_for_validation
 
 LOGGER = logging.getLogger(__name__)
 
@@ -492,6 +492,7 @@ LOAN_FIELDS = {
 }
 
 
+@cache_field_validation_calls
 def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
     anomalies: list[dict] = []
     people = _people(trusted)
@@ -508,7 +509,10 @@ def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
             "assign_page_owners failed before consistency checks; continuing without person stamps",
             exc_info=exc,
         )
-    observations = _observations(pages, people)
+    compacted_page_texts = {
+        int(page.get("page_number") or 0): _compact(page.get("ocr_text")) for page in pages
+    }
+    observations = _observations(pages, people, compacted_page_texts=compacted_page_texts)
 
     anomalies.extend(_trusted_matches(observations, people, trusted))
     anomalies.extend(_application_name_checks(pages, people))
@@ -540,7 +544,11 @@ def _people(trusted: dict) -> dict[str, dict]:
 
 
 def _observations(
-    pages: list[dict], people: dict[str, dict], *, included_fields: set[str] | None = None
+    pages: list[dict],
+    people: dict[str, dict],
+    *,
+    included_fields: set[str] | None = None,
+    compacted_page_texts: dict[int, str] | None = None,
 ) -> list[dict]:
     result: list[dict] = []
     multi_person_section_roles: dict[str, str] = {}
@@ -617,7 +625,9 @@ def _observations(
                             "field": canonical_field,
                             "value": comparison_value,
                             "document_type": str(page.get("document_type") or "Unknown"),
-                            "page_number": _find_supporting_page_number(pages, page, value),
+                            "page_number": _find_supporting_page_number(
+                                pages, page, value, compacted_page_texts=compacted_page_texts
+                            ),
                             "ocr_text": page.get("ocr_text"),
                         }
                     )
@@ -665,7 +675,9 @@ def _observations(
                     "field": canonical_field,
                     "value": comparison_value,
                     "document_type": str(page.get("document_type") or "Unknown"),
-                    "page_number": _find_supporting_page_number(pages, page, value),
+                    "page_number": _find_supporting_page_number(
+                        pages, page, value, compacted_page_texts=compacted_page_texts
+                    ),
                     "ocr_text": page.get("ocr_text"),
                 }
             )
@@ -1080,11 +1092,14 @@ def _name_matches_with_relatives(observed: Any, person: dict) -> bool:
         return False
 
 
-def _page_text_supports_value(page_text: Any, expected: Any) -> bool:
+def _page_text_supports_value(
+    page_text: Any, expected: Any, *, compacted_page_text: str | None = None
+) -> bool:
     text = str(page_text or "")
     if not text or expected in (None, ""):
         return False
-    if _compact(expected) and _compact(expected) in _compact(text):
+    compacted_text = _compact(text) if compacted_page_text is None else compacted_page_text
+    if _compact(expected) and _compact(expected) in compacted_text:
         return True
     return _names_equivalent(expected, text)
 
@@ -1093,12 +1108,18 @@ def _find_supporting_page_number(
     pages: list[dict],
     current_page: dict,
     value: Any,
+    *,
+    compacted_page_texts: dict[int, str] | None = None,
 ) -> int:
     """Find the page number in the same document that supports the value, or return current page number."""
     current_page_no = int(current_page.get("page_number") or 0)
     if value in (None, ""):
         return current_page_no
-    if _page_text_supports_value(current_page.get("ocr_text"), value):
+    if _page_text_supports_value(
+        current_page.get("ocr_text"),
+        value,
+        compacted_page_text=(compacted_page_texts or {}).get(current_page_no),
+    ):
         return current_page_no
 
     doc_id = current_page.get("source_document_id")
@@ -1117,7 +1138,11 @@ def _find_supporting_page_number(
             candidates.append(p)
 
     for p in sorted(candidates, key=lambda item: int(item.get("page_number") or 0)):
-        if _page_text_supports_value(p.get("ocr_text"), value):
+        if _page_text_supports_value(
+            p.get("ocr_text"),
+            value,
+            compacted_page_text=(compacted_page_texts or {}).get(p_no),
+        ):
             return int(p.get("page_number") or 0)
 
     return current_page_no
@@ -1829,6 +1854,10 @@ def _application_language_checks(pages: list[dict], trusted: dict | None = None)
         return anomalies
 
     configured_languages = _configured_application_languages(trusted or {})
+    language_profiles = {
+        id(page): analyze_text_languages(str(page.get("ocr_text") or ""))
+        for page in app_pages
+    }
     for page in app_pages:
         fields = page.get("extracted_fields") or {}
         declared_language = fields.get("second_language")
@@ -1844,15 +1873,14 @@ def _application_language_checks(pages: list[dict], trusted: dict | None = None)
         if any(_is_second_application_language(value) for value in provider_languages):
             return []
 
-        text = str(page.get("ocr_text") or "")
-        scripts = set(analyze_text_languages(text)["scripts"])
+        scripts = set(language_profiles[id(page)]["scripts"])
         if "latin" in scripts and scripts.difference({"latin"}):
             return []
 
     all_scripts = {
         script
         for app_page in app_pages
-        for script in analyze_text_languages(str(app_page.get("ocr_text") or ""))["scripts"]
+        for script in language_profiles[id(app_page)]["scripts"]
     }
     if "latin" in all_scripts and all_scripts.difference({"latin"}):
         return []

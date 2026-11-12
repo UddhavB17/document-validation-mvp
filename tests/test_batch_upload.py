@@ -1,5 +1,6 @@
 """Batch upload endpoint tests: one batch_id, per-file jobs, rejected items."""
 
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,51 @@ def test_batch_status_endpoint_shape(batch_client) -> None:
         assert item["review_ready"] is False
 
     assert batch_client.get("/upload/batch/0" * 1 + "f" * 31).status_code == 404
+
+
+def test_batch_status_loads_jobs_files_and_progress_in_one_query(monkeypatch) -> None:
+    executed = []
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def execute(self, sql, params=()):
+            executed.append((sql, params))
+            if "FROM pipeline_jobs AS j" in sql:
+                return Cursor(
+                    [
+                        {
+                            "id": 10,
+                            "application_id": 4,
+                            "status": "running",
+                            "attempt": 1,
+                            "max_attempts": 3,
+                            "failure_reason": None,
+                            "error": None,
+                            "original_filename": "case.pdf",
+                            "progress_percentage": 37.5,
+                        }
+                    ]
+                )
+            return Cursor([])
+
+    @contextmanager
+    def connect():
+        yield Connection()
+
+    monkeypatch.setattr(upload_route, "get_connection", connect)
+    response = upload_route.get_batch_status("a" * 32)
+
+    assert len(executed) == 2  # one joined job query, one rejection query
+    assert "LEFT JOIN pipeline_progress" in executed[0][0]
+    assert "uploaded_files AS uf" in executed[0][0]
+    assert response["items"][0]["filename"] == "case.pdf"
+    assert response["items"][0]["progress_percentage"] == 37.5
 
 
 def test_batch_single_pdf_uses_object_store(tmp_path, monkeypatch, auth_headers) -> None:

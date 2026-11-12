@@ -396,17 +396,24 @@ def _build_summary(bucket_key: str, items: list[dict]) -> dict:
 
 
 def _dedupe_exact(anomalies: list[dict]) -> list[dict]:
-    """Keep the first copy of byte-for-byte-equivalent JSON-like anomalies."""
+    """Keep the first structurally identical JSON-like anomaly without encoding it."""
+    def freeze(value: Any) -> Any:
+        if isinstance(value, dict):
+            return tuple(sorted((str(key), freeze(item)) for key, item in value.items()))
+        if isinstance(value, (list, tuple)):
+            return tuple(freeze(item) for item in value)
+        if isinstance(value, set):
+            return tuple(sorted((freeze(item) for item in value), key=repr))
+        try:
+            hash(value)
+        except TypeError:
+            return repr(value)
+        return value
+
     unique: list[dict] = []
-    seen: set[str] = set()
+    seen: set[Any] = set()
     for anomaly in anomalies:
-        fingerprint = json.dumps(
-            anomaly,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=repr,
-        )
+        fingerprint = freeze(anomaly)
         if fingerprint in seen:
             continue
         seen.add(fingerprint)
@@ -499,3 +506,91 @@ def load_reviewer_summary(application_id: int) -> dict[str, Any] | None:
         return None
     value = json.loads(str(row["summary_json"]))
     return value if isinstance(value, dict) else None
+
+
+def save_reviewer_comparison(
+    application_id: int,
+    comparison_matrix: dict[str, Any],
+    relationships: list[dict[str, Any]],
+    *,
+    pipeline_job_id: int | None = None,
+) -> None:
+    """Persist the expensive comparison view generated at pipeline finalization."""
+    now = datetime.now(UTC).isoformat()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO reviewer_comparisons (
+                application_id, pipeline_job_id, comparison_matrix_json,
+                relationships_json, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(application_id) DO UPDATE SET
+                pipeline_job_id = excluded.pipeline_job_id,
+                comparison_matrix_json = excluded.comparison_matrix_json,
+                relationships_json = excluded.relationships_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                application_id,
+                pipeline_job_id,
+                json.dumps(comparison_matrix, ensure_ascii=False),
+                json.dumps(relationships, ensure_ascii=False),
+                now,
+            ),
+        )
+
+
+def load_reviewer_comparison(application_id: int) -> dict[str, Any] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT pipeline_job_id, comparison_matrix_json, relationships_json
+            FROM reviewer_comparisons WHERE application_id = ?
+            """,
+            (application_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        comparison_matrix = json.loads(str(row["comparison_matrix_json"]))
+        relationships = json.loads(str(row["relationships_json"]))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(comparison_matrix, dict) or not isinstance(relationships, list):
+        return None
+    return {
+        "pipeline_job_id": row["pipeline_job_id"],
+        "comparison_matrix": comparison_matrix,
+        "relationships": relationships,
+    }
+
+
+def build_and_save_reviewer_comparison(
+    application_id: int,
+    pages: list[dict[str, Any]],
+    ground_truth: dict[str, Any],
+    anomalies: list[dict[str, Any]],
+    *,
+    pipeline_job_id: int | None = None,
+) -> None:
+    """Build and persist the review comparison output once at finalization."""
+    from services.review.comparison_matrix import build_comparison_matrix_and_relationships
+
+    result = build_comparison_matrix_and_relationships(
+        application_id,
+        {
+            "application": {
+                "loan_id": ground_truth.get("loan_id"),
+                "product_type": ground_truth.get("product_type"),
+            },
+            "ground_truth": {"raw_json": json.dumps(ground_truth, ensure_ascii=False)},
+            "pages": pages,
+            "anomalies": anomalies,
+        },
+    )
+    save_reviewer_comparison(
+        application_id,
+        result["comparison_matrix"],
+        result["relationships"],
+        pipeline_job_id=pipeline_job_id,
+    )

@@ -1094,9 +1094,15 @@ def _page_status(page: dict, field_names: list[str]) -> str:
 
 
 def _is_positive_status(
-    page: dict, accepted: list[str], rejected: list[str], fields: list[str]
+    page: dict,
+    accepted: list[str],
+    rejected: list[str],
+    fields: list[str],
+    *,
+    status: str | None = None,
 ) -> bool:
-    status = _page_status(page, fields)
+    if status is None:
+        status = _page_status(page, fields)
     if any(term.lower() in status for term in rejected):
         return False
     return any(term.lower() in status for term in accepted)
@@ -1107,11 +1113,14 @@ def _has_explicit_status_field(page: dict, fields: list[str]) -> bool:
     return any(extracted.get(name) not in (None, "") for name in fields)
 
 
-def _status_looks_like_full_page_fallback(page: dict, fields: list[str]) -> bool:
+def _status_looks_like_full_page_fallback(
+    page: dict, fields: list[str], *, status: str | None = None
+) -> bool:
     """True when status was inferred from whole-page OCR rather than a status field."""
     if _has_explicit_status_field(page, fields):
         return False
-    status = _page_status(page, fields)
+    if status is None:
+        status = _page_status(page, fields)
     return len(status) > 80
 
 
@@ -1355,11 +1364,24 @@ def _run_accuracy_checks(
             ]
             status_fields = item.get("status_fields") or ["status"]
 
+            # Status fallback normalizes the full OCR page. Cache it once for
+            # this document group's term-batch instead of repeating it for
+            # accepted/rejected terms and fallback diagnostics below.
+            status_by_page_id = {
+                id(page): _page_status(page, status_fields) for page in doc_pages
+            }
+
             # Partition pages: those that pass vs those that fail the status check.
             passing_pages = [
                 page
                 for page in doc_pages
-                if _is_positive_status(page, accepted, rejected, status_fields)
+                if _is_positive_status(
+                    page,
+                    accepted,
+                    rejected,
+                    status_fields,
+                    status=status_by_page_id[id(page)],
+                )
             ]
             # If ANY page in the document group has a passing status, treat the
             # whole document as cleared — no anomaly needed.
@@ -1379,11 +1401,15 @@ def _run_accuracy_checks(
                     unverifiable_fallback = (
                         not first_has_status_field
                         and all(
-                            _status_looks_like_full_page_fallback(page, status_fields)
+                            _status_looks_like_full_page_fallback(
+                                page,
+                                status_fields,
+                                status=status_by_page_id[id(page)],
+                            )
                             for page in failing_pages
                         )
                         and not any(
-                            term.lower() in _page_status(page, status_fields)
+                            term.lower() in status_by_page_id[id(page)]
                             for page in failing_pages
                             for term in rejected
                         )
@@ -1430,7 +1456,7 @@ def _run_accuracy_checks(
                                 severity=item.get("severity_if_fail", "HIGH"),
                                 expected_value=" / ".join(accepted),
                                 found_value=(
-                                    f"{_page_status(first, status_fields)[:120] or 'Status not found'}"
+                                    f"{status_by_page_id[id(first)][:120] or 'Status not found'}"
                                     + (
                                         f" across {len(failing_pages)} page(s): {page_preview}"
                                         if len(failing_pages) > 1

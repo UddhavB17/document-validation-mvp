@@ -49,7 +49,17 @@ function useUndoRemainingSeconds(decidedAt: string | null | undefined): number |
 
   useEffect(() => {
     if (!decidedAt) return undefined;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const decidedAtMs = Date.parse(decidedAt);
+    const expiresAt = decidedAtMs + UNDO_WINDOW_SECONDS * 1000;
+    if (!Number.isFinite(decidedAtMs) || expiresAt <= Date.now()) {
+      setNow(Date.now());
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      const currentTime = Date.now();
+      setNow(currentTime);
+      if (currentTime >= expiresAt) window.clearInterval(timer);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [decidedAt]);
 

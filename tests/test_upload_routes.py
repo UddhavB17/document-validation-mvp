@@ -1,3 +1,4 @@
+import inspect
 import json
 import zipfile
 from io import BytesIO
@@ -27,6 +28,15 @@ def _zip_bytes(files: list[tuple[str, bytes]]) -> bytes:
         for filename, content in files:
             archive.writestr(filename, content)
     return buffer.getvalue()
+
+
+def test_upload_routes_run_blocking_work_on_the_threadpool() -> None:
+    async_endpoints = [
+        route.path
+        for route in upload_route.router.routes
+        if inspect.iscoroutinefunction(route.endpoint)
+    ]
+    assert async_endpoints == []
 
 
 def test_partner_json_runs_validation_pipeline(tmp_path, monkeypatch, auth_headers) -> None:

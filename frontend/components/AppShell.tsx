@@ -85,6 +85,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+function ApiHealthWidget() {
+  const health = useHealth();
+  const healthStatus = health.data?.status ?? "failed";
+
+  return (
+    <div className="app-shell__health" aria-label="API health">
+      <div className="app-shell__health-heading">
+        <span className="app-shell__nav-label">API health</span>
+        <Icon name="api" />
+      </div>
+      {health.isLoading ? (
+        <span className="app-shell__health-checking">Checking</span>
+      ) : (
+        <StatusBadge status={healthStatus} />
+      )}
+      <code className="app-shell__endpoint">127.0.0.1:8000</code>
+    </div>
+  );
+}
+
 function ShellChrome({
   children,
   pathname,
@@ -101,12 +121,10 @@ function ShellChrome({
   onLogout: () => void;
 }) {
   const { locale } = useLocale();
-  const health = useHealth();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [nowLabel, setNowLabel] = useState("--:--");
   const applicationId = getApplicationIdFromPath(pathname);
-  const healthStatus = health.data?.status ?? "failed";
   const isAdmin = role === "admin";
   const primaryNav = isAdmin ? ADMIN_NAV : OPERATIONS_NAV;
   const homeHref = isAdmin ? "/admin/worklist" : "/ops";
@@ -242,20 +260,7 @@ function ShellChrome({
 
           {isAdmin ? <ThemePickerCompact label="Desk theme" /> : null}
 
-          {isAdmin ? (
-            <div className="app-shell__health" aria-label="API health">
-              <div className="app-shell__health-heading">
-                <span className="app-shell__nav-label">API health</span>
-                <Icon name="api" />
-              </div>
-              {health.isLoading ? (
-                <span className="app-shell__health-checking">Checking</span>
-              ) : (
-                <StatusBadge status={healthStatus} />
-              )}
-              <code className="app-shell__endpoint">127.0.0.1:8000</code>
-            </div>
-          ) : null}
+          {isAdmin ? <ApiHealthWidget /> : null}
         </div>
       </aside>
 

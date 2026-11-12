@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
 from typing import Any
 
 from services.cersai import is_debtor_based, search_criteria_text
@@ -40,6 +44,33 @@ _PAGE_COUNTER_VALUE_RE = re.compile(
     r"\s*page\s*(?:no\.?\s*)?\d+\s*(?:of|/)\s*\d+\s*[.;:]?\s*",
     re.IGNORECASE,
 )
+
+_FIELD_VALIDATION_CACHE: ContextVar[dict[tuple[Any, ...], bool] | None] = ContextVar(
+    "field_validation_cache", default=None
+)
+
+
+@contextmanager
+def field_validation_cache_scope() -> Iterator[None]:
+    """Share validation results during one top-level processing operation."""
+    if _FIELD_VALIDATION_CACHE.get() is not None:
+        yield
+        return
+    token = _FIELD_VALIDATION_CACHE.set({})
+    try:
+        yield
+    finally:
+        _FIELD_VALIDATION_CACHE.reset(token)
+
+
+def cache_field_validation_calls(function: Callable[..., Any]) -> Callable[..., Any]:
+    """Give nested validation calls one scoped cache without changing callers."""
+    @wraps(function)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        with field_validation_cache_scope():
+            return function(*args, **kwargs)
+
+    return wrapped
 WEAK_INHERITED_METHODS = {"inherited", "sandwich_smoothed", "agreement_context_smoothed"}
 
 
@@ -218,6 +249,33 @@ def attach_field_provenance(
 
 
 def field_reliable_for_validation(
+    page: dict[str, Any],
+    field: Any,
+    value: Any,
+    *,
+    expected_document_type: str | None = None,
+    cache: dict[tuple[Any, ...], bool] | None = None,
+) -> bool:
+    """Return a cached reliability decision when called within a run scope."""
+    active_cache = cache if cache is not None else _FIELD_VALIDATION_CACHE.get()
+    if active_cache is None:
+        return _field_reliable_for_validation_uncached(
+            page, field, value, expected_document_type=expected_document_type
+        )
+    field_key = canonical_field(field)
+    text = str(page.get("ocr_text") or "")
+    expected_type = str(
+        expected_document_type or page.get("document_type") or ""
+    ).strip().casefold()
+    key = (id(page), hash(text), field_key, repr(value), expected_type)
+    if key not in active_cache:
+        active_cache[key] = _field_reliable_for_validation_uncached(
+            page, field, value, expected_document_type=expected_document_type
+        )
+    return active_cache[key]
+
+
+def _field_reliable_for_validation_uncached(
     page: dict[str, Any],
     field: Any,
     value: Any,

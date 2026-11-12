@@ -21,6 +21,7 @@ from services.ocr_engine import run_ocr_on_page
 from services.offline_ocr_languages import normalize_paddle_language, recognition_model_for_language
 
 logger = logging.getLogger(__name__)
+_FAST_OCR_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dmef-fast-ocr")
 
 OCRRoute = Literal["fast", "structured", "google_vision"]
 OCRProcessor = Callable[[str | Path], Any]
@@ -386,8 +387,7 @@ def _get_fast_model() -> Any:
 def run_fast_ocr_on_page(page_image: str | Path) -> OCRResult:
     """Run PaddleOCR text detection/recognition without layout or table models."""
     model = _get_fast_model()
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dmef-fast-ocr")
-    future = executor.submit(_predict_fast, model, page_image)
+    future = _FAST_OCR_EXECUTOR.submit(_predict_fast, model, page_image)
     try:
         raw_result = list(
             future.result(timeout=get_int("OCR_HARD_TIMEOUT_SECONDS", 180, minimum=1))
@@ -395,8 +395,6 @@ def run_fast_ocr_on_page(page_image: str | Path) -> OCRResult:
     except TimeoutError as exc:
         future.cancel()
         raise TimeoutError("Fast OCR exceeded its hard timeout") from exc
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
 
     texts: list[str] = []
     scores: list[float] = []

@@ -56,6 +56,7 @@ function WorklistContent() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const search = searchParams.get("search") ?? "";
+  const [searchInput, setSearchInput] = useState(search);
   const selectedFilter = parseFilter(searchParams.get("filter"));
   const selectedSort = parseSort(searchParams.get("sort"));
   const items = worklist.data?.items ?? EMPTY_WORKLIST;
@@ -88,6 +89,16 @@ function WorklistContent() {
       selectedSort,
     );
   }, [items, search, selectedFilter, selectedSort]);
+
+  useEffect(() => {
+    setSearchInput(search);
+  }, [search]);
+
+  useEffect(() => {
+    if (searchInput === search) return;
+    const timeout = setTimeout(() => updateUrl({ search: searchInput }), 300);
+    return () => clearTimeout(timeout);
+  }, [search, searchInput, updateUrl]);
 
   const queueItems = useMemo(
     () => getActionableReviewItems(items, search),
@@ -147,15 +158,15 @@ function WorklistContent() {
                 <input
                   id="worklist-search"
                   type="search"
-                  value={search}
-                  onChange={(event) => updateUrl({ search: event.target.value })}
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
                   placeholder="Search loan, applicant, product, or state"
                   className="w-full rounded-lg border border-desk-line bg-desk-surface px-4 py-2.5 pr-10 text-sm text-desk-ink shadow-3xs outline-none transition focus:border-desk-electric focus:ring-2 focus:ring-desk-surface"
                 />
-                {search ? (
+                {searchInput ? (
                   <button
                     type="button"
-                    onClick={() => updateUrl({ search: "" })}
+                    onClick={() => setSearchInput("")}
                     aria-label="Clear search"
                     className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-lg leading-none text-desk-muted hover:bg-desk-surface-muted hover:text-desk-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-desk-electric"
                   >

@@ -11,6 +11,7 @@ import base64
 import os
 import re
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -158,19 +159,12 @@ def _call_client_library(path: Path) -> dict[str, Any]:
     except ImportError as exc:  # pragma: no cover - exercised in deployment without dependency
         raise RuntimeError("Install google-cloud-vision to use GOOGLE_VISION_AUTH=adc") from exc
 
-    client_options = None
     endpoint = str(
         os.getenv("GOOGLE_VISION_API_ENDPOINT")
         or get_setting("google.vision.api_endpoint", "")
         or ""
     ).strip()
-    if endpoint:
-        client_options = {"api_endpoint": endpoint}
-    client = (
-        vision.ImageAnnotatorClient(client_options=client_options)
-        if client_options
-        else vision.ImageAnnotatorClient()
-    )
+    client = _vision_client(endpoint)
     image = vision.Image(content=path.read_bytes())
     hints = _language_hints()
     request_kwargs: dict[str, Any] = {
@@ -190,6 +184,15 @@ def _call_client_library(path: Path) -> dict[str, Any]:
 
         return MessageToDict(response._pb, preserving_proto_field_name=False)
     return response
+
+
+@lru_cache(maxsize=4)
+def _vision_client(endpoint: str):
+    """Reuse the ADC Vision client for the configured endpoint."""
+    from google.cloud import vision
+
+    options = {"api_endpoint": endpoint} if endpoint else None
+    return vision.ImageAnnotatorClient(client_options=options) if options else vision.ImageAnnotatorClient()
 
 
 def _result_from_payload(path: Path, payload: Any, *, auth_mode: str) -> dict[str, Any]:

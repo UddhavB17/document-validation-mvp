@@ -84,6 +84,7 @@ def test_schema_parity_postgres_matches_sqlite(tmp_path, monkeypatch) -> None:
         "ocr_route_events",
         "document_verification_reports",
         "reviewer_summaries",
+        "reviewer_comparisons",
         "system_settings",
         "llm_calls",
         "object_refs",

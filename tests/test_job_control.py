@@ -78,10 +78,38 @@ def test_recovery_rejects_modified_source_file(tmp_path, monkeypatch) -> None:
         system_data={},
         product_type="LAP",
     )
+    # The worker's first load records the checksum; later recovery must reject
+    # changes to either the local hint or the durable object-store source.
+    load_job_input(application_id, job_id)
     source.write_bytes(b"tampered")
 
     with pytest.raises(JobInputUnavailableError, match="integrity"):
         load_job_input(application_id, job_id)
+
+
+def test_persist_job_input_defers_source_hash_to_worker(tmp_path, monkeypatch) -> None:
+    import services.job_control as job_control
+
+    monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "dmef.db")
+    monkeypatch.setenv("DMEF_JOB_INPUT_KEY_FILE", str(tmp_path / "recovery.key"))
+    application_id, job_id, source = _seed_job(tmp_path)
+
+    def unexpected_hash(_source):
+        pytest.fail("enqueue must not reread the full PDF to compute its checksum")
+
+    monkeypatch.setattr(job_control, "_source_checksum", unexpected_hash)
+    persist_job_input(
+        job_id,
+        application_id,
+        source_path=source,
+        system_data={},
+        product_type="LAP",
+    )
+    with get_connection() as connection:
+        checksum = connection.execute(
+            "SELECT source_sha256 FROM pipeline_job_inputs WHERE job_id = ?", (job_id,)
+        ).fetchone()["source_sha256"]
+    assert checksum == ""
 
 
 def test_pause_resume_and_cancel_transitions_are_audited(tmp_path, monkeypatch) -> None:
@@ -236,6 +264,7 @@ def test_pipeline_task_preserves_source_integrity_and_cleans_failed_staging(
         product_type="LAP",
         mapped_manifest={} if mapped else None,
     )
+    load_job_input(application_id, job_id)
     store_key = f"applications/{application_id}/source/a.pdf"
     get_store().put(store_key, b"changed after enqueue", "application/pdf")
     record_ref(

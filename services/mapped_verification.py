@@ -47,6 +47,7 @@ from services.trusted_candidate_resolver import (
 )
 from services.validation_gates import (
     attach_field_provenance,
+    cache_field_validation_calls,
     canonical_field,
     field_reliable_for_validation,
 )
@@ -275,6 +276,7 @@ def _mapped_ocr_router() -> OCRRouter:
     )
 
 
+@cache_field_validation_calls
 def run_mapped_verification(
     pdf_path: str | Path,
     application_id: int,
