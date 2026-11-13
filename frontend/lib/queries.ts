@@ -12,6 +12,11 @@ import {
   fetchApplicationStatus,
   fetchOpsApplication,
   fetchOpsWorklist,
+  fetchOpsTATWorklist,
+  fetchOpsWorkflow,
+  fetchOpsTatMetrics,
+  fetchCurrentUser,
+  opsWorkflowApi,
 } from "./api";
 
 // These hooks are the frontend's cache and polling boundary. Components use
@@ -54,12 +59,76 @@ export function useHealth() {
   return useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 15000 });
 }
 
+export function useCurrentUser() {
+  return useQuery({ queryKey: ["currentUser"], queryFn: fetchCurrentUser, staleTime: 60000 });
+}
+
 export function useWorklist() {
   return useQuery({ queryKey: ["worklist"], queryFn: api.worklist, refetchInterval: 10000 });
 }
 
-export function useOpsWorklist() {
-  return useQuery({ queryKey: ["opsWorklist"], queryFn: fetchOpsWorklist, refetchInterval: 10000 });
+export function useOpsWorklist(view = "all") {
+  return useQuery({ queryKey: ["opsWorklist", view], queryFn: () => fetchOpsTATWorklist(view), refetchInterval: 10000 });
+}
+
+export function useOpsWorkflow(applicationId: number | null) {
+  return useQuery({
+    queryKey: ["opsWorkflow", applicationId],
+    queryFn: () => {
+      if (applicationId === null) throw new Error("Application ID is required");
+      return fetchOpsWorkflow(applicationId);
+    },
+    enabled: applicationId !== null,
+  });
+}
+
+export function useOpsTatMetrics() {
+  return useQuery({ queryKey: ["opsTatMetrics"], queryFn: fetchOpsTatMetrics });
+}
+
+function useOpsWorkflowMutation<T>(mutationFn: (value: T) => Promise<unknown>, applicationId?: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["opsWorklist"] }),
+        queryClient.invalidateQueries({ queryKey: ["opsWorkflow", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["opsTatMetrics"] }),
+      ]);
+    },
+  });
+}
+
+export function useClaimOpsCase(applicationId: number) {
+  return useOpsWorkflowMutation(() => opsWorkflowApi.claim(applicationId), applicationId);
+}
+
+export function useReleaseOpsCase(applicationId: number) {
+  return useOpsWorkflowMutation(() => opsWorkflowApi.release(applicationId), applicationId);
+}
+
+export function useReassignOpsCase(applicationId: number) {
+  return useOpsWorkflowMutation((payload: { user_id: number; reason: string }) => opsWorkflowApi.reassign(applicationId, payload), applicationId);
+}
+
+export function useSaveOpsCheck(applicationId: number) {
+  return useOpsWorkflowMutation((payload: { check_key: string; evidence_revision: string; status: string; note?: string }) =>
+    opsWorkflowApi.saveCheck(applicationId, payload), applicationId);
+}
+
+export function useRequestOpsDocuments(applicationId: number) {
+  return useOpsWorkflowMutation((payload: { message: string; items: string[]; follow_up_at?: string }) =>
+    opsWorkflowApi.requestDocuments(applicationId, payload), applicationId);
+}
+
+export function useUpdateOpsDocumentItem(applicationId: number) {
+  return useOpsWorkflowMutation((payload: { requestId: number; itemId: number; status: string; uploadedFileId?: number }) =>
+    opsWorkflowApi.updateDocumentItem(applicationId, payload.requestId, payload.itemId, payload.status, payload.uploadedFileId), applicationId);
+}
+
+export function useReviewNextOpsCase() {
+  return useOpsWorkflowMutation(() => opsWorkflowApi.next());
 }
 
 export function useActivityToday() {

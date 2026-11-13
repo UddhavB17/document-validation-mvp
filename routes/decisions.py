@@ -8,12 +8,11 @@ from pydantic import BaseModel
 
 from database.db import dialect, get_connection
 from services.auth.dependencies import CurrentUser, get_current_user
+from services.ops_workflow import record_decision, record_undo
 from services.progress_tracker import operational_progress_status
 from services.reviewer import compute_final_status
 
-router = APIRouter(
-    prefix="/decision", tags=["decision"], dependencies=[Depends(get_current_user)]
-)
+router = APIRouter(prefix="/decision", tags=["decision"], dependencies=[Depends(get_current_user)])
 
 VALID_DECISIONS = {"ACCEPT", "OVERRIDE", "REQUEST_DOCS"}
 GATED_DECISIONS = {"ACCEPT", "OVERRIDE"}
@@ -138,6 +137,23 @@ def create_decision(
         if existing is None:
             raise HTTPException(status_code=404, detail="Application not found")
 
+        ops_case = connection.execute(
+            "SELECT owner_user_id, workflow_state FROM ops_cases WHERE application_id = ?"
+            + (" FOR UPDATE" if dialect() == "postgresql" else ""),
+            (payload.application_id,),
+        ).fetchone()
+        if ops_case is not None:
+            owner_id = ops_case["owner_user_id"]
+            if user.role != "admin" and owner_id is None and ops_case["workflow_state"] == "ready":
+                raise HTTPException(
+                    status_code=409, detail="Claim this case before recording an Ops outcome"
+                )
+            if user.role != "admin" and owner_id is not None and int(owner_id) != user.id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Case ownership changed. Refresh before recording an outcome",
+                )
+
         if decision in GATED_DECISIONS and not _is_pipeline_complete(
             connection, payload.application_id
         ):
@@ -185,6 +201,9 @@ def create_decision(
                     }
                 ),
             ),
+        )
+        record_decision(
+            connection, payload.application_id, user.id, decision, decided_at, reviewer_note
         )
 
     return {
@@ -239,9 +258,7 @@ def undo_decision(
             (application_id,),
         ).fetchone()
         if latest is None or int(latest["id"]) != int(row["id"]):
-            raise HTTPException(
-                status_code=409, detail="Only the latest decision may be undone"
-            )
+            raise HTTPException(status_code=409, detail="Only the latest decision may be undone")
 
         preceding = connection.execute(
             """
@@ -284,6 +301,9 @@ def undo_decision(
                     }
                 ),
             ),
+        )
+        record_undo(
+            connection, application_id, user.id, restored_status, datetime.now(UTC).isoformat()
         )
     return {
         "decision_id": decision_id,

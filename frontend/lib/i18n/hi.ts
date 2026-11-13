@@ -28,6 +28,7 @@ export const hi: { [K in keyof typeof en]: string } = {
   "ops.worklist.filter.processing": "प्रसंस्करण",
   "ops.worklist.filter.clean": "साफ़",
   "ops.worklist.filter.all": "सभी",
+  "ops.worklist.filter.failed": "विफल",
   "ops.worklist.sortOldest": "सबसे पुराना पहले",
   "ops.worklist.queueCalm": "कतार शांत",
   "ops.worklist.showing": "दिखा रहे",

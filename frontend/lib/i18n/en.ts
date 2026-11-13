@@ -26,6 +26,7 @@ export const en = {
   "ops.worklist.filter.processing": "Processing",
   "ops.worklist.filter.clean": "Clean",
   "ops.worklist.filter.all": "All",
+  "ops.worklist.filter.failed": "Failed",
   "ops.worklist.sortOldest": "Sort oldest first",
   "ops.worklist.queueCalm": "Queue calm",
   "ops.worklist.showing": "Showing",

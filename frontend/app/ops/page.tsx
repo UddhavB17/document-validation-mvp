@@ -6,12 +6,14 @@ import { useMemo, useState } from "react";
 import { ErrorMessage } from "@/components/Message";
 import { LedgerStamp } from "@/components/ops/LedgerStamp";
 import { normalizeOpsStatus, type OpsStatus } from "@/components/ops/StatusPill";
-import type { OpsWorklistItem } from "@/lib/api";
+import type { OpsTATWorklist } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
-import { useOpsWorklist } from "@/lib/queries";
+import { useAdminUsers, useClaimOpsCase, useCurrentUser, useOpsTatMetrics, useOpsWorklist, useReassignOpsCase, useReleaseOpsCase, useReviewNextOpsCase } from "@/lib/queries";
 import { formatWaitingSince } from "@/lib/waiting";
 
-type FilterKey = "needs_review" | "processing" | "clean" | "all";
+type FilterKey = "all" | "ready" | "mine" | "waiting" | "completed" | "processing";
+
+type OpsQueueItem = OpsTATWorklist["applications"][number];
 
 const PAGE_SIZE = 5;
 
@@ -32,19 +34,58 @@ function statusTone(status: OpsStatus): "warn" | "ok" | "electric" | "danger" {
   return "danger";
 }
 
-function sortOldest(a: OpsWorklistItem, b: OpsWorklistItem): number {
-  const aTime = Date.parse(a.updated_at ?? "") || 0;
-  const bTime = Date.parse(b.updated_at ?? "") || 0;
+function sortOldest(a: OpsQueueItem, b: OpsQueueItem): number {
+  const aTime = Date.parse(a.queue_entered_at ?? a.ready_at ?? "") || 0;
+  const bTime = Date.parse(b.queue_entered_at ?? b.ready_at ?? "") || 0;
   if (aTime === bTime) {
     return a.application_id - b.application_id;
   }
   return aTime - bTime;
 }
 
+function metricValue(value: number | null | undefined): string {
+  return value === null || value === undefined ? "—" : `${Math.round(value)} min`;
+}
+
+function QueueOwnershipAction({ item, currentUserId, onUpdated }: { item: OpsQueueItem; currentUserId?: number; onUpdated: () => void }) {
+  const claimCase = useClaimOpsCase(item.application_id);
+  const releaseCase = useReleaseOpsCase(item.application_id);
+  if (item.workflow_state !== "ready") return <span className="text-xs text-desk-faint">{item.next_action}</span>;
+  if (item.owner_user_id === currentUserId) {
+  return <button type="button" className="ledger-link text-xs" onClick={() => void releaseCase.mutateAsync(undefined).then(onUpdated)}>Release</button>;
+  }
+  if (item.owner_user_id !== null) return <span className="text-xs text-desk-muted">{item.owner_name || "Assigned"}</span>;
+  return <button type="button" className="ledger-link text-xs" onClick={() => void claimCase.mutateAsync(undefined).then(onUpdated)}>Claim</button>;
+}
+
+function AdminReassignAction({ item, onUpdated }: { item: OpsQueueItem; onUpdated: () => void }) {
+  const users = useAdminUsers();
+  const reassign = useReassignOpsCase(item.application_id);
+  const [targetId, setTargetId] = useState("");
+  const [reason, setReason] = useState("");
+  if (item.workflow_state !== "ready" || !users.data?.users.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      <select className="ledger-input !min-h-8 max-w-36 text-xs" value={targetId} onChange={(event) => setTargetId(event.target.value)} aria-label="Reassign to">
+        <option value="">Reassign…</option>
+        {users.data.users.filter((user) => user.is_active && user.id !== item.owner_user_id).map((user) => <option key={user.id} value={user.id}>{user.display_name}</option>)}
+      </select>
+      {targetId ? <>
+        <input className="ledger-input !min-h-8 max-w-40 text-xs" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason" aria-label="Reassignment reason" />
+        <button type="button" className="ledger-link text-xs" disabled={reason.trim().length < 3 || reassign.isPending} onClick={() => void reassign.mutateAsync({ user_id: Number(targetId), reason }).then(onUpdated)}>Assign</button>
+      </> : null}
+    </div>
+  );
+}
+
 export default function OpsWorklistPage() {
   const { locale } = useLocale();
-  const worklist = useOpsWorklist();
-  const [filter, setFilter] = useState<FilterKey>("needs_review");
+  const [view, setView] = useState<FilterKey>("ready");
+  const worklist = useOpsWorklist(view);
+  const metrics = useOpsTatMetrics();
+  const currentUser = useCurrentUser();
+  const reviewNext = useReviewNextOpsCase();
+  const [filter, setFilter] = useState<"all" | "needs_review" | "processing" | "clean" | "failed">("all");
   const [query, setQuery] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
@@ -80,10 +121,7 @@ export default function OpsWorklistPage() {
       .sort(sortOldest);
   }, [applications, filter, query]);
 
-  const reviewQueue = useMemo(
-    () => applications.filter((item) => normalizeOpsStatus(item.status) === "needs_review").slice().sort(sortOldest),
-    [applications],
-  );
+  const reviewQueue = useMemo(() => applications.filter((item) => item.workflow_state === "ready").slice().sort(sortOldest), [applications]);
   const hero = filter === "needs_review" || filter === "all" ? reviewQueue[0] ?? null : null;
   const visible = filtered.slice(0, visibleCount);
   const remaining = Math.max(0, filtered.length - visible.length);
@@ -104,9 +142,18 @@ export default function OpsWorklistPage() {
           </p>
         </div>
         <LedgerStamp tone="ink">
-          {counts.needs_review} {t(locale, "ops.worklist.needReview")}
+          {worklist.data?.total ?? 0} {t(locale, "ops.worklist.needReview")}
         </LedgerStamp>
       </header>
+
+      <section className="grid gap-3 rounded-desk border border-[color:var(--border)] bg-[color:var(--surface)] p-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Prospective Ops turnaround baseline">
+        <div><p className="text-[10px] font-bold uppercase tracking-wide text-desk-faint">First touch · p50 / p90</p><p className="mt-1 text-sm font-semibold text-desk-ink">{metricValue(metrics.data?.first_touch.p50_minutes)} / {metricValue(metrics.data?.first_touch.p90_minutes)}</p><p className="text-xs text-desk-muted">{metrics.data?.first_touch.sample_count ?? 0} cases</p></div>
+        <div><p className="text-[10px] font-bold uppercase tracking-wide text-desk-faint">First outcome · p50 / p90</p><p className="mt-1 text-sm font-semibold text-desk-ink">{metricValue(metrics.data?.first_outcome_after_start.p50_minutes)} / {metricValue(metrics.data?.first_outcome_after_start.p90_minutes)}</p><p className="text-xs text-desk-muted">{metrics.data?.first_outcome_after_start.sample_count ?? 0} cases</p></div>
+        <div><p className="text-[10px] font-bold uppercase tracking-wide text-desk-faint">Ready to completion · p50 / p90</p><p className="mt-1 text-sm font-semibold text-desk-ink">{metricValue(metrics.data?.ready_to_completion.p50_minutes)} / {metricValue(metrics.data?.ready_to_completion.p90_minutes)}</p><p className="text-xs text-desk-muted">Total elapsed, including document waits</p><p className="text-xs text-desk-muted">Excluding waits: {metricValue(metrics.data?.ready_to_completion_excluding_document_wait.p50_minutes)} p50</p></div>
+        <div><p className="text-[10px] font-bold uppercase tracking-wide text-desk-faint">Document wait · p50 / p90</p><p className="mt-1 text-sm font-semibold text-desk-ink">{metricValue(metrics.data?.document_wait.p50_minutes)} / {metricValue(metrics.data?.document_wait.p90_minutes)}</p><p className="text-xs text-desk-muted">Prospective baseline · {metrics.data?.sample_count ?? 0} tracked cases</p></div>
+        <div><p className="text-[10px] font-bold uppercase tracking-wide text-desk-faint">Follow-up quality signals</p><p className="mt-1 text-sm font-semibold text-desk-ink">{metrics.data?.cases_reopened_after_documents ?? 0} reopened · {metrics.data?.decision_undo_count ?? 0} decision undos</p><p className="text-xs text-desk-muted">{metrics.data?.document_request_rounds.total ?? 0} request rounds · {metrics.data?.document_request_rounds.cases_with_multiple_requests ?? 0} repeat cases</p></div>
+        <button type="button" className="ledger-btn ledger-btn--electric justify-self-start xl:col-span-4 xl:justify-self-end" disabled={reviewNext.isPending} onClick={() => void reviewNext.mutateAsync(undefined).then(async (result) => { const nextId = (result as { application_id?: number | null }).application_id; if (nextId) window.location.assign(`/ops/applications/${nextId}`); else await worklist.refetch(); })}>Review next</button>
+      </section>
 
       {worklist.isError ? <ErrorMessage message={t(locale, "ops.review.loadError")} /> : null}
 
@@ -134,7 +181,7 @@ export default function OpsWorklistPage() {
                   </h2>
                   <p className="mt-2 text-sm text-[color:var(--hero-muted)]">
                     {hero.findings_count} {t(locale, "ops.worklist.exceptions")} · {t(locale, "ops.worklist.sortOldest").toLowerCase()} ·{" "}
-                    {formatWaitingSince(hero.updated_at)}
+                  {formatWaitingSince(hero.queue_entered_at ?? hero.ready_at)}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {hero.findings_count > 0 ? (
@@ -179,10 +226,11 @@ export default function OpsWorklistPage() {
               <div className="flex flex-wrap gap-2" role="group" aria-label="Queue filters">
                 {(
                   [
+                    ["all", counts.all, "ops.worklist.filter.all"],
                     ["needs_review", counts.needs_review, "ops.worklist.filter.needsReview"],
                     ["processing", counts.processing, "ops.worklist.filter.processing"],
                     ["clean", counts.clean, "ops.worklist.filter.clean"],
-                    ["all", counts.all, "ops.worklist.filter.all"],
+                    ["failed", counts.failed, "ops.worklist.filter.failed"],
                   ] as const
                 ).map(([key, count, labelKey]) => (
                   <button
@@ -208,6 +256,14 @@ export default function OpsWorklistPage() {
             </div>
           </div>
 
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Ops workflow views">
+            {(["ready", "mine", "waiting", "completed", "processing", "all"] as const).map((key) => (
+              <button key={key} type="button" className={`ledger-filter-chip${view === key ? " is-active" : ""}`} aria-pressed={view === key} onClick={() => { setView(key); setVisibleCount(PAGE_SIZE); }}>
+                {key === "ready" ? "Ready" : key === "mine" ? "My cases" : key === "waiting" ? "Waiting for documents" : key === "completed" ? "Completed" : key === "processing" ? "Processing" : "All cases"}
+              </button>
+            ))}
+          </div>
+
           {filtered.length === 0 ? (
             <div className="ledger-surface px-5 py-10 text-center">
               <p className="font-display text-2xl text-desk-ink">{t(locale, "ops.worklist.empty")}</p>
@@ -229,14 +285,14 @@ export default function OpsWorklistPage() {
                 {visible.map((item) => {
                   const status = normalizeOpsStatus(item.status);
                   const stamp = exceptionStamp(item.findings_count);
-                  const waiting = formatWaitingSince(item.updated_at);
+                  const waiting = formatWaitingSince(item.queue_entered_at ?? item.ready_at ?? item.updated_at);
                   const rail =
                     status === "needs_review"
                       ? item.findings_count >= 3
                         ? "ledger-rail-danger"
                         : "ledger-rail-warn"
                       : "";
-                  const canReview = status === "needs_review" || status === "clean" || status === "failed";
+                  const canReview = item.workflow_state === "ready";
                   return (
                     <li
                       key={item.application_id}
@@ -268,14 +324,16 @@ export default function OpsWorklistPage() {
                           {t(locale, `ops.review.status.${status}`)}
                         </LedgerStamp>
                       </div>
-                      <div>
-                        {canReview ? (
+                      <div className="flex flex-col gap-1">
+                        {canReview && item.workflow_state !== "waiting_documents" ? (
                           <Link href={`/ops/applications/${item.application_id}`} className="ledger-link text-sm">
                             {t(locale, "ops.worklist.review")} →
                           </Link>
                         ) : (
                           <span className="text-sm font-semibold text-desk-faint">—</span>
                         )}
+                        <QueueOwnershipAction item={item} currentUserId={currentUser.data?.id} onUpdated={() => void worklist.refetch()} />
+                        {currentUser.data?.role === "admin" ? <AdminReassignAction item={item} onUpdated={() => void worklist.refetch()} /> : null}
                       </div>
                     </li>
                   );

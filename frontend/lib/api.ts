@@ -915,3 +915,93 @@ export async function fetchOpsWorklist(): Promise<OpsWorklist> {
 export async function fetchApplicationStatus(applicationId: number): Promise<ApplicationStatus> {
   return getJsonResponse(`/review/applications/${applicationId}/status`, applicationStatusSchema);
 }
+
+// --- Ops turnaround workflow ---
+export const opsWorkflowSchema = z.object({
+  case: z.object({
+    application_id: z.number(),
+    owner_user_id: z.number().nullable(),
+    owner_name: nullableString,
+    workflow_state: z.string(),
+    waiting_reason: nullableString,
+    ready_at: z.string().nullable(),
+    returned_at: nullableString,
+    first_started_at: z.string().nullable(),
+    first_outcome_at: z.string().nullable(),
+    completed_at: z.string().nullable(),
+    updated_at: z.string(),
+  }),
+  events: z.array(z.object({
+    id: z.number(), actor_user_id: z.number().nullable(), actor_name: nullableString,
+    action: z.string(), reason: nullableString, occurred_at: z.string(), details: z.record(z.unknown()),
+  })),
+  document_requests: z.array(z.object({
+    id: z.number(), message: z.string(), status: z.string(), follow_up_at: nullableString,
+    opened_at: z.string(), resolved_at: nullableString,
+  })),
+  document_request_items: z.array(z.object({
+    id: z.number(), request_id: z.number(), item: z.string(), status: z.string(),
+    uploaded_file_id: z.number().nullable(), updated_at: z.string(),
+  })),
+  review_items: z.array(z.object({
+    check_key: z.string(), evidence_revision: z.string(), kind: z.string(), title: z.unknown(),
+    pages: z.array(z.number()), status: z.string().nullable(), note: z.string().nullable().optional(),
+    updated_at: nullableString,
+  })),
+  changed_review_items: z.number(),
+  latest_decision: z.object({ decision: z.string().nullable(), decided_at: z.string().nullable() }).nullable(),
+});
+
+export type OpsWorkflow = z.infer<typeof opsWorkflowSchema>;
+
+export const opsTatMetricsSchema = z.object({
+  baseline_type: z.string(), sample_count: z.number(),
+  first_touch: z.object({ sample_count: z.number(), p50_minutes: z.number().nullable(), p90_minutes: z.number().nullable() }),
+  first_outcome_after_start: z.object({ sample_count: z.number(), p50_minutes: z.number().nullable(), p90_minutes: z.number().nullable() }),
+  ready_to_completion: z.object({ sample_count: z.number(), p50_minutes: z.number().nullable(), p90_minutes: z.number().nullable() }),
+  ready_to_completion_excluding_document_wait: z.object({ sample_count: z.number(), p50_minutes: z.number().nullable(), p90_minutes: z.number().nullable() }),
+  document_wait: z.object({ sample_count: z.number(), p50_minutes: z.number().nullable(), p90_minutes: z.number().nullable() }),
+  document_request_rounds: z.object({ total: z.number(), cases_with_requests: z.number(), cases_with_multiple_requests: z.number() }),
+  cases_reopened_after_documents: z.number(),
+  decision_undo_count: z.number(),
+  note: z.string(),
+});
+
+export const opsTATWorklistSchema = z.object({
+  applications: z.array(z.object({
+    application_id: z.number(), loan_id: opsDisplayStringSchema.optional(),
+    applicant_name: opsDisplayStringSchema.optional(), status: opsStatusSchema,
+    workflow_state: z.string(), findings_count: z.number(), updated_at: nullableString,
+    ready_at: nullableString, queue_entered_at: nullableString, owner_user_id: z.number().nullable(), owner_name: nullableString,
+    waiting_reason: nullableString, next_action: z.string(),
+  })),
+  total: z.number(), limit: z.number(), offset: z.number(), view: z.string(),
+});
+
+export type OpsTATWorklist = z.infer<typeof opsTATWorklistSchema>;
+
+export async function fetchOpsTATWorklist(view: string): Promise<OpsTATWorklist> {
+  return getJsonResponse(`/ops/worklist?view=${encodeURIComponent(view)}`, opsTATWorklistSchema as z.ZodType<OpsTATWorklist>);
+}
+
+export async function fetchOpsWorkflow(applicationId: number): Promise<OpsWorkflow> {
+  return getJsonResponse(`/ops/workflow/${applicationId}`, opsWorkflowSchema);
+}
+
+export async function fetchOpsTatMetrics(): Promise<z.infer<typeof opsTatMetricsSchema>> {
+  return getJsonResponse("/ops/metrics/tat", opsTatMetricsSchema);
+}
+
+export const opsWorkflowApi = {
+  claim: (applicationId: number) => postJsonResponse(`/ops/applications/${applicationId}/claim`, {}, z.object({ case: z.record(z.unknown()) })),
+  release: (applicationId: number) => postJsonResponse(`/ops/applications/${applicationId}/release`, {}, z.object({ case: z.record(z.unknown()) })),
+  next: () => getJsonResponse("/ops/worklist/next", z.object({ application_id: z.number().nullable() })),
+  saveCheck: (applicationId: number, payload: { check_key: string; evidence_revision: string; status: string; note?: string }) =>
+    postJsonResponse(`/ops/applications/${applicationId}/checks`, payload, z.object({ check_key: z.string(), status: z.string(), note: nullableString })),
+  requestDocuments: (applicationId: number, payload: { message: string; items: string[]; follow_up_at?: string }) =>
+    postJsonResponse(`/ops/applications/${applicationId}/document-requests`, payload, z.object({ request_id: z.number(), status: z.string() })),
+  updateDocumentItem: (applicationId: number, requestId: number, itemId: number, status: string, uploadedFileId?: number) =>
+    patchJsonResponse(`/ops/applications/${applicationId}/document-requests/${requestId}/items/${itemId}`, { status, uploaded_file_id: uploadedFileId ?? null }, z.object({ item_id: z.number(), status: z.string(), request_resolved: z.boolean() })),
+  reassign: (applicationId: number, payload: { user_id: number; reason: string }) =>
+    postJsonResponse(`/ops/applications/${applicationId}/reassign`, payload, z.object({ case: z.record(z.unknown()) })),
+};

@@ -18,7 +18,125 @@ import { clampPercentage, opsFindingExplanation, pickText, statusProgressPercent
 import { normalizeOpsStatus } from "@/components/ops/StatusPill";
 import type { OpsFinding } from "@/lib/api";
 import { t, useLocale } from "@/lib/i18n";
-import { isApplicationReviewPollingStatus, useApplicationStatus, useOpsApplication } from "@/lib/queries";
+import { isApplicationReviewPollingStatus, useApplicationStatus, useClaimOpsCase, useCurrentUser, useOpsApplication, useOpsWorkflow, useReleaseOpsCase, useRequestOpsDocuments, useReviewNextOpsCase, useSaveOpsCheck, useUpdateOpsDocumentItem } from "@/lib/queries";
+
+function OpsWorkflowPanel({ applicationId, onOpenPage }: { applicationId: number; onOpenPage: (page: number) => void }) {
+  const { locale } = useLocale();
+  const workflow = useOpsWorkflow(applicationId);
+  const currentUser = useCurrentUser();
+  const claimCase = useClaimOpsCase(applicationId);
+  const releaseCase = useReleaseOpsCase(applicationId);
+  const saveCheck = useSaveOpsCheck(applicationId);
+  const requestDocuments = useRequestOpsDocuments(applicationId);
+  const updateDocument = useUpdateOpsDocumentItem(applicationId);
+  const nextCase = useReviewNextOpsCase();
+  const [requestedItems, setRequestedItems] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
+  const [followUpAt, setFollowUpAt] = useState("");
+  const [linkedFileId, setLinkedFileId] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const data = workflow.data;
+  const ownerId = data?.case.owner_user_id;
+  const isOwner = ownerId === currentUser.data?.id;
+  const titleFor = (value: unknown) => {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object") {
+      const localized = value as { en?: unknown; hi?: unknown };
+      const selected = localized[locale] ?? localized.en;
+      return typeof selected === "string" ? selected : "Review item";
+    }
+    return "Review item";
+  };
+  async function sendDocumentRequest() {
+    const items = requestedItems.split("\n").map((item) => item.trim()).filter(Boolean);
+    try {
+      await requestDocuments.mutateAsync({ message: requestMessage, items, follow_up_at: followUpAt ? new Date(followUpAt).toISOString() : undefined });
+      setRequestedItems(""); setRequestMessage(""); setFeedback("Document request saved. This case is now waiting for documents.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Could not save the document request.");
+    }
+  }
+
+  if (workflow.isLoading) return <div className="ledger-surface p-4 text-sm text-desk-muted">Loading Ops workflow…</div>;
+  if (workflow.isError || !data) return <div className="ledger-surface p-4 text-sm text-desk-muted">Could not load Ops ownership and follow-up. <button type="button" className="ledger-link" onClick={() => void workflow.refetch()}>Retry</button></div>;
+  return (
+    <section className="ledger-surface space-y-5 p-4 sm:p-5" aria-label="Ops workflow">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display text-xl font-semibold text-desk-ink">Case ownership and progress</h2>
+          <p className="mt-1 text-xs text-desk-muted">{data.case.owner_name ? `Owned by ${data.case.owner_name}` : "No reviewer owns this case"} · Ready since {data.case.ready_at ? new Date(data.case.ready_at).toLocaleString() : "time unknown"}</p>
+          {data.case.waiting_reason ? <p className="mt-1 text-xs font-semibold text-desk-muted">{data.case.waiting_reason}</p> : null}
+        </div>
+        {isOwner ? (
+          <button type="button" className="ledger-btn ledger-btn--outline" onClick={() => void releaseCase.mutateAsync(undefined).catch((error) => setFeedback(error instanceof Error ? error.message : "Could not release this case."))}>Release case</button>
+        ) : ownerId === null ? (
+          <button type="button" className="ledger-btn ledger-btn--electric" onClick={() => void claimCase.mutateAsync(undefined).catch((error) => setFeedback(error instanceof Error ? error.message : "Could not claim this case."))}>Claim case</button>
+        ) : null}
+      </div>
+
+      <div>
+        <h3 className="text-sm font-bold text-desk-ink">Saved review checks</h3>
+        {data.changed_review_items > 0 ? <p role="status" className="mt-2 rounded-desk border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{data.changed_review_items} saved check(s) no longer match the current evidence or checklist. Recheck them before recording an outcome.</p> : null}
+        <ul className="mt-2 divide-y divide-[color:var(--border)]">
+          {data.review_items.map((item) => (
+            <li key={item.check_key} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-desk-ink">{titleFor(item.title)}</p>
+                {item.pages.length ? <button type="button" className="ledger-link text-xs" onClick={() => onOpenPage(item.pages[0])}>Open source page {item.pages[0]} →</button> : null}
+                {item.note ? <p className="text-xs text-desk-muted">{item.note}</p> : null}
+                {item.status ? <p className="text-xs font-semibold text-desk-indigo">Saved: {item.status}</p> : null}
+              </div>
+              {isOwner ? (
+                <div className="flex flex-wrap gap-2">
+                  {(["checked", "exception_confirmed", "needs_help"] as const).map((status) => (
+                    <button key={status} type="button" className={`ledger-filter-chip${item.status === status ? " is-active" : ""}`} disabled={saveCheck.isPending} onClick={() => void saveCheck.mutateAsync({ check_key: item.check_key, evidence_revision: item.evidence_revision, status }).catch((error) => setFeedback(error instanceof Error ? error.message : "Could not save this check."))}>{status === "checked" ? "Checked" : status === "exception_confirmed" ? "Exception confirmed" : "Needs help"}</button>
+                  ))}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-2">
+          <h3 className="text-sm font-bold text-desk-ink">Request documents</h3>
+          <label className="block text-xs font-semibold text-desk-muted">Items, one per line<textarea className="ledger-input mt-1 min-h-20 w-full" value={requestedItems} onChange={(event) => setRequestedItems(event.target.value)} /></label>
+          <label className="block text-xs font-semibold text-desk-muted">Message<textarea className="ledger-input mt-1 min-h-20 w-full" value={requestMessage} onChange={(event) => setRequestMessage(event.target.value)} /></label>
+          <label className="block text-xs font-semibold text-desk-muted">Follow-up date<input className="ledger-input mt-1 w-full" type="date" value={followUpAt} onChange={(event) => setFollowUpAt(event.target.value)} /></label>
+          <button type="button" className="ledger-btn ledger-btn--electric" disabled={!isOwner || requestDocuments.isPending} onClick={() => void sendDocumentRequest()}>{requestDocuments.isPending ? "Saving…" : "Save request and wait"}</button>
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-desk-ink">Document follow-up</h3>
+          {data.document_requests.length === 0 ? <p className="mt-2 text-sm text-desk-faint">No document requests recorded.</p> : null}
+          {data.document_requests.map((request) => (
+            <div key={request.id} className="mt-2 rounded-desk border border-[color:var(--border)] p-3">
+              <p className="text-sm font-semibold text-desk-ink">{request.status === "open" ? "Waiting for documents" : "Request resolved"}</p>
+              <p className="mt-1 whitespace-pre-wrap text-xs text-desk-muted">{request.message}</p>
+              {request.follow_up_at ? <p className="mt-1 text-xs text-desk-muted">Follow up: {new Date(request.follow_up_at).toLocaleDateString()}</p> : null}
+              {data.document_request_items.filter((item) => item.request_id === request.id).map((item) => (
+                <div key={item.id} className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-[color:var(--border)] pt-2 text-xs">
+                  <span>{item.item} · {item.status}{item.uploaded_file_id ? ` · file ${item.uploaded_file_id}` : ""}</span>
+                  {request.status === "open" && isOwner ? <div className="flex gap-2"><input aria-label="Uploaded file ID" className="ledger-input !min-h-8 w-24" type="number" min="1" value={linkedFileId} onChange={(event) => setLinkedFileId(event.target.value)} placeholder="File ID" /><button type="button" className="ledger-link" onClick={() => void updateDocument.mutateAsync({ requestId: request.id, itemId: item.id, status: "received", uploadedFileId: linkedFileId ? Number(linkedFileId) : undefined }).catch((error) => setFeedback(error instanceof Error ? error.message : "Could not update this item."))}>Received</button><button type="button" className="ledger-link" onClick={() => void updateDocument.mutateAsync({ requestId: request.id, itemId: item.id, status: "outstanding" }).catch((error) => setFeedback(error instanceof Error ? error.message : "Could not update this item."))}>Still outstanding</button></div> : null}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-bold text-desk-ink">Case history</h3>
+        <ul className="mt-2 space-y-1 text-xs text-desk-muted">{data.events.slice(0, 8).map((event) => <li key={event.id}>{event.actor_name || "System"} · {event.action.replace(/_/g, " ")} · {new Date(event.occurred_at).toLocaleString()}{event.reason ? ` · ${event.reason}` : ""}</li>)}</ul>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className="ledger-btn ledger-btn--outline" disabled={nextCase.isPending} onClick={() => void nextCase.mutateAsync(undefined).then((result) => { const nextId = (result as { application_id?: number | null }).application_id; if (nextId) window.location.assign(`/ops/applications/${nextId}`); else setFeedback("No other ready case is available."); })}>Review next</button>
+        {data.latest_decision ? <p className="text-sm font-semibold text-desk-muted">Latest outcome: {data.latest_decision.decision} · {data.latest_decision.decided_at ? new Date(data.latest_decision.decided_at).toLocaleString() : "time unknown"}</p> : null}
+        {feedback ? <p role="status" className="text-sm text-desk-muted">{feedback}</p> : null}
+      </div>
+    </section>
+  );
+}
 
 export default function OpsApplicationPage() {
   const params = useParams<{ id: string }>();
@@ -303,6 +421,8 @@ export default function OpsApplicationPage() {
           onOpenPage={(page) => setWizard({ kind: "page", page })}
         />
       </div>
+
+      <OpsWorkflowPanel applicationId={applicationId} onOpenPage={(page) => setWizard({ kind: "page", page })} />
     </div>
   );
 }
