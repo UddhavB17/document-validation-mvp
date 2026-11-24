@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -144,10 +145,17 @@ function ShellChrome({
       >
         <div className="app-shell__sidebar-top">
           <div className="app-shell__brand-row">
-            <Link href={homeHref} className="app-shell__brand" aria-label="DMEF operations review home" onClick={closeMobileNavigation}>
-              <span className="app-shell__brand-mark" aria-hidden="true">D</span>
+            <Link href={homeHref} className="app-shell__brand" aria-label="MS Fincap document review home" onClick={closeMobileNavigation}>
+              <Image
+                src="/ms-fincap-logo.png"
+                alt="MS Fincap — Your Financial Navigator"
+                width={112}
+                height={80}
+                className="app-shell__brand-logo"
+                priority
+              />
               <span className="app-shell__brand-copy">
-                <span className="app-shell__brand-name">DMEF</span>
+                <span className="app-shell__brand-name">MS Fincap</span>
                 <span className="app-shell__brand-subtitle">{isAdmin ? "Admin console" : "Operations review"}</span>
               </span>
             </Link>

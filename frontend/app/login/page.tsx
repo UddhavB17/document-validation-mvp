@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import Image from "next/image";
 
 import { ErrorMessage } from "@/components/Message";
 import { LedgerStamp } from "@/components/ops/LedgerStamp";
@@ -50,11 +51,15 @@ export default function LoginPage() {
         />
         <div className="relative">
           <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-md bg-[color:var(--electric)] font-mono text-lg font-bold text-white">
-              D
-            </span>
+            <Image
+              src="/ms-fincap-logo.png"
+              alt="MS Fincap — Your Financial Navigator"
+              width={112}
+              height={80}
+              className="h-16 w-24 object-contain"
+              priority
+            />
             <div>
-              <p className="text-base font-extrabold tracking-wide">DMEF</p>
               <p className="text-xs text-[color:var(--sidebar-muted)]">Document validation</p>
             </div>
           </div>

@@ -341,19 +341,12 @@ a {
   text-decoration: none;
 }
 
-.app-shell__brand-mark {
-  display: grid;
-  flex: 0 0 36px;
-  width: 36px;
-  height: 36px;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--electric);
-  color: #fff;
-  font-family: var(--font-mono), monospace;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.05em;
+.app-shell__brand-logo {
+  display: block;
+  flex: 0 0 76px;
+  width: 76px;
+  height: 56px;
+  object-fit: contain;
 }
 
 .app-shell__brand-copy {
@@ -586,6 +579,12 @@ a {
   justify-content: center;
   padding-right: var(--space-2);
   padding-left: var(--space-2);
+}
+
+.app-shell__sidebar[data-collapsed="true"] .app-shell__brand-logo {
+  flex-basis: 52px;
+  width: 52px;
+  height: 44px;
 }
 
 .app-shell__sidebar[data-collapsed="true"] .app-shell__brand-copy,
