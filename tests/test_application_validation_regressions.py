@@ -64,6 +64,40 @@ def test_shared_father_does_not_hide_a_different_full_address():
     assert verify_address(observed, "S/O Ram Kumar").match
 
 
+@pytest.mark.parametrize(
+    ("expected", "observed"),
+    [
+        (
+            "Ward 01 Semli Bakhta Sulia Jhalawar Rajasthan 326502",
+            "Ward 11 Semli Bakhta Sulia Jhalawar Rajasthan 326502",
+        ),
+        (
+            "Sector 4 Semli Bakhta Sulia Jhalawar Rajasthan 326502",
+            "Sector 5 Semli Bakhta Sulia Jhalawar Rajasthan 326502",
+        ),
+    ],
+)
+def test_explicit_ward_or_sector_conflict_overrides_shared_locality_and_pin(
+    expected, observed
+):
+    assert not _matches("address", observed, expected)
+    assert not verify_address(observed, expected).match
+
+
+def test_ward_punctuation_and_leading_zero_are_equivalent():
+    expected = "Ward 01 Semli Bakhta Sulia Jhalawar Rajasthan 326502"
+    observed = "WARD-1 Semli Bakhta Sulia Jhalawar Rajasthan 326502"
+    assert _matches("address", observed, expected)
+    assert verify_address(observed, expected).match
+
+
+def test_missing_ward_or_sector_label_remains_tolerated():
+    expected = "Sector 4 Semli Bakhta Sulia Jhalawar Rajasthan 326502"
+    observed = "Semli Bakhta Sulia Jhalawar Rajasthan 326502"
+    assert _matches("address", observed, expected)
+    assert verify_address(observed, expected).match
+
+
 def test_lender_statement_uses_named_subject_in_title():
     fields = extract_fields(
         "Bank Statement",

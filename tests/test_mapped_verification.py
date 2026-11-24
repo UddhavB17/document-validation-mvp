@@ -49,6 +49,252 @@ def test_low_ocr_warning_preserves_person_and_manual_review_status(
     assert "too low" in warning["reason"]
 
 
+def test_aggregated_address_match_does_not_hide_explicit_component_conflict() -> None:
+    from services.mapped_verification import _verify_document_fields
+
+    expected = "Flat 12, Oak Road, Delhi 110001"
+    observations = {
+        "address": [
+            {"page_number": 2, "value": "Flat 18, Oak Road, Delhi 110001", "ocr_confidence": 0.95},
+            {"page_number": 3, "value": expected, "ocr_confidence": 0.95},
+        ]
+    }
+    anomalies: list[dict] = []
+
+    _verify_document_fields(
+        expected={"address": expected},
+        document_observations=observations,
+        readable_pages=[2, 3],
+        provided_type="Aadhaar",
+        person_id="primary",
+        reference_data={"primary": {"address": expected}},
+        anomalies=anomalies,
+        prefer_any_match=True,
+    )
+
+    assert [(item["rule_id"], item["page_number"]) for item in anomalies] == [
+        ("ADDRESS_MISMATCH", 2)
+    ]
+
+
+def test_aggregated_address_keeps_distinct_trusted_address_variant() -> None:
+    from services.mapped_verification import _verify_document_fields
+
+    expected = "Flat 12, Oak Road, Delhi 110001"
+    communication = "Flat 18, Pine Road, Mumbai 400001"
+    anomalies: list[dict] = []
+
+    _verify_document_fields(
+        expected={"address": expected},
+        document_observations={
+            "address": [
+                {"page_number": 2, "value": communication, "ocr_confidence": 0.95},
+                {"page_number": 3, "value": expected, "ocr_confidence": 0.95},
+            ]
+        },
+        readable_pages=[2, 3],
+        provided_type="Aadhaar",
+        person_id="primary",
+        reference_data={
+            "primary": {
+                "address": expected,
+                "communication_address": communication,
+            }
+        },
+        anomalies=anomalies,
+        prefer_any_match=True,
+    )
+
+    assert anomalies == []
+
+
+def test_stale_address_component_without_page_ocr_support_is_replaced_by_fresh_extraction():
+    from services.mapped_verification import _comparison_fields_for_page
+
+    expected = {"permanent_address": "Ward Number 01, Market Road"}
+    comparison_fields = _comparison_fields_for_page(
+        {"permanent_address": "Ward No 11, Market Road"},
+        {"permanent_address": "Ward No 01, Market Road"},
+        expected,
+        source_text="Ward No 01, Market Road",
+    )
+
+    assert comparison_fields["permanent_address"] == "Ward No 01, Market Road"
+
+
+def test_page_supported_permanent_address_conflict_remains_mismatch():
+    from services.mapped_verification import (
+        _comparison_fields_for_page,
+        _verify_document_fields,
+    )
+
+    expected = {"permanent_address": "Ward Number 01, Market Road"}
+    comparison_fields = _comparison_fields_for_page(
+        {"permanent_address": "Ward No 11, Market Road"},
+        {},
+        expected,
+        source_text="Ward No 11, Market Road",
+    )
+    anomalies: list[dict] = []
+    _verify_document_fields(
+        expected=expected,
+        document_observations={
+            "address": [{"page_number": 81, "value": comparison_fields["permanent_address"]}]
+        },
+        readable_pages=[81],
+        provided_type="Application Form",
+        person_id="coapplicant_2",
+        reference_data={"coapplicant_2": expected},
+        anomalies=anomalies,
+    )
+
+    assert [(item["rule_id"], item["page_number"]) for item in anomalies] == [
+        ("ADDRESS_MISMATCH", 81)
+    ]
+
+
+def test_identical_address_alias_expectations_emit_one_mismatch():
+    from services.mapped_verification import _verify_document_fields
+
+    expected = {
+        "address": "Ward Number 01, Market Road",
+        "permanent_address": "Ward Number 01, Market Road",
+    }
+    anomalies: list[dict] = []
+    _verify_document_fields(
+        expected=expected,
+        document_observations={
+            "address": [{"page_number": 79, "value": "Ward No 11, Market Road"}]
+        },
+        readable_pages=[79],
+        provided_type="Application Form",
+        person_id="primary",
+        reference_data={"primary": expected},
+        anomalies=anomalies,
+    )
+
+    assert [(item["rule_id"], item["page_number"]) for item in anomalies] == [
+        ("ADDRESS_MISMATCH", 79)
+    ]
+
+
+def test_application_form_mapping_does_not_apply_primary_identity_fields_to_other_pages(monkeypatch):
+    monkeypatch.setattr(
+        "services.mapped_verification.extract_fields",
+        lambda document_type, text: (
+            {"permanent_address": "Ward No 01, Market Road"}
+            if "PAGE79" in text
+            else {}
+        ),
+    )
+    monkeypatch.setattr(
+        "services.mapped_verification.resolve_trusted_candidate", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        "services.mapped_verification.field_reliable_for_validation",
+        lambda *_args, **_kwargs: True,
+    )
+    pages = [
+        {
+            "page_number": 79,
+            "document_type": "Application Form",
+            "page_type": "digital",
+            "classification_confidence": 0.99,
+            "ocr_confidence": 1.0,
+            "ocr_text": "PAGE79 Ward No 01, Market Road",
+            "extracted_fields": {
+                "permanent_address": "Ward No 11, Market Road",
+                "_ownership": {"person_id": "unassigned", "confidence": 0.0, "evidence": []},
+            },
+        },
+        {
+            "page_number": 81,
+            "document_type": "Application Form",
+            "page_type": "digital",
+            "classification_confidence": 0.99,
+            "ocr_confidence": 1.0,
+            "ocr_text": "PAGE81 Ward No 11, Market Road",
+            "extracted_fields": {
+                "permanent_address": "Ward No 11, Market Road",
+                "_ownership": {
+                    "person_id": "coapplicant_2",
+                    "confidence": 0.9,
+                    "evidence": ["phone_number"],
+                },
+            },
+        },
+    ]
+    result = compare_processed_pages(
+        pages,
+        {
+            "reference_data": {
+                "primary": {"permanent_address": "Ward Number 01, Market Road"},
+                "coapplicant_2": {
+                    "permanent_address": "Ward Number 01, Market Road",
+                    "phone_number": "9999912345",
+                },
+            },
+            "documents": [
+                {
+                    "document_type": "Application Form",
+                    "applicant_role": "primary",
+                    "pages": [79, 81],
+                    "expected_fields": {"permanent_address": "Ward Number 01, Market Road"},
+                }
+            ],
+        },
+    )
+
+    personal_flags = [
+        item for item in result["anomalies"]
+        if item["rule_id"] in {"ADDRESS_MISMATCH", "PAN_NUMBER_NOT_FOUND"}
+    ]
+    assert personal_flags == []
+    assert pages[0]["person_id"] == "unassigned"
+    assert pages[1]["person_id"] == "coapplicant_2"
+
+
+def test_address_recovery_preserves_explicit_component_conflict(monkeypatch) -> None:
+    from services.mapped_verification import _recover_trusted_fields_from_ocr
+
+    fields = {"address": "Flat 18, Oak Road, Delhi 110001"}
+    monkeypatch.setattr(
+        "services.mapped_verification.resolve_trusted_candidate",
+        lambda *_args: {
+            "observed_value": "Flat 12, Oak Road, Delhi 110001",
+            "confidence": 0.98,
+            "match_method": "normalized_exact",
+            "anchor": "address_label",
+            "line_number": 4,
+        },
+    )
+    monkeypatch.setattr(
+        "services.mapped_verification.field_reliable_for_validation", lambda *_args, **_kwargs: True
+    )
+    page = {
+        "page_number": 1,
+        "document_type": "Aadhaar",
+        "ocr_text": "Address: Flat 12, Oak Road, Delhi 110001",
+        "ocr_confidence": 0.98,
+        "is_readable": True,
+        "classification_confidence": 1.0,
+    }
+
+    recovered = _recover_trusted_fields_from_ocr(
+        page=page,
+        fields=fields,
+        mapped_fields={},
+        expected={"address": "Flat 12, Oak Road, Delhi 110001"},
+        reference_data={"primary": {"address": "Flat 12, Oak Road, Delhi 110001"}},
+        person_id="primary",
+        document_type="Aadhaar",
+    )
+
+    assert recovered == {}
+    assert fields["address"] == "Flat 18, Oak Road, Delhi 110001"
+    assert "_trusted_candidate_recovery" not in fields
+
+
 class _FakeDocument:
     def __init__(self, pages: int) -> None:
         self.pages = [object() for _ in range(pages)]

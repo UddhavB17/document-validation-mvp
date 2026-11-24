@@ -242,6 +242,38 @@ Monthly 8234.00 & 60
     assert extract_fields("KFS", text)["emi"] == "8234"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        """Annual Percentage Rate (APR) (%)
+
+वार्षिक प्रतिशत दर (APR) (%)
+24.54%
+Note: APR calculated based on net of taxes.""",
+        """9.
+Annual Percentage rate - Effective annualized interest rate
+वार्षिक प्रतिशत दर
+ऋण की प्रभावी वार्षिक ब्याज दर
+24.54 %
+10.
+Schedule of disbursement of loan in phases.""",
+    ],
+)
+def test_kfs_extracts_apr_from_bounded_bilingual_row(text: str) -> None:
+    assert extract_fields("KFS", text)["apr"] == pytest.approx(24.54)
+
+
+def test_kfs_apr_does_not_use_narrative_or_following_percentage_rows() -> None:
+    narrative = "Annual Percentage Rate (APR) is calculated using a fee of 24.54%."
+    unrelated_row = """Annual Percentage Rate (APR) (%)
+वार्षिक प्रतिशत दर
+10.
+Processing fee: 24.54 %"""
+
+    assert extract_fields("KFS", narrative)["apr"] is None
+    assert extract_fields("KFS", unrelated_row)["apr"] is None
+
+
 def test_kfs_extracts_recurring_emi_from_repayment_schedule() -> None:
     text = """Repayment Schedule under Equated Periodic Instalment
 S No.
@@ -1372,6 +1404,59 @@ def test_application_form_supports_residential_address_aliases() -> None:
 
     assert result["current_address"] == ("B-402 Pandit Dindayal Nagar, Hathijan, Ahmedabad 382445")
     assert result["permanent_address"] == "81 Modi Vas, Harniyav, Ahmedabad 382435"
+
+
+def test_application_form_recovers_permanent_address_from_confirmed_residence_row_order() -> None:
+    result = extract_fields(
+        "Application Form",
+        """Current Office Address
+Mobile
+9876500123
+WARD NO41
+LOCAL OFFICE ROAD
+Owned Rented Co-Provided
+Others
+Years at Current Residence
+WARD NO 11 276 MODELPLACE
+MODEL TOWN RAJASTHAN.
+PN 302001 tote
+Partnership Firm Private Co Public LM Co
+Yes
+No Whatsapp Contact No""",
+    )
+
+    assert result["permanent_address"] == (
+        "WARD NO 11 276 MODELPLACE MODEL TOWN RAJASTHAN 302001"
+    )
+
+
+def test_application_form_does_not_infer_permanent_address_without_row_boundary() -> None:
+    result = extract_fields(
+        "Application Form",
+        """Years at Current Residence
+WARD NO 11 276 MODELPLACE
+MODEL TOWN RAJASTHAN.
+PN 302001 tote
+Personal Details""",
+    )
+
+    assert result["permanent_address"] is None
+
+
+def test_application_kyc_records_accept_hindi_table_heading() -> None:
+    result = extract_fields(
+        "Application Form",
+        """सह-आवेदक केवाईसी विवरण
+Sudha Bai
+XXXXXXXX1234
+ABCDE1234F""",
+    )
+
+    assert {
+        "applicant_name": "Sudha Bai",
+        "aadhaar_last4": "1234",
+        "pan_number": "ABCDE1234F",
+    } in result["person_records"]
 
 
 def test_application_form_never_uses_page_counter_as_address() -> None:

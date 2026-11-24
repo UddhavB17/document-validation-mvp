@@ -96,6 +96,33 @@ def test_generic_repayment_schedule_reference_does_not_authorize_summary() -> No
     assert extract_repayment_summary(text) == {}
 
 
+def test_missing_kfs_term_does_not_use_next_numbered_row_as_tenure() -> None:
+    text = (
+        "Illustration for computation of APR for Retail and MSME loans\n"
+        "1. Amount of Facility\n100000.00\n"
+        "2. Loan Term (in months)\n"
+        "3. Rate of Interest 21.00\n"
+        "4. Total Interest amount to be charged during the entire tenure\n2000.00"
+    )
+
+    summary = extract_repayment_summary(text)
+
+    assert "tenure" not in summary
+    assert summary["roi"] == 21.0
+
+
+def test_kfs_term_is_read_with_numbered_label_and_unparenthesized_months() -> None:
+    text = (
+        "Illustration for computation of APR for Retail and MSME loans\n"
+        "1. Amount of Facility\n100000.00\n"
+        "2. Loan Term in Months\n36\n"
+        "3. Rate of Interest 21.00\n"
+        "4. Total Interest amount to be charged during the entire tenure\n2000.00"
+    )
+
+    assert extract_repayment_summary(text)["tenure"] == 36
+
+
 def test_blank_facility_amount_does_not_swallow_rate_of_interest() -> None:
     text = (
         "Key Facts Statement\n"

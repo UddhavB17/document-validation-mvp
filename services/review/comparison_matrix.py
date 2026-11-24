@@ -39,19 +39,19 @@ def resolve_field_status(
     actual_value: str | None,
     anomalies: list[dict[str, Any]],
     page_to_person: dict[int, str],
+    *,
+    observation_status: FieldStatus | None = None,
 ) -> FieldStatus:
     """Resolve one applicant field's status from values and related anomalies."""
     if not expected_value or expected_value == "None":
         return "match"
-    if not actual_value or actual_value == "None":
-        return "attention"
-    if not _matches(field_name, expected_value, actual_value):
-        return "mismatch"
 
     has_mismatch = False
     has_attention = False
 
     for anomaly in anomalies:
+        if str(anomaly.get("status", "")).casefold() == "dismissed_by_llm":
+            continue
         rule_id = str(anomaly.get("rule_id", "")).upper()
         page_number = anomaly.get("page_number")
 
@@ -64,22 +64,32 @@ def resolve_field_status(
             is_field_related = True
         elif field_name == "phone_number" and "PHONE" in rule_id:
             is_field_related = True
-        elif field_name == "address" and "ADDRESS" in rule_id:
+        elif (
+            field_name == "address"
+            and "ADDRESS" in rule_id
+            and not any(f"{subtype}_ADDRESS" in rule_id for subtype in ("CURRENT", "COMMUNICATION"))
+        ):
+            is_field_related = True
+        elif (
+            field_name in {"current_address", "communication_address"}
+            and field_name.upper() in rule_id
+        ):
             is_field_related = True
         elif field_name == "pin_code" and "PIN" in rule_id:
             is_field_related = True
-        elif field_name == "aadhaar_last4" and "AADHAAR" in rule_id:
+        elif field_name == "aadhaar_last4" and (
+            "AADHAAR_NUMBER" in rule_id or "AADHAAR_LAST4" in rule_id
+        ):
             is_field_related = True
 
         if is_field_related:
-            applies_to_person = False
-            if page_number is not None:
-                if page_to_person.get(page_number) == person_id:
-                    applies_to_person = True
+            anomaly_person_id = anomaly.get("person_id")
+            if anomaly_person_id is not None:
+                applies_to_person = str(anomaly_person_id) == person_id
             else:
-                reason = str(anomaly.get("reason", "")).lower()
-                if person_id in reason or (person_id == "primary" and "coapplicant" not in reason):
-                    applies_to_person = True
+                applies_to_person = (
+                    page_number is not None and page_to_person.get(page_number) == person_id
+                )
 
             if applies_to_person:
                 if "MISMATCH" in rule_id or "FAIL" in rule_id or "ERROR" in rule_id:
@@ -87,7 +97,17 @@ def resolve_field_status(
                 else:
                     has_attention = True
 
+    # Persisted, reliably attributed mismatch evidence outranks missing or
+    # partial extraction. Generic attention remains a softer signal.
     if has_mismatch:
+        return "mismatch"
+    if observation_status is not None:
+        return (
+            "attention" if has_attention and observation_status == "match" else observation_status
+        )
+    if not actual_value or actual_value == "None":
+        return "attention"
+    if not _matches(field_name, expected_value, actual_value):
         return "mismatch"
     if has_attention:
         return "attention"
@@ -175,6 +195,7 @@ def build_comparison_matrix_and_relationships(
         ("sanction_amount", "Sanction Amount"),
         ("loan_amount", "Loan Amount"),
         ("roi", "Rate of Interest (ROI)"),
+        ("apr", "Annual Percentage Rate (APR)"),
         ("tenure", "Tenure (Months)"),
         ("emi", "EMI"),
         ("installment_count", "Installment Count"),
@@ -227,6 +248,8 @@ def build_comparison_matrix_and_relationships(
         ("date_of_birth", "Date of Birth"),
         ("phone_number", "Phone Number"),
         ("address", "Address (Permanent)"),
+        ("current_address", "Address (Current)"),
+        ("communication_address", "Address (Communication)"),
         ("pin_code", "Pin Code"),
         ("aadhaar_last4", "Aadhaar Last 4"),
         ("gender", "Gender"),
@@ -268,6 +291,8 @@ def build_comparison_matrix_and_relationships(
 
         for field_name, field_label in applicant_field_definitions:
             expected = person_profile.get(field_name)
+            if field_name == "address":
+                expected = person_profile.get("permanent_address") or expected
             if expected is not None:
                 expected = str(expected)
             else:
@@ -280,13 +305,47 @@ def build_comparison_matrix_and_relationships(
                 continue
 
             extracted, source_pages, field_status = observed_field(
-                observations, field_name, expected, person_id
+                observations,
+                field_name,
+                expected,
+                person_id,
+                alternate_addresses=tuple(
+                    person_profile[key]
+                    for key in ("current_address", "communication_address")
+                    if person_profile.get(key) and str(person_profile[key]) != expected
+                )
+                if field_name == "address"
+                else (),
             )
-            anomaly_status = resolve_field_status(
-                person_id, field_name, expected, extracted, anomalies, page_to_person
+            resolved_status = resolve_field_status(
+                person_id,
+                field_name,
+                expected,
+                extracted,
+                anomalies,
+                page_to_person,
+                observation_status=field_status,
             )
-            if field_status == "match":
-                field_status = anomaly_status
+            if resolved_status == "mismatch" and field_status != "mismatch":
+                # If a saved mismatch supersedes a mixed comparison, open the
+                # conflicting source instead of the first matching source.
+                conflicting = next(
+                    (
+                        observation
+                        for observation in observations
+                        if observation["person_id"] == person_id
+                        and observation["field"] == field_name
+                        and observation["page_number"] in source_pages
+                        and not _matches(field_name, expected, observation["value"])
+                    ),
+                    None,
+                )
+                if conflicting is not None:
+                    extracted = str(conflicting["value"])
+                    conflict_page = int(conflicting["page_number"])
+                    source_pages.remove(conflict_page)
+                    source_pages.insert(0, conflict_page)
+            field_status = resolved_status
 
             if field_status == "mismatch":
                 has_any_mismatch = True

@@ -325,12 +325,28 @@ def _field_reliable_for_validation_uncached(
     ):
         return False
     provenance = _field_provenance(fields, field)
+    min_confidence = 0.60
+    if field_key in {"applicant_name", "pan_number", "aadhaar_number", "date_of_birth"}:
+        min_confidence = 0.65
     if provenance:
-        min_confidence = 0.60
-        if field_key in {"applicant_name", "pan_number", "aadhaar_number", "date_of_birth"}:
-            min_confidence = 0.65
         if _float(provenance.get("field_confidence"), 1.0) < min_confidence:
             return False
+    elif (
+        field_key in IDENTITY_FIELDS
+        and str(page.get("page_type") or "").strip().casefold() != "digital"
+    ):
+        # Older persisted pages may not have per-field provenance. Apply the
+        # same measured OCR floor to those scanned identity observations so
+        # omission of provenance cannot make a weak ID more reliable. Digital
+        # text and pages without an OCR score retain their existing behavior;
+        # page eligibility separately rejects scanned pages with no score.
+        ocr_confidence = page.get("ocr_confidence")
+        if ocr_confidence not in (None, ""):
+            try:
+                if float(ocr_confidence) < min_confidence:
+                    return False
+            except (TypeError, ValueError):
+                return False
     return True
 
 

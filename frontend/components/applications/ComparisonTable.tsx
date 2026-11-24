@@ -16,10 +16,6 @@ const statusLabels = {
   attention: "Attention",
 };
 
-function normalizedPages(pages: number[]): number[] {
-  return [...new Set(pages.filter((page) => Number.isFinite(page) && page > 0))].sort((a, b) => a - b);
-}
-
 function SourcePages({
   pages,
   label,
@@ -29,7 +25,7 @@ function SourcePages({
   label: string;
   onSelectPage: (pageNo: number, title: string, reason: string) => void;
 }) {
-  const pageNumbers = normalizedPages(pages);
+  const pageNumbers = [...new Set(pages.filter((page) => Number.isFinite(page) && page > 0))];
   if (pageNumbers.length === 0) {
     return <span className="text-[#5C6B7A] font-medium">—</span>;
   }

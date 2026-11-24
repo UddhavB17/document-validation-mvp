@@ -16,6 +16,7 @@ from services.ops_presentation import (
     AI_DISPLAY_CONFIDENCE_THRESHOLD,
     _plain_ai_explanation,
     build_ops_payload,
+    compute_findings,
     rule_to_code,
 )
 from services.ops_repository import load_ops_snapshot
@@ -110,6 +111,9 @@ def _walk_keys(value: object, found: set[str]) -> None:
 @pytest.fixture()
 def ops_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DATABASE_PATH", tmp_path / "ops.db")
+    # The deterministic fixture has no saved AI assessment. Application IDs
+    # can overlap with persisted reviews in a developer's object store.
+    monkeypatch.setattr("services.ops_presentation._load_ops_ai_assessments", lambda _: {})
     init_db()
     anomalies = json.loads(Path("tests/fixtures/ops/anomalies.json").read_text())
     with get_connection() as connection:
@@ -174,6 +178,92 @@ def test_all_findings_are_visible_and_hindi_is_present(ops_db) -> None:
         assert finding["detail"]["hi"].strip()
     assert payload["summary"]["en"].strip()
     assert payload["summary"]["hi"].strip()
+
+
+@pytest.mark.parametrize(
+    "anomalies,private_values",
+    [
+        (
+            [
+                {
+                    "rule_id": "PAN_NUMBER_MISMATCH", "severity": "HIGH", "page_number": 4,
+                    "document_type": "PAN Card", "expected_value": "ABCDE1234F",
+                    "found_value": "TSTPA7002Z",
+                },
+                {
+                    "rule_id": "PAN_NUMBER_MISMATCH", "severity": "HIGH", "page_number": 6,
+                    "document_type": "PAN Card", "expected_value": "FGHIJ5678K",
+                    "found_value": "TSTPA9999Z",
+                },
+            ],
+            ("ABCDE1234F", "TSTPA7002Z", "FGHIJ5678K", "TSTPA9999Z"),
+        ),
+        (
+            [
+                {
+                    "rule_id": "PAN_NUMBER_MISMATCH", "severity": "HIGH", "page_number": 4,
+                    "document_type": "PAN Card", "expected_value": "ABCDE1234F",
+                    "found_value": "TSTPA7002Z",
+                },
+                {
+                    "rule_id": "DATE_OF_BIRTH_MISMATCH", "severity": "HIGH", "page_number": 8,
+                    "document_type": "Aadhaar", "expected_value": "01/02/1980",
+                    "found_value": "02/01/1980",
+                },
+            ],
+            ("ABCDE1234F", "TSTPA7002Z", "01/02/1980", "02/01/1980"),
+        ),
+    ],
+)
+def test_distinct_identity_issues_share_neutral_bilingual_detail(anomalies, private_values):
+    [finding] = compute_findings(anomalies)
+    expected_pages = [4, 6] if anomalies[1]["page_number"] == 6 else [4, 8]
+
+    assert finding["code"] == "ID_MISMATCH"
+    assert finding["pages"] == expected_pages
+    assert finding["evidence"]["page"] == 4
+    assert "distinct checks" in finding["detail"]["en"]
+    assert "अलग-अलग जाँचों" in finding["detail"]["hi"]
+    detail_json = json.dumps(finding["detail"], ensure_ascii=False)
+    assert all(value not in detail_json for value in private_values)
+    assert "ai_detail" not in finding
+
+
+def test_single_identity_finding_keeps_specific_detail():
+    [finding] = compute_findings(
+        [{
+            "rule_id": "PAN_NUMBER_MISMATCH", "severity": "HIGH", "page_number": 4,
+            "document_type": "PAN Card", "expected_value": "ABCDE1234F",
+            "found_value": "TSTPA7002Z",
+        }]
+    )
+
+    assert "ABCDE1234F" in finding["detail"]["en"]
+    assert "TSTPA7002Z" in finding["detail"]["en"]
+
+
+def test_grouped_finding_fallback_evidence_stays_with_primary_values():
+    [finding] = compute_findings(
+        [
+            {
+                "rule_id": "PAN_NUMBER_MISMATCH", "severity": "LOW", "page_number": 4,
+                "document_type": "PAN Card", "expected_value": "ABCDE1234F",
+                "found_value": "TSTPA7002Z",
+            },
+            {
+                "rule_id": "AADHAAR_NUMBER_MISMATCH", "severity": "HIGH", "page_number": 8,
+                "document_type": "Aadhaar", "expected_value": "123456789012",
+                "found_value": "123456789999",
+            },
+        ]
+    )
+
+    assert finding["pages"] == [4, 8]
+    assert finding["evidence"] == {
+        "page": 8,
+        "bbox": None,
+        "text": "123456789999",
+    }
 
 
 def test_no_internal_keys_leak(ops_db) -> None:

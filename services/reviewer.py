@@ -16,6 +16,7 @@ from typing import Any
 from database.db import get_connection
 
 SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+REVIEWER_COMPARISON_VERSION = 3  # Rebuild prior results with APR and legal-party evidence.
 
 # File-level severity is deliberately count-based.  Individual finding
 # severities remain domain-specific and continue to drive reviewer safeguards;
@@ -40,6 +41,7 @@ PROCESSING_QUALITY_RULES = frozenset(
         "AUTO_OWNER_LOW_CONFIDENCE",
         "AUTO_DOCUMENT_TYPE_LOW_CONFIDENCE",
         "TRUSTED_PERSON_SCOPE_MISSING",
+        "PAN_OCR_REVIEW_REQUIRED",
     }
 )
 
@@ -103,24 +105,35 @@ def collapse_for_reviewer(anomalies: list[dict]) -> list[dict]:
     buckets: dict[str, list[dict]] = {}
     unique_anomalies = _dedupe_exact([a for a in anomalies if a.get("status") != "dismissed_by_llm"])
 
-    # A trusted-data mismatch already identifies the offending document value.
-    # Do not create a second operations task for the corresponding
-    # cross-document mismatch for the same person and field.
-    trusted_mismatch_keys: set[tuple[str, str]] = set()
+    # Merge two rules only when they point to the very same observation. A
+    # conflict on a different source page is evidence the reviewer still needs.
+    trusted_mismatches: dict[tuple[str, str, str, str, str], int] = {}
+
+    def observation_key(anomaly: dict, field: str) -> tuple[str, str, str, str, str]:
+        return (
+            str(anomaly.get("person_id") or ""),
+            field,
+            str(anomaly.get("page_number") or ""),
+            str(anomaly.get("document_type") or ""),
+            str(anomaly.get("found_value") or ""),
+        )
+
     for anomaly in unique_anomalies:
         rule_id = str(anomaly.get("rule_id") or "")
-        match = re.match(r"^TRUSTED_(.+?)_MISMATCH(?:_SUMMARY)?$", rule_id)
-        if match:
-            trusted_mismatch_keys.add((str(anomaly.get("person_id") or ""), match.group(1)))
+        match = re.fullmatch(r"TRUSTED_(.+?)_MISMATCH", rule_id)
+        if match and anomaly.get("page_number"):
+            key = observation_key(anomaly, match.group(1))
+            severity = SEVERITY_ORDER.get(str(anomaly.get("severity") or "").upper(), 3)
+            trusted_mismatches[key] = min(severity, trusted_mismatches.get(key, 3))
 
     for anomaly in unique_anomalies:
         rule_id = str(anomaly.get("rule_id") or "")
         cross_match = re.match(r"^CROSS_DOCUMENT_(.+?)_MISMATCH$", rule_id)
-        if (
-            cross_match
-            and (str(anomaly.get("person_id") or ""), cross_match.group(1)) in trusted_mismatch_keys
-        ):
-            continue
+        if cross_match:
+            trusted_severity = trusted_mismatches.get(observation_key(anomaly, cross_match.group(1)))
+            severity = SEVERITY_ORDER.get(str(anomaly.get("severity") or "").upper(), 3)
+            if trusted_severity is not None and trusted_severity <= severity:
+                continue
         bucket_key = _collapse_bucket_key(rule_id, anomaly)
         if bucket_key is None:
             actionable.append(anomaly)
@@ -533,7 +546,10 @@ def save_reviewer_comparison(
             (
                 application_id,
                 pipeline_job_id,
-                json.dumps(comparison_matrix, ensure_ascii=False),
+                json.dumps(
+                    {**comparison_matrix, "_version": REVIEWER_COMPARISON_VERSION},
+                    ensure_ascii=False,
+                ),
                 json.dumps(relationships, ensure_ascii=False),
                 now,
             ),
@@ -557,6 +573,9 @@ def load_reviewer_comparison(application_id: int) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     if not isinstance(comparison_matrix, dict) or not isinstance(relationships, list):
+        return None
+    if comparison_matrix.pop("_version", None) != REVIEWER_COMPARISON_VERSION:
+        # Older results can be rebuilt from saved evidence without rerunning the pipeline.
         return None
     return {
         "pipeline_job_id": row["pipeline_job_id"],

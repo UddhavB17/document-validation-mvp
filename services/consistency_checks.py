@@ -16,7 +16,13 @@ from services.document_classifier import (
     is_insurance_application_context,
     is_insurer_local_application_identifier,
 )
-from services.field_verification import address_with_relationship
+from services.field_verification import address_with_relationship, verify_amount
+from services.identity_matching import (
+    address_component_conflict,
+    explicit_address_units,
+    numbered_locality_identifiers,
+)
+from services.legal_party_identity import legal_party_birth_dates
 from services.person_names import (
     canonicalize_person_name,
     comparable_name,
@@ -607,6 +613,9 @@ def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
 
     anomalies.extend(validate_repayment_schedules(pages, trusted))
     anomalies.extend(_identity_affidavit_checks(pages, anomalies, people, reference_date))
+    anomalies = _review_confusable_scanned_form_pan_ocr(
+        anomalies, pages, observations, people
+    )
     try:
         from services.evidence_boxes import attach_evidence_to_anomalies
 
@@ -614,6 +623,251 @@ def run_consistency_checks(pages: list[dict], trusted: dict) -> list[dict]:
     except (ImportError, TypeError, ValueError, KeyError, AttributeError) as exc:
         LOGGER.warning("evidence-box attach failed; continuing without bboxes", exc_info=exc)
     return anomalies
+
+
+def _review_confusable_scanned_form_pan_ocr(
+    anomalies: list[dict],
+    pages: list[dict],
+    observations: list[dict],
+    people: dict[str, dict],
+) -> list[dict]:
+    """Turn a narrowly corroborated handwritten PAN OCR error into review.
+
+    This never accepts or rewrites an identifier. It only replaces the form's
+    business mismatch when a unique exact phone identifies the person and a
+    reliable PAN card with matching holder name agrees with trusted data.
+    """
+    page_by_number = {int(page.get("page_number") or 0): page for page in pages}
+    reviews: list[tuple[tuple[str, int, str], dict]] = []
+    for anomaly in anomalies:
+        if anomaly.get("rule_id") != "TRUSTED_PAN_NUMBER_MISMATCH":
+            continue
+        page_number = int(anomaly.get("page_number") or 0)
+        person_id = str(anomaly.get("person_id") or "")
+        page = page_by_number.get(page_number)
+        person = people.get(person_id)
+        if not page or not person or not _is_scanned_form_pan_ocr_candidate(
+            page, anomaly.get("expected_value"), anomaly.get("found_value")
+        ):
+            continue
+        if not _has_unique_exact_page_phone(page, person_id, people, observations):
+            continue
+        card_pages = _corroborating_pan_card_pages(
+            page_number, person_id, person, anomaly.get("expected_value"), pages, observations, people
+        )
+        if not card_pages:
+            continue
+        key = (person_id, page_number, _normalized_pan(anomaly.get("found_value")))
+        review = {
+            **_anomaly(
+                "PAN_OCR_REVIEW_REQUIRED",
+                "LOW",
+                anomaly.get("expected_value"),
+                anomaly.get("found_value"),
+                {
+                    "document_type": page.get("document_type") or "Application Form",
+                    "page_number": page_number,
+                    "person_id": person_id,
+                },
+                (
+                    "The scanned application form PAN differs from the trusted PAN by a "
+                    "single T/J OCR-confusable character. A unique phone identifies the "
+                    f"person, and PAN card page {min(card_pages)} agrees with trusted data. "
+                    "Check the original form before recording a decision."
+                ),
+            ),
+            "field_name": "pan_number",
+            "status": "MANUAL_REVIEW_REQUIRED",
+        }
+        reviews.append((key, review))
+
+    if not reviews:
+        return anomalies
+    review_keys = {key for key, _ in reviews}
+    replaced_pages = {(person_id, page_number) for person_id, page_number, _ in review_keys}
+    filtered = []
+    for anomaly in anomalies:
+        if anomaly.get("rule_id") not in {
+            "TRUSTED_PAN_NUMBER_MISMATCH",
+            "CROSS_DOCUMENT_PAN_NUMBER_MISMATCH",
+        }:
+            filtered.append(anomaly)
+            continue
+        key = (
+            str(anomaly.get("person_id") or ""),
+            int(anomaly.get("page_number") or 0),
+            _normalized_pan(anomaly.get("found_value")),
+        )
+        if anomaly.get("rule_id") == "CROSS_DOCUMENT_PAN_NUMBER_MISMATCH":
+            cross_found = _normalized_pan(anomaly.get("found_value"))
+            if key[:2] not in replaced_pages or not any(
+                review_key[:2] == key[:2] and review_key[2] == cross_found
+                for review_key in review_keys
+            ):
+                filtered.append(anomaly)
+        elif key not in review_keys:
+            filtered.append(anomaly)
+    filtered.extend(review for _, review in dict(reviews).items())
+    return filtered
+
+
+def _is_scanned_form_pan_ocr_candidate(page: dict, expected: Any, found: Any) -> bool:
+    if (
+        _canonical_type(page.get("document_type")) != "application form"
+        or str(page.get("page_type") or "").strip().casefold() != "scanned"
+    ):
+        return False
+    try:
+        confidence = float(page.get("ocr_confidence"))
+    except (TypeError, ValueError):
+        return False
+    if not 0.72 <= confidence <= 0.90:
+        return False
+    expected_pan = re.sub(r"[^A-Z0-9]", "", str(expected or "").upper())
+    found_pan = re.sub(r"[^A-Z0-9]", "", str(found or "").upper())
+    if not re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", expected_pan) or not re.fullmatch(
+        r"[A-Z]{5}\d{4}[A-Z]", found_pan
+    ):
+        return False
+    differences = [
+        index for index, (left, right) in enumerate(zip(expected_pan, found_pan)) if left != right
+    ]
+    return (
+        differences == [2]
+        and {expected_pan[2], found_pan[2]} == {"T", "J"}
+    )
+
+
+def _normalized_phone(value: Any) -> str:
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) == 12 and digits.startswith("91"):
+        return digits[-10:]
+    return digits
+
+
+def _normalized_pan(value: Any) -> str:
+    match = re.search(r"\b[A-Z]{5}\d{4}[A-Z]\b", str(value or "").upper())
+    return match.group(0) if match else ""
+
+
+def _has_unique_exact_page_phone(
+    page: dict,
+    person_id: str,
+    people: dict[str, dict],
+    observations: list[dict],
+) -> bool:
+    person = people.get(person_id) or {}
+    trusted_phone = _normalized_phone(_lookup(person, "phone_number"))
+    if not re.fullmatch(r"[6-9]\d{9}", trusted_phone):
+        return False
+    matching_owners = [
+        other_id
+        for other_id, other in people.items()
+        if _normalized_phone(_lookup(other, "phone_number")) == trusted_phone
+    ]
+    if matching_owners != [person_id]:
+        return False
+    page_number = int(page.get("page_number") or 0)
+    phone_observed = any(
+        observation.get("field") == "phone_number"
+        and int(observation.get("page_number") or 0) == page_number
+        and observation.get("person_id") == person_id
+        and _normalized_phone(observation.get("value")) == trusted_phone
+        for observation in observations
+    )
+    fields = page.get("extracted_fields")
+    fields = fields if isinstance(fields, dict) else {}
+    ownership = fields.get("_ownership")
+    ownership_evidence = (
+        set(ownership.get("evidence") or []) if isinstance(ownership, dict) else set()
+    )
+    ownership_confidence = (
+        float(ownership.get("confidence") or 0.0) if isinstance(ownership, dict) else 0.0
+    )
+    phone_ownership = (
+        isinstance(ownership, dict)
+        and str(ownership.get("person_id") or "") == person_id
+        and "phone_number" in ownership_evidence
+        and ownership_confidence >= 0.65
+    )
+    if not phone_observed and not phone_ownership:
+        return False
+    phone_matches = re.findall(
+        r"(?<!\d)(?:\+?91[\s-]?)?([6-9]\d{4}[\s-]?\d{5})(?!\d)",
+        str(page.get("ocr_text") or ""),
+    )
+    normalized_matches = {re.sub(r"\D", "", match) for match in phone_matches}
+    return normalized_matches == {trusted_phone}
+
+
+def _corroborating_pan_card_pages(
+    form_page_number: int,
+    person_id: str,
+    person: dict,
+    expected_pan: Any,
+    pages: list[dict],
+    observations: list[dict],
+    people: dict[str, dict],
+) -> set[int]:
+    expected = re.sub(r"[^A-Z0-9]", "", str(expected_pan or "").upper())
+    by_number = {int(page.get("page_number") or 0): page for page in pages}
+    matches: set[int] = set()
+    conflicts: set[int] = set()
+    for observation in observations:
+        if observation.get("field") != "pan_number":
+            continue
+        if _canonical_type(observation.get("document_type")) not in {"pan", "pan card"}:
+            continue
+        page_number = int(observation.get("page_number") or 0)
+        if not page_number or page_number == form_page_number:
+            continue
+        source_page = by_number.get(page_number)
+        if not source_page or not page_eligible_for("pan_number", source_page):
+            continue
+        value = re.sub(r"[^A-Z0-9]", "", str(observation.get("value") or "").upper())
+        if not re.fullmatch(r"[A-Z]{5}\d{4}[A-Z]", value):
+            continue
+        exact_owner = _positive_exact_identity_owner("pan_number", value, people)
+        page_owner = str(observation.get("person_id") or "")
+        if exact_owner:
+            same_person = exact_owner == person_id
+        else:
+            same_person = page_owner == person_id
+        if not same_person:
+            continue
+        if value != expected:
+            conflicts.add(page_number)
+            continue
+        if page_owner != person_id and exact_owner != person_id:
+            continue
+        if _pan_card_name_matches(source_page, person):
+            matches.add(page_number)
+    return matches if matches and not conflicts else set()
+
+
+def _pan_card_name_matches(page: dict, person: dict) -> bool:
+    fields = page.get("extracted_fields")
+    if not isinstance(fields, dict):
+        return False
+    trusted_name = _lookup(person, "applicant_name")
+    names = [
+        _lookup(fields, "applicant_name"),
+        _lookup(fields.get("_mapped_extraction") or {}, "applicant_name"),
+    ]
+    records = fields.get("person_records")
+    if isinstance(records, list):
+        names.extend(
+            _lookup(record, "applicant_name")
+            for record in records
+            if isinstance(record, dict)
+        )
+    return any(
+        name not in (None, "")
+        and _observation_is_reliable(page, "applicant_name", name)
+        and page_eligible_for("applicant_name", page)
+        and _matches("applicant_name", name, trusted_name)
+        for name in names
+    )
 
 
 def _people(trusted: dict) -> dict[str, dict]:
@@ -652,6 +906,9 @@ def _observations(
         has_person_rows = isinstance(person_records, list) and any(
             isinstance(record, dict) and bool(record) for record in person_records
         )
+        multiple_pans = is_multi_person_type and len(set(re.findall(
+            r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", str(page.get("ocr_text") or "").upper()
+        ))) > 1
         misowned_application_section = (
             type_key == "application form"
             and section_role in {"coapplicant", "guarantor"}
@@ -707,6 +964,7 @@ def _observations(
                             "field": canonical_field,
                             "value": comparison_value,
                             "document_type": str(page.get("document_type") or "Unknown"),
+                            "page_type": page.get("page_type"),
                             "page_number": _find_supporting_page_number(
                                 pages, page, value, compacted_page_texts=compacted_page_texts
                             ),
@@ -726,6 +984,10 @@ def _observations(
             if canonical_field in ADDRESS_FIELDS and _is_guarantor_person(person_id, people):
                 # Keep guarantor documents in the packet, but exclude their
                 # address from borrower/co-borrower validation.
+                continue
+            if canonical_field == "pan_number" and multiple_pans:
+                # A page-level PAN can come from a different person's KYC row.
+                # The scoped records above are the evidence for these forms.
                 continue
             if multi_person_container and canonical_field in PERSON_FIELDS:
                 # Application/CAM pages are multi-person containers even when
@@ -757,12 +1019,18 @@ def _observations(
                     "field": canonical_field,
                     "value": comparison_value,
                     "document_type": str(page.get("document_type") or "Unknown"),
+                    "page_type": page.get("page_type"),
                     "page_number": _find_supporting_page_number(
                         pages, page, value, compacted_page_texts=compacted_page_texts
                     ),
                     "ocr_text": page.get("ocr_text"),
                 }
             )
+    if included_fields is None or "date_of_birth" in included_fields:
+        result.extend(
+            {**observation, "source_type": "legal_party"}
+            for observation in legal_party_birth_dates(pages, people)
+        )
     return result
 
 
@@ -1061,6 +1329,15 @@ def _trusted_matches(
     anomalies: list[dict] = []
     emitted: set[tuple[str, str, int | None]] = set()
     multi_person = len(people) > 1
+    matched_pan_card_pages: dict[str, set[int]] = defaultdict(set)
+    for obs in observations:
+        if obs["field"] != "pan_number" or _canonical_type(obs["document_type"]) not in {
+            "pan", "pan card"
+        }:
+            continue
+        owner = _positive_exact_identity_owner("pan_number", obs["value"], people)
+        if owner and obs["page_number"]:
+            matched_pan_card_pages[owner].add(obs["page_number"])
     for obs in observations:
         person_id = obs["person_id"]
         field = obs["field"]
@@ -1101,25 +1378,27 @@ def _trusted_matches(
             # co-applicant or guarantor in a multi-person manifest.
             address_records.append(trusted)
         address_variants = (
-            _trusted_address_variants(*address_records) if field in ADDRESS_FIELDS else []
+            trusted_address_values(field, *address_records) if field in ADDRESS_FIELDS else []
         )
         if address_variants and any(
             _matches("address", value, obs["value"]) for value in address_variants
         ):
             continue
-        if expected in (None, "") and address_variants:
+        if address_variants:
             expected = address_variants[0]
         if field in NAME_FIELDS and not is_person_name_candidate(expected):
             continue
         if expected in (None, "") or _matches(field, expected, obs["value"]):
             continue
-        # Multi-KYC collage pages often extract the wrong card's address. If the
-        # page OCR still contains the trusted address/prefix, do not flag it.
-        if field in ADDRESS_FIELDS and _page_text_supports_value(obs.get("ocr_text"), expected):
-            continue
-        # Person PIN on the extracted address + short trusted relation prefix
-        # is operationally consistent for rural KYC dumps.
-        if field in ADDRESS_FIELDS:
+        address_conflict = (
+            address_component_conflict(expected, obs["value"]) if field in ADDRESS_FIELDS else None
+        )
+        if field in ADDRESS_FIELDS and not address_conflict:
+            # Whole-page OCR can recover incomplete collage extraction, but cannot
+            # negate a conflicting labelled component on an eligible observation.
+            if _page_text_supports_value(obs.get("ocr_text"), expected):
+                continue
+            # A PIN can support a short trusted relationship prefix.
             person_pin = str(person.get("pin_code") or "")
             found_pins = set(re.findall(r"\b[1-8]\d{5}\b", str(obs["value"])))
             expected_tokens = set(re.findall(r"[a-z0-9]+", str(expected).lower()))
@@ -1146,6 +1425,20 @@ def _trusted_matches(
         if key in emitted:
             continue
         emitted.add(key)
+        reason = f"{field.replace('_', ' ').title()} does not match the trusted JSON/database dump."
+        if address_conflict:
+            reason = f"Address {address_conflict} differs from the trusted JSON/database dump."
+        if (
+            field == "pan_number"
+            and obs.get("page_type") == "scanned"
+            and _canonical_type(obs["document_type"]) == "application form"
+            and matched_pan_card_pages.get(person_id)
+        ):
+            card_page = min(matched_pan_card_pages[person_id])
+            reason = (
+                "OCR on the scanned form disagrees with the trusted PAN. "
+                f"PAN card page {card_page} agrees with the trusted PAN. Check the original form."
+            )
         anomalies.append(
             _anomaly(
                 f"TRUSTED_{field.upper()}_MISMATCH",
@@ -1153,7 +1446,7 @@ def _trusted_matches(
                 expected,
                 obs["value"],
                 {**obs, "person_id": person_id},
-                f"{field.replace('_', ' ').title()} does not match the trusted JSON/database dump.",
+                reason,
             )
         )
     return anomalies
@@ -1357,7 +1650,8 @@ def _aadhaar_address_checks(
     for person_id, values in by_person.items():
         if person_id == "unassigned":
             continue
-        address_variants = _trusted_address_variants((people or {}).get(person_id, {}))
+        person = (people or {}).get(person_id, {})
+        address_variants = _trusted_address_variants(person)
         aadhaar_values = [item for item in values if item["document_type"] == "Aadhaar"]
         aadhaar = max(
             aadhaar_values,
@@ -1381,8 +1675,20 @@ def _aadhaar_address_checks(
         )
         if not aadhaar:
             continue
+        for aadhaar_address in aadhaar_values:
+            if finding := _aadhaar_permanent_locality_review(
+                aadhaar_address, observations, person, people or {}
+            ):
+                anomalies.append(finding)
         for other in values:
             if other is aadhaar or _matches("address", aadhaar["value"], other["value"]):
+                continue
+            if other["field"] != "address" and not any(
+                _matches("address", expected, aadhaar["value"])
+                for expected in trusted_address_values(other["field"], person)
+            ) and any(_matches("address", expected, aadhaar["value"]) for expected in address_variants):
+                # Aadhaar supports another declared address type. The typed
+                # observation must be assessed against its own trusted value.
                 continue
             if address_variants and all(
                 any(_matches("address", variant, item["value"]) for variant in address_variants)
@@ -1400,6 +1706,46 @@ def _aadhaar_address_checks(
                 )
             )
     return anomalies
+
+
+def _aadhaar_permanent_locality_review(
+    address: dict, observations: list[dict], person: dict, people: dict[str, dict]
+) -> dict | None:
+    """Report a permanent-address detail that a shorter alternate cannot resolve."""
+    if address.get("page_type") != "digital":
+        return None
+    permanent = _lookup(person, "permanent_address")
+    if not permanent and _compact(person.get("address_subtype")) in {"permanent", "permanentaddress"}:
+        permanent = _lookup(person, "address")
+    found = address["value"]
+    if address_component_conflict(permanent, found) != "locality identifier":
+        return None
+    matching_variants = [
+        variant for variant in _trusted_address_variants(person) if _matches("address", variant, found)
+    ]
+    found_codes = numbered_locality_identifiers(found)
+    if not matching_variants or any(
+        found_codes & numbered_locality_identifiers(variant) for variant in matching_variants
+    ):
+        return None
+    if not any(
+        obs["page_number"] == address["page_number"]
+        and obs["document_type"] == "Aadhaar"
+        and obs["person_id"] == address["person_id"]
+        and obs["field"] in {"aadhaar_number", "aadhaar_last4"}
+        and _positive_exact_identity_owner(obs["field"], obs["value"], people) == address["person_id"]
+        for obs in observations
+    ):
+        return None
+    return _anomaly(
+        "TRUSTED_ADDRESS_MISMATCH",
+        "MEDIUM",
+        permanent,
+        found,
+        address,
+        "Aadhaar locality identifier differs from the trusted permanent address. "
+        "The matching alternate address omits this detail.",
+    )
 
 
 def _positive_exact_identity_owner(field: str, value: Any, people: dict[str, dict]) -> str | None:
@@ -1427,6 +1773,22 @@ def _trusted_address_variants(*records: dict | None) -> list[Any]:
             seen.add(marker)
             values.append(value)
     return values
+
+
+def trusted_address_values(field: str, *records: dict | None) -> list[Any]:
+    """Use the corresponding trusted address when a source labels its address type."""
+    if field != "address":
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            expected = _lookup(record, field)
+            if expected in (None, "") and field == "permanent_address":
+                subtype = _compact(record.get("address_subtype"))
+                if subtype in {"", "permanent", "permanentaddress"}:
+                    expected = _lookup(record, "address")
+            if expected not in (None, ""):
+                return [expected]
+    return _trusted_address_variants(*records)
 
 
 def _relationship_checks(observations: list[dict], people: dict[str, dict]) -> list[dict]:
@@ -1952,6 +2314,11 @@ def _lookup(data: dict, field: str) -> Any:
 def _matches(field: str, left: Any, right: Any) -> bool:
     if left in (None, "") or right in (None, ""):
         return True
+    if field == "loan_amount":
+        return verify_amount(str(right), str(left)).match
+    if field in {"tenure", "installment_count"}:
+        expected, observed = _number(left), _number(right)
+        return expected is not None and expected == observed
     if field in NUMERIC_FIELDS or field == "credit_score":
         a, b = _number(left), _number(right)
         return a is not None and b is not None and abs(a - b) <= max(0.01, abs(a) * 0.01)
@@ -1987,7 +2354,7 @@ def _matches(field: str, left: Any, right: Any) -> bool:
             and left_compact[-4:] == right_compact[-4:]
         )
     if field in ADDRESS_FIELDS:
-        if _explicit_address_unit_conflict(left, right):
+        if address_component_conflict(left, right):
             return False
 
         def address_tokens(value: Any) -> set[str]:
@@ -2087,12 +2454,12 @@ def _matches(field: str, left: Any, right: Any) -> bool:
             for right_token in right_distinctive - distinctive_shared
             if _similarity(left_token, right_token) >= 0.78
         }
-        left_units = _explicit_address_units(left)
-        right_units = _explicit_address_units(right)
+        left_units = explicit_address_units(left)
+        right_units = explicit_address_units(right)
         matched_unit = any(
             not left_values.isdisjoint(right_units[category])
             for category, left_values in left_units.items()
-            if category in right_units
+            if category in right_units and category in {"occupancy", "plot", "block"}
         )
         # Layout OCR may corrupt a PIN or one locality spelling while preserving
         # the exact flat/unit plus multiple address anchors (B-402, Pandit,
@@ -2128,48 +2495,6 @@ def _matches(field: str, left: Any, right: Any) -> bool:
     if field in {"father_name", "mother_name"}:
         return _related_names_equivalent(left, right)
     return _similarity(left, right) >= 0.88
-
-
-def _explicit_address_unit_conflict(left: Any, right: Any) -> bool:
-    """Reject locality-tolerant matches when both addresses disagree on a unit.
-
-    PIN and locality overlap are deliberately tolerant of OCR noise.  A clear
-    Flat/House/Unit number is different: B-402 and B-403 cannot describe the
-    same service address even if every remaining token is identical.
-    """
-    left_units = _explicit_address_units(left)
-    right_units = _explicit_address_units(right)
-    for category in left_units.keys() & right_units.keys():
-        if left_units[category].isdisjoint(right_units[category]):
-            return True
-    return False
-
-
-def _explicit_address_units(value: Any) -> dict[str, set[str]]:
-    text = str(value or "").casefold()
-    result: dict[str, set[str]] = defaultdict(set)
-    identifier = r"([a-z]?\s*[-/]?\s*\d{1,5}(?:\s*[-/]\s*\d{1,5})?[a-z]?)"
-    patterns = (
-        (
-            "occupancy",
-            rf"\b(?:flat|apartment|apt|house|unit|door|room|quarter)\s*(?:(?:number|no)\.?\s*)?{identifier}",
-        ),
-        ("occupancy", rf"\bh\s*\.?\s*no\.?\s*{identifier}"),
-        ("plot", rf"\bplot\s*(?:(?:number|no)\.?\s*)?{identifier}"),
-        ("block", rf"\bblock\s*(?:(?:number|no)\.?\s*)?{identifier}"),
-    )
-    for category, pattern in patterns:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            normalized = re.sub(r"[^a-z0-9]", "", match.group(1).casefold())
-            if normalized:
-                result[category].add(normalized)
-
-    # Company dumps commonly omit the word "Flat" and start directly with
-    # an alphanumeric unit such as "B 402" or "B-402".
-    leading = re.match(r"^\s*([a-z])\s*[-/]?\s*(\d{1,5}[a-z]?)\b", text)
-    if leading:
-        result["occupancy"].add(f"{leading.group(1)}{leading.group(2)}")
-    return result
 
 
 def _related_names_equivalent(left: Any, right: Any) -> bool:

@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 
 from database.models import DocumentVerificationReport, FieldVerificationResult, GravitonRecord
 from services.config import get_setting
+from services.identity_matching import address_component_conflict
 from services.llm_verifier import llm_verify_field
 from services.person_names import (
     NAME_MATCH_THRESHOLD,
@@ -199,6 +200,8 @@ def address_with_relationship(address: Any, fields: dict[str, Any] | None) -> st
 
 def verify_address(extracted: str, db_value: str) -> FieldVerificationResult:
     """Verify addresses using rapidfuzz token-set similarity with abbreviation normalization."""
+    if component := address_component_conflict(extracted, db_value):
+        return _failed("address", extracted, db_value, "exact", f"Address {component} differs")
     if _relationship_prefix_matches(extracted, db_value):
         return FieldVerificationResult(
             field_name="address",

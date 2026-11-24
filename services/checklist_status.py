@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.checklist_engine import condition_applies, system_flag_state
+from services.checklist_engine import (
+    _document_derived_system_data,
+    condition_applies,
+    system_flag_state,
+)
 from services.document_presence import assess_document_presence, review_presence_findings
 from services.page_quality import confident_pages_for_types
 
@@ -46,7 +50,7 @@ def build_checklist_status(
         if a.get("s_no") is not None and not str(a.get("rule_id", "")).startswith("MISSING_DOC")
     }
 
-    system_data = system_data or {}
+    system_data = {**_document_derived_system_data(pages), **(system_data or {})}
     rows: list[dict[str, Any]] = []
     for item in sorted(checklist_items, key=lambda row: int(row.get("s_no") or 0)):
         s_no = int(item.get("s_no") or 0)
@@ -65,9 +69,15 @@ def build_checklist_status(
             status = "required_and_missing"
         elif s_no in review_by_sno or (assessment.candidate_pages and not matched_pages):
             status = "manual_review"
-        elif matched_pages or system_state is True:
+        elif system_state is True:
             status = "required_and_present"
-        elif applicability is None or system_state is None:
+        elif item.get("ai_checkable") is False:
+            status = "manual_review"
+        elif applicability is None:
+            status = "not_evaluated_by_engine"
+        elif matched_pages:
+            status = "required_and_present"
+        elif system_state is None:
             status = "not_evaluated_by_engine"
         else:
             status = "manual_review"

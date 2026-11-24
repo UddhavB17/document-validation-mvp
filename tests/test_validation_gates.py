@@ -1,3 +1,5 @@
+import pytest
+
 from services.field_extractor import extract_fields
 from services.validation_gates import (
     attach_field_provenance,
@@ -124,6 +126,77 @@ def test_cached_page_counter_is_not_reliable_address_evidence() -> None:
         "Page 2 of 128",
         expected_document_type="Application Form",
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("pan_number", "ABCDE1234F"),
+        ("aadhaar_number", "234567890123"),
+        ("date_of_birth", "1990-01-02"),
+        ("applicant_name", "Sample Kumar"),
+    ],
+)
+def test_legacy_scanned_identity_without_provenance_uses_ocr_confidence_floor(field, value):
+    page = {
+        "page_type": "scanned",
+        "ocr_confidence": 0.60,
+        "classification_confidence": 0.95,
+        "extracted_fields": {field: value},
+    }
+
+    assert not field_reliable_for_validation(page, field, value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "confidence", "expected"),
+    [
+        ("pan_number", "ABCDE1234F", 0.60, False),
+        ("pan_number", "ABCDE1234F", 0.65, True),
+        ("aadhaar_number", "234567890123", 0.60, False),
+        ("aadhaar_number", "234567890123", 0.65, True),
+        ("date_of_birth", "1990-01-02", 0.60, False),
+        ("date_of_birth", "1990-01-02", 0.65, True),
+        ("applicant_name", "Sample Kumar", 0.60, False),
+        ("applicant_name", "Sample Kumar", 0.65, True),
+    ],
+)
+def test_legacy_and_provenance_backed_identity_share_confidence_threshold(
+    field, value, confidence, expected
+):
+    fields = {
+        field: value,
+        "_field_provenance": {field: {"field_confidence": confidence}},
+    }
+    provenance_page = {
+        "page_type": "scanned",
+        "ocr_confidence": 0.95,
+        "extracted_fields": fields,
+    }
+    legacy_page = {
+        "page_type": "scanned",
+        "ocr_confidence": confidence,
+        "extracted_fields": {field: value},
+    }
+
+    assert field_reliable_for_validation(provenance_page, field, value) is expected
+    assert field_reliable_for_validation(legacy_page, field, value) is expected
+
+
+def test_digital_and_missing_ocr_confidence_behavior_is_preserved_without_provenance():
+    value = "ABCDE1234F"
+    digital_page = {
+        "page_type": "digital",
+        "ocr_confidence": 0.60,
+        "extracted_fields": {"pan_number": value},
+    }
+    scanned_without_score = {
+        "page_type": "scanned",
+        "extracted_fields": {"pan_number": value},
+    }
+
+    assert field_reliable_for_validation(digital_page, "pan_number", value)
+    assert field_reliable_for_validation(scanned_without_score, "pan_number", value)
 
 
 def _synth_bbox(x0: float, y0: float, x1: float, y1: float) -> dict:

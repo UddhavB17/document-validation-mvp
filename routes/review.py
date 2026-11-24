@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
@@ -125,7 +126,11 @@ def _application_source_bytes(application_id: int) -> tuple[bytes, str, str]:
         cached = _source_cache_get(cache_key)
         if cached is not None:
             row = load_latest_uploaded_file(application_id) or {}
-            return cached, str(row.get("original_filename") or Path(storage_key).name), source_version
+            return (
+                cached,
+                str(row.get("original_filename") or Path(storage_key).name),
+                source_version,
+            )
         try:
             pdf_bytes = get_store().get(storage_key)
         except FileNotFoundError as exc:
@@ -190,15 +195,26 @@ def get_application_review(application_id: int) -> dict[str, Any]:
     summary = summarize_for_display(anomalies)
     reviewer_summary = load_reviewer_summary(application_id)
     checklist_items = get_all_checklist_items(product_type)
+    try:
+        trusted = json.loads(str((data.get("ground_truth") or {}).get("raw_json") or "{}"))
+    except json.JSONDecodeError:
+        trusted = {}
     # Confidence checks revisit the same settings for many pages/items. Keep
     # one short-lived snapshot for this calculation, never across requests.
     with cached_settings():
-        checklist_rows = build_checklist_status(checklist_items, data["pages"], anomalies)
-    manual_items = get_human_review_items(product_type)
-    ai_items = get_ai_checkable_items(product_type)
-    failed_ai_snos = {
-        anomaly.get("s_no") for anomaly in anomalies if anomaly.get("s_no") is not None
-    }
+        checklist_rows = build_checklist_status(
+            checklist_items,
+            data["pages"],
+            anomalies,
+            system_data=trusted if isinstance(trusted, dict) else None,
+        )
+    not_applicable = {row["s_no"] for row in checklist_rows if row["status"] == "not_applicable"}
+    manual_items = [
+        item
+        for item in get_human_review_items(product_type)
+        if item.get("s_no") not in not_applicable
+    ]
+    ai_snos = {item["s_no"] for item in get_ai_checkable_items(product_type)} - not_applicable
 
     application_status = str(application.get("status") or "").casefold()
     stored_comparison = (
@@ -212,11 +228,12 @@ def get_application_review(application_id: int) -> dict[str, Any]:
             "relationships": stored_comparison["relationships"],
         }
     else:
-        matrix_and_rels = build_comparison_matrix_and_relationships(
-            application_id,
-            data,
-            evidence_pages=evidence_pages if data.get("ground_truth") else [],
-        )
+        with cached_settings():
+            matrix_and_rels = build_comparison_matrix_and_relationships(
+                application_id,
+                data,
+                evidence_pages=evidence_pages if data.get("ground_truth") else [],
+            )
     documents = build_document_summaries(data.get("document_pages") or {}, anomalies)
 
     return {
@@ -242,8 +259,11 @@ def get_application_review(application_id: int) -> dict[str, Any]:
             "rows": checklist_rows,
         },
         "ai_checklist": {
-            "passed": len([item for item in ai_items if item.get("s_no") not in failed_ai_snos]),
-            "total": len(ai_items),
+            "passed": sum(
+                row["s_no"] in ai_snos and row["status"] == "required_and_present"
+                for row in checklist_rows
+            ),
+            "total": len(ai_snos),
         },
         "latest_decision": load_latest_decision(application_id),
         "progress": get_progress(application_id),

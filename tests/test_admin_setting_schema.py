@@ -76,15 +76,21 @@ def test_classifier_threshold_setting_is_readable_from_database(isolated_db):
 
 
 def test_validation_tolerance_settings_affect_field_verification(isolated_db):
+    from services.checklist_engine import check_field_match
+    from services.consistency_checks import _matches
     from services.field_verification import verify_amount
 
     assert verify_amount("102", "100").match is False
+    assert _matches("loan_amount", "100", "102") is False
+    assert check_field_match({"loan_amount": "102"}, {"loan_amount": "100"}, ["loan_amount"])
     with get_connection() as connection:
         connection.execute(
             "UPDATE system_settings SET config_value = ? WHERE config_key = ?",
             ("2.0", "validation.amount_tolerance_percent"),
         )
     assert verify_amount("102", "100").match is True
+    assert _matches("loan_amount", "100", "102") is True
+    assert not check_field_match({"loan_amount": "102"}, {"loan_amount": "100"}, ["loan_amount"])
 
 
 def test_classifier_uses_admin_minimum_confidence_setting(isolated_db, monkeypatch):

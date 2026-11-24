@@ -267,6 +267,8 @@ def _finding_from_group(
     ordered = sorted(items, key=lambda item: (_severity_key(item.get("severity")),))
     primary = ordered[0]
     pages = sorted({page for item in items for page in _anomaly_pages(item)})
+    primary_pages = _anomaly_pages(primary)
+    primary_page = int(primary_pages[0]) if primary_pages else None
     severity = str(primary.get("severity") or "LOW").upper()
     expected = primary.get("expected_value")
     found = primary.get("found_value")
@@ -277,7 +279,7 @@ def _finding_from_group(
         if evidence is not None:
             break
     if evidence is None and pages:
-        evidence = {"page": pages[0], "bbox": None, "text": str(found or "")}
+        evidence = {"page": primary_page or pages[0], "bbox": None, "text": str(found or "")}
     values = {
         "expected": "" if expected is None else str(expected),
         "found": "" if found is None else str(found),
@@ -290,10 +292,10 @@ def _finding_from_group(
         "document": document_label(document_type, "hi"),
         "pages": _pages_phrase(pages, "hi") if pages else "फ़ाइल",
     }
-    primary_pages = _anomaly_pages(primary)
-    primary_page = int(primary_pages[0]) if primary_pages else None
+    distinct_issues = {_finding_issue_identity(item) for item in items}
+    has_distinct_issues = len(distinct_issues) > 1
     assessment = None
-    if ai_assessments:
+    if ai_assessments and not has_distinct_issues:
         assessment = ai_assessments.get((str(primary.get("rule_id") or ""), primary_page))
         if assessment is None and primary_page is not None:
             assessment = ai_assessments.get((str(primary.get("rule_id") or ""), None))
@@ -309,7 +311,21 @@ def _finding_from_group(
         "pages": pages,
         "evidence": evidence,
     }
-    if assessment and assessment.get("plain_en"):
+    if has_distinct_issues:
+        issue_count = len(distinct_issues)
+        page_phrase_en = _pages_phrase(pages, "en") if pages else "the file"
+        page_phrase_hi = _pages_phrase(pages, "hi") if pages else "फ़ाइल"
+        finding["detail"] = {
+            "en": (
+                f"{issue_count} distinct checks need review across {page_phrase_en}. "
+                "Open each source page to inspect its own values."
+            ),
+            "hi": (
+                f"{issue_count} अलग-अलग जाँचों की समीक्षा {page_phrase_hi} पर करें। "
+                "हर पृष्ठ पर उसके अपने मान देखें।"
+            ),
+        }
+    if assessment and assessment.get("plain_en") and not has_distinct_issues:
         plain = str(assessment["plain_en"])
         finding["ai_detail"] = {"en": plain, "hi": plain}
         if assessment.get("confidence") is not None:
@@ -319,6 +335,24 @@ def _finding_from_group(
         if assessment.get("ai_primary"):
             finding["ai_primary"] = True
     return finding
+
+
+def _finding_issue_identity(item: dict) -> tuple[str, ...]:
+    """Fields that distinguish different underlying checks in one display group."""
+    return tuple(
+        str(item.get(key) if item.get(key) is not None else "").strip().casefold()
+        for key in (
+            "rule_id",
+            "field_name",
+            "person_id",
+            "applicant_role",
+            "document_type",
+            "expected_value",
+            "found_value",
+            "s_no",
+            "reason",
+        )
+    )
 
 
 def _summary_part(code: str, pages: list[int], lang: str) -> str:

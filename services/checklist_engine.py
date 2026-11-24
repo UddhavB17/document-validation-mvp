@@ -12,7 +12,7 @@ from dateutil.relativedelta import relativedelta
 
 from services import checklist_service
 from services.config import cached_settings, effective_config
-from services.consistency_checks import run_consistency_checks
+from services.consistency_checks import _matches, run_consistency_checks
 from services.document_presence import review_presence_findings
 from services.page_quality import confident_pages_for_types, is_confident_document_match
 from services.person_names import is_person_name_candidate
@@ -105,8 +105,7 @@ def check_field_match(
             try:
                 sys_num = float(str(system_val).replace(",", ""))
                 ext_num = float(str(extracted_val).replace(",", ""))
-                tolerance = sys_num * 0.01
-                if abs(sys_num - ext_num) > tolerance:
+                if not _matches(field, sys_num, ext_num):
                     anomalies.append(
                         {"field": field, "expected": system_val, "found": extracted_val}
                     )

@@ -745,6 +745,41 @@ def _extract_percentage_near(text_lower: str, *labels: str) -> float | None:
     return None
 
 
+def _extract_labeled_apr_row(text: str) -> float | None:
+    """Read an APR percentage from a bounded bilingual KFS row.
+
+    KFS tables put the English APR label on one line, Hindi translations on
+    following lines, and the percentage on its own line. Stop at the next
+    numbered row, English heading, or note so unrelated percentages cannot be
+    borrowed as APR.
+    """
+    lines = str(text or "").splitlines()
+    label = re.compile(
+        r"^\s*(?:\d{1,3}\.\s*)?annual\s+percentage\s+rate"
+        r"(?:\s*\(\s*apr\s*\))?(?:\s*\(\s*%\s*\))?"
+        r"(?:\s*[-–:]\s*effective\s+annualized\s+interest\s+rate)?\s*$",
+        re.IGNORECASE,
+    )
+    percentage = re.compile(r"^\s*(\d{1,3}(?:\.\d+)?)\s*%\s*$")
+    numbered_row = re.compile(r"^\s*\d{1,3}\.(?:\s*$|\s+\S)")
+    for index, line in enumerate(lines):
+        if not label.fullmatch(line):
+            continue
+        for candidate in lines[index + 1 : index + 13]:
+            stripped = candidate.strip()
+            if not stripped:
+                continue
+            if numbered_row.match(stripped) or re.match(r"note\s*:", stripped, re.I):
+                break
+            match = percentage.fullmatch(stripped)
+            if match:
+                return float(match.group(1))
+            if not re.search(r"[\u0900-\u097f]", stripped):
+                # A different English heading/value row ends the APR row.
+                break
+    return None
+
+
 def _extract_identifier(text: str, *labels: str) -> str | None:
     for label in labels:
         match = re.search(
@@ -1364,7 +1399,8 @@ def _extract_sanction_letter(text: str) -> dict[str, Any]:
         or _float_or_none(
             _numeric_line_after_label(text, "roi (p.a)", "interest rate (%) and type")
         ),
-        "apr": _extract_percentage_near(t, "apr", "annual percentage rate"),
+        "apr": _extract_labeled_apr_row(text)
+        or _extract_percentage_near(t, "apr", "annual percentage rate"),
         "applicant_name": _line_after_label(text, "borrower", "applicant name"),
         "application_number": _extract_identifier(
             text, "application number", "application no", "loan account number", "loan id"
@@ -1826,6 +1862,8 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         "permanent resi address",
         "permanent residential address",
     )
+    if not permanent_address:
+        permanent_address = _extract_permanent_address_after_current_residence(text)
     communication_address = _extract_application_address_block(
         text, "COMMUNICATION ADDRESS", ("PERMANENT ADDRESS", "OFFICE ADDRESS")
     ) or _extract_residential_address_alias(text, "communication address")
@@ -1883,6 +1921,74 @@ def _extract_application_form(text: str) -> dict[str, Any]:
         "person_records": person_records,
         "second_language": language_match.group(1).strip() if language_match else None,
     }
+
+
+def _extract_permanent_address_after_current_residence(text: str) -> str | None:
+    """Recover a lost permanent-address label from a narrow printed form layout.
+
+    On this application form, OCR can drop the permanent-address heading while
+    retaining the row order: ``Years at Current Residence``, the permanent
+    address beginning with an explicit ward number, a PIN, then business/office
+    fields. Requiring all of those cues avoids guessing from an unlabelled ward
+    mention elsewhere on the page.
+    """
+    lines = [re.sub(r"\s+", " ", line).strip(" ,.;") for line in str(text or "").splitlines()]
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(r"years\s+at\s+current\s+residence", line, re.IGNORECASE)
+    ]
+    candidates: list[str] = []
+    ward_re = re.compile(r"^WARD\s+NO\.?\s*\d{1,4}\b", re.IGNORECASE)
+    pin_re = re.compile(r"\b(?:P\s*I\s*N|P\s*N|PINCODE)\s*[:#-]?\s*([1-8]\d{5})\b", re.I)
+    business_re = re.compile(
+        r"\b(?:partnership\s+firm|private\s+co\.?|public\s+(?:l\s*m\s*co|ltd|limited|co\.?)|"
+        r"current\s+office\s+address|office\s+address|business\s+details)\b",
+        re.IGNORECASE,
+    )
+
+    for start in starts:
+        ward_indexes = [
+            index
+            for index in range(start + 1, min(start + 4, len(lines)))
+            if ward_re.search(lines[index])
+        ]
+        if len(ward_indexes) != 1:
+            continue
+        ward_index = ward_indexes[0]
+
+        pin_indexes = [
+            index
+            for index in range(ward_index + 1, min(ward_index + 5, len(lines)))
+            if pin_re.search(lines[index])
+        ]
+        if len(pin_indexes) != 1 or pin_indexes[0] == ward_index + 1:
+            continue
+        pin_index = pin_indexes[0]
+
+        # The form's business/office section must follow immediately after the
+        # postal row (allowing one OCR blank/noise line), confirming the row
+        # boundary seen in the handwritten-form layout.
+        if not any(
+            business_re.search(lines[index])
+            for index in range(pin_index + 1, min(pin_index + 3, len(lines)))
+        ):
+            continue
+
+        address_lines = lines[ward_index:pin_index + 1]
+        pin = pin_re.search(address_lines[-1])
+        if pin is None:
+            continue
+        address = " ".join(address_lines)
+        address = re.sub(r"\b(?:P\s*I\s*N|P\s*N|PINCODE)\s*[:#-]?\s*", "", address, flags=re.I)
+        address = re.sub(r"\b(?:tele|tote|telephone)\b.*$", "", address, flags=re.I).strip(" ,.;")
+        if pin.group(1) not in address:
+            address = f"{address} {pin.group(1)}"
+        cleaned = _sanitize_address_value(address)
+        if cleaned:
+            candidates.append(cleaned)
+
+    return candidates[0] if len(candidates) == 1 else None
 
 
 _APPLICATION_LAYOUT_ADDRESS_LABELS = {
@@ -2421,7 +2527,7 @@ def _extract_coapplicant_address_record(
 
 def _extract_application_kyc_records(text: str) -> list[dict[str, Any]]:
     """Keep each application-form KYC row attached to its named person."""
-    if "KYC DETAILS" not in text.upper():
+    if not re.search(r"\bKYC\s+DETAILS\b|केवाईसी\s+विवरण", text, re.IGNORECASE):
         return []
     records: list[dict[str, Any]] = []
     pattern = re.compile(

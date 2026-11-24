@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from database.db import get_connection
+from services.legal_party_identity import LEGAL_PARTY_DOCUMENT_TYPES
 from services.paths import processed_output_dir
 from services.progress_tracker import RETRYABLE_PROGRESS_STATES, operational_progress_status
 from services.review.types import ApplicationReviewData
@@ -301,6 +302,8 @@ def _ground_truth_comparison_fields(row: Any) -> set[str]:
             for key, value in profile.items():
                 if value not in (None, "", [], {}):
                     fields.add(_comparison_field_name(key))
+    if "address" in fields:
+        fields.add("permanent_address")
     return fields
 
 
@@ -335,12 +338,27 @@ def _comparison_evidence_page_numbers(page_rows: list[Any], ground_truth_row: An
         if direct_fields & expected:
             numbers.append(page_number)
             continue
+        document_type = " ".join(str(row.get("document_type") or "").casefold().split())
+        if ("apr" in expected and document_type == "kfs") or (
+            "date_of_birth" in expected and document_type in LEGAL_PARTY_DOCUMENT_TYPES
+        ):
+            # Older runs can omit labeled APR or a named legal party's date.
+            numbers.append(page_number)
+            continue
+        if (
+            "permanent_address" in expected
+            and fields.get("generic_phone_numbers")
+            and document_type == "application form"
+        ):
+            # A handwritten form with only a phone extracted can still have
+            # enough OCR and ownership evidence to recover a permanent address.
+            numbers.append(page_number)
+            continue
         records = fields.get("person_records")
         if isinstance(records, list) and any(
             isinstance(record, dict)
             and any(
-                _comparison_field_name(key) in expected
-                and value not in (None, "", [], {})
+                _comparison_field_name(key) in expected and value not in (None, "", [], {})
                 for key, value in record.items()
             )
             for record in records
@@ -349,9 +367,7 @@ def _comparison_evidence_page_numbers(page_rows: list[Any], ground_truth_row: An
     return numbers
 
 
-def _hydrate_sparse_comparison_evidence(
-    pages: list[dict], rows: list[Any]
-) -> list[dict]:
+def _hydrate_sparse_comparison_evidence(pages: list[dict], rows: list[Any]) -> list[dict]:
     """Hydrate all summaries while attaching raw evidence only to candidates."""
     details_by_page = {}
     for row in rows:
@@ -361,8 +377,9 @@ def _hydrate_sparse_comparison_evidence(
             continue
     evidence: list[dict] = []
     for page in pages:
+        raw_page_number = page.get("page_number")
         try:
-            page_number = int(page.get("page_number"))
+            page_number = int(raw_page_number) if raw_page_number is not None else 0
         except (TypeError, ValueError):
             page_number = 0
         detail = details_by_page.get(page_number, {})

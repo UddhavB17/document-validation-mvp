@@ -26,6 +26,24 @@ def test_trusted_mismatch_suppresses_redundant_cross_document_item() -> None:
     assert [item["rule_id"] for item in result] == ["TRUSTED_APPLICANT_NAME_MISMATCH"]
 
 
+def test_distinct_cross_document_conflict_remains_visible() -> None:
+    trusted = {
+        "rule_id": "TRUSTED_TENURE_MISMATCH",
+        "severity": "MEDIUM",
+        "document_type": "KFS",
+        "page_number": 10,
+        "found_value": 85,
+    }
+    cross = {
+        **trusted,
+        "rule_id": "CROSS_DOCUMENT_TENURE_MISMATCH",
+        "document_type": "Loan Agreement",
+        "page_number": 40,
+        "found_value": 96,
+    }
+    assert collapse_for_reviewer([trusted, cross]) == [trusted, cross]
+
+
 def test_collapses_repeated_unclassified_pages() -> None:
     anomalies = [
         {
@@ -107,6 +125,7 @@ def test_separates_business_exceptions_from_processing_warnings() -> None:
         [
             {"rule_id": "MISSING_DOC_S7", "severity": "HIGH"},
             {"rule_id": "PAN_NUMBER_MISMATCH", "severity": "HIGH"},
+            {"rule_id": "PAN_OCR_REVIEW_REQUIRED", "severity": "LOW"},
             {"rule_id": "LOW_OCR_CONFIDENCE_SUMMARY", "severity": "LOW"},
             {"rule_id": "PAGE_PROCESSING_ERROR", "severity": "MEDIUM"},
         ]
@@ -114,6 +133,7 @@ def test_separates_business_exceptions_from_processing_warnings() -> None:
 
     assert [item["rule_id"] for item in business] == ["MISSING_DOC_S7", "PAN_NUMBER_MISMATCH"]
     assert [item["rule_id"] for item in processing] == [
+        "PAN_OCR_REVIEW_REQUIRED",
         "LOW_OCR_CONFIDENCE_SUMMARY",
         "PAGE_PROCESSING_ERROR",
     ]

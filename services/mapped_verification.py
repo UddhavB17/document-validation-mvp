@@ -18,9 +18,15 @@ from services.cersai import (
 from services.cersai import (
     report_search_type as cersai_report_search_type,
 )
+from services.config import cached_settings
 from services.exception_aggregator import aggregate
 from services.field_extractor import extract_fields
 from services.field_verification import address_with_relationship
+from services.identity_matching import (
+    address_component_conflict,
+    explicit_address_units,
+    numbered_locality_identifiers,
+)
 from services.mapped_verification_rules import (
     AGGREGATED_FIELD_DOC_TYPES as _AGGREGATED_FIELD_DOC_TYPES,
 )
@@ -56,6 +62,22 @@ from services.validation_gates import (
 # Backward-compatible seam used by existing mapped-verification integrations.
 run_ocr_on_page = run_fast_ocr_on_page
 _DEFAULT_FAST_OCR_PROCESSOR = run_fast_ocr_on_page
+
+_PERSON_SCOPED_FIELDS = frozenset(
+    {
+        "applicant_name",
+        "pan_number",
+        "aadhaar_number",
+        "phone_number",
+        "date_of_birth",
+        "address",
+        "pin_code",
+        "gender",
+        "father_name",
+        "mother_name",
+        "account_number",
+    }
+)
 
 
 
@@ -553,6 +575,7 @@ def run_mapped_verification(
     return result
 
 
+@cached_settings()
 def compare_processed_pages(
     pages: list[dict[str, Any]],
     manifest: dict[str, Any],
@@ -614,6 +637,7 @@ def compare_processed_pages(
         document_unreliable_fields: dict[str, list[dict[str, Any]]] = {}
         readable_pages: list[int] = []
         aggregate_key = (person_id, provided_type.strip().lower())
+        mapping_owner_pages = 0
         should_aggregate = provided_type.strip().lower() in _AGGREGATED_FIELD_DOC_TYPES
 
         if not mapped_numbers:
@@ -667,19 +691,31 @@ def compare_processed_pages(
                 fields = {}
                 page["extracted_fields"] = fields
             _suppress_invalid_name_fields(fields)
+            page_person_id = _mapped_page_person_id(
+                fields, person_id, provided_type, reference_data
+            )
+            page_expected = expected
+            if page_person_id != person_id:
+                page_expected = {
+                    key: value for key, value in expected.items()
+                    if _canonical(key) not in _PERSON_SCOPED_FIELDS
+                }
+            elif page_person_id != "unassigned":
+                mapping_owner_pages += 1
             mapping_metadata = {
                 "person_id": person_id,
+                "page_person_id": page_person_id,
                 "provided_person_id": provided_person_id,
                 "provided_document_type": provided_type,
                 "source_document_id": source_document_id,
                 "pages": mapped_numbers,
             }
             fields["_provided_mapping"] = mapping_metadata
-            page["person_id"] = person_id
-            page["applicant_role"] = person_id
+            page["person_id"] = page_person_id
+            page["applicant_role"] = page_person_id
             if cersai_scope in {CERSAI_DEBTOR_BASED, CERSAI_ASSET_BASED}:
                 fields["_ownership"] = {
-                    "person_id": person_id,
+                    "person_id": page_person_id,
                     "confidence": owner.get("confidence", 0.0),
                     "evidence": owner.get("evidence", []),
                     "cersai_search_type": cersai_scope,
@@ -695,21 +731,21 @@ def compare_processed_pages(
                 page=page,
                 fields=fields,
                 mapped_fields=mapped_fields,
-                expected=expected,
+                expected=page_expected,
                 reference_data=reference_data,
-                person_id=person_id,
+                person_id=page_person_id,
                 document_type=provided_type,
                 source_document=source_document,
             )
             fields["_mapped_extraction"] = mapped_fields
-            comparison_fields = {
-                **{key: value for key, value in fields.items() if not str(key).startswith("_")},
-                **{
-                    key: value
-                    for key, value in mapped_fields.items()
-                    if not str(key).startswith("_") and value not in (None, "", [], {})
-                },
-            }
+            comparison_fields = _comparison_fields_for_page(
+                fields, mapped_fields, page_expected, source_text=text
+            )
+            if page_person_id == "unassigned":
+                comparison_fields = {
+                    key: value for key, value in comparison_fields.items()
+                    if _canonical(key) not in _PERSON_SCOPED_FIELDS
+                }
             if page.get("is_readable") is not False and text.strip():
                 readable_pages.append(page_number)
 
@@ -721,6 +757,8 @@ def compare_processed_pages(
                 ):
                     continue
                 field = _canonical(key)
+                if field in _PERSON_SCOPED_FIELDS and page_person_id != person_id:
+                    continue
                 comparison_value = (
                     address_with_relationship(value, comparison_fields)
                     if field == "address"
@@ -780,19 +818,31 @@ def compare_processed_pages(
             )
             continue
 
+        verify_expected = expected
+        if (
+            provided_type.strip().casefold() == "application form"
+            and mapping_owner_pages == 0
+        ):
+            verify_expected = {
+                key: value for key, value in expected.items()
+                if _canonical(key) not in _PERSON_SCOPED_FIELDS
+            }
+        if not verify_expected:
+            continue
+
         if should_aggregate:
             bucket = aggregated.setdefault(
                 aggregate_key,
                 {
                     "person_id": person_id,
                     "document_type": provided_type,
-                    "expected": expected,
+                    "expected": {},
                     "observations": {},
                     "unreliable_fields": {},
                     "readable_pages": [],
                 },
             )
-            bucket["expected"].update(expected)
+            bucket["expected"].update(verify_expected)
             bucket["readable_pages"].extend(readable_pages)
             for field, field_observations in document_observations.items():
                 bucket["observations"].setdefault(field, []).extend(field_observations)
@@ -801,7 +851,7 @@ def compare_processed_pages(
             continue
 
         field_stats = _verify_document_fields(
-            expected=expected,
+            expected=verify_expected,
             document_observations=document_observations,
             readable_pages=readable_pages,
             provided_type=provided_type,
@@ -891,6 +941,113 @@ def _eligible_field_pages(
     return sorted(eligible)
 
 
+def _comparison_fields_for_page(
+    page_fields: dict[str, Any],
+    mapped_fields: dict[str, Any],
+    expected: dict[str, Any],
+    *,
+    source_text: str = "",
+) -> dict[str, Any]:
+    """Merge mapped extraction while requiring OCR support for explicit conflicts.
+
+    Persisted page fields can contain an address component carried over from a
+    neighboring page. A mapped re-extraction that finds a conflicting ward,
+    flat, or other explicit unit is not itself evidence that the component is
+    present on this page. Keep an explicit conflict only when its identifier is
+    visible in this page's OCR text. Prefer a matching shared field over an
+    unmatched re-extraction when there is no explicit component conflict.
+    """
+    expected_addresses = [
+        value for key, value in expected.items()
+        if _canonical(key) == "address" and value not in (None, "", [], {})
+    ]
+    result: dict[str, Any] = {}
+    for key, value in page_fields.items():
+        if str(key).startswith("_"):
+            continue
+        if _canonical(key) == "address" and not _address_conflict_supported_by_text(
+            value, expected_addresses, source_text
+        ):
+            continue
+        result[key] = value
+
+    for key, value in mapped_fields.items():
+        if str(key).startswith("_") or value in (None, "", [], {}):
+            continue
+        if _canonical(key) == "address" and not _address_conflict_supported_by_text(
+            value, expected_addresses, source_text
+        ):
+            continue
+        if _canonical(key) == "address" and key in result:
+            page_value = result[key]
+            shared_matches = any(
+                VERIFY["address"](str(page_value), str(candidate)).match
+                for candidate in expected_addresses
+            )
+            mapped_matches = any(
+                VERIFY["address"](str(value), str(candidate)).match
+                for candidate in expected_addresses
+            )
+            if shared_matches and not mapped_matches and not any(
+                address_component_conflict(value, candidate) for candidate in expected_addresses
+            ):
+                continue
+        result[key] = value
+    return result
+
+
+def _mapped_page_person_id(
+    fields: dict[str, Any],
+    mapped_person_id: str | None,
+    document_type: str,
+    reference_data: dict[str, Any],
+) -> str | None:
+    """Honor independent page ownership for application-form fragments."""
+    if document_type.strip().casefold() != "application form":
+        return mapped_person_id
+    ownership = fields.get("_ownership")
+    if not isinstance(ownership, dict):
+        return mapped_person_id
+    page_person_id = str(ownership.get("person_id") or "").strip()
+    if page_person_id == "unassigned":
+        return page_person_id
+    if page_person_id not in reference_data:
+        return mapped_person_id
+    raw_evidence = ownership.get("evidence") or []
+    if not isinstance(raw_evidence, (list, tuple, set)):
+        raw_evidence = []
+    evidence = {str(item).strip().casefold() for item in raw_evidence}
+    try:
+        confidence = float(ownership.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if confidence >= 0.8 and evidence.intersection(
+        {"pan_number", "aadhaar_number", "phone_number", "account_number"}
+    ):
+        return page_person_id
+    return mapped_person_id
+
+
+def _address_conflict_supported_by_text(
+    value: Any, expected_addresses: list[Any], source_text: str
+) -> bool:
+    text_units = explicit_address_units(source_text)
+    observed_units = explicit_address_units(value)
+    conflicting_components = {
+        component
+        for expected in expected_addresses
+        if (component := address_component_conflict(value, expected)) is not None
+    }
+    for component in conflicting_components:
+        if component == "locality identifier":
+            if not numbered_locality_identifiers(value) <= numbered_locality_identifiers(source_text):
+                return False
+            continue
+        if not (observed_units.get(component, set()) & text_units.get(component, set())):
+            return False
+    return True
+
+
 def _verify_document_fields(
     *,
     expected: dict[str, Any],
@@ -911,6 +1068,7 @@ def _verify_document_fields(
     # Determine which readable pages have low OCR confidence so we can suppress
     # spurious NOT_FOUND / MISMATCH anomalies for genuinely unreadable pages.
     low_confidence_pages_emitted: set[int] = set()
+    seen_expected_addresses: set[str] = set()
     account_identity_match = _passbook_has_unique_account_identity(
         provided_type,
         person_id,
@@ -922,6 +1080,11 @@ def _verify_document_fields(
         field = _canonical(raw_field)
         if field not in VERIFY or expected_value in (None, ""):
             continue
+        if field == "address":
+            expected_key = _comparison_key(field, expected_value)
+            if expected_key in seen_expected_addresses:
+                continue
+            seen_expected_addresses.add(expected_key)
         if field == "applicant_name" and not is_person_name_candidate(expected_value):
             continue
         field_observations = document_observations.get(field) or []
@@ -1025,11 +1188,23 @@ def _verify_document_fields(
             ]
             checked += 1
             if matching:
-                matched += 1
                 for observation in matching:
                     observation["expected_value"] = expected_value
                     observation["status"] = "MATCH"
-                continue
+                # A matching address on one fragment must not mask a reliable,
+                # explicitly contradictory address component on another.
+                # Other aggregated fields retain the historical any-match rule.
+                matching_ids = {id(observation) for observation in matching}
+                component_conflicts = [
+                    observation
+                    for observation in field_observations
+                    if id(observation) not in matching_ids
+                    and address_component_conflict(observation["value"], expected_value)
+                ] if field == "address" else []
+                if not component_conflicts:
+                    matched += 1
+                    continue
+                field_observations = component_conflicts
             # Fall through to report the first distinct mismatch only.
 
         seen_values: set[str] = set()
@@ -1293,6 +1468,14 @@ def _recover_trusted_fields_from_ocr(
         ):
             # Preserve genuine wrong-owner evidence rather than replacing it
             # with the expected value and hiding an index/person mapping error.
+            continue
+        if field == "address" and any(
+            address_component_conflict(value, expected_value) for value in current_values
+        ):
+            # Keep source-backed, explicitly contradictory address evidence.
+            # Recovery is intended for absent/noisy values, never to rewrite a
+            # conflicting address into the trusted address found elsewhere in
+            # the same OCR text.
             continue
         if field in _OWNER_UNIQUE_RECOVERY_FIELDS and not _trusted_value_is_unique_to_person(
             reference_data,

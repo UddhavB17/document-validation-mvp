@@ -227,14 +227,28 @@ def run_accuracy_checks(
 
         elif check_type == "field_less_than":
             doc_pages = _matching_pages(pages, document_type)
-            found_value, found_page = _field_from_pages(doc_pages, *item.get("document_fields", []))
             expected_value = system_data.get(item.get("system_field"))
-            found_number, expected_number = _numeric(found_value), _numeric(expected_value)
-            if (
-                found_number is not None
-                and expected_number is not None
-                and found_number >= expected_number
-            ):
+            expected_number = _numeric(expected_value)
+            # A matching first term must not hide a later conflicting value
+            # on another matching document page.
+            violation: tuple[object, dict] | None = None
+            for page in doc_pages:
+                fields = page.get("extracted_fields") or {}
+                for field_name in item.get("document_fields", []):
+                    found_value = fields.get(field_name)
+                    found_number = _numeric(found_value)
+                    if (
+                        found_value not in (None, "")
+                        and found_number is not None
+                        and expected_number is not None
+                        and found_number >= expected_number
+                    ):
+                        violation = (found_value, page)
+                        break
+                if violation is not None:
+                    break
+            if violation is not None:
+                found_value, found_page = violation
                 anomalies.append(
                     build_anomaly(
                         rule_id=f"FIELD_RELATION_S{s_no}",
@@ -243,7 +257,7 @@ def run_accuracy_checks(
                         expected_value=f"Less than {expected_value}",
                         found_value=found_value,
                         reason=description,
-                        page_number=(found_page or {}).get("page_number"),
+                        page_number=found_page.get("page_number"),
                         document_type=" / ".join(_document_types(document_type)),
                     )
                 )

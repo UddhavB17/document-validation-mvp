@@ -1288,6 +1288,139 @@ def test_trusted_permanent_and_communication_addresses_are_valid_variants() -> N
     )
 
 
+def test_permanent_ward_conflict_cannot_match_the_communication_address() -> None:
+    permanent = "Ward 01, Model Colony, Jaipur, Rajasthan 302001"
+    mailing = "Ward 11, Model Colony, Jaipur, Rajasthan 302001"
+    trusted = {"people": {"primary": {
+        "applicant_name": "Ravi Kumar",
+        "address": permanent,
+        "address_subtype": "Permanent",
+        "communication_address": mailing,
+    }}}
+    form = page(2, "Application Form", "primary", permanent_address=mailing)
+    form["ocr_text"] = f"Communication Address: {permanent}\nPermanent Address: {mailing}"
+    anomalies = run_consistency_checks(
+        [page(1, "Aadhaar", "primary", address=mailing), form], trusted
+    )
+    address_findings = [row for row in anomalies if "ADDRESS" in row["rule_id"]]
+    assert [(row["rule_id"], row["page_number"]) for row in address_findings] == [
+        ("TRUSTED_PERMANENT_ADDRESS_MISMATCH", 2)
+    ]
+    assert "ward" in address_findings[0]["reason"]
+
+
+def test_integer_loan_terms_do_not_use_money_tolerance() -> None:
+    assert _matches("tenure", "120", "120.0")
+    assert not _matches("tenure", "120", "121")
+    assert not _matches("installment_count", "120", "119")
+
+
+def test_scanned_pan_tj_ocr_conflict_with_unique_phone_and_card_needs_review_only() -> None:
+    people = {
+        "primary": {
+            "applicant_name": "Mira Shah",
+            "pan_number": "MIRAS1234F",
+            "phone_number": "9876543210",
+        },
+        "coapplicant_1": {
+            "applicant_name": "Ravi Kumar",
+            "pan_number": "ABTDE1234F",
+            "phone_number": "9123456780",
+        },
+    }
+    card = page(
+        16,
+        "PAN Card",
+        "coapplicant_1",
+        applicant_name="Ravi Kumar",
+        pan_number="ABTDE1234F",
+    )
+    card["ocr_text"] = "Permanent Account Number ABTDE1234F Ravi Kumar"
+    form = page(
+        80,
+        "Application Form",
+        "coapplicant_1",
+        pan_number="ABJDE1234F",
+    )
+    form.update(
+        page_type="scanned",
+        ocr_confidence=0.7594,
+        ocr_text="Mobile Number 9123456780\nMobile Number 9123456780\nABJDE1234F",
+    )
+    form["extracted_fields"]["_ownership"] = {
+        "person_id": "coapplicant_1",
+        "confidence": 0.867,
+        "evidence": ["phone_number", "document_index"],
+    }
+
+    findings = run_consistency_checks([card, form], {"people": people})
+    pan_findings = [
+        item for item in findings if "PAN" in item["rule_id"] and item.get("page_number") == 80
+    ]
+    assert [item["rule_id"] for item in pan_findings] == ["PAN_OCR_REVIEW_REQUIRED"]
+    assert pan_findings[0]["severity"] == "LOW"
+    assert pan_findings[0]["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert pan_findings[0]["expected_value"] == "ABTDE1234F"
+    assert pan_findings[0]["found_value"] == "ABJDE1234F"
+
+
+@pytest.mark.parametrize(
+    ("observed_pan", "confidence", "has_phone", "conflicting_card"),
+    [
+        ("ABJDE1234F", 0.91, True, False),  # outside the scanned-OCR window
+        ("ABCDF1234F", 0.78, True, False),  # a different letter, not T/J
+        ("ABJDE1234F", 0.78, False, False),  # no independent phone anchor
+        ("ABJDE1234F", 0.78, True, True),  # an official card conflicts
+    ],
+)
+def test_pan_ocr_review_gate_preserves_unconfirmed_or_real_mismatches(
+    observed_pan, confidence, has_phone, conflicting_card
+):
+    people = {
+        "coapplicant_1": {
+            "applicant_name": "Ravi Kumar",
+            "pan_number": "ABTDE1234F",
+            "phone_number": "9123456780",
+        }
+    }
+    card = page(
+        16,
+        "PAN Card",
+        "coapplicant_1",
+        applicant_name="Ravi Kumar",
+        pan_number="ABTDE1234F",
+    )
+    card["ocr_text"] = "Permanent Account Number ABTDE1234F Ravi Kumar"
+    form_fields = {"pan_number": observed_pan}
+    form_text = "ABJDE1234F"
+    if has_phone:
+        form_fields["phone_number"] = "9123456780"
+        form_text = "Mobile Number 9123456780\n" + form_text
+    form = page(80, "Application Form", "coapplicant_1", **form_fields)
+    form.update(page_type="scanned", ocr_confidence=confidence, ocr_text=form_text)
+    pages = [card, form]
+    if conflicting_card:
+        other_card = page(
+            17,
+            "PAN Card",
+            "coapplicant_1",
+            applicant_name="Ravi Kumar",
+            pan_number="ABTDE1234J",
+        )
+        other_card["ocr_text"] = "Permanent Account Number ABTDE1234J Ravi Kumar"
+        pages.append(other_card)
+
+    findings = run_consistency_checks(pages, {"people": people})
+    assert any(
+        item["rule_id"] == "TRUSTED_PAN_NUMBER_MISMATCH" and item.get("page_number") == 80
+        for item in findings
+    )
+    assert not any(
+        item["rule_id"] == "PAN_OCR_REVIEW_REQUIRED" and item.get("page_number") == 80
+        for item in findings
+    )
+
+
 def test_utility_address_is_not_compared_for_coapplicant() -> None:
     trusted = {
         "communication_address": "B 402 PANDIT DINDAYAL 2 HATHIJAN AHMEDABAD 382445",

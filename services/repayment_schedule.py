@@ -134,13 +134,14 @@ def extract_repayment_summary(text: Any) -> dict[str, Any]:
         summary["emi"] = _number(monthly.group(1))
         summary["installment_count"] = int(monthly.group(2))
 
-    tenure = re.search(
-        r"loan\s+term\s*\(\s*in\s+months\s*\)[\s\S]{0,260}?\b(\d{1,3})\b",
-        raw,
-        re.IGNORECASE,
-    )
-    if tenure:
-        summary["tenure"] = int(tenure.group(1))
+    # Keep the term value inside its own row. A broad cross-line search can
+    # mistake the next numbered row (e.g. ``3. Rate of Interest``) for tenure
+    # when OCR omitted the term value.
+    tenure = _number_after_label(raw, "loan term (in months)")
+    if tenure is None:
+        tenure = _number_after_label(raw, "loan term")
+    if tenure is not None and tenure.is_integer() and 1 <= tenure <= 600:
+        summary["tenure"] = int(tenure)
 
     roi = _number_after_label(raw, "rate of interest")
     if roi is not None:

@@ -136,6 +136,14 @@ def worklist(
     now = utc_now()
     active_progress = "('queued','processing','retrying','paused')"
     active_jobs = "('queued','running','retrying','paused')"
+    # Ops timestamps are ISO text. PostgreSQL needs a common timestamp type
+    # to combine them with applications.updated_at and order chronologically.
+    ready_order = "COALESCE(c.returned_at, c.ready_at, a.updated_at)"
+    if dialect() == "postgresql":
+        ready_order = (
+            "COALESCE(CAST(NULLIF(c.returned_at, '') AS TIMESTAMP WITH TIME ZONE), "
+            "CAST(NULLIF(c.ready_at, '') AS TIMESTAMP WITH TIME ZONE), a.updated_at)"
+        )
     with get_connection() as connection:
         # Record the first server-observed ready moment prospectively. Cases
         # still processing are excluded so their queue age starts on completion.
@@ -185,7 +193,7 @@ def worklist(
             + joins
             + " LEFT JOIN users u ON u.id = c.owner_user_id WHERE "
             + where
-            + " ORDER BY COALESCE(c.returned_at, c.ready_at, a.updated_at) ASC, a.id ASC LIMIT ? OFFSET ?",
+            + f" ORDER BY {ready_order} ASC, a.id ASC LIMIT ? OFFSET ?",
             tuple(parameters + [limit, offset]),
         ).fetchall()
 

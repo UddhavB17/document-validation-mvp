@@ -86,3 +86,13 @@ def test_build_checklist_status_requires_confident_match() -> None:
     pan_row = next(row for row in rows if row["s_no"] == 7)
     assert pan_row["status"] == "manual_review"
     assert pan_row["pages"] == "1"
+
+
+def test_document_presence_does_not_complete_a_manual_check() -> None:
+    rows = build_checklist_status(
+        [{"s_no": 1, "document_type": "Guarantee Deed", "ai_checkable": False}],
+        [{"page_number": 5, "document_type": "Guarantee Deed"}],
+        [],
+    )
+    assert rows[0]["status"] == "manual_review"
+    assert rows[0]["pages"] == "5"

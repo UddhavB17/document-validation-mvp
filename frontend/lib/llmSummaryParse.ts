@@ -224,33 +224,12 @@ export function reviewerSummaryText(
   rawSummary: string | null | undefined,
   options?: { pageNumber?: number; ruleId?: string | null },
 ): string | null {
-  if (!rawSummary?.trim()) {
-    return null;
-  }
-  const parsed = parseLlmSummary(rawSummary);
-  if (parsed) {
-    const pageNumber = options?.pageNumber;
-    const ruleId = options?.ruleId;
-    const pageSummary = parsed.page_summaries?.find((item) => {
-      const pageMatches = pageNumber === undefined || item.page_number === pageNumber;
-      const ruleMatches = !ruleId || !item.rule_id || item.rule_id === ruleId;
-      return pageMatches && ruleMatches;
-    });
-    if (pageSummary?.problem_description?.trim()) {
-      return plainReviewerText(pageSummary.problem_description.trim());
-    }
-    const pageDetails = pageSummary
-      ? (pageSummary.summary_points ?? []).filter(Boolean).join(" ")
-      : "";
-    if (pageDetails.trim()) {
-      return plainReviewerText(pageDetails.trim());
-    }
-    return plainReviewerText(parsed.overall_summary);
-  }
-
-  const overall = reviewerOverallSummaryText(rawSummary);
-  if (overall) {
-    return overall;
-  }
-  return null;
+  if (!options) return reviewerOverallSummaryText(rawSummary);
+  const { pageNumber, ruleId } = options;
+  if (!ruleId) return null;
+  const note = parseLlmSummary(rawSummary)?.page_summaries?.find(
+    (item) => item.rule_id === ruleId && (item.page_number ?? undefined) === pageNumber,
+  );
+  return plainReviewerText(note?.problem_description)
+    ?? plainReviewerText(note?.summary_points?.join(" "));
 }

@@ -291,7 +291,9 @@ def test_operations_user_can_read_pdf_evidence_but_anonymous_user_cannot(client,
     _create_ops_user(client, _admin_headers(client))
     ops_headers = {"Authorization": f"Bearer {_login(client, OPS_EMAIL, OPS_PASSWORD)['token']}"}
     pdf_bytes = b"%PDF-1.4 test evidence"
-    monkeypatch.setattr(review_routes, "_application_source_bytes", lambda _: (pdf_bytes, "source.pdf"))
+    monkeypatch.setattr(
+        review_routes, "_application_source_bytes", lambda _: (pdf_bytes, "source.pdf", "v1")
+    )
     path = "/review/applications/1/source-pdf"
 
     response = client.get(path, headers=ops_headers)

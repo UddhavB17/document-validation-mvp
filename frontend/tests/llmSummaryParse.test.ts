@@ -38,6 +38,23 @@ test("reviewerSummaryText never returns a JSON blob", () => {
   assert.ok(!text?.startsWith("{"));
 });
 
+test("issue notes require the same rule and source page", () => {
+  const raw = JSON.stringify({
+    overall_summary: "The file has a PAN mismatch.",
+    page_summaries: [
+      { page_number: 80, problem_description: "Unattributed page note." },
+      { page_number: 80, rule_id: "TRUSTED_PAN_NUMBER_MISMATCH", problem_description: "Check the PAN card." },
+      { rule_id: "FILE_LEVEL_RULE", summary_points: ["Check the file evidence."] },
+    ],
+  });
+  assert.equal(reviewerSummaryText(raw, { ruleId: "TRUSTED_PAN_NUMBER_MISMATCH", pageNumber: 80 }), "Check the PAN card.");
+  assert.equal(reviewerSummaryText(raw, { ruleId: "TRUSTED_PAN_NUMBER_MISMATCH" }), null);
+  assert.equal(reviewerSummaryText(raw, { ruleId: "TRUSTED_PAN_NUMBER_MISMATCH", pageNumber: 81 }), null);
+  assert.equal(reviewerSummaryText(raw, { ruleId: "STATUS_UNVERIFIABLE_S38", pageNumber: 80 }), null);
+  assert.equal(reviewerSummaryText(raw, { ruleId: "FILE_LEVEL_RULE" }), "Check the file evidence.");
+  assert.equal(reviewerSummaryText('{"overall_summary":"The file has a PAN mismatch', { ruleId: "FILE_LEVEL_RULE" }), null);
+});
+
 test("parses TOON-style overall_summary lines", () => {
   const raw = `overall_summary: Verification found one PAN mismatch.
 final_recommendation: MANUAL REVIEW`;

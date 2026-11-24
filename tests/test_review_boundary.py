@@ -571,6 +571,10 @@ def test_application_review_payload_shape(tmp_path, monkeypatch, auth_headers) -
     assert isinstance(payload["documents"], list)
     assert payload["summary"]["raw_count"] == 0
     assert payload["latest_decision"] is None
+    checklist_statuses = {row["s_no"]: row["status"] for row in payload["checklist"]["rows"]}
+    assert checklist_statuses[23] == checklist_statuses[28] == "not_applicable"
+    assert all(row.get("s_no") not in {23, 28} for row in payload["manual_review_items"])
+    assert payload["ai_checklist"]["passed"] < payload["ai_checklist"]["total"]
 
 
 def test_application_review_not_found(tmp_path, monkeypatch, auth_headers) -> None:

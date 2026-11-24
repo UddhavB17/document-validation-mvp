@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from services.checklist_engine import (
+    _run_accuracy_checks,
     check_date_range,
     check_field_match,
     check_presence_any,
@@ -124,6 +125,20 @@ def test_field_match_loan_amount_mismatch() -> None:
     assert result[0]["field"] == "loan_amount"
 
 
+def test_field_match_loan_amount_keeps_one_percent_tolerance_and_missing_baseline() -> None:
+    assert (
+        check_field_match({"loan_amount": "505000"}, {"loan_amount": "500000"}, ["loan_amount"])
+        == []
+    )
+    assert check_field_match(
+        {"loan_amount": "505001"}, {"loan_amount": "500000"}, ["loan_amount"]
+    )[0]["field"] == "loan_amount"
+    assert (
+        check_field_match({"loan_amount": "700000"}, {"loan_amount": None}, ["loan_amount"])
+        == []
+    )
+
+
 def test_field_match_pan_case_insensitive() -> None:
     assert (
         check_field_match(
@@ -131,6 +146,37 @@ def test_field_match_pan_case_insensitive() -> None:
         )
         == []
     )
+
+
+def test_insurance_tenure_check_does_not_hide_later_conflicting_document() -> None:
+    def page(number: int, value: int) -> dict:
+        return {
+            "page_number": number,
+            "document_type": "Insurance Consent Letter",
+            "page_type": "digital",
+            "classification_confidence": 0.99,
+            "detection_method": "detected",
+            "ocr_confidence": 1.0,
+            "extracted_fields": {"insurance_tenure": value},
+        }
+
+    item = {
+        "s_no": 35,
+        "description": "Insurance tenure must be less than loan tenure",
+        "document_type": "Insurance Consent Letter",
+        "check_type": "field_less_than",
+        "document_fields": ["insurance_tenure", "insurance_tenure_months"],
+        "system_field": "tenure",
+    }
+
+    anomalies = _run_accuracy_checks(
+        [page(1, 12), page(2, 36)], {}, {"tenure": 24}, [item]
+    )
+
+    assert len(anomalies) == 1
+    assert anomalies[0]["rule_id"] == "FIELD_RELATION_S35"
+    assert anomalies[0]["found_value"] == 36
+    assert anomalies[0]["page_number"] == 2
 
 
 def test_date_range_bank_stmt_recent() -> None:
