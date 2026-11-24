@@ -49,6 +49,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (
     pathname === "/login" ||
+    pathname === "/ms-fincap-logo.png" ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api/")
   ) {
